@@ -1,8 +1,8 @@
 import './globals.css'
 
 export const metadata = {
-  title: 'SocialBrand Dashboard',
-  description: 'Cross-store reporting for SocialBrand retail group',
+  title: 'SocialBrand Pulse',
+  description: 'Cross-store retail intelligence for SocialBrand',
 }
 
 export default function RootLayout({ children }) {
