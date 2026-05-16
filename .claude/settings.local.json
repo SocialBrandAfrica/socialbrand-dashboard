@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:crklvhfwyxlisfcvqenc.supabase.co)",
+      "Bash(npm run *)",
+      "Bash(Get-Content package.json)",
+      "Bash(Select-String -Pattern '\"scripts\"' -A 5)"
+    ]
+  }
+}
