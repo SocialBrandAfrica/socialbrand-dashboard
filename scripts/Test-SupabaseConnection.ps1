@@ -10,7 +10,14 @@ try {
     Write-Host "SUCCESS - HTTP $($response.StatusCode) from $SupabaseUrl" -ForegroundColor Green
 }
 catch {
-    Write-Host "FAILED - $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "Check: outbound port 443 must be open. Sigma GRD uses this port - if GRD works, this should too." -ForegroundColor Yellow
-    exit 1
+    # 401 Unauthorized = Supabase received the request but requires an API key.
+    # This means port 443 is open and the network path is clear - treat as SUCCESS.
+    if ($_.Exception.Response -and $_.Exception.Response.StatusCode.value__ -eq 401) {
+        Write-Host "SUCCESS - Port 443 is open. Supabase responded with 401 (no API key sent, expected)." -ForegroundColor Green
+    }
+    else {
+        Write-Host "FAILED - $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Check: outbound port 443 must be open. Sigma GRD uses this port - if GRD works, this should too." -ForegroundColor Yellow
+        exit 1
+    }
 }
