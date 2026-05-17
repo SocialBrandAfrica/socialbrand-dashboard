@@ -34,10 +34,8 @@ $NposDb        = 'npos'
 $DwDb          = 'DW220sDB'
 
 # F7 — siMktNr is Sigma's internal market number, NOT the 5-digit store code.
-# Before first run, execute this in SSMS on this server and put the result below:
-#   SELECT siMktNr, COUNT(*) AS rows, MIN(dtDatum) AS earliest, MAX(dtDatum) AS latest
-#   FROM DW220sDB.dbo.DBAUms GROUP BY siMktNr ORDER BY siMktNr
-$SigmaMktNr    = 0                 # TODO: replace with actual siMktNr from query above
+# Confirmed 2026-05-17: siMktNr = 1 on all store servers. No per-store mapping needed.
+$SigmaMktNr    = 1
 
 # Supabase — service_role key only. Never logged, never in queries.
 $SupabaseUrl   = 'https://crklvhfwyxlisfcvqenc.supabase.co'
@@ -242,11 +240,6 @@ function Push-DailyAggregates {
         $watermark = Get-Watermark -TableName 'daily_aggregates'
         Write-Host "  Watermark: $watermark  |  siMktNr filter: $SigmaMktNr"
 
-        # Validate siMktNr has been configured
-        if ($SigmaMktNr -eq 0) {
-            throw "SigmaMktNr is not configured. Run the siMktNr mapping query on this server first (see F7 in SIGMA_COLUMN_MAPPING.md)."
-        }
-
         # F6 — DBAUms has no dept/sub_dept; join to npos.PLU_d → npos.Wgr_d
         # F7 — filter by siMktNr (Sigma internal market number, not the store code)
         # dArtNr is float — cast via BIGINT to strip the decimal safely
@@ -347,6 +340,8 @@ function Push-StockSnapshots {
         # Full snapshot every run — no watermark filter.
         # PLU_s holds current SOH only; it is fully replaced each nightly close.
         # F5 — PLU_s has no reserved_qty; push 0. available_qty = s_stock.
+        # NOTE: PLU_s is SPAR-only. TOPS store servers return 0 rows — do not deploy
+        #       this function on TOPS servers until an alternative stock table is found.
         $sql = @"
 SELECT
     PLU_nr,
