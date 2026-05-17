@@ -24,8 +24,8 @@ $ErrorActionPreference = 'Stop'
 # CONFIG - uncomment the block for this server, leave the rest commented
 # =============================================================================
 
-$ScriptVersion = 'v1.0'
-$ClientId      = 1                 # clients.id in Supabase (SocialBrand = 1)
+$ScriptVersion  = 'v1.0'
+$ClientName     = 'SocialBrand'    # looked up at startup - do not change
 
 # Store identity - one line active per server deployment
 # ---------------------------------------------------------------
@@ -65,6 +65,21 @@ $RetryWaitSecs = 10
 # HELPERS
 # =============================================================================
 
+function Get-ClientId {
+    # Fetch the UUID for this client from the clients table at startup.
+    $url  = "$SupabaseUrl/rest/v1/clients?select=*&limit=1"
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
+    $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs
+    if (-not $rows -or $rows.Count -eq 0) {
+        throw "Client '$ClientName' not found in Supabase clients table."
+    }
+    $row = $rows[0]
+    # Try common primary key column names
+    if ($row.PSObject.Properties['client_id']) { return $row.client_id }
+    if ($row.PSObject.Properties['id'])        { return $row.id }
+    throw "Could not find primary key column on clients table. Columns: $($row.PSObject.Properties.Name -join ', ')"
+}
+
 function Get-Headers {
     return @{
         'apikey'        = $SupabaseKey
@@ -97,15 +112,15 @@ function Invoke-Sql {
         [string]$Sql,
         [hashtable]$Params = @{}
     )
-    $cmd             = New-Object System.Data.SqlClient.SqlCommand($Sql, $Conn)
+    $cmd                = New-Object System.Data.SqlClient.SqlCommand($Sql, $Conn)
     $cmd.CommandTimeout = 180
     foreach ($k in $Params.Keys) {
-        $cmd.Parameters.AddWithValue($k, $Params[$k]) | Out-Null
+        $null = $cmd.Parameters.AddWithValue($k, $Params[$k])
     }
     $adapter = New-Object System.Data.SqlClient.SqlDataAdapter($cmd)
     $dt      = New-Object System.Data.DataTable
-    $adapter.Fill($dt) | Out-Null
-    return $dt
+    $null    = $adapter.Fill($dt)
+    return ,$dt
 }
 
 function Get-EAN {
@@ -153,24 +168,26 @@ function Start-PushLog {
         store_code     = $StoreCode
         client_id      = $ClientId
         table_name     = $TableName
+        push_type      = $Mode
         status         = 'RUNNING'
         started_at     = (Get-Date -Format 'o')
         script_version = $ScriptVersion
     } | ConvertTo-Json
     $result = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log" -Method POST -Headers (Get-ReturnHeaders) -Body $body
-    return $result[0].id
+    return $result[0].push_id
 }
 
 function Complete-PushLog {
-    param([object]$LogId, [string]$Status, [int]$RowsPushed = 0, [string]$Msg = '')
+    param([object]$LogId, [string]$Status, [int]$RowsPushed = 0, [int]$RowsFailed = 0, [string]$Msg = '')
     $body = [ordered]@{
         status       = $Status
         completed_at = (Get-Date -Format 'o')
         rows_pushed  = $RowsPushed
+        rows_failed  = $RowsFailed
     }
     if ($Msg) { $body['error_message'] = $Msg }
     $json = $body | ConvertTo-Json
-    Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log?id=eq.$LogId" -Method PATCH -Headers (Get-Headers) -Body $json | Out-Null
+    Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log?push_id=eq.$LogId" -Method PATCH -Headers (Get-Headers) -Body $json | Out-Null
 }
 
 function Write-PushError {
@@ -212,9 +229,17 @@ function Send-Batch {
         }
         catch {
             $attempt++
+            $detail = ''
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($stream)
+                $detail = ' | ' + $reader.ReadToEnd()
+            } catch {}
             if ($attempt -lt $RetryMax) {
-                Write-Warning "Batch attempt $attempt/$RetryMax failed for $TableName - retrying in ${RetryWaitSecs}s. ($_)"
+                Write-Warning "Batch attempt $attempt/$RetryMax failed for $TableName - retrying in ${RetryWaitSecs}s. ($_$detail)"
                 Start-Sleep -Seconds $RetryWaitSecs
+            } else {
+                Write-Warning "Batch failed after $RetryMax retries: $_$detail"
             }
         }
     }
@@ -251,23 +276,26 @@ function Push-DailyAggregates {
         # F6 - DBAUms has no dept/sub_dept; join to npos.PLU_d -> npos.Wgr_d
         # F7 - filter by siMktNr (Sigma internal market number, not the store code)
         # dArtNr is float - cast via BIGINT to strip the decimal safely
+        # Group by date + product to collapse multiple siKz rows (sales, returns, etc.)
+        # into one aggregate row per product per day.
         $sql = @"
 SELECT
     u.dtDatum,
     CAST(CAST(u.dArtNr AS BIGINT) AS VARCHAR(20)) AS plu_code_raw,
-    CAST(u.dMenge    AS FLOAT)                    AS qty_sold,
-    CAST(u.dUmsVK    AS FLOAT)                    AS sales_inc_vat,
-    CAST(u.dUmsEK    AS FLOAT)                    AS cost_of_sales,
-    CAST(u.dMwStAus  AS FLOAT)                    AS vat_amount,
-    CAST(p.wgr_id    AS VARCHAR(20))              AS sub_dept_code,
-    CAST(w.hptgrp    AS VARCHAR(20))              AS dept_code
+    SUM(CAST(u.dMenge   AS FLOAT))                AS qty_sold,
+    SUM(CAST(u.dUmsVK   AS FLOAT))                AS sales_inc_vat,
+    SUM(CAST(u.dUmsEK   AS FLOAT))                AS cost_of_sales,
+    SUM(CAST(u.dMwStAus AS FLOAT))                AS vat_amount,
+    MAX(CAST(p.wgr_id   AS VARCHAR(20)))          AS sub_dept_code,
+    MAX(CAST(w.hptgrp   AS VARCHAR(20)))          AS dept_code
 FROM $DwDb.dbo.DBAUms u
 LEFT JOIN $NposDb.dbo.PLU_d p
     ON CAST(CAST(u.dArtNr AS BIGINT) AS VARCHAR(20)) = p.PLU_nr
 LEFT JOIN $NposDb.dbo.Wgr_d w
     ON p.wgr_id = w.wgr_id
-WHERE u.dtDatum  >= @watermark
-  AND u.siMktNr   = @sigmaMktNr
+WHERE u.dtDatum >= @watermark
+  AND u.siMktNr  = @sigmaMktNr
+GROUP BY u.dtDatum, u.dArtNr
 ORDER BY u.dtDatum, u.dArtNr
 "@
         $conn = New-SqlConn -Database $DwDb
@@ -311,13 +339,13 @@ ORDER BY u.dtDatum, u.dArtNr
             $batch.Add($record)
 
             if ($batch.Count -ge $BatchSize) {
-                $pushed += Send-Batch -TableName 'daily_aggregates' -ConflictCols 'client_id,store_code,agg_date,plu_code' -Rows $batch.ToArray() -LogId $logId
+                $pushed += Send-Batch -TableName 'daily_aggregates' -ConflictCols 'client_id,store_code,agg_date,ean' -Rows $batch.ToArray() -LogId $logId
                 $batch.Clear()
                 Write-Host "  Pushed $pushed rows so far..."
             }
         }
         if ($batch.Count -gt 0) {
-            $pushed += Send-Batch -TableName 'daily_aggregates' -ConflictCols 'client_id,store_code,agg_date,plu_code' -Rows $batch.ToArray() -LogId $logId
+            $pushed += Send-Batch -TableName 'daily_aggregates' -ConflictCols 'client_id,store_code,agg_date,ean' -Rows $batch.ToArray() -LogId $logId
         }
 
         Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed $pushed
@@ -325,6 +353,11 @@ ORDER BY u.dtDatum, u.dArtNr
     }
     catch {
         $msg = $_.ToString()
+        try {
+            $stream = $_.Exception.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($stream)
+            $msg   += ' | ' + $reader.ReadToEnd()
+        } catch {}
         Write-Host "  [daily_aggregates] FAILED: $msg" -ForegroundColor Red
         if ($logId) {
             try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg } catch {}
@@ -341,8 +374,8 @@ function Push-StockSnapshots {
     $logId = $null
 
     try {
-        $logId        = Start-PushLog -TableName 'stock_snapshots'
-        $snapshotDate = (Get-Date).ToString('yyyy-MM-dd')
+        $logId       = Start-PushLog -TableName 'stock_snapshots'
+        $snapshotAt  = (Get-Date).ToString('o')
 
         # Full snapshot every run - no watermark filter.
         # PLU_s holds current SOH and is maintained live on all stores (SPAR and TOPS).
@@ -369,25 +402,25 @@ WHERE s_stock IS NOT NULL
             $soh    = [Math]::Round([double]$row['soh'], 3)
 
             $record = [ordered]@{
-                client_id     = $ClientId
-                store_code    = $StoreCode
-                snapshot_date = $snapshotDate
-                ean           = $ean
-                plu_code      = $plu
-                soh           = $soh
-                reserved_qty  = 0
+                client_id    = $ClientId
+                store_code   = $StoreCode
+                snapshot_at  = $snapshotAt
+                ean          = $ean
+                plu_code     = $plu
+                soh          = $soh
+                reserved_qty = 0
                 available_qty = $soh
             }
             $batch.Add($record)
 
             if ($batch.Count -ge $BatchSize) {
-                $pushed += Send-Batch -TableName 'stock_snapshots' -ConflictCols 'client_id,store_code,snapshot_date,plu_code' -Rows $batch.ToArray() -LogId $logId
+                $pushed += Send-Batch -TableName 'stock_snapshots' -ConflictCols 'client_id,store_code,snapshot_at,ean' -Rows $batch.ToArray() -LogId $logId
                 $batch.Clear()
                 Write-Host "  Pushed $pushed rows so far..."
             }
         }
         if ($batch.Count -gt 0) {
-            $pushed += Send-Batch -TableName 'stock_snapshots' -ConflictCols 'client_id,store_code,snapshot_date,plu_code' -Rows $batch.ToArray() -LogId $logId
+            $pushed += Send-Batch -TableName 'stock_snapshots' -ConflictCols 'client_id,store_code,snapshot_at,ean' -Rows $batch.ToArray() -LogId $logId
         }
 
         Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed $pushed
@@ -395,6 +428,11 @@ WHERE s_stock IS NOT NULL
     }
     catch {
         $msg = $_.ToString()
+        try {
+            $stream = $_.Exception.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($stream)
+            $msg   += ' | ' + $reader.ReadToEnd()
+        } catch {}
         Write-Host "  [stock_snapshots] FAILED: $msg" -ForegroundColor Red
         if ($logId) {
             try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg } catch {}
@@ -408,6 +446,9 @@ WHERE s_stock IS NOT NULL
 
 Write-Host "=== SocialBrand Push Script $ScriptVersion - Mode: $Mode - Store: $StoreCode ===" -ForegroundColor White
 Write-Host "Started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+
+$ClientId = Get-ClientId
+Write-Host "Client UUID: $ClientId"
 
 switch ($Mode) {
     'nightly' {
