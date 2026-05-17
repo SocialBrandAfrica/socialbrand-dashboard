@@ -193,12 +193,11 @@ function Complete-PushLog {
 function Write-PushError {
     param([object]$LogId, [string]$TableName, [string]$Message, [string]$Payload = '')
     $body = [ordered]@{
+        push_id       = $LogId
         store_code    = $StoreCode
-        client_id     = $ClientId
         table_name    = $TableName
-        push_log_id   = $LogId
         error_message = $Message
-        payload       = $Payload.Substring(0, [Math]::Min(2000, $Payload.Length))
+        row_data      = $Payload.Substring(0, [Math]::Min(2000, $Payload.Length))
     } | ConvertTo-Json
     try {
         Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_errors" -Method POST -Headers (Get-Headers) -Body $body | Out-Null
