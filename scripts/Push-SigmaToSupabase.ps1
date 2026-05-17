@@ -162,6 +162,32 @@ function Get-Watermark {
     return (Get-Date).AddDays(-$DefaultDays)
 }
 
+function Clear-StuckRuns {
+    # Mark any RUNNING entries older than 30 minutes as FAILED before starting a new run.
+    # Prevents push_log filling with orphaned rows from crashed or interrupted runs.
+    $cutoff = (Get-Date).AddMinutes(-30).ToString('o')
+    $url    = "$SupabaseUrl/rest/v1/push_log" +
+              "?store_code=eq.$StoreCode" +
+              "&status=eq.RUNNING" +
+              "&started_at=lt.$cutoff"
+    $hdrs   = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
+    try {
+        $stuck = Invoke-RestMethod -Uri ($url + '&select=push_id,table_name') -Method GET -Headers $hdrs
+        if ($stuck -and $stuck.Count -gt 0) {
+            Write-Warning "Found $($stuck.Count) stuck RUNNING entry/entries - marking FAILED before starting."
+            $body = [ordered]@{
+                status        = 'FAILED'
+                completed_at  = (Get-Date -Format 'o')
+                error_message = 'Marked FAILED by new run startup - previous run did not complete cleanly.'
+            } | ConvertTo-Json
+            Invoke-RestMethod -Uri $url -Method PATCH -Headers (Get-Headers) -Body $body | Out-Null
+        }
+    }
+    catch {
+        Write-Warning "Could not clear stuck runs: $_"
+    }
+}
+
 function Start-PushLog {
     param([string]$TableName)
     $body = [ordered]@{
@@ -448,6 +474,8 @@ Write-Host "Started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 
 $ClientId = Get-ClientId
 Write-Host "Client UUID: $ClientId"
+
+Clear-StuckRuns
 
 switch ($Mode) {
     'nightly' {

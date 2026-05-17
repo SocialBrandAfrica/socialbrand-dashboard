@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx'
 import { ProductDetailPanel } from '@/components/ProductDetailPanel'
 import { FocusAreaPanel }    from '@/components/FocusAreaPanel'
 import { CalendarPopover } from '@/components/CalendarPopover'
+import PushStatusStrip from '@/components/PushStatusStrip'
 import './dashboard.css'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1375,6 +1376,8 @@ export default function Home() {
             {subDeptFilter !== 'all' ? ` › ${subDeptFilter}` : ''}
           </div>
         </header>
+
+        <PushStatusStrip />
 
         <div style={{ display: 'grid', gap: 14 }}>
 
