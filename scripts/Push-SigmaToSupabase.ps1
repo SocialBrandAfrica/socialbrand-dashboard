@@ -14,7 +14,8 @@
 #>
 param(
     [ValidateSet('nightly', 'intraday')]
-    [string]$Mode = 'nightly'
+    [string]$Mode = 'nightly',
+    [switch]$Backfill
 )
 
 Set-StrictMode -Version Latest
@@ -124,13 +125,16 @@ function Invoke-Sql {
 }
 
 function Get-EAN {
-    # F1 - EAN synthesis. If PLU is all-numeric and shorter than 8 chars, build a
-    # synthetic barcode: store_code padded to 5 + PLU padded to 8.
-    param([string]$Plu)
-    if ($Plu -match '^\d+$' -and $Plu.Length -lt 8) {
-        return $StoreCode.PadLeft(5, '0') + $Plu.PadLeft(8, '0')
-    }
-    return $Plu
+    # EAN priority: (1) d_intnr if it is a 13-digit GS1 barcode,
+    # (2) PLU_EAN.EAN_nr if supplied, (3) synthetic store+PLU fallback.
+    param(
+        [string]$Plu,
+        [string]$Intnr = '',
+        [string]$EanNr = ''
+    )
+    if ($Intnr -match '^\d{13}$') { return $Intnr }
+    if ($EanNr -ne '')            { return $EanNr  }
+    return $StoreCode.PadLeft(5, '0') + $Plu.PadLeft(8, '0')
 }
 
 function Get-GpPct {
@@ -295,32 +299,41 @@ function Push-DailyAggregates {
 
     try {
         $logId     = Start-PushLog -TableName 'daily_aggregates'
-        $watermark = Get-Watermark -TableName 'daily_aggregates'
+        $watermark = if ($Backfill) { [datetime]'2026-03-01' } else { Get-Watermark -TableName 'daily_aggregates' }
         Write-Host "  Watermark: $watermark  |  siMktNr filter: $SigmaMktNr"
 
-        # F6 - DBAUms has no dept/sub_dept; join to npos.PLU_d -> npos.Wgr_d
-        # F7 - filter by siMktNr (Sigma internal market number, not the store code)
-        # dArtNr is float - cast via BIGINT to strip the decimal safely
-        # Group by date + product to collapse multiple siKz rows (sales, returns, etc.)
-        # into one aggregate row per product per day.
         $sql = @"
 SELECT
-    u.dtDatum,
-    CAST(CAST(u.dArtNr AS BIGINT) AS VARCHAR(20)) AS plu_code_raw,
-    SUM(CAST(u.dMenge   AS FLOAT))                AS qty_sold,
-    SUM(CAST(u.dUmsVK   AS FLOAT))                AS sales_inc_vat,
-    SUM(CAST(u.dUmsEK   AS FLOAT))                AS cost_of_sales,
-    SUM(CAST(u.dMwStAus AS FLOAT))                AS vat_amount,
-    MAX(CAST(p.wgr_id   AS VARCHAR(20)))          AS sub_dept_code,
-    MAX(CAST(w.hptgrp   AS VARCHAR(20)))          AS dept_code
+    u.dtDatum                                                                        AS agg_date,
+    CAST(CAST(u.dArtNr AS BIGINT) AS VARCHAR(20))                                   AS plu_code,
+    '$StoreCode' + RIGHT('00000000' + CAST(CAST(u.dArtNr AS BIGINT) AS VARCHAR), 8) AS ean,
+    LTRIM(RTRIM(a.cBEZ))                                                            AS description,
+    CAST(g.WGRZUGABT AS VARCHAR(20))                                                AS dept_code,
+    LTRIM(RTRIM(ab.ABTLBEZ))                                                       AS dept_name,
+    CAST(a.lWgr AS VARCHAR(20))                                                     AS sub_dept_code,
+    LTRIM(RTRIM(g.WGRBEZ))                                                          AS sub_dept_name,
+    SUM(u.dUmsVK)                                                                   AS sales_inc_vat,
+    SUM(u.dUmsVK - u.dMwStAus)                                                      AS sales_ex_vat,
+    SUM(u.dUmsEK)                                                                   AS cost_of_sales,
+    SUM(u.dUmsVK - u.dMwStAus - u.dUmsEK)                                          AS gp_amount,
+    SUM(u.dMenge)                                                                   AS qty_sold
 FROM $DwDb.dbo.DBAUms u
-LEFT JOIN $NposDb.dbo.PLU_d p
-    ON CAST(CAST(u.dArtNr AS BIGINT) AS VARCHAR(20)) = p.PLU_nr
-LEFT JOIN $NposDb.dbo.Wgr_d w
-    ON p.wgr_id = w.wgr_id
-WHERE u.dtDatum >= @watermark
-  AND u.siMktNr  = @sigmaMktNr
-GROUP BY u.dtDatum, u.dArtNr
+LEFT JOIN $DwDb.dbo.DBARTS a
+    ON u.dArtNr = a.dARTNR
+LEFT JOIN $DwDb.dbo.DBWGRP g
+    ON a.lWgr = g.lWgr
+LEFT JOIN $DwDb.dbo.DBABTL ab
+    ON g.WGRZUGABT = ab.ABTLNR
+WHERE u.siMktNr  = @sigmaMktNr
+  AND u.dtDatum >= @watermark
+GROUP BY
+    u.dtDatum,
+    u.dArtNr,
+    a.cBEZ,
+    a.lWgr,
+    g.WGRZUGABT,
+    g.WGRBEZ,
+    ab.ABTLBEZ
 ORDER BY u.dtDatum, u.dArtNr
 "@
         $conn = New-SqlConn -Database $DwDb
@@ -336,27 +349,24 @@ ORDER BY u.dtDatum, u.dArtNr
         $batch  = [System.Collections.Generic.List[hashtable]]::new()
 
         foreach ($row in $dt.Rows) {
-            $plu     = $row['plu_code_raw']
-            $ean     = Get-EAN -Plu $plu
-
-            $sellInc = [double]$row['sales_inc_vat']
-            $cost    = [double]$row['cost_of_sales']
-            $vatOut  = [double]$row['vat_amount']
-            $sellEx  = [Math]::Round($sellInc - $vatOut, 2)
-            $gpAmt   = [Math]::Round($sellEx - $cost, 2)
-            $gpPct   = Get-GpPct -SellIncVat $sellInc -CostExVat $cost
+            $sellEx  = [Math]::Round([double]$row['sales_ex_vat'], 2)
+            $gpAmt   = [Math]::Round([double]$row['gp_amount'], 2)
+            $gpPct   = if ($sellEx -gt 0) { [Math]::Round($gpAmt / $sellEx * 100, 2) } else { 0.0 }
 
             $record  = [ordered]@{
                 client_id     = $ClientId
                 store_code    = $StoreCode
-                agg_date      = ([datetime]$row['dtDatum']).ToString('yyyy-MM-dd')
-                ean           = $ean
-                plu_code      = $plu
-                dept_code     = if ($row['dept_code']     -is [DBNull]) { $null } else { $row['dept_code'] }
-                sub_dept_code = if ($row['sub_dept_code'] -is [DBNull]) { $null } else { $row['sub_dept_code'] }
+                agg_date      = ([datetime]$row['agg_date']).ToString('yyyy-MM-dd')
+                ean           = [string]$row['ean']
+                plu_code      = [string]$row['plu_code']
+                description   = if ($row['description']   -is [DBNull]) { $null } else { [string]$row['description']   }
+                dept_code     = if ($row['dept_code']      -is [DBNull]) { $null } else { [string]$row['dept_code']     }
+                dept_name     = if ($row['dept_name']      -is [DBNull]) { $null } else { [string]$row['dept_name']     }
+                sub_dept_code = if ($row['sub_dept_code']  -is [DBNull]) { $null } else { [string]$row['sub_dept_code'] }
+                sub_dept_name = if ($row['sub_dept_name']  -is [DBNull]) { $null } else { [string]$row['sub_dept_name'] }
                 qty_sold      = [Math]::Round([double]$row['qty_sold'], 3)
-                sales_inc_vat = [Math]::Round($sellInc, 2)
-                cost_of_sales = [Math]::Round($cost, 2)
+                sales_inc_vat = [Math]::Round([double]$row['sales_inc_vat'], 2)
+                cost_of_sales = [Math]::Round([double]$row['cost_of_sales'], 2)
                 sales_ex_vat  = $sellEx
                 gp_amount     = $gpAmt
                 gp_pct        = $gpPct
@@ -387,6 +397,82 @@ ORDER BY u.dtDatum, u.dArtNr
         if ($logId) {
             try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg } catch {}
         }
+    }
+}
+
+# =============================================================================
+# PUSH: departments + sub_departments  <-  npos.dbo.Dgrp_d / npos.dbo.Wgr_d
+# These are tiny reference tables (~30 rows each). Upserted every nightly run.
+# client_id is included so they work in a multi-tenant schema.
+# =============================================================================
+
+function Push-RefTables {
+    Write-Host "`n[ref_tables] Starting push (departments + sub_departments)..." -ForegroundColor Cyan
+
+    try {
+        $conn = New-SqlConn -Database $NposDb
+
+        # -- departments (DBABTL) -----------------------------------------------
+        $sqlDept = @"
+SELECT
+    CAST(ABTLNR AS VARCHAR(20))  AS dept_code,
+    LTRIM(RTRIM(ABTLBEZ))        AS dept_name
+FROM $DwDb.dbo.DBABTL
+WHERE ABTLBEZ IS NOT NULL
+"@
+        $dtDept = Invoke-Sql -Conn $conn -Sql $sqlDept
+        Write-Host "  departments rows from Sigma: $($dtDept.Rows.Count)"
+
+        $deptBatch = @()
+        foreach ($row in $dtDept.Rows) {
+            $deptBatch += [ordered]@{
+                client_id  = $ClientId
+                store_code = $StoreCode
+                dept_code  = [string]$row['dept_code']
+                dept_name  = [string]$row['dept_name']
+            }
+        }
+        if ($deptBatch.Count -gt 0) {
+            $url  = "$SupabaseUrl/rest/v1/departments?on_conflict=client_id,store_code,dept_code"
+            $json = ConvertTo-Json -InputObject @($deptBatch) -Depth 3 -Compress
+            Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json | Out-Null
+            Write-Host "  departments upserted: $($deptBatch.Count)" -ForegroundColor Green
+        }
+
+        # -- sub_departments (DBWGRP) -------------------------------------------
+        $sqlSub = @"
+SELECT
+    CAST(lWgr        AS VARCHAR(20)) AS sub_dept_code,
+    LTRIM(RTRIM(WGRBEZ))             AS sub_dept_name,
+    CAST(WGRZUGABT   AS VARCHAR(20)) AS dept_code
+FROM $DwDb.dbo.DBWGRP
+WHERE WGRBEZ IS NOT NULL
+"@
+        $dtSub = Invoke-Sql -Conn $conn -Sql $sqlSub
+        Write-Host "  sub_departments rows from Sigma: $($dtSub.Rows.Count)"
+
+        $subBatch = @()
+        foreach ($row in $dtSub.Rows) {
+            $subBatch += [ordered]@{
+                client_id     = $ClientId
+                store_code    = $StoreCode
+                sub_dept_code = [string]$row['sub_dept_code']
+                sub_dept_name = [string]$row['sub_dept_name']
+                dept_code     = if ($row['dept_code'] -is [DBNull]) { $null } else { [string]$row['dept_code'] }
+            }
+        }
+        if ($subBatch.Count -gt 0) {
+            $url  = "$SupabaseUrl/rest/v1/sub_departments?on_conflict=client_id,store_code,sub_dept_code"
+            $json = ConvertTo-Json -InputObject @($subBatch) -Depth 3 -Compress
+            Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json | Out-Null
+            Write-Host "  sub_departments upserted: $($subBatch.Count)" -ForegroundColor Green
+        }
+
+        $conn.Dispose()
+        Write-Host "  [ref_tables] Done." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "  [ref_tables] FAILED: $_" -ForegroundColor Red
     }
 }
 
@@ -479,6 +565,7 @@ Clear-StuckRuns
 
 switch ($Mode) {
     'nightly' {
+        Push-RefTables
         Push-DailyAggregates
         Push-StockSnapshots
     }
