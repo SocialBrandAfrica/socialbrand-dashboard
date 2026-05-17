@@ -21,20 +21,28 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # =============================================================================
-# CONFIG — edit before deploying to a store server
+# CONFIG — uncomment the block for this server, leave the rest commented
 # =============================================================================
 
 $ScriptVersion = 'v1.0'
-$StoreCode     = '10116'           # 5-digit code for SPAR Delareyville
 $ClientId      = 1                 # clients.id in Supabase (SocialBrand = 1)
+
+# Store identity — one block active per server deployment
+# ---------------------------------------------------------------
+$StoreCode = '10116'  # SPAR Delareyville   — srsdelareyvilesvr
+# $StoreCode = '80175'  # SPAR Roosville       — srsroosvillesvr
+# $StoreCode = '21355'  # TOPS Delareyville    — srtdelareyvilsvr
+# $StoreCode = '80579'  # TOPS Dice            — srsdelareyt2svr
+# $StoreCode = '80176'  # TOPS Roosville       — srtroosvillesvr
+# ---------------------------------------------------------------
 
 # SQL Server — Windows Auth, no password needed
 $SigmaServer   = 'localhost\SIGMA'
 $NposDb        = 'npos'
 $DwDb          = 'DW220sDB'
 
-# F7 — siMktNr is Sigma's internal market number, NOT the 5-digit store code.
-# Confirmed 2026-05-17: siMktNr = 1 on all store servers. No per-store mapping needed.
+# siMktNr = 1 on every store server (each runs an isolated Sigma instance).
+# Store identity comes from $StoreCode above, not from siMktNr.
 $SigmaMktNr    = 1
 
 # Supabase — service_role key only. Never logged, never in queries.
@@ -340,8 +348,9 @@ function Push-StockSnapshots {
         # Full snapshot every run — no watermark filter.
         # PLU_s holds current SOH only; it is fully replaced each nightly close.
         # F5 — PLU_s has no reserved_qty; push 0. available_qty = s_stock.
-        # NOTE: PLU_s is SPAR-only. TOPS store servers return 0 rows — do not deploy
-        #       this function on TOPS servers until an alternative stock table is found.
+        # Confirmed on all stores: PLU_s is populated during trading hours and after
+        # nightly close. Earlier 0-row result was a timing issue (Sigma clears PLU_s
+        # mid-reset); the 02:00 push runs well after repopulation completes.
         $sql = @"
 SELECT
     PLU_nr,
