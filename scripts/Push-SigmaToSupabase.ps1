@@ -1,16 +1,16 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Nightly push from Sigma SQL Server to Supabase — SocialBrand Pulse.
+    Nightly push from Sigma SQL Server to Supabase - SocialBrand Pulse.
 .DESCRIPTION
     Phase 1: daily_aggregates (DBAUms) and stock_snapshots (PLU_s).
     Runs on the store server using Windows Auth against localhost\SIGMA.
     Scheduled via Task Scheduler at 02:00 every night after Sigma day-end close.
 .PARAMETER Mode
-    nightly  — daily_aggregates + stock_snapshots (default)
-    intraday — reserved for Phase 2 (transactions)
+    nightly  - daily_aggregates + stock_snapshots (default)
+    intraday - reserved for Phase 2 (transactions)
 .EXAMPLE
-    powershell.exe -ExecutionPolicy Bypass -File "C:\SocialBrand\Push-SigmaToSupabase.ps1" -Mode nightly
+    powershell.exe -ExecutionPolicy Bypass -File "S:\SocialBrand\Push-SigmaToSupabase.ps1" -Mode nightly
 #>
 param(
     [ValidateSet('nightly', 'intraday')]
@@ -21,22 +21,22 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # =============================================================================
-# CONFIG — uncomment the block for this server, leave the rest commented
+# CONFIG - uncomment the block for this server, leave the rest commented
 # =============================================================================
 
 $ScriptVersion = 'v1.0'
 $ClientId      = 1                 # clients.id in Supabase (SocialBrand = 1)
 
-# Store identity — one block active per server deployment
+# Store identity - one line active per server deployment
 # ---------------------------------------------------------------
-$StoreCode = '10116'  # SPAR Delareyville   — srsdelareyvilesvr
-# $StoreCode = '80175'  # SPAR Roosville       — srsroosvillesvr
-# $StoreCode = '21355'  # TOPS Delareyville    — srtdelareyvilsvr
-# $StoreCode = '80579'  # TOPS Dice            — srsdelareyt2svr
-# $StoreCode = '80176'  # TOPS Roosville       — srtroosvillesvr
+$StoreCode = '10116'  # SPAR Delareyville  - srsdelareyvilesvr
+# $StoreCode = '80175'  # SPAR Roosville    - srsroosvillesvr
+# $StoreCode = '21355'  # TOPS Delareyville - srtdelareyvilsvr
+# $StoreCode = '80579'  # TOPS Dice         - srsdelareyt2svr
+# $StoreCode = '80176'  # TOPS Roosville    - srtroosvillesvr
 # ---------------------------------------------------------------
 
-# SQL Server — Windows Auth, no password needed
+# SQL Server - Windows Auth, no password needed
 $SigmaServer   = 'localhost\SIGMA'
 $NposDb        = 'npos'
 $DwDb          = 'DW220sDB'
@@ -45,9 +45,9 @@ $DwDb          = 'DW220sDB'
 # Store identity comes from $StoreCode above, not from siMktNr.
 $SigmaMktNr    = 1
 
-# Supabase — service_role key only. Never logged, never in queries.
+# Supabase - service_role key only. Never logged, never in queries.
 $SupabaseUrl   = 'https://crklvhfwyxlisfcvqenc.supabase.co'
-$SupabaseKey   = 'REPLACE_WITH_SERVICE_ROLE_KEY'
+$SupabaseKey   = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNya2x2aGZ3eXhsaXNmY3ZxZW5jIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODQxNTAxNSwiZXhwIjoyMDkzOTkxMDE1fQ.krsIfIwVEkCdl3BJnUJYb04A1f2mKJu1n8wsTi04dG0'
 
 # Push tuning
 $BatchSize     = 500
@@ -109,7 +109,7 @@ function Invoke-Sql {
 }
 
 function Get-EAN {
-    # F1 — EAN synthesis. If PLU is all-numeric and shorter than 8 chars, build a
+    # F1 - EAN synthesis. If PLU is all-numeric and shorter than 8 chars, build a
     # synthetic barcode: store_code padded to 5 + PLU padded to 8.
     param([string]$Plu)
     if ($Plu -match '^\d+$' -and $Plu.Length -lt 8) {
@@ -142,7 +142,7 @@ function Get-Watermark {
         }
     }
     catch {
-        Write-Warning "Watermark read failed for $TableName — defaulting to last $DefaultDays days. ($_)"
+        Write-Warning "Watermark read failed for $TableName - defaulting to last $DefaultDays days. ($_)"
     }
     return (Get-Date).AddDays(-$DefaultDays)
 }
@@ -213,13 +213,13 @@ function Send-Batch {
         catch {
             $attempt++
             if ($attempt -lt $RetryMax) {
-                Write-Warning "Batch attempt $attempt/$RetryMax failed for $TableName — retrying in ${RetryWaitSecs}s. ($_)"
+                Write-Warning "Batch attempt $attempt/$RetryMax failed for $TableName - retrying in ${RetryWaitSecs}s. ($_)"
                 Start-Sleep -Seconds $RetryWaitSecs
             }
         }
     }
 
-    # Batch failed after all retries — fall back to row-by-row to isolate bad rows
+    # Batch failed after all retries - fall back to row-by-row to isolate bad rows
     Write-Warning "Batch failed after $RetryMax retries. Falling back to row-by-row for $($Rows.Count) rows."
     $pushed = 0
     foreach ($row in $Rows) {
@@ -236,7 +236,7 @@ function Send-Batch {
 }
 
 # =============================================================================
-# PUSH: daily_aggregates  ←  DW220sDB.dbo.DBAUms
+# PUSH: daily_aggregates  <-  DW220sDB.dbo.DBAUms
 # =============================================================================
 
 function Push-DailyAggregates {
@@ -244,13 +244,13 @@ function Push-DailyAggregates {
     $logId = $null
 
     try {
-        $logId    = Start-PushLog -TableName 'daily_aggregates'
+        $logId     = Start-PushLog -TableName 'daily_aggregates'
         $watermark = Get-Watermark -TableName 'daily_aggregates'
         Write-Host "  Watermark: $watermark  |  siMktNr filter: $SigmaMktNr"
 
-        # F6 — DBAUms has no dept/sub_dept; join to npos.PLU_d → npos.Wgr_d
-        # F7 — filter by siMktNr (Sigma internal market number, not the store code)
-        # dArtNr is float — cast via BIGINT to strip the decimal safely
+        # F6 - DBAUms has no dept/sub_dept; join to npos.PLU_d -> npos.Wgr_d
+        # F7 - filter by siMktNr (Sigma internal market number, not the store code)
+        # dArtNr is float - cast via BIGINT to strip the decimal safely
         $sql = @"
 SELECT
     u.dtDatum,
@@ -272,15 +272,14 @@ ORDER BY u.dtDatum, u.dArtNr
 "@
         $conn = New-SqlConn -Database $DwDb
         $dt   = Invoke-Sql -Conn $conn -Sql $sql -Params @{
-            watermark   = $watermark.Date
-            sigmaMktNr  = $SigmaMktNr
+            watermark  = $watermark.Date
+            sigmaMktNr = $SigmaMktNr
         }
         $conn.Dispose()
 
         Write-Host "  Rows from Sigma: $($dt.Rows.Count)"
 
         $pushed = 0
-        $today  = (Get-Date).ToString('yyyy-MM-dd')
         $batch  = [System.Collections.Generic.List[hashtable]]::new()
 
         foreach ($row in $dt.Rows) {
@@ -295,26 +294,26 @@ ORDER BY u.dtDatum, u.dArtNr
             $gpPct   = Get-GpPct -SellIncVat $sellInc -CostExVat $cost
 
             $record  = [ordered]@{
-                client_id      = $ClientId
-                store_code     = $StoreCode
-                agg_date       = ([datetime]$row['dtDatum']).ToString('yyyy-MM-dd')
-                ean            = $ean
-                plu_code       = $plu
-                dept_code      = if ($row['dept_code']     -is [DBNull]) { $null } else { $row['dept_code'] }
-                sub_dept_code  = if ($row['sub_dept_code'] -is [DBNull]) { $null } else { $row['sub_dept_code'] }
-                qty_sold       = [Math]::Round([double]$row['qty_sold'], 3)
-                sales_inc_vat  = [Math]::Round($sellInc, 2)
-                cost_of_sales  = [Math]::Round($cost, 2)
-                sales_ex_vat   = $sellEx
-                gp_amount      = $gpAmt
-                gp_pct         = $gpPct
+                client_id     = $ClientId
+                store_code    = $StoreCode
+                agg_date      = ([datetime]$row['dtDatum']).ToString('yyyy-MM-dd')
+                ean           = $ean
+                plu_code      = $plu
+                dept_code     = if ($row['dept_code']     -is [DBNull]) { $null } else { $row['dept_code'] }
+                sub_dept_code = if ($row['sub_dept_code'] -is [DBNull]) { $null } else { $row['sub_dept_code'] }
+                qty_sold      = [Math]::Round([double]$row['qty_sold'], 3)
+                sales_inc_vat = [Math]::Round($sellInc, 2)
+                cost_of_sales = [Math]::Round($cost, 2)
+                sales_ex_vat  = $sellEx
+                gp_amount     = $gpAmt
+                gp_pct        = $gpPct
             }
             $batch.Add($record)
 
             if ($batch.Count -ge $BatchSize) {
                 $pushed += Send-Batch -TableName 'daily_aggregates' -ConflictCols 'client_id,store_code,agg_date,plu_code' -Rows $batch.ToArray() -LogId $logId
                 $batch.Clear()
-                Write-Host "  Pushed $pushed rows..." -NoNewline; Write-Host "`r" -NoNewline
+                Write-Host "  Pushed $pushed rows so far..."
             }
         }
         if ($batch.Count -gt 0) {
@@ -334,7 +333,7 @@ ORDER BY u.dtDatum, u.dArtNr
 }
 
 # =============================================================================
-# PUSH: stock_snapshots  ←  npos.dbo.PLU_s
+# PUSH: stock_snapshots  <-  npos.dbo.PLU_s
 # =============================================================================
 
 function Push-StockSnapshots {
@@ -342,15 +341,12 @@ function Push-StockSnapshots {
     $logId = $null
 
     try {
-        $logId       = Start-PushLog -TableName 'stock_snapshots'
+        $logId        = Start-PushLog -TableName 'stock_snapshots'
         $snapshotDate = (Get-Date).ToString('yyyy-MM-dd')
 
-        # Full snapshot every run — no watermark filter.
-        # PLU_s holds current SOH only; it is fully replaced each nightly close.
-        # F5 — PLU_s has no reserved_qty; push 0. available_qty = s_stock.
-        # Confirmed on all stores: PLU_s is populated during trading hours and after
-        # nightly close. Earlier 0-row result was a timing issue (Sigma clears PLU_s
-        # mid-reset); the 02:00 push runs well after repopulation completes.
+        # Full snapshot every run - no watermark filter.
+        # PLU_s holds current SOH and is maintained live on all stores (SPAR and TOPS).
+        # F5 - PLU_s has no reserved_qty; push 0. available_qty = s_stock.
         $sql = @"
 SELECT
     PLU_nr,
@@ -387,7 +383,7 @@ WHERE s_stock IS NOT NULL
             if ($batch.Count -ge $BatchSize) {
                 $pushed += Send-Batch -TableName 'stock_snapshots' -ConflictCols 'client_id,store_code,snapshot_date,plu_code' -Rows $batch.ToArray() -LogId $logId
                 $batch.Clear()
-                Write-Host "  Pushed $pushed rows..." -NoNewline; Write-Host "`r" -NoNewline
+                Write-Host "  Pushed $pushed rows so far..."
             }
         }
         if ($batch.Count -gt 0) {
@@ -410,7 +406,7 @@ WHERE s_stock IS NOT NULL
 # MAIN
 # =============================================================================
 
-Write-Host "=== SocialBrand Push Script $ScriptVersion — Mode: $Mode — Store: $StoreCode ===" -ForegroundColor White
+Write-Host "=== SocialBrand Push Script $ScriptVersion - Mode: $Mode - Store: $StoreCode ===" -ForegroundColor White
 Write-Host "Started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 
 switch ($Mode) {
