@@ -1,58 +1,75 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Nightly push from Sigma SQL Server to Supabase - SocialBrand Pulse.
+    Nightly push from Sigma TAC zip (PRSSALE.DAT) to Supabase - SocialBrand Pulse.
 .DESCRIPTION
-    Phase 1: daily_aggregates (DBAUms) and stock_snapshots (PLU_s).
-    Runs on the store server using Windows Auth against localhost\SIGMA.
-    Scheduled via Task Scheduler at 02:00 every night after Sigma day-end close.
+    Reads PRSSALE.DAT from S:\sigma\comms\Catman\TAC*.zip.
+    Pushes daily_aggregates (from PRSSALE) and stock_snapshots (from dewas_PLU_s).
+    DBAUms is retired as a sales source. PRSSALE.DAT covers 100% of sales.
 .PARAMETER Mode
     nightly  - daily_aggregates + stock_snapshots (default)
     intraday - reserved for Phase 2 (transactions)
+.PARAMETER Backfill
+    Process all TAC*.zip files in TacZipDir instead of only the latest.
+.PARAMETER Force
+    Combined with -Backfill: overwrite dates that already exist in daily_aggregates.
 .EXAMPLE
-    powershell.exe -ExecutionPolicy Bypass -File "S:\SocialBrand\Push-SigmaToSupabase.ps1" -Mode nightly
+    powershell.exe -ExecutionPolicy Bypass -File "C:\SocialBrand\Push-SigmaToSupabase.ps1"
+    powershell.exe -ExecutionPolicy Bypass -File "C:\SocialBrand\Push-SigmaToSupabase.ps1" -Backfill
+    powershell.exe -ExecutionPolicy Bypass -File "C:\SocialBrand\Push-SigmaToSupabase.ps1" -Backfill -Force
 #>
 param(
     [ValidateSet('nightly', 'intraday')]
     [string]$Mode = 'nightly',
-    [switch]$Backfill
+    [switch]$Backfill,
+    [switch]$Force
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # =============================================================================
-# CONFIG - uncomment the block for this server, leave the rest commented
+# CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.0'
-$ClientName     = 'SocialBrand'    # looked up at startup - do not change
+$ScriptVersion = 'v2.0'
+$ClientName    = 'SocialBrand'
 
-# Store identity - one line active per server deployment
+# Store identity - auto-detected from hostname. Same script deploys to all servers.
 # ---------------------------------------------------------------
-$StoreCode = '10116'  # SPAR Delareyville  - srsdelareyvilesvr
-# $StoreCode = '80175'  # SPAR Roosville    - srsroosvillesvr
-# $StoreCode = '21355'  # TOPS Delareyville - srtdelareyvilsvr
-# $StoreCode = '80579'  # TOPS Dice         - srsdelareyt2svr
-# $StoreCode = '80176'  # TOPS Roosville    - srtroosvillesvr
+$hostMap = @{
+    'SRSDELAREYVILESVR' = @{ StoreCode = '10116'; StoreName = 'SPAR_Delareyville' }
+    'SRSROOSVILLESVR'   = @{ StoreCode = '80175'; StoreName = 'SPAR_Roosville'    }
+    'SRTDELAREYVILSVR'  = @{ StoreCode = '21355'; StoreName = 'TOPS_Delareyville' }
+    'SRSDELAREYT2SVR'   = @{ StoreCode = '80579'; StoreName = 'TOPS_Dice'         }
+    'SRTROOSVILLESVR'   = @{ StoreCode = '80176'; StoreName = 'TOPS_Roosville'    }
+}
+$hostKey = $env:COMPUTERNAME.ToUpper()
+if (-not $hostMap.ContainsKey($hostKey)) {
+    throw "Unknown host '$hostKey' - add it to hostMap in script config."
+}
+$StoreCode = $hostMap[$hostKey].StoreCode
+$StoreName = $hostMap[$hostKey].StoreName
+Write-Host "Store: $StoreName ($StoreCode) on $hostKey"
 # ---------------------------------------------------------------
+
+# TAC zip location and temp extraction root
+$TacZipDir    = 'S:\sigma\comms\Catman'
+$TempBase     = "$env:TEMP\SBPush"
+$BackfillFrom = [datetime]'2025-01-01'   # skip zips older than this date
 
 # SQL Server - Windows Auth, no password needed
-$SigmaServer   = 'localhost\SIGMA'
-$NposDb        = 'npos'
-$DwDb          = 'DW220sDB'
-
-# siMktNr = 1 on every store server (each runs an isolated Sigma instance).
-# Store identity comes from $StoreCode above, not from siMktNr.
-$SigmaMktNr    = 1
+$SigmaServer = 'localhost\SIGMA'
+$NposDb      = 'npos'
+$DwDb        = 'DW220sDB'
 
 # Supabase - service_role key only. Never logged, never in queries.
-$SupabaseUrl   = 'https://crklvhfwyxlisfcvqenc.supabase.co'
-$SupabaseKey   = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNya2x2aGZ3eXhsaXNmY3ZxZW5jIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODQxNTAxNSwiZXhwIjoyMDkzOTkxMDE1fQ.krsIfIwVEkCdl3BJnUJYb04A1f2mKJu1n8wsTi04dG0'
+$SupabaseUrl = 'https://crklvhfwyxlisfcvqenc.supabase.co'
+$SupabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNya2x2aGZ3eXhsaXNmY3ZxZW5jIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODQxNTAxNSwiZXhwIjoyMDkzOTkxMDE1fQ.krsIfIwVEkCdl3BJnUJYb04A1f2mKJu1n8wsTi04dG0'
 
 # Push tuning
 $BatchSize     = 500
-$DefaultDays   = 7                 # look-back window when no prior success exists
+$DefaultDays   = 7
 $RetryMax      = 3
 $RetryWaitSecs = 10
 
@@ -63,22 +80,20 @@ $RetryWaitSecs = 10
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
 
 # =============================================================================
-# HELPERS
+# CORE HELPERS
 # =============================================================================
 
 function Get-ClientId {
-    # Fetch the UUID for this client from the clients table at startup.
     $url  = "$SupabaseUrl/rest/v1/clients?select=*&limit=1"
     $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
     $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs
     if (-not $rows -or $rows.Count -eq 0) {
-        throw "Client '$ClientName' not found in Supabase clients table."
+        throw "Client not found in Supabase clients table."
     }
     $row = $rows[0]
-    # Try common primary key column names
     if ($row.PSObject.Properties['client_id']) { return $row.client_id }
     if ($row.PSObject.Properties['id'])        { return $row.id }
-    throw "Could not find primary key column on clients table. Columns: $($row.PSObject.Properties.Name -join ', ')"
+    throw "Could not find primary key on clients table. Columns: $($row.PSObject.Properties.Name -join ', ')"
 }
 
 function Get-Headers {
@@ -124,26 +139,6 @@ function Invoke-Sql {
     return ,$dt
 }
 
-function Get-EAN {
-    # EAN priority: (1) d_intnr if it is a 13-digit GS1 barcode,
-    # (2) PLU_EAN.EAN_nr if supplied, (3) synthetic store+PLU fallback.
-    param(
-        [string]$Plu,
-        [string]$Intnr = '',
-        [string]$EanNr = ''
-    )
-    if ($Intnr -match '^\d{13}$') { return $Intnr }
-    if ($EanNr -ne '')            { return $EanNr  }
-    return $StoreCode.PadLeft(5, '0') + $Plu.PadLeft(8, '0')
-}
-
-function Get-GpPct {
-    param([double]$SellIncVat, [double]$CostExVat)
-    $sellExVat = $SellIncVat / 1.15
-    if ($sellExVat -le 0) { return 0.0 }
-    return [Math]::Round(($sellExVat - $CostExVat) / $sellExVat * 100, 2)
-}
-
 function Get-Watermark {
     param([string]$TableName)
     $url = "$SupabaseUrl/rest/v1/push_log" +
@@ -167,8 +162,6 @@ function Get-Watermark {
 }
 
 function Clear-StuckRuns {
-    # Mark any RUNNING entries older than 30 minutes as FAILED before starting a new run.
-    # Prevents push_log filling with orphaned rows from crashed or interrupted runs.
     $cutoff = (Get-Date).AddMinutes(-30).ToString('o')
     $url    = "$SupabaseUrl/rest/v1/push_log" +
               "?store_code=eq.$StoreCode" +
@@ -184,7 +177,7 @@ function Clear-StuckRuns {
                 completed_at  = (Get-Date -Format 'o')
                 error_message = 'Marked FAILED by new run startup - previous run did not complete cleanly.'
             } | ConvertTo-Json
-            Invoke-RestMethod -Uri $url -Method PATCH -Headers (Get-Headers) -Body $body | Out-Null
+            $null = Invoke-RestMethod -Uri $url -Method PATCH -Headers (Get-Headers) -Body $body
         }
     }
     catch {
@@ -198,7 +191,7 @@ function Start-PushLog {
         store_code     = $StoreCode
         client_id      = $ClientId
         table_name     = $TableName
-        push_type      = $Mode
+        push_type      = if ($Backfill) { 'backfill' } else { $Mode }
         status         = 'RUNNING'
         started_at     = (Get-Date -Format 'o')
         script_version = $ScriptVersion
@@ -217,7 +210,7 @@ function Complete-PushLog {
     }
     if ($Msg) { $body['error_message'] = $Msg }
     $json = $body | ConvertTo-Json
-    Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log?push_id=eq.$LogId" -Method PATCH -Headers (Get-Headers) -Body $json | Out-Null
+    $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log?push_id=eq.$LogId" -Method PATCH -Headers (Get-Headers) -Body $json
 }
 
 function Write-PushError {
@@ -230,7 +223,7 @@ function Write-PushError {
         row_data      = $Payload.Substring(0, [Math]::Min(2000, $Payload.Length))
     } | ConvertTo-Json
     try {
-        Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_errors" -Method POST -Headers (Get-Headers) -Body $body | Out-Null
+        $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_errors" -Method POST -Headers (Get-Headers) -Body $body
     }
     catch {
         Write-Warning "push_errors write failed: $_"
@@ -238,8 +231,6 @@ function Write-PushError {
 }
 
 function Send-Batch {
-    # POST one batch (up to $BatchSize rows) to a Supabase table.
-    # Returns count of rows successfully pushed.
     param(
         [string]$TableName,
         [string]$ConflictCols,
@@ -249,11 +240,10 @@ function Send-Batch {
     $url  = "$SupabaseUrl/rest/v1/$TableName`?on_conflict=$ConflictCols"
     $json = ConvertTo-Json -InputObject @($Rows) -Depth 5 -Compress
 
-    # Try the whole batch first
     $attempt = 0
     while ($attempt -lt $RetryMax) {
         try {
-            Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json | Out-Null
+            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json
             return $Rows.Count
         }
         catch {
@@ -273,13 +263,12 @@ function Send-Batch {
         }
     }
 
-    # Batch failed after all retries - fall back to row-by-row to isolate bad rows
-    Write-Warning "Batch failed after $RetryMax retries. Falling back to row-by-row for $($Rows.Count) rows."
+    Write-Warning "Falling back to row-by-row for $($Rows.Count) rows in $TableName."
     $pushed = 0
     foreach ($row in $Rows) {
         $rowJson = ConvertTo-Json -InputObject @($row) -Depth 5 -Compress
         try {
-            Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $rowJson | Out-Null
+            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $rowJson
             $pushed++
         }
         catch {
@@ -290,129 +279,279 @@ function Send-Batch {
 }
 
 # =============================================================================
-# PUSH: daily_aggregates  <-  DW220sDB.dbo.DBAUms
+# PRSSALE PARSING
 # =============================================================================
 
-function Push-DailyAggregates {
-    Write-Host "`n[daily_aggregates] Starting push..." -ForegroundColor Cyan
-    $logId = $null
+function Parse-NumericField {
+    # Strip leading + and whitespace. Negative values keep their sign.
+    param([string]$Val)
+    $clean = $Val.Trim().TrimStart('+')
+    if ([string]::IsNullOrWhiteSpace($clean)) { return 0.0 }
+    return [double]$clean
+}
 
-    try {
-        $logId     = Start-PushLog -TableName 'daily_aggregates'
-        $watermark = if ($Backfill) { [datetime]'2026-03-01' } else { Get-Watermark -TableName 'daily_aggregates' }
-        Write-Host "  Watermark: $watermark  |  siMktNr filter: $SigmaMktNr"
+function Convert-SigmaDate {
+    # DD/MM/YYYY -> YYYY-MM-DD
+    param([string]$Val)
+    $p = $Val.Trim() -split '/'
+    return "$($p[2])-$($p[1])-$($p[0])"
+}
 
-        $sql = @"
-SELECT
-    u.dtDatum                                                                        AS agg_date,
-    CAST(CAST(u.dArtNr AS BIGINT) AS VARCHAR(20))                                   AS plu_code,
-    '$StoreCode' + RIGHT('00000000' + CAST(CAST(u.dArtNr AS BIGINT) AS VARCHAR), 8) AS ean,
-    LTRIM(RTRIM(a.cBEZ))                                                            AS description,
-    CAST(g.WGRZUGABT AS VARCHAR(20))                                                AS dept_code,
-    LTRIM(RTRIM(ab.ABTLBEZ))                                                       AS dept_name,
-    CAST(a.lWgr AS VARCHAR(20))                                                     AS sub_dept_code,
-    LTRIM(RTRIM(g.WGRBEZ))                                                          AS sub_dept_name,
-    SUM(u.dUmsVK)                                                                   AS sales_inc_vat,
-    SUM(u.dUmsVK - u.dMwStAus)                                                      AS sales_ex_vat,
-    SUM(u.dUmsEK)                                                                   AS cost_of_sales,
-    SUM(u.dUmsVK - u.dMwStAus - u.dUmsEK)                                          AS gp_amount,
-    SUM(u.dMenge)                                                                   AS qty_sold
-FROM $DwDb.dbo.DBAUms u
-LEFT JOIN $DwDb.dbo.DBARTS a
-    ON u.dArtNr = a.dARTNR
-LEFT JOIN $DwDb.dbo.DBWGRP g
-    ON a.lWgr = g.lWgr
-LEFT JOIN $DwDb.dbo.DBABTL ab
-    ON g.WGRZUGABT = ab.ABTLNR
-WHERE u.siMktNr  = @sigmaMktNr
-  AND u.dtDatum >= @watermark
-GROUP BY
-    u.dtDatum,
-    u.dArtNr,
-    a.cBEZ,
-    a.lWgr,
-    g.WGRZUGABT,
-    g.WGRBEZ,
-    ab.ABTLBEZ
-ORDER BY u.dtDatum, u.dArtNr
-"@
-        $conn = New-SqlConn -Database $DwDb
-        $dt   = Invoke-Sql -Conn $conn -Sql $sql -Params @{
-            watermark  = $watermark.Date
-            sigmaMktNr = $SigmaMktNr
+function Invoke-MergeFields {
+    # Reconstructs a 34-element field array from a P row that has more than
+    # 34 comma-separated tokens due to commas embedded in description,
+    # dept_name, or sub_dept_name. Returns [string[]] of exactly 34 elements,
+    # or $null if the row cannot be reliably reconstructed.
+    #
+    # Three fixed-format anchors drive the reconstruction (all non-variable):
+    #   Status   (field 26) - the keyword 'Active', 'Locked', or 'Delete'
+    #   subdept  (field 23) - exactly 9 digits, zero-padded
+    #   dept     (field 21) - exactly 6 digits, zero-padded
+    #
+    # The 7 trailing fields (27-33) after Status contain dates and reserved
+    # values - none are expected to contain commas.
+    param([string[]]$Raw)
+
+    $n = $Raw.Count
+
+    # Step 1: find Status by scanning forward from its nominal index (26).
+    # internal_ref (field 25) is always immediately before Status and contains
+    # only digits, so the Status keyword is a reliable target.
+    $statusIdx = -1
+    $scanCeil  = $n - 7   # at least 7 trailing fields must follow Status
+    for ($i = 26; $i -lt $scanCeil; $i++) {
+        $v = $Raw[$i].Trim()
+        if ($v -eq 'Active' -or $v -eq 'Locked' -or $v -eq 'Delete') {
+            $statusIdx = $i
+            break
         }
-        $conn.Dispose()
-
-        Write-Host "  Rows from Sigma: $($dt.Rows.Count)"
-
-        $pushed = 0
-        $batch  = [System.Collections.Generic.List[hashtable]]::new()
-
-        foreach ($row in $dt.Rows) {
-            $sellEx  = [Math]::Round([double]$row['sales_ex_vat'], 2)
-            $gpAmt   = [Math]::Round([double]$row['gp_amount'], 2)
-            $gpPct   = if ($sellEx -gt 0) { [Math]::Round($gpAmt / $sellEx * 100, 2) } else { 0.0 }
-
-            $record  = [ordered]@{
-                client_id     = $ClientId
-                store_code    = $StoreCode
-                agg_date      = ([datetime]$row['agg_date']).ToString('yyyy-MM-dd')
-                ean           = [string]$row['ean']
-                plu_code      = [string]$row['plu_code']
-                description   = if ($row['description']   -is [DBNull]) { $null } else { [string]$row['description']   }
-                dept_code     = if ($row['dept_code']      -is [DBNull]) { $null } else { [string]$row['dept_code']     }
-                dept_name     = if ($row['dept_name']      -is [DBNull]) { $null } else { [string]$row['dept_name']     }
-                sub_dept_code = if ($row['sub_dept_code']  -is [DBNull]) { $null } else { [string]$row['sub_dept_code'] }
-                sub_dept_name = if ($row['sub_dept_name']  -is [DBNull]) { $null } else { [string]$row['sub_dept_name'] }
-                qty_sold      = [Math]::Round([double]$row['qty_sold'], 3)
-                sales_inc_vat = [Math]::Round([double]$row['sales_inc_vat'], 2)
-                cost_of_sales = [Math]::Round([double]$row['cost_of_sales'], 2)
-                sales_ex_vat  = $sellEx
-                gp_amount     = $gpAmt
-                gp_pct        = $gpPct
-            }
-            $batch.Add($record)
-
-            if ($batch.Count -ge $BatchSize) {
-                $pushed += Send-Batch -TableName 'daily_aggregates' -ConflictCols 'client_id,store_code,agg_date,ean' -Rows $batch.ToArray() -LogId $logId
-                $batch.Clear()
-                Write-Host "  Pushed $pushed rows so far..."
-            }
-        }
-        if ($batch.Count -gt 0) {
-            $pushed += Send-Batch -TableName 'daily_aggregates' -ConflictCols 'client_id,store_code,agg_date,ean' -Rows $batch.ToArray() -LogId $logId
-        }
-
-        Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed $pushed
-        Write-Host "  [daily_aggregates] Done. $pushed rows pushed." -ForegroundColor Green
     }
-    catch {
-        $msg = $_.ToString()
-        try {
-            $stream = $_.Exception.Response.GetResponseStream()
-            $reader = New-Object System.IO.StreamReader($stream)
-            $msg   += ' | ' + $reader.ReadToEnd()
-        } catch {}
-        Write-Host "  [daily_aggregates] FAILED: $msg" -ForegroundColor Red
-        if ($logId) {
-            try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg } catch {}
+    if ($statusIdx -lt 0) { return $null }
+
+    # Step 2: find sub_dept_code (field 23, exactly 9 digits) by scanning
+    # backward from statusIdx - 2 (skipping internal_ref at statusIdx - 1).
+    $subDeptCodeIdx = -1
+    $floor1         = [Math]::Max(22, $statusIdx - 30)
+    for ($i = ($statusIdx - 2); $i -ge $floor1; $i--) {
+        if ($Raw[$i].Trim() -match '^\d{9}$') {
+            $subDeptCodeIdx = $i
+            break
         }
+    }
+    if ($subDeptCodeIdx -lt 0) { return $null }
+
+    # Step 3: find dept_code (field 21, exactly 6 digits) by scanning backward
+    # from one position before sub_dept_code.
+    $deptCodeIdx = -1
+    $floor2      = [Math]::Max(20, $subDeptCodeIdx - 30)
+    for ($i = ($subDeptCodeIdx - 1); $i -ge $floor2; $i--) {
+        if ($Raw[$i].Trim() -match '^\d{6}$') {
+            $deptCodeIdx = $i
+            break
+        }
+    }
+    if ($deptCodeIdx -lt 0) { return $null }
+
+    # Fields 4-20 (17 fixed-format numeric tokens) sit immediately before
+    # dept_code: raw[deptCodeIdx-17 .. deptCodeIdx-1].
+    # Description (field 3) is everything from raw[3] to raw[deptCodeIdx-18].
+    $descEnd = $deptCodeIdx - 18
+    if ($descEnd -lt 3) { return $null }
+
+    $out = [string[]]::new(34)
+
+    $out[0] = $Raw[0]   # record type (P)
+    $out[1] = $Raw[1]   # file date (DD/MM/YYYY)
+    $out[2] = $Raw[2]   # EAN
+
+    # Description: join all tokens from index 3 to descEnd
+    $out[3] = ($Raw[3..$descEnd] -join ',')
+
+    # Fields 4-20: 17 fixed-format numerics just before dept_code
+    for ($i = 4; $i -le 20; $i++) {
+        $out[$i] = $Raw[$deptCodeIdx - 21 + $i]
+    }
+
+    $out[21] = $Raw[$deptCodeIdx]
+
+    # Dept name: all tokens between dept_code and sub_dept_code
+    $deptNameEnd = $subDeptCodeIdx - 1
+    $out[22] = if ($deptCodeIdx + 1 -le $deptNameEnd) {
+                   ($Raw[($deptCodeIdx + 1)..$deptNameEnd] -join ',')
+               } else { '' }
+
+    $out[23] = $Raw[$subDeptCodeIdx]
+
+    # Sub-dept name: all tokens between sub_dept_code and internal_ref
+    $subNameEnd = $statusIdx - 2
+    $out[24] = if ($subDeptCodeIdx + 1 -le $subNameEnd) {
+                   ($Raw[($subDeptCodeIdx + 1)..$subNameEnd] -join ',')
+               } else { '' }
+
+    $out[25] = $Raw[$statusIdx - 1]   # internal_ref (15-digit plu_code)
+    $out[26] = $Raw[$statusIdx]       # Status
+
+    for ($i = 27; $i -le 33; $i++) {
+        $out[$i] = $Raw[$statusIdx + ($i - 26)]
+    }
+
+    return ,$out
+}
+
+function Invoke-TacExtract {
+    # Extracts a TAC*.zip, locates PRSSALE.dat inside TEMPDIR\, reads the
+    # sale date from field[1] of the first P row (DD/MM/YYYY), renames the
+    # file to the standard pattern PRSSALE_<StoreName>_<YYYYMMDD>.dat, and
+    # returns a PSCustomObject:
+    #   FilePath - full path to the renamed PRSSALE file
+    #   AggDate  - ISO date YYYY-MM-DD parsed from the file header
+    #   TempDir  - extraction root (caller must clean up in a finally block)
+    param([string]$ZipPath)
+
+    $zipName = [System.IO.Path]::GetFileNameWithoutExtension($ZipPath)
+    $tempDir = Join-Path $TempBase $zipName
+
+    if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
+    $null = New-Item -ItemType Directory -Path $tempDir -Force
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $tempDir)
+
+    $prssalePath = Join-Path $tempDir 'TEMPDIR\PRSSALE.dat'
+    if (-not (Test-Path $prssalePath)) {
+        $found = Get-ChildItem -Path $tempDir -Recurse -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -ieq 'PRSSALE.dat' } |
+                 Select-Object -First 1
+        if (-not $found) { throw "PRSSALE.dat not found inside $ZipPath" }
+        $prssalePath = $found.FullName
+    }
+
+    $enc     = [System.Text.Encoding]::GetEncoding('iso-8859-1')
+    $lines   = [System.IO.File]::ReadAllLines($prssalePath, $enc)
+    $dateRaw = $null
+    foreach ($ln in $lines) {
+        if ($ln.StartsWith('P,')) {
+            $dateRaw = ($ln -split ',')[1].Trim()
+            break
+        }
+    }
+    if (-not $dateRaw) { throw "No P row found in PRSSALE.dat extracted from $ZipPath" }
+
+    $p        = $dateRaw -split '/'
+    $yyyymmdd = "$($p[2])$($p[1])$($p[0])"
+    $isoDate  = "$($p[2])-$($p[1])-$($p[0])"
+
+    $newName = "PRSSALE_${StoreName}_${yyyymmdd}.dat"
+    $newPath = Join-Path (Split-Path $prssalePath -Parent) $newName
+    Move-Item -Path $prssalePath -Destination $newPath -Force
+
+    return [PSCustomObject]@{
+        FilePath = $newPath
+        AggDate  = $isoDate
+        TempDir  = $tempDir
     }
 }
 
+function Test-DateExists {
+    # Returns $true if daily_aggregates already has rows for this store + date.
+    param([string]$AggDate)
+    $url  = "$SupabaseUrl/rest/v1/daily_aggregates" +
+            "?select=agg_date" +
+            "&client_id=eq.$ClientId" +
+            "&store_code=eq.$StoreCode" +
+            "&agg_date=eq.$AggDate" +
+            "&limit=1"
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
+    $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs
+    return ($rows -and $rows.Count -gt 0)
+}
+
+function Invoke-ParsePrssale {
+    # Parses a renamed PRSSALE file (ISO-8859-1 encoding, 34 fields per P row).
+    # Filters: today_qty != 0 AND Status != 'Delete'.
+    # EAN comes from field[2] directly - no synthesis required.
+    # sales_ex_vat = sales_inc_vat / (1 + vat_rate / 100).
+    # gp_amount    = sales_ex_vat - cost_of_sales.
+    # gp_pct is NOT stored in daily_aggregates (computed in the view layer).
+    # Returns List[hashtable] ready to POST to daily_aggregates.
+    param([string]$FilePath)
+
+    $enc     = [System.Text.Encoding]::GetEncoding('iso-8859-1')
+    $lines   = [System.IO.File]::ReadAllLines($FilePath, $enc)
+    $records = [System.Collections.Generic.List[hashtable]]::new()
+    $skipped = 0
+
+    foreach ($line in $lines) {
+        if (-not $line.StartsWith('P,')) { continue }
+
+        $raw    = $line -split ','
+        $fields = if ($raw.Count -eq 34) {
+                      $raw
+                  } else {
+                      Invoke-MergeFields -Raw $raw
+                  }
+
+        if ($null -eq $fields) {
+            # Silently skip rows that are clearly zero-qty (e.g. Sigma 'Item Not Found'
+            # placeholders). Only warn when the row might carry real sales data.
+            $likelyZeroQty = ($raw.Count -gt 8) -and ((Parse-NumericField $raw[8]) -eq 0)
+            if (-not $likelyZeroQty) {
+                $skipped++
+                Write-Warning "Unparseable P row (token count $($raw.Count)) skipped: $($line.Substring(0, [Math]::Min(100, $line.Length)))"
+            }
+            continue
+        }
+
+        $status = $fields[26].Trim()
+        if ($status -eq 'Delete') { continue }
+
+        $todayQty = Parse-NumericField $fields[8]
+        if ($todayQty -eq 0) { continue }
+
+        $vatRate     = Parse-NumericField $fields[7]
+        $salesIncVat = Parse-NumericField $fields[10]
+        $costOfSales = Parse-NumericField $fields[9]
+
+        $divisor    = 1 + ($vatRate / 100)
+        $salesExVat = if ($divisor -gt 0) {
+                          [Math]::Round($salesIncVat / $divisor, 2)
+                      } else { $salesIncVat }
+        $gpAmount   = [Math]::Round($salesExVat - $costOfSales, 2)
+
+        $record = [ordered]@{
+            client_id     = $ClientId
+            store_code    = $StoreCode
+            agg_date      = Convert-SigmaDate $fields[1]
+            ean           = $fields[2].Trim()
+            plu_code      = $fields[25].Trim()
+            description   = $fields[3].Trim()
+            dept_code     = $fields[21].Trim()
+            dept_name     = $fields[22].Trim()
+            sub_dept_code = $fields[23].Trim()
+            sub_dept_name = $fields[24].Trim()
+            qty_sold      = [Math]::Round($todayQty, 3)
+            sales_inc_vat = [Math]::Round($salesIncVat, 2)
+            sales_ex_vat  = $salesExVat
+            cost_of_sales = [Math]::Round($costOfSales, 2)
+            gp_amount     = $gpAmount
+        }
+        $records.Add($record)
+    }
+
+    if ($skipped -gt 0) { Write-Warning "Skipped $skipped unparseable rows in $FilePath" }
+    return ,$records
+}
+
 # =============================================================================
-# PUSH: departments + sub_departments  <-  npos.dbo.Dgrp_d / npos.dbo.Wgr_d
-# These are tiny reference tables (~30 rows each). Upserted every nightly run.
-# client_id is included so they work in a multi-tenant schema.
+# PUSH: departments + sub_departments  <-  DW220sDB reference tables
+# Full upsert on every nightly run (~30 rows each, rarely changes).
 # =============================================================================
 
 function Push-RefTables {
     Write-Host "`n[ref_tables] Starting push (departments + sub_departments)..." -ForegroundColor Cyan
-
     try {
         $conn = New-SqlConn -Database $NposDb
 
-        # -- departments (DBABTL) -----------------------------------------------
         $sqlDept = @"
 SELECT
     CAST(ABTLNR AS VARCHAR(20))  AS dept_code,
@@ -421,7 +560,7 @@ FROM $DwDb.dbo.DBABTL
 WHERE ABTLBEZ IS NOT NULL
 "@
         $dtDept = Invoke-Sql -Conn $conn -Sql $sqlDept
-        Write-Host "  departments rows from Sigma: $($dtDept.Rows.Count)"
+        Write-Host "  departments rows: $($dtDept.Rows.Count)"
 
         $deptBatch = @()
         foreach ($row in $dtDept.Rows) {
@@ -435,11 +574,10 @@ WHERE ABTLBEZ IS NOT NULL
         if ($deptBatch.Count -gt 0) {
             $url  = "$SupabaseUrl/rest/v1/departments?on_conflict=client_id,store_code,dept_code"
             $json = ConvertTo-Json -InputObject @($deptBatch) -Depth 3 -Compress
-            Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json | Out-Null
+            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json
             Write-Host "  departments upserted: $($deptBatch.Count)" -ForegroundColor Green
         }
 
-        # -- sub_departments (DBWGRP) -------------------------------------------
         $sqlSub = @"
 SELECT
     CAST(lWgr        AS VARCHAR(20)) AS sub_dept_code,
@@ -449,7 +587,7 @@ FROM $DwDb.dbo.DBWGRP
 WHERE WGRBEZ IS NOT NULL
 "@
         $dtSub = Invoke-Sql -Conn $conn -Sql $sqlSub
-        Write-Host "  sub_departments rows from Sigma: $($dtSub.Rows.Count)"
+        Write-Host "  sub_departments rows: $($dtSub.Rows.Count)"
 
         $subBatch = @()
         foreach ($row in $dtSub.Rows) {
@@ -464,7 +602,7 @@ WHERE WGRBEZ IS NOT NULL
         if ($subBatch.Count -gt 0) {
             $url  = "$SupabaseUrl/rest/v1/sub_departments?on_conflict=client_id,store_code,sub_dept_code"
             $json = ConvertTo-Json -InputObject @($subBatch) -Depth 3 -Compress
-            Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json | Out-Null
+            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json
             Write-Host "  sub_departments upserted: $($subBatch.Count)" -ForegroundColor Green
         }
 
@@ -477,61 +615,221 @@ WHERE WGRBEZ IS NOT NULL
 }
 
 # =============================================================================
-# PUSH: stock_snapshots  <-  npos.dbo.PLU_s
+# PUSH: daily_aggregates  <-  PRSSALE.DAT  (nightly - latest TAC zip only)
 # =============================================================================
 
-function Push-StockSnapshots {
-    Write-Host "`n[stock_snapshots] Starting push..." -ForegroundColor Cyan
-    $logId = $null
+function Push-DailyAggregatesNightly {
+    Write-Host "`n[daily_aggregates] Starting nightly push from PRSSALE.DAT..." -ForegroundColor Cyan
+    $logId   = $null
+    $tempDir = $null
 
     try {
-        $logId       = Start-PushLog -TableName 'stock_snapshots'
-        $snapshotAt  = (Get-Date).ToString('o')
+        $logId = Start-PushLog -TableName 'daily_aggregates'
 
-        # Full snapshot every run - no watermark filter.
-        # PLU_s holds current SOH and is maintained live on all stores (SPAR and TOPS).
-        # F5 - PLU_s has no reserved_qty; push 0. available_qty = s_stock.
-        $sql = @"
-SELECT
-    PLU_nr,
-    CAST(s_stock AS FLOAT) AS soh
-FROM $NposDb.dbo.PLU_s
-WHERE s_stock IS NOT NULL
-"@
-        $conn = New-SqlConn -Database $NposDb
-        $dt   = Invoke-Sql -Conn $conn -Sql $sql
-        $conn.Dispose()
+        $zips = @(Get-ChildItem -Path $TacZipDir -Filter 'TAC*.zip' -ErrorAction Stop |
+                  Sort-Object LastWriteTime -Descending)
+        if ($zips.Count -eq 0) { throw "No TAC*.zip files found in $TacZipDir" }
 
-        Write-Host "  Rows from Sigma: $($dt.Rows.Count)"
+        $latest = $zips[0]
+        Write-Host "  ZIP: $($latest.Name)  (modified $($latest.LastWriteTime))"
+
+        $extracted = Invoke-TacExtract -ZipPath $latest.FullName
+        $tempDir   = $extracted.TempDir
+        Write-Host "  File date: $($extracted.AggDate)"
+
+        $records = Invoke-ParsePrssale -FilePath $extracted.FilePath
+        Write-Host "  Rows after filter (qty != 0, not Delete): $($records.Count)"
 
         $pushed = 0
         $batch  = [System.Collections.Generic.List[hashtable]]::new()
-
-        foreach ($row in $dt.Rows) {
-            $plu    = [string]$row['PLU_nr']
-            $ean    = Get-EAN -Plu $plu
-            $soh    = [Math]::Round([double]$row['soh'], 3)
-
-            $record = [ordered]@{
-                client_id    = $ClientId
-                store_code   = $StoreCode
-                snapshot_at  = $snapshotAt
-                ean          = $ean
-                plu_code     = $plu
-                soh          = $soh
-                reserved_qty = 0
-                available_qty = $soh
-            }
-            $batch.Add($record)
-
+        foreach ($rec in $records) {
+            $batch.Add($rec)
             if ($batch.Count -ge $BatchSize) {
-                $pushed += Send-Batch -TableName 'stock_snapshots' -ConflictCols 'client_id,store_code,snapshot_at,ean' -Rows $batch.ToArray() -LogId $logId
+                $pushed += Send-Batch -TableName 'daily_aggregates' `
+                                      -ConflictCols 'client_id,store_code,agg_date,ean' `
+                                      -Rows $batch.ToArray() -LogId $logId
                 $batch.Clear()
                 Write-Host "  Pushed $pushed rows so far..."
             }
         }
         if ($batch.Count -gt 0) {
-            $pushed += Send-Batch -TableName 'stock_snapshots' -ConflictCols 'client_id,store_code,snapshot_at,ean' -Rows $batch.ToArray() -LogId $logId
+            $pushed += Send-Batch -TableName 'daily_aggregates' `
+                                  -ConflictCols 'client_id,store_code,agg_date,ean' `
+                                  -Rows $batch.ToArray() -LogId $logId
+        }
+
+        Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed $pushed
+        Write-Host "  [daily_aggregates] Done. $pushed rows pushed." -ForegroundColor Green
+    }
+    catch {
+        $msg = $_.ToString()
+        try {
+            $stream = $_.Exception.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($stream)
+            $msg   += ' | ' + $reader.ReadToEnd()
+        } catch {}
+        Write-Host "  [daily_aggregates] FAILED: $msg" -ForegroundColor Red
+        if ($logId) { try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg } catch {} }
+    }
+    finally {
+        if ($tempDir -and (Test-Path $tempDir)) {
+            Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# =============================================================================
+# PUSH: daily_aggregates  <-  all TAC*.zip files  (backfill mode)
+# =============================================================================
+
+function Push-DailyAggregatesBackfill {
+    Write-Host "`n[daily_aggregates] Backfill mode - processing all TAC*.zip files..." -ForegroundColor Cyan
+
+    $zips = @(Get-ChildItem -Path $TacZipDir -Filter 'TAC*.zip' -ErrorAction Stop |
+              Sort-Object LastWriteTime)
+    if ($zips.Count -eq 0) {
+        Write-Host "  No TAC*.zip files found in $TacZipDir" -ForegroundColor Yellow
+        return
+    }
+    Write-Host "  Found $($zips.Count) zip file(s). Processing oldest-first."
+
+    $totalPushed  = 0
+    $totalSkipped = 0
+
+    foreach ($zip in $zips) {
+        $logId   = $null
+        $tempDir = $null
+
+        try {
+            Write-Host "`n  ZIP: $($zip.Name)"
+            $logId = Start-PushLog -TableName 'daily_aggregates'
+
+            $extracted = Invoke-TacExtract -ZipPath $zip.FullName
+            $tempDir   = $extracted.TempDir
+            $aggDate   = $extracted.AggDate
+            Write-Host "  Date: $aggDate"
+
+            if ([datetime]$aggDate -lt $BackfillFrom) {
+                Write-Host "  SKIP - $aggDate is before BackfillFrom $($BackfillFrom.ToString('yyyy-MM-dd'))." -ForegroundColor DarkGray
+                Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed 0 `
+                    -Msg "Skipped - before BackfillFrom threshold"
+                $totalSkipped++
+                continue
+            }
+
+            if (-not $Force -and (Test-DateExists -AggDate $aggDate)) {
+                Write-Host "  SKIP - $aggDate already in daily_aggregates. Use -Force to overwrite." -ForegroundColor Yellow
+                Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed 0 `
+                    -Msg "Skipped - $aggDate already loaded for store $StoreCode"
+                $totalSkipped++
+                continue
+            }
+
+            $records = Invoke-ParsePrssale -FilePath $extracted.FilePath
+            Write-Host "  Rows after filter: $($records.Count)"
+
+            $pushed = 0
+            $batch  = [System.Collections.Generic.List[hashtable]]::new()
+            foreach ($rec in $records) {
+                $batch.Add($rec)
+                if ($batch.Count -ge $BatchSize) {
+                    $pushed += Send-Batch -TableName 'daily_aggregates' `
+                                          -ConflictCols 'client_id,store_code,agg_date,ean' `
+                                          -Rows $batch.ToArray() -LogId $logId
+                    $batch.Clear()
+                }
+            }
+            if ($batch.Count -gt 0) {
+                $pushed += Send-Batch -TableName 'daily_aggregates' `
+                                      -ConflictCols 'client_id,store_code,agg_date,ean' `
+                                      -Rows $batch.ToArray() -LogId $logId
+            }
+
+            Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed $pushed
+            Write-Host "  Pushed $pushed rows for $aggDate." -ForegroundColor Green
+            $totalPushed += $pushed
+        }
+        catch {
+            $msg = $_.ToString()
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($stream)
+                $msg   += ' | ' + $reader.ReadToEnd()
+            } catch {}
+            Write-Host "  FAILED ($($zip.Name)): $msg" -ForegroundColor Red
+            if ($logId) { try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg } catch {} }
+        }
+        finally {
+            if ($tempDir -and (Test-Path $tempDir)) {
+                Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Write-Host ("`n[daily_aggregates] Backfill complete. " +
+                "$totalPushed rows pushed. $totalSkipped dates skipped.") -ForegroundColor Green
+}
+
+# =============================================================================
+# PUSH: stock_snapshots  <-  npos.dbo.dewas_PLU_s
+# Source changed from PLU_s (wipes at EOD, 0 rows during trading hours) to
+# dewas_PLU_s (persistent ~78k rows, confirmed columns 2026-05-18).
+# PLU_nr is the 13-digit barcode - used as ean directly, no synthesis needed.
+# Conflict key: (client_id, store_code, ean) - one row per EAN per store,
+# updated on each push (snapshot_at records when SOH was last refreshed).
+# =============================================================================
+
+function Push-StockSnapshots {
+    Write-Host "`n[stock_snapshots] Starting push from dewas_PLU_s..." -ForegroundColor Cyan
+    $logId = $null
+
+    try {
+        $logId      = Start-PushLog -TableName 'stock_snapshots'
+        $snapshotAt = (Get-Date).ToString('o')
+
+        $sql = @"
+SELECT PLU_nr, CAST(SUM(s_stock) AS FLOAT) AS soh
+FROM $NposDb.dbo.dewas_PLU_s
+WHERE s_stock IS NOT NULL
+GROUP BY PLU_nr
+"@
+        $conn = New-SqlConn -Database $NposDb
+        $dt   = Invoke-Sql -Conn $conn -Sql $sql
+        $conn.Dispose()
+
+        Write-Host "  Rows from dewas_PLU_s: $($dt.Rows.Count)"
+
+        $pushed = 0
+        $batch  = [System.Collections.Generic.List[hashtable]]::new()
+
+        foreach ($row in $dt.Rows) {
+            $ean = [string]$row['PLU_nr']
+            $soh = [Math]::Round([double]$row['soh'], 3)
+
+            $record = [ordered]@{
+                client_id     = $ClientId
+                store_code    = $StoreCode
+                snapshot_at   = $snapshotAt
+                ean           = $ean
+                plu_code      = $ean
+                soh           = $soh
+                reserved_qty  = 0
+                available_qty = $soh
+            }
+            $batch.Add($record)
+
+            if ($batch.Count -ge $BatchSize) {
+                $pushed += Send-Batch -TableName 'stock_snapshots' `
+                                      -ConflictCols 'client_id,store_code,snapshot_at,ean' `
+                                      -Rows $batch.ToArray() -LogId $logId
+                $batch.Clear()
+                Write-Host "  Pushed $pushed rows so far..."
+            }
+        }
+        if ($batch.Count -gt 0) {
+            $pushed += Send-Batch -TableName 'stock_snapshots' `
+                                  -ConflictCols 'client_id,store_code,snapshot_at,ean' `
+                                  -Rows $batch.ToArray() -LogId $logId
         }
 
         Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed $pushed
@@ -545,9 +843,7 @@ WHERE s_stock IS NOT NULL
             $msg   += ' | ' + $reader.ReadToEnd()
         } catch {}
         Write-Host "  [stock_snapshots] FAILED: $msg" -ForegroundColor Red
-        if ($logId) {
-            try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg } catch {}
-        }
+        if ($logId) { try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg } catch {} }
     }
 }
 
@@ -555,18 +851,28 @@ WHERE s_stock IS NOT NULL
 # MAIN
 # =============================================================================
 
-Write-Host "=== SocialBrand Push Script $ScriptVersion - Mode: $Mode - Store: $StoreCode ===" -ForegroundColor White
+Write-Host "=== SocialBrand Push $ScriptVersion - Store: $StoreCode ($StoreName) - Mode: $Mode ===" -ForegroundColor White
 Write-Host "Started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+if ($Backfill) {
+    $forceLabel = if ($Force) { ' + Force' } else { '' }
+    Write-Host "Backfill mode ON$forceLabel" -ForegroundColor Yellow
+}
 
 $ClientId = Get-ClientId
 Write-Host "Client UUID: $ClientId"
 
 Clear-StuckRuns
 
+$null = New-Item -ItemType Directory -Path $TempBase -Force
+
 switch ($Mode) {
     'nightly' {
         Push-RefTables
-        Push-DailyAggregates
+        if ($Backfill) {
+            Push-DailyAggregatesBackfill
+        } else {
+            Push-DailyAggregatesNightly
+        }
         Push-StockSnapshots
     }
     'intraday' {
