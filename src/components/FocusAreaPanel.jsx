@@ -32,15 +32,16 @@ function shortDay(iso) {
   return iso ? iso.slice(8) : ''
 }
 
-// Each basket item label on the chart: truncated description + store code
+// Each basket item label on the chart.
+// When store_code is null (multi-store default mode) we omit the store tag.
 function itemLabel(item) {
   const desc = item.description.length > 22
     ? item.description.slice(0, 20) + '…'
     : item.description
-  return `${desc} [${item.store_code}]`
+  return item.store_code ? `${desc} [${item.store_code}]` : desc
 }
 
-export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, isDefault }) {
+export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allStoreCodes, isDefault }) {
   const [chartData,  setChartData]  = useState([])
   const [totals,     setTotals]     = useState([])
   const [loading,    setLoading]    = useState(false)
@@ -55,34 +56,42 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, isDef
     setLoading(true)
 
     const eans = [...new Set(basket.map(b => b.ean))]
-    const storeCodes = [...new Set(basket.map(b => b.store_code))]
+
+    // When items have no store_code (multi-store default mode), query across
+    // all currently selected stores via the allStoreCodes prop.
+    // When items have an explicit store_code (manually added), use those.
+    const basketStoreCodes = [...new Set(basket.map(b => b.store_code).filter(Boolean))]
+    const queryStoreCodes = basketStoreCodes.length > 0 ? basketStoreCodes : (allStoreCodes ?? [])
 
     supabase
       .from('daily_snapshots')
       .select('ean,description,size,unit,snapshot_date,store_code,today_sales,today_qty,soh')
       .in('snapshot_date', selectedDates)
       .in('ean', eans)
-      .in('store_code', storeCodes)
+      .in('store_code', queryStoreCodes)
       .order('snapshot_date', { ascending: true })
       .then(({ data }) => {
         const rows = data ?? []
         const dates = [...new Set(rows.map(r => r.snapshot_date))].sort()
 
-        // Time series: one object per date, one key per basket item
+        // Time series: one object per date, one key per basket item.
+        // Items with no store_code are aggregated across all stores for that EAN.
         const series = dates.map(date => {
           const obj = { date, label: shortDay(date) }
           for (const item of basket) {
-            const row = rows.find(
-              r => r.ean === item.ean && r.store_code === item.store_code && r.snapshot_date === date
-            )
-            obj[itemLabel(item)] = row ? Number(row.today_sales ?? 0) : 0
+            const matchRows = item.store_code
+              ? rows.filter(r => r.ean === item.ean && r.store_code === item.store_code && r.snapshot_date === date)
+              : rows.filter(r => r.ean === item.ean && r.snapshot_date === date)
+            obj[itemLabel(item)] = matchRows.reduce((s, r) => s + Number(r.today_sales ?? 0), 0)
           }
           return obj
         })
 
-        // Per-item totals
+        // Per-item totals — same aggregation logic as the chart
         const tots = basket.map(item => {
-          const itemRows   = rows.filter(r => r.ean === item.ean && r.store_code === item.store_code)
+          const itemRows    = item.store_code
+            ? rows.filter(r => r.ean === item.ean && r.store_code === item.store_code)
+            : rows.filter(r => r.ean === item.ean)
           const periodSales = itemRows.reduce((s, r) => s + Number(r.today_sales ?? 0), 0)
           const periodQty   = itemRows.reduce((s, r) => s + Number(r.today_qty   ?? 0), 0)
           const sellingDays = itemRows.filter(r => Number(r.today_qty ?? 0) > 0).length
@@ -98,7 +107,7 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, isDef
         setTotals(tots)
         setLoading(false)
       })
-  }, [basket, selectedDates])
+  }, [basket, selectedDates, allStoreCodes])
 
   const combinedTotal = totals.reduce((s, t) => s + t.periodSales, 0)
 
@@ -155,10 +164,12 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, isDef
               flexShrink: 0, display: 'inline-block',
             }} />
             <span style={{ color: '#f5f5f4' }}>{item.description}</span>
-            <span style={{
-              color: 'rgba(245,245,244,0.4)',
-              fontFamily: "'Geist Mono', monospace", fontSize: 9,
-            }}>{item.store_code}</span>
+            {item.store_code && (
+              <span style={{
+                color: 'rgba(245,245,244,0.4)',
+                fontFamily: "'Geist Mono', monospace", fontSize: 9,
+              }}>{item.store_code}</span>
+            )}
             <button
               onClick={() => onRemove(item)}
               title="Remove from Focus Area"
@@ -254,7 +265,7 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, isDef
                         </div>
                       </div>
                     </td>
-                    <td style={{ padding: '9px 10px', color: 'rgba(245,245,244,0.5)', fontFamily: "'Geist Mono', monospace", fontSize: 10 }}>{item.store_code}</td>
+                    <td style={{ padding: '9px 10px', color: 'rgba(245,245,244,0.5)', fontFamily: "'Geist Mono', monospace", fontSize: 10 }}>{item.store_code ?? 'All'}</td>
                     <td style={{ padding: '9px 10px', color: 'rgba(245,245,244,0.5)' }}>{item.dept_name}</td>
                     <td style={{ padding: '9px 10px', textAlign: 'right', color: '#4ade80', fontFamily: "'Geist Mono', monospace" }}>
                       R {Number(item.periodSales).toFixed(2)}

@@ -759,45 +759,31 @@ export default function Home() {
   const [focusBasket,      setFocusBasket]      = useState([])
   const [isDefaultBasket,  setIsDefaultBasket]  = useState(true)
 
-  // Auto-populate with top 5 items by sales value whenever store/date changes
-  // and the basket is still in "default" mode.
+  // Auto-populate Focus Area with top 5 by value from the already-computed top20Data.
+  // top20Data is already reactive to every store/date/dept/subdept change, so this
+  // effect will fire correctly whenever the user changes any filter — no separate
+  // Supabase query needed.
+  //
+  // store_code is set to the single store when only one is selected, or null when
+  // multiple stores are selected (FocusAreaPanel treats null as "all selected stores").
   useEffect(() => {
     if (!isDefaultBasket) return
-    if (!storeCodes.length || !selectedDates.length) return
+    if (!top20Data.length) { setFocusBasket([]); return }
 
-    supabase
-      .from('daily_snapshots')
-      .select('ean,description,store_code,dept_name,sub_dept_name,today_sales')
-      .in('store_code', storeCodes)
-      .in('snapshot_date', selectedDates)
-      .gt('today_sales', 0)
-      .order('today_sales', { ascending: false })
-      .limit(500)
-      .then(({ data }) => {
-        if (!data?.length) return
+    const top5 = [...top20Data]
+      .filter(r => (r.total_sales ?? 0) > 0)
+      .sort((a, b) => (b.total_sales ?? 0) - (a.total_sales ?? 0))
+      .slice(0, 5)
+      .map(r => ({
+        ean:           r.ean,
+        description:   r.description,
+        store_code:    storeCodes.length === 1 ? storeCodes[0] : null,
+        dept_name:     r.dept_name,
+        sub_dept_name: r.sub_dept_name ?? null,
+      }))
 
-        // Aggregate by ean + store across multiple dates
-        const totals = {}
-        for (const r of data) {
-          const key = `${r.ean}|${r.store_code}`
-          if (!totals[key]) totals[key] = { ...r, _total: 0 }
-          totals[key]._total += Number(r.today_sales ?? 0)
-        }
-
-        const top5 = Object.values(totals)
-          .sort((a, b) => b._total - a._total)
-          .slice(0, 5)
-          .map(r => ({
-            ean:          r.ean,
-            description:  r.description,
-            store_code:   r.store_code,
-            dept_name:    r.dept_name,
-            sub_dept_name: r.sub_dept_name,
-          }))
-
-        setFocusBasket(top5)
-      })
-  }, [isDefaultBasket, storeCodes, selectedDates])
+    setFocusBasket(top5)
+  }, [isDefaultBasket, top20Data, storeCodes])
 
   const addToFocus = useCallback((row) => {
     setIsDefaultBasket(false)
@@ -1521,6 +1507,7 @@ export default function Home() {
               onRemove={removeFromFocus}
               onClear={clearFocus}
               selectedDates={selectedDates}
+              allStoreCodes={storeCodes}
               isDefault={isDefaultBasket}
             />
           )}
