@@ -760,29 +760,24 @@ export default function Home() {
   const [isDefaultBasket,  setIsDefaultBasket]  = useState(true)
 
   // Auto-populate Focus Area with the top 5 products by period sales value.
-  // Queries daily_snapshots directly — EANs are then guaranteed to match the
-  // chart query in FocusAreaPanel. Respects dept/subdept filter so selecting
-  // HMR shows HMR items and their chart data loads correctly.
+  // Uses the same straight-chain query structure as the original working code.
+  // Dept / sub-dept filter is applied client-side so the query shape stays identical.
   useEffect(() => {
     if (!isDefaultBasket) return
     if (!storeCodes.length || !selectedDates.length) return
-    let cancelled = false
 
-    let q = supabase
+    supabase
       .from('daily_snapshots')
       .select('ean,description,store_code,dept_name,sub_dept_name,today_sales')
       .in('store_code', storeCodes)
       .in('snapshot_date', selectedDates)
       .gt('today_sales', 0)
-
-    if (deptFilter    !== 'all') q = q.eq('dept_name',     deptFilter)
-    if (subDeptFilter !== 'all') q = q.eq('sub_dept_name', subDeptFilter)
-
-    q.order('today_sales', { ascending: false })
-      .limit(500)
+      .order('today_sales', { ascending: false })
+      .limit(2000)
       .then(({ data }) => {
-        if (cancelled || !data?.length) return
+        if (!data?.length) return
 
+        // Aggregate by ean + store across multiple dates
         const totals = {}
         for (const r of data) {
           const key = `${r.ean}|${r.store_code}`
@@ -790,7 +785,12 @@ export default function Home() {
           totals[key]._total += Number(r.today_sales ?? 0)
         }
 
-        const top5 = Object.values(totals)
+        // Apply dept / sub-dept filter client-side (keeps the Supabase chain simple)
+        let candidates = Object.values(totals)
+        if (deptFilter    !== 'all') candidates = candidates.filter(r => r.dept_name    === deptFilter)
+        if (subDeptFilter !== 'all') candidates = candidates.filter(r => r.sub_dept_name === subDeptFilter)
+
+        const top5 = candidates
           .sort((a, b) => b._total - a._total)
           .slice(0, 5)
           .map(r => ({
@@ -803,8 +803,6 @@ export default function Home() {
 
         setFocusBasket(top5)
       })
-
-    return () => { cancelled = true }
   }, [isDefaultBasket, storeCodes, selectedDates, deptFilter, subDeptFilter])
 
   const addToFocus = useCallback((row) => {
