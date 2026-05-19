@@ -1,4 +1,4 @@
--- ============================================================
+﻿-- ============================================================
 -- STEP 1: Identity tables
 -- SB-AP-002 v1.0 — server names and IPs verified 2026-05-17
 -- ============================================================
@@ -42,7 +42,7 @@ FROM clients c,
 (VALUES
   ('10116', 'SPAR Delareyville', 'SPAR', 'Delareyville', 'srsdelareyvilesvr', '10.6.120.1',  NULL),
   ('80175', 'SPAR Roosville',    'SPAR', 'Roosville',     'srsroosvillesvr',   '10.6.214.1',  NULL),
-  ('21355', 'TOPS Delareyville', 'TOPS', 'Delareyville',  'srtdelareyvilsvr',  '10.6.120.60', NULL),
+  ('21355', 'TOPS Delareyville', 'TOPS', 'Delareyville',  'srtdelareyvilsv',  '10.6.120.60', NULL),
   ('80579', 'TOPS Dice',         'TOPS', 'Dice',           'srsdelareyt2svr',   '10.6.18.60',  '192.168.0.249'),
   ('80176', 'TOPS Roosville',    'TOPS', 'Roosville',      'srtroosvillesvr',   '10.6.214.60', NULL)
 ) AS v(store_code, store_name, store_type, location, sigma_server, lan_ip, secondary_ip)

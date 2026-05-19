@@ -40,7 +40,7 @@ $ClientName    = 'SocialBrand'
 $hostMap = @{
     'SRSDELAREYVILESVR' = @{ StoreCode = '10116'; StoreName = 'SPAR_Delareyville' }
     'SRSROOSVILLESVR'   = @{ StoreCode = '80175'; StoreName = 'SPAR_Roosville'    }
-    'SRTDELAREYVILSVR'  = @{ StoreCode = '21355'; StoreName = 'TOPS_Delareyville' }
+    'SRTDELAREYVILSV'   = @{ StoreCode = '21355'; StoreName = 'TOPS_Delareyville' }
     'SRSDELAREYT2SVR'   = @{ StoreCode = '80579'; StoreName = 'TOPS_Dice'         }
     'SRTROOSVILLESVR'   = @{ StoreCode = '80176'; StoreName = 'TOPS_Roosville'    }
 }
