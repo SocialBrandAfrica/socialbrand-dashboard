@@ -779,7 +779,7 @@ export default function Home() {
       .sort((a, b) => (b.total_sales ?? 0) - (a.total_sales ?? 0))
       .slice(0, 5)
       .map(r => ({
-        ean:           r.ean,
+        ean:           String(r.ean),   // rpc_top20 returns bigint; daily_snapshots.ean is text
         description:   r.description,
         store_code:    storeCodes.length === 1 ? storeCodes[0] : null,
         dept_name:     r.dept_name,

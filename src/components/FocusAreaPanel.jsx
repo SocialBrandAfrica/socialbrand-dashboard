@@ -32,6 +32,26 @@ function shortDay(iso) {
   return iso ? iso.slice(8) : ''
 }
 
+// When only one date is selected, expand to the full week-to-date range
+// (Monday → selected date) so the chart has a meaningful trend line.
+// When multiple dates are already selected, use them as-is.
+function resolveChartDates(selectedDates) {
+  if (selectedDates.length !== 1) return selectedDates
+  const latest = selectedDates[0]
+  const latestDate = new Date(latest + 'T00:00:00')
+  const dow = latestDate.getDay() // 0=Sun … 6=Sat
+  const daysBack = dow === 0 ? 6 : dow - 1  // steps back to Monday
+  const monday = new Date(latestDate)
+  monday.setDate(latestDate.getDate() - daysBack)
+  const dates = []
+  const cur = new Date(monday)
+  while (cur <= latestDate) {
+    dates.push(cur.toISOString().slice(0, 10))
+    cur.setDate(cur.getDate() + 1)
+  }
+  return dates
+}
+
 // Each basket item label on the chart.
 // When store_code is null (multi-store default mode) we omit the store tag.
 function itemLabel(item) {
@@ -55,7 +75,9 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
     }
     setLoading(true)
 
-    const eans = [...new Set(basket.map(b => b.ean))]
+    // EANs come from rpc_top20 which may return them as numbers (PostgreSQL bigint).
+    // daily_snapshots.ean is a text column, so stringify to ensure the filter matches.
+    const eans = [...new Set(basket.map(b => String(b.ean)))]
 
     // When items have no store_code (multi-store default mode), query across
     // all currently selected stores via the allStoreCodes prop.
@@ -63,10 +85,14 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
     const basketStoreCodes = [...new Set(basket.map(b => b.store_code).filter(Boolean))]
     const queryStoreCodes = basketStoreCodes.length > 0 ? basketStoreCodes : (allStoreCodes ?? [])
 
+    // Expand a single selected date to the full week-to-date range so the chart
+    // always has a meaningful trend line rather than a single data point.
+    const chartDates = resolveChartDates(selectedDates)
+
     supabase
       .from('daily_snapshots')
       .select('ean,description,size,unit,snapshot_date,store_code,today_sales,today_qty,soh')
-      .in('snapshot_date', selectedDates)
+      .in('snapshot_date', chartDates)
       .in('ean', eans)
       .in('store_code', queryStoreCodes)
       .order('snapshot_date', { ascending: true })
