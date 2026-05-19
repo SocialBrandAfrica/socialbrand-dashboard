@@ -768,6 +768,10 @@ export default function Home() {
   // multiple stores are selected (FocusAreaPanel treats null as "all selected stores").
   useEffect(() => {
     if (!isDefaultBasket) return
+    // Only auto-populate when no dept filter is active. Focus Area is a
+    // store/date comparison tool — dept chip selection should not force HMR
+    // (or any other dept) EANs into it, as those may not resolve to chart rows.
+    if (deptFilter !== 'all') return
     if (!top20Data.length) { setFocusBasket([]); return }
 
     const top5 = [...top20Data]
@@ -783,7 +787,7 @@ export default function Home() {
       }))
 
     setFocusBasket(top5)
-  }, [isDefaultBasket, top20Data, storeCodes])
+  }, [isDefaultBasket, top20Data, storeCodes, deptFilter])
 
   const addToFocus = useCallback((row) => {
     setIsDefaultBasket(false)
