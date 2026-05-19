@@ -89,15 +89,15 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
     // always has a meaningful trend line rather than a single data point.
     const chartDates = resolveChartDates(selectedDates)
 
-    supabase
-      .from('daily_snapshots')
-      .select('ean,description,size,unit,snapshot_date,store_code,today_sales,today_qty,soh')
-      .in('snapshot_date', chartDates)
-      .in('ean', eans)
-      .in('store_code', queryStoreCodes)
-      .order('snapshot_date', { ascending: true })
-      .then(({ data }) => {
-        const rows = data ?? []
+    // rpc_focus_chart is a SECURITY DEFINER function — direct daily_snapshots
+    // reads are blocked by RLS for the anon key.
+    supabase.rpc('rpc_focus_chart', {
+      p_eans:        eans,
+      p_store_codes: queryStoreCodes,
+      p_dates:       chartDates,
+    }).then(({ data, error }) => {
+      if (error) { console.error('rpc_focus_chart error', error); setLoading(false); return }
+      const rows = data ?? []
         const dates = [...new Set(rows.map(r => r.snapshot_date))].sort()
 
         // Time series: one object per date, one key per basket item.

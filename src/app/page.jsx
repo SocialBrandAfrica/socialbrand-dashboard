@@ -97,7 +97,9 @@ function dateSummaryLabel(selectedDates, availableDates) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DATA FETCH — raw daily_snapshots (on-demand when report is explicitly loaded)
+// DATA FETCH — on-demand when a report is explicitly loaded.
+// Uses rpc_all_rows (SECURITY DEFINER) — direct daily_snapshots reads are
+// blocked by RLS for the anon key.  Pages through results in 1 000-row batches.
 // ─────────────────────────────────────────────────────────────────────────────
 async function fetchAllRows({ storeCodes, dates }) {
   if (!storeCodes.length || !dates.length) return []
@@ -105,13 +107,13 @@ async function fetchAllRows({ storeCodes, dates }) {
   const batchSize = 1000
   let from = 0
   while (true) {
-    const { data, error } = await supabase
-      .from('daily_snapshots')
-      .select(COLS)
-      .in('store_code', storeCodes)
-      .in('snapshot_date', dates)
-      .range(from, from + batchSize - 1)
-    if (error) { console.error('fetchAllRows:', error.message); break }
+    const { data, error } = await supabase.rpc('rpc_all_rows', {
+      p_store_codes: storeCodes,
+      p_dates:       dates,
+      p_from:        from,
+      p_limit:       batchSize,
+    })
+    if (error) { console.error('rpc_all_rows:', error.message); break }
     if (!data || data.length === 0) break
     allRows.push(...data)
     if (data.length < batchSize) break
@@ -499,39 +501,31 @@ function ProductSearchBar({ storeCodes, selectedDates, onSelect, onAddToFocus, f
     timerRef.current = setTimeout(async () => {
       setLoading(true)
       const q = query.trim()
-      // daily_snapshots has one row per store per date per EAN.
-      // We fetch a large batch and deduplicate by EAN client-side so we never
-      // miss products due to the store-multiplier effect.
-      // When dept/subdept filters are active the working set is much smaller,
-      // so we use a tighter limit for speed; otherwise 25 × stores.
+      // Search uses rpc_search_products (SECURITY DEFINER) — direct daily_snapshots
+      // reads are blocked by RLS for the anon key.
       const latestDate = selectedDates.length ? [...selectedDates].sort().reverse()[0] : null
+      if (!latestDate) { setResults([]); setOpen(false); setLoading(false); return }
+
       const hasContext = (deptFilter && deptFilter !== 'all') || (subDeptFilter && subDeptFilter !== 'all')
-      // With context filters active the set is small — 100 rows is plenty.
-      // Without filters we fetch more rows so products from smaller depts (like HMR)
-      // are not crowded out by large depts (like GROCERIES FOODS).
       const fetchLimit = hasContext ? 100 : Math.min(50 * (storeCodes.length || 1), 1000)
 
-      let qb = supabase
-        .from('daily_snapshots')
-        .select('ean,description,internal_ref,dept_name,sub_dept_name,sell_price,soh,today_qty,today_sales,today_cost,period_qty,period_cost,period_sales,last_sales_date_iso,status,snapshot_date,store_code,store_name,size,unit,unit_cost,is_placeholder')
-        .in('store_code', storeCodes)
-        .in('snapshot_date', latestDate ? [latestDate] : selectedDates.slice(0, 1))
-        .or(`ean.ilike.%${q}%,description.ilike.%${q}%,internal_ref.ilike.%${q}%`)
-        // Note: do NOT filter is_placeholder here — HMR PLU items like VEGGIE SOUP are
-        // incorrectly flagged as placeholders in the parser. Search must include them.
+      // Pass all raw dept name variants (e.g. "HMR" and "H.M.R.") so the RPC
+      // can match regardless of how the dept_name was stored in the database.
+      // Note: do NOT filter is_placeholder — HMR PLU items like VEGGIE SOUP are
+      // incorrectly flagged as placeholders. Search must include them.
+      const deptNames = (deptFilter && deptFilter !== 'all')
+        ? [...(deptNormMap?.get(deptFilter) ?? new Set([deptFilter]))]
+        : null
 
-      // Respect active dept filter — use raw dept names via normMap for accuracy
-      if (deptFilter && deptFilter !== 'all') {
-        const rawNames = [...(deptNormMap?.get(deptFilter) ?? new Set([deptFilter]))]
-        qb = qb.in('dept_name', rawNames)
-      }
-      // Respect active sub-dept filter
-      if (subDeptFilter && subDeptFilter !== 'all') {
-        qb = qb.eq('sub_dept_name', subDeptFilter)
-      }
-
-      // Order alphabetically so results interleave across all depts (HMR, GROCERIES, etc.)
-      const { data } = await qb.order('description', { ascending: true }).limit(fetchLimit)
+      const { data, error } = await supabase.rpc('rpc_search_products', {
+        p_store_codes: storeCodes,
+        p_date:        latestDate,
+        p_query:       q,
+        p_dept_names:  deptNames,
+        p_subdept:     (subDeptFilter && subDeptFilter !== 'all') ? subDeptFilter : null,
+        p_limit:       fetchLimit,
+      })
+      if (error) console.error('rpc_search_products error', error)
       // Deduplicate by EAN + description — PLU codes like 200149 mean different products
       // in different stores (VEGGIE SOUP at Delareyville, PORK SHOULDER CHOPS at Roosville),
       // so keying on EAN alone would hide one of them.
@@ -760,49 +754,32 @@ export default function Home() {
   const [isDefaultBasket,  setIsDefaultBasket]  = useState(true)
 
   // Auto-populate Focus Area with the top 5 products by period sales value.
-  // Uses the same straight-chain query structure as the original working code.
-  // Dept / sub-dept filter is applied client-side so the query shape stays identical.
+  // Uses rpc_focus_top5 (SECURITY DEFINER) — direct daily_snapshots reads are
+  // blocked by RLS for the anon key.  Clear the basket immediately so stale
+  // chips don't linger when the store / date selection changes.
   useEffect(() => {
     if (!isDefaultBasket) return
     if (!storeCodes.length || !selectedDates.length) return
 
-    supabase
-      .from('daily_snapshots')
-      .select('ean,description,store_code,dept_name,sub_dept_name,today_sales')
-      .in('store_code', storeCodes)
-      .in('snapshot_date', selectedDates)
-      .gt('today_sales', 0)
-      .order('today_sales', { ascending: false })
-      .limit(2000)
-      .then(({ data }) => {
-        if (!data?.length) return
+    setFocusBasket([])   // clear immediately so old data never lingers
 
-        // Aggregate by ean + store across multiple dates
-        const totals = {}
-        for (const r of data) {
-          const key = `${r.ean}|${r.store_code}`
-          if (!totals[key]) totals[key] = { ...r, _total: 0 }
-          totals[key]._total += Number(r.today_sales ?? 0)
-        }
-
-        // Apply dept / sub-dept filter client-side (keeps the Supabase chain simple)
-        let candidates = Object.values(totals)
-        if (deptFilter    !== 'all') candidates = candidates.filter(r => r.dept_name    === deptFilter)
-        if (subDeptFilter !== 'all') candidates = candidates.filter(r => r.sub_dept_name === subDeptFilter)
-
-        const top5 = candidates
-          .sort((a, b) => b._total - a._total)
-          .slice(0, 5)
-          .map(r => ({
-            ean:           String(r.ean),
-            description:   r.description,
-            store_code:    r.store_code,
-            dept_name:     r.dept_name,
-            sub_dept_name: r.sub_dept_name,
-          }))
-
-        setFocusBasket(top5)
-      })
+    supabase.rpc('rpc_focus_top5', {
+      p_store_codes: storeCodes,
+      p_dates:       selectedDates,
+      p_dept:        deptFilter    !== 'all' ? deptFilter    : null,
+      p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
+    }).then(({ data, error }) => {
+      if (error) { console.error('rpc_focus_top5 error', error); return }
+      if (!data?.length) return
+      const top5 = data.slice(0, 5).map(r => ({
+        ean:           String(r.ean),
+        description:   r.description,
+        store_code:    r.store_code,
+        dept_name:     r.dept_name,
+        sub_dept_name: r.sub_dept_name,
+      }))
+      setFocusBasket(top5)
+    })
   }, [isDefaultBasket, storeCodes, selectedDates, deptFilter, subDeptFilter])
 
   const addToFocus = useCallback((row) => {
@@ -882,13 +859,12 @@ export default function Home() {
         }),
         // All unique sub-dept names for the current store+date — powers the
         // sub-dept dropdown when no dept filter is selected.
-        supabase.from('daily_snapshots')
-          .select('sub_dept_name')
-          .in('store_code', storeCodes)
-          .in('snapshot_date', selectedDates)
-          .eq('is_placeholder', false)
-          .gt('today_sales', 0)
-          .limit(5000),
+        // rpc_subdepts is SECURITY DEFINER — direct daily_snapshots reads are blocked by RLS.
+        supabase.rpc('rpc_subdepts', {
+          p_store_codes: storeCodes,
+          p_dates:       selectedDates,
+          p_dept_names:  null,
+        }),
       ])
 
       if (cancelled) return
@@ -961,16 +937,15 @@ export default function Home() {
     }
     let cancelled = false
     async function loadSubDepts() {
-      const { data } = await supabase
-        .from('daily_snapshots')
-        .select('sub_dept_name')
-        .in('store_code', storeCodes)
-        .in('snapshot_date', selectedDates)
-        .in('dept_name', [...(deptNormMap.get(deptFilter) ?? new Set([deptFilter]))])
-        .eq('is_placeholder', false)
-        .limit(5000)
+      // rpc_subdepts is SECURITY DEFINER — direct daily_snapshots reads are blocked by RLS.
+      // Pass all raw dept name variants so HMR / H.M.R. both match.
+      const { data } = await supabase.rpc('rpc_subdepts', {
+        p_store_codes: storeCodes,
+        p_dates:       selectedDates,
+        p_dept_names:  [...(deptNormMap.get(deptFilter) ?? new Set([deptFilter]))],
+      })
       if (cancelled) return
-      const names = [...new Set((data ?? []).map(r => r.sub_dept_name))].filter(Boolean).sort()
+      const names = (data ?? []).map(r => r.sub_dept_name).filter(Boolean)
       setSubDepts(names)
     }
     loadSubDepts()
@@ -1014,14 +989,15 @@ export default function Home() {
 
     setTimeout(() => panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
 
+    // rpc_product_detail is SECURITY DEFINER — direct daily_snapshots reads are
+    // blocked by RLS for the anon key.  Uses availableDates (full history) so
+    // the 5 charts span the complete date range, not just the KPI filter window.
     const [detailRes, rosRes] = await Promise.all([
-      supabase
-        .from('daily_snapshots')
-        .select('snapshot_date,store_code,store_name,today_qty,today_sales,today_cost,soh,sell_price')
-        .eq('ean', ean)
-        .in('store_code', storeCodes)
-        .in('snapshot_date', availableDates)   // full history, not just the KPI filter window
-        .order('snapshot_date'),
+      supabase.rpc('rpc_product_detail', {
+        p_ean:         ean,
+        p_store_codes: storeCodes,
+        p_dates:       availableDates,
+      }),
       supabase
         .from('v_rate_of_sale')
         .select('store_code,store_name,soh,daily_ros,days_cover')
