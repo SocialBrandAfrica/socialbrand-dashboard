@@ -102,12 +102,14 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
 
         // Time series: one object per date, one key per basket item.
         // Items with no store_code are aggregated across all stores for that EAN.
+        // Use String() on both sides of the EAN compare — the column type in
+        // daily_snapshots vs rpc_top20 may differ (text vs bigint).
         const series = dates.map(date => {
           const obj = { date, label: shortDay(date) }
           for (const item of basket) {
             const matchRows = item.store_code
-              ? rows.filter(r => r.ean === item.ean && r.store_code === item.store_code && r.snapshot_date === date)
-              : rows.filter(r => r.ean === item.ean && r.snapshot_date === date)
+              ? rows.filter(r => String(r.ean) === String(item.ean) && r.store_code === item.store_code && r.snapshot_date === date)
+              : rows.filter(r => String(r.ean) === String(item.ean) && r.snapshot_date === date)
             obj[itemLabel(item)] = matchRows.reduce((s, r) => s + Number(r.today_sales ?? 0), 0)
           }
           return obj
@@ -116,8 +118,8 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
         // Per-item totals — same aggregation logic as the chart
         const tots = basket.map(item => {
           const itemRows    = item.store_code
-            ? rows.filter(r => r.ean === item.ean && r.store_code === item.store_code)
-            : rows.filter(r => r.ean === item.ean)
+            ? rows.filter(r => String(r.ean) === String(item.ean) && r.store_code === item.store_code)
+            : rows.filter(r => String(r.ean) === String(item.ean))
           const periodSales = itemRows.reduce((s, r) => s + Number(r.today_sales ?? 0), 0)
           const periodQty   = itemRows.reduce((s, r) => s + Number(r.today_qty   ?? 0), 0)
           const sellingDays = itemRows.filter(r => Number(r.today_qty ?? 0) > 0).length

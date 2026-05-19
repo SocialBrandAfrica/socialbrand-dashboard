@@ -759,35 +759,53 @@ export default function Home() {
   const [focusBasket,      setFocusBasket]      = useState([])
   const [isDefaultBasket,  setIsDefaultBasket]  = useState(true)
 
-  // Auto-populate Focus Area with top 5 by value from the already-computed top20Data.
-  // top20Data is already reactive to every store/date/dept/subdept change, so this
-  // effect will fire correctly whenever the user changes any filter — no separate
-  // Supabase query needed.
-  //
-  // store_code is set to the single store when only one is selected, or null when
-  // multiple stores are selected (FocusAreaPanel treats null as "all selected stores").
+  // Auto-populate Focus Area with the top 5 products by period sales value.
+  // Queries daily_snapshots directly — EANs are then guaranteed to match the
+  // chart query in FocusAreaPanel. Respects dept/subdept filter so selecting
+  // HMR shows HMR items and their chart data loads correctly.
   useEffect(() => {
     if (!isDefaultBasket) return
-    // Only auto-populate when no dept filter is active. Focus Area is a
-    // store/date comparison tool — dept chip selection should not force HMR
-    // (or any other dept) EANs into it, as those may not resolve to chart rows.
-    if (deptFilter !== 'all') return
-    if (!top20Data.length) { setFocusBasket([]); return }
+    if (!storeCodes.length || !selectedDates.length) return
+    let cancelled = false
 
-    const top5 = [...top20Data]
-      .filter(r => (r.total_sales ?? 0) > 0)
-      .sort((a, b) => (b.total_sales ?? 0) - (a.total_sales ?? 0))
-      .slice(0, 5)
-      .map(r => ({
-        ean:           String(r.ean),   // rpc_top20 returns bigint; daily_snapshots.ean is text
-        description:   r.description,
-        store_code:    storeCodes.length === 1 ? storeCodes[0] : null,
-        dept_name:     r.dept_name,
-        sub_dept_name: r.sub_dept_name ?? null,
-      }))
+    let q = supabase
+      .from('daily_snapshots')
+      .select('ean,description,store_code,dept_name,sub_dept_name,today_sales')
+      .in('store_code', storeCodes)
+      .in('snapshot_date', selectedDates)
+      .gt('today_sales', 0)
 
-    setFocusBasket(top5)
-  }, [isDefaultBasket, top20Data, storeCodes, deptFilter])
+    if (deptFilter    !== 'all') q = q.eq('dept_name',     deptFilter)
+    if (subDeptFilter !== 'all') q = q.eq('sub_dept_name', subDeptFilter)
+
+    q.order('today_sales', { ascending: false })
+      .limit(500)
+      .then(({ data }) => {
+        if (cancelled || !data?.length) return
+
+        const totals = {}
+        for (const r of data) {
+          const key = `${r.ean}|${r.store_code}`
+          if (!totals[key]) totals[key] = { ...r, _total: 0 }
+          totals[key]._total += Number(r.today_sales ?? 0)
+        }
+
+        const top5 = Object.values(totals)
+          .sort((a, b) => b._total - a._total)
+          .slice(0, 5)
+          .map(r => ({
+            ean:           String(r.ean),
+            description:   r.description,
+            store_code:    r.store_code,
+            dept_name:     r.dept_name,
+            sub_dept_name: r.sub_dept_name,
+          }))
+
+        setFocusBasket(top5)
+      })
+
+    return () => { cancelled = true }
+  }, [isDefaultBasket, storeCodes, selectedDates, deptFilter, subDeptFilter])
 
   const addToFocus = useCallback((row) => {
     setIsDefaultBasket(false)
