@@ -22,20 +22,23 @@ function timeAgo(isoString) {
 
 export default function PushStatusStrip() {
   const { data, loading } = useQuery(async () => {
-    const { data: rows, error } = await supabase
-      .from('push_log')
-      .select('store_code, completed_at')
-      .eq('status', 'SUCCESS')
-      .order('completed_at', { ascending: false })
-
-    if (error) throw new Error(error.message)
-
-    // Latest SUCCESS per store
-    const latest = {}
-    for (const r of rows ?? []) {
-      if (!latest[r.store_code]) latest[r.store_code] = r.completed_at
-    }
-    return latest
+    // One query per store to avoid the default 1000-row limit cutting off stores
+    // that haven't pushed recently when other stores have many push_log entries.
+    const results = await Promise.all(
+      STORES.map(async s => {
+        const { data: row, error } = await supabase
+          .from('push_log')
+          .select('completed_at')
+          .eq('status', 'SUCCESS')
+          .eq('store_code', s.code)
+          .order('completed_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (error) throw new Error(error.message)
+        return [s.code, row?.completed_at ?? null]
+      })
+    )
+    return Object.fromEntries(results)
   }, [])
 
   if (loading) return (
