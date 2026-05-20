@@ -1,18 +1,19 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Nightly push from Sigma TAC zip (PRSSALE.DAT) to Supabase - SocialBrand Pulse.
+    Nightly push from Sigma TAC zip (PRSSALE.DAT) to Supabase daily_snapshots.
 .DESCRIPTION
     Reads PRSSALE.DAT from S:\sigma\comms\Catman\TAC*.zip.
-    Pushes daily_aggregates (from PRSSALE) and stock_snapshots (from dewas_PLU_s).
-    DBAUms is retired as a sales source. PRSSALE.DAT covers 100% of sales.
+    Pushes daily_snapshots (all 27 columns, full catalog including zero-sale rows).
+    Also pushes stock_snapshots (from dewas_PLU_s) and ref tables.
+    daily_aggregates is retired - this script no longer writes to it.
 .PARAMETER Mode
-    nightly  - daily_aggregates + stock_snapshots (default)
+    nightly  - daily_snapshots + stock_snapshots + ref tables (default)
     intraday - reserved for Phase 2 (transactions)
 .PARAMETER Backfill
     Process all TAC*.zip files in TacZipDir instead of only the latest.
 .PARAMETER Force
-    Combined with -Backfill: overwrite dates that already exist in daily_aggregates.
+    Combined with -Backfill: overwrite dates already in daily_snapshots.
 .EXAMPLE
     powershell.exe -ExecutionPolicy Bypass -File "C:\SocialBrand\Push-SigmaToSupabase.ps1"
     powershell.exe -ExecutionPolicy Bypass -File "C:\SocialBrand\Push-SigmaToSupabase.ps1" -Backfill
@@ -22,7 +23,8 @@ param(
     [ValidateSet('nightly', 'intraday')]
     [string]$Mode = 'nightly',
     [switch]$Backfill,
-    [switch]$Force
+    [switch]$Force,
+    [datetime]$BackfillFrom = [datetime]'2025-01-01'
 )
 
 Set-StrictMode -Version Latest
@@ -32,17 +34,17 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v2.0'
+$ScriptVersion = 'v3.0'
 $ClientName    = 'SocialBrand'
 
 # Store identity - auto-detected from hostname. Same script deploys to all servers.
-# ---------------------------------------------------------------
+# StoreName uses spaces to match prssale_parser_v2.py STORE_MAP output.
 $hostMap = @{
-    'SRSDELAREYVILESVR' = @{ StoreCode = '10116'; StoreName = 'SPAR_Delareyville' }
-    'SRSROOSVILLESVR'   = @{ StoreCode = '80175'; StoreName = 'SPAR_Roosville'    }
-    'SRTDELAREYVILSV'   = @{ StoreCode = '21355'; StoreName = 'TOPS_Delareyville' }
-    'SRSDELAREYT2SVR'   = @{ StoreCode = '80579'; StoreName = 'TOPS_Dice'         }
-    'SRTROOSVILLESVR'   = @{ StoreCode = '80176'; StoreName = 'TOPS_Roosville'    }
+    'SRSDELAREYVILES'   = @{ StoreCode = '10116'; StoreName = 'SPAR Delareyville' }
+    'SRSROOSVILLESVR'   = @{ StoreCode = '80175'; StoreName = 'SPAR Roosville'    }
+    'SRTDELAREYVILSV'   = @{ StoreCode = '21355'; StoreName = 'TOPS Delareyville' }
+    'SRSDELAREYT2SVR'   = @{ StoreCode = '80579'; StoreName = 'TOPS Dice'         }
+    'SRTROOSVILLESVR'   = @{ StoreCode = '80176'; StoreName = 'TOPS Roosville'    }
 }
 $hostKey = $env:COMPUTERNAME.ToUpper()
 if (-not $hostMap.ContainsKey($hostKey)) {
@@ -51,12 +53,10 @@ if (-not $hostMap.ContainsKey($hostKey)) {
 $StoreCode = $hostMap[$hostKey].StoreCode
 $StoreName = $hostMap[$hostKey].StoreName
 Write-Host "Store: $StoreName ($StoreCode) on $hostKey"
-# ---------------------------------------------------------------
 
 # TAC zip location and temp extraction root
-$TacZipDir    = 'S:\sigma\comms\Catman'
-$TempBase     = "$env:TEMP\SBPush"
-$BackfillFrom = [datetime]'2025-01-01'   # skip zips older than this date
+$TacZipDir = 'S:\sigma\comms\Catman'
+$TempBase  = "$env:TEMP\SBPush"
 
 # SQL Server - Windows Auth, no password needed
 $SigmaServer = 'localhost\SIGMA'
@@ -72,6 +72,9 @@ $BatchSize     = 500
 $DefaultDays   = 7
 $RetryMax      = 3
 $RetryWaitSecs = 10
+
+# Placeholder sentinel used by Sigma for products with no sales history
+$PlaceholderDate = '01/01/1990'
 
 # =============================================================================
 # TLS
@@ -287,14 +290,19 @@ function Parse-NumericField {
     param([string]$Val)
     $clean = $Val.Trim().TrimStart('+')
     if ([string]::IsNullOrWhiteSpace($clean)) { return 0.0 }
-    return [double]$clean
+    try { return [double]$clean } catch { return 0.0 }
 }
 
 function Convert-SigmaDate {
-    # DD/MM/YYYY -> YYYY-MM-DD
-    param([string]$Val)
-    $p = $Val.Trim() -split '/'
-    return "$($p[2])-$($p[1])-$($p[0])"
+    # DD/MM/YYYY or DD-MM-YYYY -> YYYY-MM-DD
+    # KI-002 fix: normalise hyphens to slashes before splitting.
+    # Some TAC archives on TOPS Roosville (and possibly other TOPS stores)
+    # encode dates as DD-MM-YYYY. The Replace ensures consistent parsing.
+    param([string]$Raw)
+    $s = $Raw.Trim().Replace('-', '/')
+    $parts = $s.Split('/')
+    if ($parts.Count -lt 3 -or [string]::IsNullOrWhiteSpace($parts[2])) { return $null }
+    return "$($parts[2])-$($parts[1])-$($parts[0])"
 }
 
 function Invoke-MergeFields {
@@ -315,10 +323,8 @@ function Invoke-MergeFields {
     $n = $Raw.Count
 
     # Step 1: find Status by scanning forward from its nominal index (26).
-    # internal_ref (field 25) is always immediately before Status and contains
-    # only digits, so the Status keyword is a reliable target.
     $statusIdx = -1
-    $scanCeil  = $n - 7   # at least 7 trailing fields must follow Status
+    $scanCeil  = $n - 7
     for ($i = 26; $i -lt $scanCeil; $i++) {
         $v = $Raw[$i].Trim()
         if ($v -eq 'Active' -or $v -eq 'Locked' -or $v -eq 'Delete') {
@@ -328,8 +334,7 @@ function Invoke-MergeFields {
     }
     if ($statusIdx -lt 0) { return $null }
 
-    # Step 2: find sub_dept_code (field 23, exactly 9 digits) by scanning
-    # backward from statusIdx - 2 (skipping internal_ref at statusIdx - 1).
+    # Step 2: find sub_dept_code (field 23, exactly 9 digits).
     $subDeptCodeIdx = -1
     $floor1         = [Math]::Max(22, $statusIdx - 30)
     for ($i = ($statusIdx - 2); $i -ge $floor1; $i--) {
@@ -340,8 +345,7 @@ function Invoke-MergeFields {
     }
     if ($subDeptCodeIdx -lt 0) { return $null }
 
-    # Step 3: find dept_code (field 21, exactly 6 digits) by scanning backward
-    # from one position before sub_dept_code.
+    # Step 3: find dept_code (field 21, exactly 6 digits).
     $deptCodeIdx = -1
     $floor2      = [Math]::Max(20, $subDeptCodeIdx - 30)
     for ($i = ($subDeptCodeIdx - 1); $i -ge $floor2; $i--) {
@@ -352,29 +356,23 @@ function Invoke-MergeFields {
     }
     if ($deptCodeIdx -lt 0) { return $null }
 
-    # Fields 4-20 (17 fixed-format numeric tokens) sit immediately before
-    # dept_code: raw[deptCodeIdx-17 .. deptCodeIdx-1].
-    # Description (field 3) is everything from raw[3] to raw[deptCodeIdx-18].
     $descEnd = $deptCodeIdx - 18
     if ($descEnd -lt 3) { return $null }
 
     $out = [string[]]::new(34)
 
     $out[0] = $Raw[0]   # record type (P)
-    $out[1] = $Raw[1]   # file date (DD/MM/YYYY)
+    $out[1] = $Raw[1]   # file date (DD/MM/YYYY or DD-MM-YYYY)
     $out[2] = $Raw[2]   # EAN
 
-    # Description: join all tokens from index 3 to descEnd
     $out[3] = ($Raw[3..$descEnd] -join ',')
 
-    # Fields 4-20: 17 fixed-format numerics just before dept_code
     for ($i = 4; $i -le 20; $i++) {
         $out[$i] = $Raw[$deptCodeIdx - 21 + $i]
     }
 
     $out[21] = $Raw[$deptCodeIdx]
 
-    # Dept name: all tokens between dept_code and sub_dept_code
     $deptNameEnd = $subDeptCodeIdx - 1
     $out[22] = if ($deptCodeIdx + 1 -le $deptNameEnd) {
                    ($Raw[($deptCodeIdx + 1)..$deptNameEnd] -join ',')
@@ -382,7 +380,6 @@ function Invoke-MergeFields {
 
     $out[23] = $Raw[$subDeptCodeIdx]
 
-    # Sub-dept name: all tokens between sub_dept_code and internal_ref
     $subNameEnd = $statusIdx - 2
     $out[24] = if ($subDeptCodeIdx + 1 -le $subNameEnd) {
                    ($Raw[($subDeptCodeIdx + 1)..$subNameEnd] -join ',')
@@ -399,13 +396,9 @@ function Invoke-MergeFields {
 }
 
 function Invoke-TacExtract {
-    # Extracts a TAC*.zip, locates PRSSALE.dat inside TEMPDIR\, reads the
-    # sale date from field[1] of the first P row (DD/MM/YYYY), renames the
-    # file to the standard pattern PRSSALE_<StoreName>_<YYYYMMDD>.dat, and
-    # returns a PSCustomObject:
-    #   FilePath - full path to the renamed PRSSALE file
-    #   AggDate  - ISO date YYYY-MM-DD parsed from the file header
-    #   TempDir  - extraction root (caller must clean up in a finally block)
+    # Extracts a TAC*.zip, locates PRSSALE.dat, reads the sale date from
+    # field[1] of the first P row, applies KI-002 hyphen normalisation,
+    # renames the file, and returns FilePath, AggDate (ISO), TempDir.
     param([string]$ZipPath)
 
     $zipName = [System.IO.Path]::GetFileNameWithoutExtension($ZipPath)
@@ -437,12 +430,15 @@ function Invoke-TacExtract {
     }
     if (-not $dateRaw) { throw "No P row found in PRSSALE.dat extracted from $ZipPath" }
 
-    $p        = $dateRaw -split '/'
+    # KI-002: normalise DD-MM-YYYY to DD/MM/YYYY before splitting
+    $dateNorm = $dateRaw.Replace('-', '/')
+    $p        = $dateNorm -split '/'
     $yyyymmdd = "$($p[2])$($p[1])$($p[0])"
     $isoDate  = "$($p[2])-$($p[1])-$($p[0])"
 
-    $newName = "PRSSALE_${StoreName}_${yyyymmdd}.dat"
-    $newPath = Join-Path (Split-Path $prssalePath -Parent) $newName
+    $storeTag = $StoreName.Replace(' ', '_')
+    $newName  = "PRSSALE_${storeTag}_${yyyymmdd}.dat"
+    $newPath  = Join-Path (Split-Path $prssalePath -Parent) $newName
     Move-Item -Path $prssalePath -Destination $newPath -Force
 
     return [PSCustomObject]@{
@@ -453,28 +449,31 @@ function Invoke-TacExtract {
 }
 
 function Test-DateExists {
-    # Returns $true if daily_aggregates already has rows for this store + date.
-    param([string]$AggDate)
-    $url  = "$SupabaseUrl/rest/v1/daily_aggregates" +
-            "?select=agg_date" +
-            "&client_id=eq.$ClientId" +
+    # Returns $true if daily_snapshots already has rows for this store + date.
+    param([string]$SnapDate)
+    $url  = "$SupabaseUrl/rest/v1/daily_snapshots" +
+            "?select=snapshot_date" +
             "&store_code=eq.$StoreCode" +
-            "&agg_date=eq.$AggDate" +
+            "&snapshot_date=eq.$SnapDate" +
             "&limit=1"
     $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
-    $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs
-    return ($rows -and $rows.Count -gt 0)
+    try {
+        $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs
+        return ($rows -and $rows.Count -gt 0)
+    }
+    catch { return $false }
 }
 
-function Invoke-ParsePrssale {
-    # Parses a renamed PRSSALE file (ISO-8859-1 encoding, 34 fields per P row).
-    # Filters: today_qty != 0 AND Status != 'Delete'.
-    # EAN comes from field[2] directly - no synthesis required.
-    # sales_ex_vat = sales_inc_vat / (1 + vat_rate / 100).
-    # gp_amount    = sales_ex_vat - cost_of_sales.
-    # gp_pct is NOT stored in daily_aggregates (computed in the view layer).
-    # Returns List[hashtable] ready to POST to daily_aggregates.
-    param([string]$FilePath)
+function Invoke-ParsePrssaleForSnapshots {
+    # Parses PRSSALE.dat and maps all 27 daily_snapshots columns.
+    # Inclusion rules (same as prssale_parser_v2.py):
+    #   - Status == 'Delete'                                         -> EXCLUDE
+    #   - last_sales_date == 01/01/1990 AND soh == 0 AND period_qty == 0 -> EXCLUDE (pure placeholder)
+    #   - last_sales_date == 01/01/1990 AND (soh > 0 OR period_qty > 0) -> INCLUDE, is_placeholder = true
+    #   - All other rows including today_qty == 0                    -> INCLUDE, is_placeholder = false
+    # EAN synthesis: PLU codes shorter than 8 digits get a synthetic 13-digit EAN
+    #   (store_code zero-padded to 5 digits) + (PLU zero-padded to 8 digits).
+    param([string]$FilePath, [string]$SnapDate)
 
     $enc     = [System.Text.Encoding]::GetEncoding('iso-8859-1')
     $lines   = [System.IO.File]::ReadAllLines($FilePath, $enc)
@@ -492,48 +491,91 @@ function Invoke-ParsePrssale {
                   }
 
         if ($null -eq $fields) {
-            # Silently skip rows that are clearly zero-qty (e.g. Sigma 'Item Not Found'
-            # placeholders). Only warn when the row might carry real sales data.
-            $likelyZeroQty = ($raw.Count -gt 8) -and ((Parse-NumericField $raw[8]) -eq 0)
-            if (-not $likelyZeroQty) {
-                $skipped++
-                Write-Warning "Unparseable P row (token count $($raw.Count)) skipped: $($line.Substring(0, [Math]::Min(100, $line.Length)))"
-            }
+            $skipped++
+            Write-Warning "Unparseable P row ($($raw.Count) tokens) skipped: $($line.Substring(0, [Math]::Min(120, $line.Length)))"
             continue
         }
 
         $status = $fields[26].Trim()
-        if ($status -eq 'Delete') { continue }
 
-        $todayQty = Parse-NumericField $fields[8]
-        if ($todayQty -eq 0) { continue }
+        $lastDateRaw = $fields[28].Trim()
+        # KI-002: normalise hyphen dates in last_sales_date_raw before comparison
+        $lastDateNorm = $lastDateRaw.Replace('-', '/')
 
-        $vatRate     = Parse-NumericField $fields[7]
-        $salesIncVat = Parse-NumericField $fields[10]
-        $costOfSales = Parse-NumericField $fields[9]
+        $periodQty = Parse-NumericField $fields[11]
+        $soh       = Parse-NumericField $fields[20]
 
-        $divisor    = 1 + ($vatRate / 100)
-        $salesExVat = if ($divisor -gt 0) {
-                          [Math]::Round($salesIncVat / $divisor, 2)
-                      } else { $salesIncVat }
-        $gpAmount   = [Math]::Round($salesExVat - $costOfSales, 2)
+        $isPlaceholder = ($lastDateNorm -eq $PlaceholderDate)
+        if ($isPlaceholder -and $soh -eq 0 -and $periodQty -eq 0) { continue }
+
+        # Convert last_sales_date to ISO. NULL if placeholder date or pre-2000 or invalid.
+        $lastDateIso = $null
+        if (-not $isPlaceholder) {
+            $converted = Convert-SigmaDate $lastDateNorm
+            if ($converted -and $converted.Length -ge 4) {
+                $yr = 0
+                if ([int]::TryParse($converted.Substring(0, 4), [ref]$yr) -and $yr -ge 2000) {
+                    $lastDateIso = $converted
+                }
+            }
+        }
+
+        # EAN synthesis: PLU codes (< 8 digits, all numeric) get a synthetic 13-digit EAN
+        # to ensure global uniqueness across stores. Format: store_code(5) + PLU(8).
+        $rawEan = $fields[2].Trim()
+        $ean = if ($rawEan -match '^\d+$' -and $rawEan.Length -lt 8) {
+                   $StoreCode.PadLeft(5, '0') + $rawEan.PadLeft(8, '0')
+               } else {
+                   $rawEan
+               }
+
+        # file_date: normalise hyphen format to slash format for consistency
+        $fileDate = $fields[1].Trim().Replace('-', '/')
+
+        # unit_cost: use period cost/qty when available; fall back to 80% of ex-VAT sell price
+        $periodCost = Parse-NumericField $fields[12]
+        $sellPrice  = Parse-NumericField $fields[6]
+        $vatPct     = Parse-NumericField $fields[7]
+
+        $unitCost = if ($periodQty -ne 0) {
+                        [Math]::Round($periodCost / [Math]::Abs($periodQty), 4)
+                    } elseif ($sellPrice -gt 0) {
+                        $divisor = 1 + ($vatPct / 100)
+                        $exVat   = if ($divisor -gt 0) { $sellPrice / $divisor } else { $sellPrice }
+                        [Math]::Round($exVat * 0.80, 4)
+                    } else {
+                        0.0
+                    }
 
         $record = [ordered]@{
-            client_id     = $ClientId
-            store_code    = $StoreCode
-            agg_date      = Convert-SigmaDate $fields[1]
-            ean           = $fields[2].Trim()
-            plu_code      = $fields[25].Trim()
-            description   = $fields[3].Trim()
-            dept_code     = $fields[21].Trim()
-            dept_name     = $fields[22].Trim()
-            sub_dept_code = $fields[23].Trim()
-            sub_dept_name = $fields[24].Trim()
-            qty_sold      = [Math]::Round($todayQty, 3)
-            sales_inc_vat = [Math]::Round($salesIncVat, 2)
-            sales_ex_vat  = $salesExVat
-            cost_of_sales = [Math]::Round($costOfSales, 2)
-            gp_amount     = $gpAmount
+            store_code          = $StoreCode
+            store_name          = $StoreName
+            file_date           = $fileDate
+            snapshot_date       = $SnapDate
+            ean                 = $ean
+            description         = $fields[3].Trim()
+            size                = $fields[4].Trim()
+            unit                = $fields[5].Trim()
+            sell_price          = [Math]::Round($sellPrice, 4)
+            vat_pct             = [Math]::Round($vatPct, 4)
+            today_qty           = [Math]::Round((Parse-NumericField $fields[8]), 3)
+            today_cost          = [Math]::Round((Parse-NumericField $fields[9]), 2)
+            today_sales         = [Math]::Round((Parse-NumericField $fields[10]), 2)
+            period_qty          = [Math]::Round($periodQty, 3)
+            period_cost         = [Math]::Round($periodCost, 2)
+            period_sales        = [Math]::Round((Parse-NumericField $fields[13]), 2)
+            soh                 = [Math]::Round($soh, 3)
+            dept_code           = $fields[21].Trim()
+            dept_name           = $fields[22].Trim()
+            sub_dept_code       = $fields[23].Trim()
+            sub_dept_name       = $fields[24].Trim()
+            internal_ref        = $fields[25].Trim()
+            status              = $status
+            promo               = $fields[27].Trim()
+            last_sales_date_raw = $lastDateRaw
+            last_sales_date_iso = $lastDateIso
+            unit_cost           = $unitCost
+            is_placeholder      = $isPlaceholder
         }
         $records.Add($record)
     }
@@ -544,7 +586,6 @@ function Invoke-ParsePrssale {
 
 # =============================================================================
 # PUSH: departments + sub_departments  <-  DW220sDB reference tables
-# Full upsert on every nightly run (~30 rows each, rarely changes).
 # =============================================================================
 
 function Push-RefTables {
@@ -615,16 +656,18 @@ WHERE WGRBEZ IS NOT NULL
 }
 
 # =============================================================================
-# PUSH: daily_aggregates  <-  PRSSALE.DAT  (nightly - latest TAC zip only)
+# PUSH: daily_snapshots  <-  PRSSALE.DAT  (nightly - latest TAC zip only)
+# All 27 columns. Full catalog including zero-sale rows. No zero-sale filter.
+# Conflict key: store_code, snapshot_date, ean.
 # =============================================================================
 
-function Push-DailyAggregatesNightly {
-    Write-Host "`n[daily_aggregates] Starting nightly push from PRSSALE.DAT..." -ForegroundColor Cyan
+function Push-DailySnapshotsNightly {
+    Write-Host "`n[daily_snapshots] Starting nightly push from PRSSALE.DAT..." -ForegroundColor Cyan
     $logId   = $null
     $tempDir = $null
 
     try {
-        $logId = Start-PushLog -TableName 'daily_aggregates'
+        $logId = Start-PushLog -TableName 'daily_snapshots'
 
         $zips = @(Get-ChildItem -Path $TacZipDir -Filter 'TAC*.zip' -ErrorAction Stop |
                   Sort-Object LastWriteTime -Descending)
@@ -635,31 +678,32 @@ function Push-DailyAggregatesNightly {
 
         $extracted = Invoke-TacExtract -ZipPath $latest.FullName
         $tempDir   = $extracted.TempDir
-        Write-Host "  File date: $($extracted.AggDate)"
+        $snapDate  = $extracted.AggDate
+        Write-Host "  Snapshot date: $snapDate"
 
-        $records = Invoke-ParsePrssale -FilePath $extracted.FilePath
-        Write-Host "  Rows after filter (qty != 0, not Delete): $($records.Count)"
+        $records = Invoke-ParsePrssaleForSnapshots -FilePath $extracted.FilePath -SnapDate $snapDate
+        Write-Host "  Rows to push (full catalog, excl Delete + pure placeholders): $($records.Count)"
 
         $pushed = 0
         $batch  = [System.Collections.Generic.List[hashtable]]::new()
         foreach ($rec in $records) {
             $batch.Add($rec)
             if ($batch.Count -ge $BatchSize) {
-                $pushed += Send-Batch -TableName 'daily_aggregates' `
-                                      -ConflictCols 'client_id,store_code,agg_date,ean' `
+                $pushed += Send-Batch -TableName 'daily_snapshots' `
+                                      -ConflictCols 'store_code,snapshot_date,ean' `
                                       -Rows $batch.ToArray() -LogId $logId
                 $batch.Clear()
                 Write-Host "  Pushed $pushed rows so far..."
             }
         }
         if ($batch.Count -gt 0) {
-            $pushed += Send-Batch -TableName 'daily_aggregates' `
-                                  -ConflictCols 'client_id,store_code,agg_date,ean' `
+            $pushed += Send-Batch -TableName 'daily_snapshots' `
+                                  -ConflictCols 'store_code,snapshot_date,ean' `
                                   -Rows $batch.ToArray() -LogId $logId
         }
 
         Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed $pushed
-        Write-Host "  [daily_aggregates] Done. $pushed rows pushed." -ForegroundColor Green
+        Write-Host "  [daily_snapshots] Done. $pushed rows pushed." -ForegroundColor Green
     }
     catch {
         $msg = $_.ToString()
@@ -668,7 +712,7 @@ function Push-DailyAggregatesNightly {
             $reader = New-Object System.IO.StreamReader($stream)
             $msg   += ' | ' + $reader.ReadToEnd()
         } catch {}
-        Write-Host "  [daily_aggregates] FAILED: $msg" -ForegroundColor Red
+        Write-Host "  [daily_snapshots] FAILED: $msg" -ForegroundColor Red
         if ($logId) { try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg } catch {} }
     }
     finally {
@@ -679,11 +723,11 @@ function Push-DailyAggregatesNightly {
 }
 
 # =============================================================================
-# PUSH: daily_aggregates  <-  all TAC*.zip files  (backfill mode)
+# PUSH: daily_snapshots  <-  all TAC*.zip files  (backfill mode)
 # =============================================================================
 
-function Push-DailyAggregatesBackfill {
-    Write-Host "`n[daily_aggregates] Backfill mode - processing all TAC*.zip files..." -ForegroundColor Cyan
+function Push-DailySnapshotsBackfill {
+    Write-Host "`n[daily_snapshots] Backfill mode - processing all TAC*.zip files..." -ForegroundColor Cyan
 
     $zips = @(Get-ChildItem -Path $TacZipDir -Filter 'TAC*.zip' -ErrorAction Stop |
               Sort-Object LastWriteTime)
@@ -702,51 +746,51 @@ function Push-DailyAggregatesBackfill {
 
         try {
             Write-Host "`n  ZIP: $($zip.Name)"
-            $logId = Start-PushLog -TableName 'daily_aggregates'
+            $logId = Start-PushLog -TableName 'daily_snapshots'
 
             $extracted = Invoke-TacExtract -ZipPath $zip.FullName
             $tempDir   = $extracted.TempDir
-            $aggDate   = $extracted.AggDate
-            Write-Host "  Date: $aggDate"
+            $snapDate  = $extracted.AggDate
+            Write-Host "  Date: $snapDate"
 
-            if ([datetime]$aggDate -lt $BackfillFrom) {
-                Write-Host "  SKIP - $aggDate is before BackfillFrom $($BackfillFrom.ToString('yyyy-MM-dd'))." -ForegroundColor DarkGray
+            if ([datetime]$snapDate -lt $BackfillFrom) {
+                Write-Host "  SKIP - $snapDate is before BackfillFrom $($BackfillFrom.ToString('yyyy-MM-dd'))." -ForegroundColor DarkGray
                 Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed 0 `
                     -Msg "Skipped - before BackfillFrom threshold"
                 $totalSkipped++
                 continue
             }
 
-            if (-not $Force -and (Test-DateExists -AggDate $aggDate)) {
-                Write-Host "  SKIP - $aggDate already in daily_aggregates. Use -Force to overwrite." -ForegroundColor Yellow
+            if (-not $Force -and (Test-DateExists -SnapDate $snapDate)) {
+                Write-Host "  SKIP - $snapDate already in daily_snapshots. Use -Force to overwrite." -ForegroundColor Yellow
                 Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed 0 `
-                    -Msg "Skipped - $aggDate already loaded for store $StoreCode"
+                    -Msg "Skipped - $snapDate already loaded for store $StoreCode"
                 $totalSkipped++
                 continue
             }
 
-            $records = Invoke-ParsePrssale -FilePath $extracted.FilePath
-            Write-Host "  Rows after filter: $($records.Count)"
+            $records = Invoke-ParsePrssaleForSnapshots -FilePath $extracted.FilePath -SnapDate $snapDate
+            Write-Host "  Rows to push: $($records.Count)"
 
             $pushed = 0
             $batch  = [System.Collections.Generic.List[hashtable]]::new()
             foreach ($rec in $records) {
                 $batch.Add($rec)
                 if ($batch.Count -ge $BatchSize) {
-                    $pushed += Send-Batch -TableName 'daily_aggregates' `
-                                          -ConflictCols 'client_id,store_code,agg_date,ean' `
+                    $pushed += Send-Batch -TableName 'daily_snapshots' `
+                                          -ConflictCols 'store_code,snapshot_date,ean' `
                                           -Rows $batch.ToArray() -LogId $logId
                     $batch.Clear()
                 }
             }
             if ($batch.Count -gt 0) {
-                $pushed += Send-Batch -TableName 'daily_aggregates' `
-                                      -ConflictCols 'client_id,store_code,agg_date,ean' `
+                $pushed += Send-Batch -TableName 'daily_snapshots' `
+                                      -ConflictCols 'store_code,snapshot_date,ean' `
                                       -Rows $batch.ToArray() -LogId $logId
             }
 
             Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed $pushed
-            Write-Host "  Pushed $pushed rows for $aggDate." -ForegroundColor Green
+            Write-Host "  Pushed $pushed rows for $snapDate." -ForegroundColor Green
             $totalPushed += $pushed
         }
         catch {
@@ -766,17 +810,13 @@ function Push-DailyAggregatesBackfill {
         }
     }
 
-    Write-Host ("`n[daily_aggregates] Backfill complete. " +
+    Write-Host ("`n[daily_snapshots] Backfill complete. " +
                 "$totalPushed rows pushed. $totalSkipped dates skipped.") -ForegroundColor Green
 }
 
 # =============================================================================
 # PUSH: stock_snapshots  <-  npos.dbo.dewas_PLU_s
-# Source changed from PLU_s (wipes at EOD, 0 rows during trading hours) to
-# dewas_PLU_s (persistent ~78k rows, confirmed columns 2026-05-18).
-# PLU_nr is the 13-digit barcode - used as ean directly, no synthesis needed.
-# Conflict key: (client_id, store_code, ean) - one row per EAN per store,
-# updated on each push (snapshot_at records when SOH was last refreshed).
+# Retained for intraday SOH readings. Not used by the dashboard.
 # =============================================================================
 
 function Push-StockSnapshots {
@@ -848,6 +888,28 @@ GROUP BY PLU_nr
 }
 
 # =============================================================================
+# REFRESH: mv_kpi_by_date materialized view
+# =============================================================================
+
+function Invoke-RefreshKpiView {
+    Write-Host "`n[kpi_view] Refreshing mv_kpi_by_date..." -ForegroundColor Cyan
+    $url  = "$SupabaseUrl/rest/v1/rpc/refresh_kpi_view"
+    $hdrs = @{
+        'apikey'        = $SupabaseKey
+        'Authorization' = "Bearer $SupabaseKey"
+        'Content-Type'  = 'application/json'
+    }
+    try {
+        $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body '{}'
+        Write-Host "  Dashboard view refreshed - Pulse is live." -ForegroundColor Green
+    }
+    catch {
+        Write-Warning "View refresh failed: $_"
+        Write-Warning "Run manually in Supabase SQL Editor: REFRESH MATERIALIZED VIEW mv_kpi_by_date;"
+    }
+}
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -869,11 +931,12 @@ switch ($Mode) {
     'nightly' {
         Push-RefTables
         if ($Backfill) {
-            Push-DailyAggregatesBackfill
+            Push-DailySnapshotsBackfill
         } else {
-            Push-DailyAggregatesNightly
+            Push-DailySnapshotsNightly
         }
         Push-StockSnapshots
+        Invoke-RefreshKpiView
     }
     'intraday' {
         Write-Host "Intraday mode not yet implemented (Phase 2)." -ForegroundColor Yellow
