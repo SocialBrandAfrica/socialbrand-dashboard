@@ -1612,6 +1612,7 @@ export default function Home() {
                         )}
                       </tbody>
                     </table>
+                  </div>
                   <div style={{ padding: '10px 18px', borderTop: '1px solid rgba(255,255,255,0.06)', fontFamily: "'Geist Mono', monospace", fontSize: 10, color: 'rgba(245,245,244,0.3)', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.08em', flexShrink: 0 }}>
                     {reportData.length <= PAGE_SIZE
                       ? `${num(reportData.length)} rows`
