@@ -814,7 +814,7 @@ export default function Home() {
       const batchSize = 1000
       while (true) {
         const { data, error } = await supabase
-          .from('v_kpi_by_date')
+          .from('mv_kpi_by_date')
           .select('snapshot_date')
           .order('snapshot_date', { ascending: false })
           .range(from, from + batchSize - 1)
@@ -845,7 +845,7 @@ export default function Home() {
       setSelectedProduct(null)
 
       const [kpiRes, deptRes, subDeptRes] = await Promise.all([
-        supabase.from('v_kpi_by_date')
+        supabase.from('mv_kpi_by_date')
           .select('store_code,store_name,snapshot_date,total_sales,total_cost,total_qty,neg_soh_count,slow_mover_count')
           .in('store_code', storeCodes)
           .in('snapshot_date', selectedDates),
