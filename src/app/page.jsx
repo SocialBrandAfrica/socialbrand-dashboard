@@ -753,6 +753,11 @@ export default function Home() {
   const [focusBasket,      setFocusBasket]      = useState([])
   const [isDefaultBasket,  setIsDefaultBasket]  = useState(true)
 
+  // ── product EAN filter — set by "+" in search results ───────────────────────
+  // When non-empty, KPI cards and Top 20 narrow to only these EANs.
+  // Cleared with the "X products ×" chip in the filter bar.
+  const [selectedEans, setSelectedEans] = useState([])
+
   // Auto-populate Focus Area with the top 5 products by period sales value.
   // Uses rpc_focus_top5 (SECURITY DEFINER) — direct daily_snapshots reads are
   // blocked by RLS for the anon key.  Clear the basket immediately so stale
@@ -783,13 +788,19 @@ export default function Home() {
   }, [isDefaultBasket, storeCodes, selectedDates, deptFilter, subDeptFilter])
 
   const addToFocus = useCallback((row) => {
+    // BUG-1: add EAN to the KPI / Top-20 filter
+    const eanStr = String(row.ean)
+    setSelectedEans(prev => prev.includes(eanStr) ? prev : [...prev, eanStr])
+    // BUG-2: clear the auto-populated default basket before the first manual add
     setIsDefaultBasket(false)
     setFocusBasket(prev => {
+      const wasDefault = isDefaultBasket           // capture before setState flushes
+      const base       = wasDefault ? [] : prev    // wipe defaults on first manual add
       const key = `${row.ean}|${row.description}|${row.store_code}`
-      if (prev.some(b => `${b.ean}|${b.description}|${b.store_code}` === key)) return prev
-      return [...prev, row]
+      if (base.some(b => `${b.ean}|${b.description}|${b.store_code}` === key)) return base
+      return [...base, row]
     })
-  }, [])
+  }, [isDefaultBasket])
 
   const removeFromFocus = useCallback((item) => {
     setIsDefaultBasket(false)
@@ -856,6 +867,7 @@ export default function Home() {
         supabase.rpc('rpc_dept_summary', {
           p_store_codes: storeCodes,
           p_dates:       selectedDates,
+          p_eans:        selectedEans.length > 0 ? selectedEans : null,
         }),
         // All unique sub-dept names for the current store+date — powers the
         // sub-dept dropdown when no dept filter is selected.
@@ -879,7 +891,7 @@ export default function Home() {
 
     loadViews()
     return () => { cancelled = true }
-  }, [storeCodes, selectedDates])
+  }, [storeCodes, selectedDates, selectedEans])
 
   // ── fetch Top 20 via RPC — re-runs when dept or sub-dept filter changes ──────
   // rpc_top20 accepts p_dept / p_subdept and returns at most 40 pre-aggregated rows
@@ -898,6 +910,7 @@ export default function Home() {
         p_dates:       selectedDates,
         p_dept:        deptFilter    !== 'all' ? deptFilter    : null,
         p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
+        p_eans:        selectedEans.length > 0 ? selectedEans : null,
       })
       if (cancelled) return
       if (error) console.error('[rpc_top20]', error.message)
@@ -907,7 +920,7 @@ export default function Home() {
 
     loadTop20()
     return () => { cancelled = true }
-  }, [storeCodes, selectedDates, deptFilter, subDeptFilter])
+  }, [storeCodes, selectedDates, deptFilter, subDeptFilter, selectedEans])
 
   // ── derive dept chips from deptSummary ─────────────────────────────────────
   // deptSummary has no is_placeholder filter so service depts (HMR, Butchery,
@@ -973,7 +986,7 @@ export default function Home() {
     setStoreRosData(rosRes)
     setReportLoaded(true)
     setReportLoading(false)
-  }, [storeCodes, selectedDates, reportLoading])
+  }, [storeCodes, selectedDates])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // PRODUCT DETAIL
@@ -1048,24 +1061,32 @@ export default function Home() {
     return Object.values(m)
   }, [kpiData])
 
-  // deptSummary already has one pre-summed row per dept (from rpc_dept_summary)
+  // deptSummary already has one pre-summed row per dept (from rpc_dept_summary).
+  // When selectedEans is non-empty, deptSummary is EAN-filtered server-side, so
+  // we always sum through deptSummary in that case to honour the product filter.
   const kpiSales = useMemo(() => {
-    if (deptFilter !== 'all')
-      return deptSummary.filter(r => normalizeDept(r.dept_name) === deptFilter).reduce((s, r) => s + (r.total_sales ?? 0), 0)
+    if (selectedEans.length > 0 || deptFilter !== 'all')
+      return deptSummary
+        .filter(r => deptFilter === 'all' || normalizeDept(r.dept_name) === deptFilter)
+        .reduce((s, r) => s + (r.total_sales ?? 0), 0)
     return kpiData.reduce((s, r) => s + (r.total_sales ?? 0), 0)
-  }, [kpiData, deptSummary, deptFilter])
+  }, [kpiData, deptSummary, deptFilter, selectedEans.length])
 
   const kpiCost = useMemo(() => {
-    if (deptFilter !== 'all')
-      return deptSummary.filter(r => normalizeDept(r.dept_name) === deptFilter).reduce((s, r) => s + (r.total_cost ?? 0), 0)
+    if (selectedEans.length > 0 || deptFilter !== 'all')
+      return deptSummary
+        .filter(r => deptFilter === 'all' || normalizeDept(r.dept_name) === deptFilter)
+        .reduce((s, r) => s + (r.total_cost ?? 0), 0)
     return kpiData.reduce((s, r) => s + (r.total_cost ?? 0), 0)
-  }, [kpiData, deptSummary, deptFilter])
+  }, [kpiData, deptSummary, deptFilter, selectedEans.length])
 
   const kpiQty = useMemo(() => {
-    if (deptFilter !== 'all')
-      return deptSummary.filter(r => normalizeDept(r.dept_name) === deptFilter).reduce((s, r) => s + (r.total_qty ?? 0), 0)
+    if (selectedEans.length > 0 || deptFilter !== 'all')
+      return deptSummary
+        .filter(r => deptFilter === 'all' || normalizeDept(r.dept_name) === deptFilter)
+        .reduce((s, r) => s + (r.total_qty ?? 0), 0)
     return kpiData.reduce((s, r) => s + (r.total_qty ?? 0), 0)
-  }, [kpiData, deptSummary, deptFilter])
+  }, [kpiData, deptSummary, deptFilter, selectedEans.length])
 
   const kpiGP       = kpiSales > 0 ? gpPct(kpiSales, kpiCost) : 0
   const kpiNegSOH   = latestKpiByStore.reduce((s, r) => s + (r.neg_soh_count   ?? 0), 0)
@@ -1113,7 +1134,7 @@ export default function Home() {
   }
 
   function clearStoreSelection() {
-    setStoreCodes(prev => (prev.length > 1 ? [prev[0]] : prev))
+    setStoreCodes([...ALL_STORE_CODES])
   }
 
   function clickDept(name) {
@@ -1311,6 +1332,26 @@ export default function Home() {
               emptyMsg="No sub-depts available"
             />
 
+            {/* EAN product filter chip — appears when user has "+" added products */}
+            {selectedEans.length > 0 && (
+              <button
+                onClick={() => setSelectedEans([])}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 5,
+                  padding: '5px 10px',
+                  background: 'rgba(74,222,128,0.12)',
+                  border: '1px solid rgba(74,222,128,0.35)',
+                  borderRadius: 8, cursor: 'pointer',
+                  color: '#4ade80',
+                  fontFamily: 'Geist, sans-serif', fontSize: 11, fontWeight: 600,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {selectedEans.length} {selectedEans.length === 1 ? 'product' : 'products'}
+                <span style={{ opacity: 0.6, marginLeft: 2 }}>×</span>
+              </button>
+            )}
+
             {(viewsLoading || top20Loading) && (
               <span style={{ fontSize: 10, color: 'rgba(74,222,128,0.6)', fontFamily: 'Geist Mono, monospace', marginLeft: 4, animation: 'pulse 1.5s infinite' }}>loading…</span>
             )}
@@ -1381,7 +1422,7 @@ export default function Home() {
                         : `Sales · ${selectedDates[0] ?? ''}`,
                     value: zarShort(kpiSales), sub: `${num(kpiQty, 0)} units`, accent: true },
                   { label: 'Gross Profit',  value: pct(kpiGP),          sub: `Cost ${zarShort(kpiCost)}`, warn: kpiGP < 15 },
-                  { label: 'Reorder Items', value: kpiReorder != null ? num(kpiReorder) : '—', sub: kpiReorder != null ? 'SOH ≤ 0 with period sales' : 'Open report drawer', danger: kpiReorder != null && kpiReorder > 100 },
+                  { label: 'Reorder Items', value: kpiReorder != null ? num(kpiReorder) : '—', sub: kpiReorder != null ? 'SOH ≤ 0 with period sales' : 'Open report drawer', onSub: kpiReorder == null ? () => setDrawerOpen(true) : undefined, danger: kpiReorder != null && kpiReorder > 100 },
                   { label: 'Slow Movers',   value: num(kpiSlowMove), sub: 'In stock, no period sales', warn: true },
                   { label: 'Negative SOH',  value: num(kpiNegSOH),   sub: 'Stock errors / shrinkage', danger: kpiNegSOH > 0 },
                 ].map(k => (
@@ -1395,7 +1436,7 @@ export default function Home() {
                   }}>
                     <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 10 }}>{k.label}</p>
                     <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 28, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1, color: k.accent ? '#4ade80' : k.danger && k.value !== '0' ? '#fca5a5' : k.warn ? '#f59e0b' : '#f5f5f4' }}>{k.value}</p>
-                    <p style={{ fontSize: 11, color: 'rgba(245,245,244,0.35)', marginTop: 8, fontFamily: "'Geist Mono', monospace" }}>{k.sub}</p>
+                    <p onClick={k.onSub} style={{ fontSize: 11, color: k.onSub ? 'rgba(34,211,238,0.7)' : 'rgba(245,245,244,0.35)', marginTop: 8, fontFamily: "'Geist Mono', monospace", cursor: k.onSub ? 'pointer' : 'default', textDecoration: k.onSub ? 'underline' : 'none' }}>{k.sub}</p>
                   </div>
                 ))
             }
@@ -1424,7 +1465,7 @@ export default function Home() {
                     {top20.map((r, i) => {
                       const ros = selectedDates.length > 0 ? r.total_qty / selectedDates.length : 0
                       return (
-                        <div key={r.ean} style={{ display: 'grid', gridTemplateColumns: '22px 1fr auto auto', gap: 10, alignItems: 'center', padding: '8px 10px', background: 'rgba(255,255,255,0.025)', borderRadius: 8 }}>
+                        <div key={r.ean} onClick={() => handleProductClick(r)} style={{ display: 'grid', gridTemplateColumns: '22px 1fr auto auto', gap: 10, alignItems: 'center', padding: '8px 10px', background: 'rgba(255,255,255,0.025)', borderRadius: 8, cursor: 'pointer' }}>
                           <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 12, fontWeight: 600, color: i < 3 ? '#4ade80' : 'rgba(245,245,244,0.3)', textAlign: 'center' }}>{i + 1}</span>
                           <div style={{ overflow: 'hidden' }}>
                             <p style={{ fontSize: 12, color: '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
