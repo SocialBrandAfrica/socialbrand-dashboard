@@ -910,6 +910,31 @@ function Invoke-RefreshKpiView {
 }
 
 # =============================================================================
+# UPSERT: product_search_index
+# One row per EAN; stores[] array accumulates across all store servers.
+# Runs after daily_snapshots push so the index reflects the latest catalog.
+# =============================================================================
+
+function Invoke-UpsertSearchIndex {
+    Write-Host "`n[search_index] Updating product_search_index for store $StoreCode..." -ForegroundColor Cyan
+    $url  = "$SupabaseUrl/rest/v1/rpc/upsert_search_index"
+    $hdrs = @{
+        'apikey'        = $SupabaseKey
+        'Authorization' = "Bearer $SupabaseKey"
+        'Content-Type'  = 'application/json'
+    }
+    $body = '{"p_store_code":"' + $StoreCode + '"}'
+    try {
+        $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body $body
+        Write-Host "  Search index updated for store $StoreCode." -ForegroundColor Green
+    }
+    catch {
+        Write-Warning "Search index upsert failed: $_"
+        Write-Warning "Run manually: SELECT upsert_search_index('$StoreCode');"
+    }
+}
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -937,6 +962,7 @@ switch ($Mode) {
         }
         Push-StockSnapshots
         Invoke-RefreshKpiView
+        Invoke-UpsertSearchIndex
     }
     'intraday' {
         Write-Host "Intraday mode not yet implemented (Phase 2)." -ForegroundColor Yellow

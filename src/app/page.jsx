@@ -478,7 +478,7 @@ function FilterDropdown({ label, value, options, onChange, emptyMsg }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // PRODUCT SEARCH BAR — typeahead against daily_snapshots
 // ─────────────────────────────────────────────────────────────────────────────
-function ProductSearchBar({ storeCodes, selectedDates, onSelect, onAddToFocus, focusBasket, deptFilter, subDeptFilter, deptNormMap }) {
+function ProductSearchBar({ storeCodes, selectedDates, onSelect, onAddToFocus, focusBasket, deptFilter, subDeptFilter, deptNormMap, searchIndex }) {
   const [query,   setQuery]   = useState('')
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
@@ -495,12 +495,48 @@ function ProductSearchBar({ storeCodes, selectedDates, onSelect, onAddToFocus, f
   }, [open])
 
   // debounced search — fires 300 ms after last keystroke, min 2 chars
+  // When searchIndex is loaded (dept or store-scoped): filter in memory, zero RPC.
+  // Fallback to rpc_search_products when: index empty (All Depts + All Stores),
+  // or no local results found with 3+ chars (product not yet in the index).
   useEffect(() => {
     if (timerRef.current) clearTimeout(timerRef.current)
     if (query.trim().length < 2) { setResults([]); setOpen(false); return }
     timerRef.current = setTimeout(async () => {
       setLoading(true)
-      const q = query.trim()
+      const q = query.trim().toLowerCase()
+
+      // ── Local index path (fast, zero RPC per keystroke) ──────────────────
+      if (searchIndex && searchIndex.length > 0) {
+        const local = searchIndex.filter(p =>
+          p.description.toLowerCase().includes(q) ||
+          String(p.ean).includes(q)
+        ).filter(p =>
+          subDeptFilter === 'all' || !subDeptFilter || p.subdept === subDeptFilter
+        )
+
+        if (local.length > 0 || q.length < 3) {
+          // Map index rows to the shape ProductSearchBar dropdown expects
+          const mapped = local.slice(0, 25).map(p => ({
+            ean:           p.ean,
+            description:   p.description,
+            dept_name:     p.dept,
+            sub_dept_name: p.subdept ?? null,
+            store_code:    null,   // no per-store row; FocusAreaPanel handles null gracefully
+            is_placeholder: false,
+            internal_ref:  null,
+          }))
+          setResults(mapped)
+          setOpen(mapped.length > 0)
+          setLoading(false)
+          return
+        }
+        // Local returned 0 results with 3+ chars — fall through to RPC in case
+        // this product hasn't been indexed yet (first push after a new line lands)
+      }
+
+      // ── RPC fallback ─────────────────────────────────────────────────────
+      // Used when: (a) index is empty (All Depts + All Stores), or
+      //            (b) index returned 0 results for a 3+ char query.
       // Search uses rpc_search_products (SECURITY DEFINER) — direct daily_snapshots
       // reads are blocked by RLS for the anon key.
       const latestDate = selectedDates.length ? [...selectedDates].sort().reverse()[0] : null
@@ -540,7 +576,7 @@ function ProductSearchBar({ storeCodes, selectedDates, onSelect, onAddToFocus, f
       setOpen(true)
       setLoading(false)
     }, 300)
-  }, [query, storeCodes, selectedDates])
+  }, [query, storeCodes, selectedDates, searchIndex])
 
   function handleSelect(row) {
     onSelect(row)
@@ -908,6 +944,39 @@ export default function Home() {
     loadTop20()
     return () => { cancelled = true }
   }, [storeCodes, selectedDates, deptFilter, subDeptFilter])
+
+  // ── search index — one row per EAN; loaded per dept/store combo ───────────
+  // When any dept is selected, OR when a subset of stores is selected,
+  // we pre-load matching rows from product_search_index into state so
+  // ProductSearchBar can filter locally (zero RPC per keystroke).
+  // All Depts + All Stores: skip — catalog too large; falls back to RPC.
+  const [searchIndex, setSearchIndex] = useState([])
+
+  useEffect(() => {
+    const allDepts  = deptFilter  === 'all'
+    const allStores = storeCodes.length === ALL_STORE_CODES.length
+
+    if (allDepts && allStores) {
+      setSearchIndex([])   // bypass — ProductSearchBar will use RPC directly
+      return
+    }
+
+    let cancelled = false
+    let query = supabase
+      .from('product_search_index')
+      .select('ean,description,dept,subdept,stores')
+
+    if (!allDepts)  query = query.eq('dept', deptFilter)
+    if (!allStores) query = query.overlaps('stores', storeCodes)
+
+    query.then(({ data, error }) => {
+      if (cancelled) return
+      if (error) { console.error('[search_index]', error.message); return }
+      setSearchIndex(data ?? [])
+    })
+
+    return () => { cancelled = true }
+  }, [deptFilter, storeCodes])
 
   // ── derive dept chips from deptSummary ─────────────────────────────────────
   // deptSummary has no is_placeholder filter so service depts (HMR, Butchery,
@@ -1310,6 +1379,7 @@ export default function Home() {
               deptFilter={deptFilter}
               subDeptFilter={subDeptFilter}
               deptNormMap={deptNormMap}
+              searchIndex={searchIndex}
             />
           </div>
 
