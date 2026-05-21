@@ -753,11 +753,6 @@ export default function Home() {
   const [focusBasket,      setFocusBasket]      = useState([])
   const [isDefaultBasket,  setIsDefaultBasket]  = useState(true)
 
-  // ── product EAN filter — set by "+" in search results ───────────────────────
-  // When non-empty, KPI cards and Top 20 narrow to only these EANs.
-  // Cleared with the "X products ×" chip in the filter bar.
-  const [selectedEans, setSelectedEans] = useState([])
-
   // Auto-populate Focus Area with the top 5 products by period sales value.
   // Uses rpc_focus_top5 (SECURITY DEFINER) — direct daily_snapshots reads are
   // blocked by RLS for the anon key.  Clear the basket immediately so stale
@@ -788,9 +783,6 @@ export default function Home() {
   }, [isDefaultBasket, storeCodes, selectedDates, deptFilter, subDeptFilter])
 
   const addToFocus = useCallback((row) => {
-    // BUG-1: add EAN to the KPI / Top-20 filter
-    const eanStr = String(row.ean)
-    setSelectedEans(prev => prev.includes(eanStr) ? prev : [...prev, eanStr])
     // BUG-2: clear the auto-populated default basket before the first manual add
     setIsDefaultBasket(false)
     setFocusBasket(prev => {
@@ -867,7 +859,6 @@ export default function Home() {
         supabase.rpc('rpc_dept_summary', {
           p_store_codes: storeCodes,
           p_dates:       selectedDates,
-          p_eans:        selectedEans.length > 0 ? selectedEans : null,
         }),
         // All unique sub-dept names for the current store+date — powers the
         // sub-dept dropdown when no dept filter is selected.
@@ -891,7 +882,7 @@ export default function Home() {
 
     loadViews()
     return () => { cancelled = true }
-  }, [storeCodes, selectedDates, selectedEans])
+  }, [storeCodes, selectedDates])
 
   // ── fetch Top 20 via RPC — re-runs when dept or sub-dept filter changes ──────
   // rpc_top20 accepts p_dept / p_subdept and returns at most 40 pre-aggregated rows
@@ -910,7 +901,6 @@ export default function Home() {
         p_dates:       selectedDates,
         p_dept:        deptFilter    !== 'all' ? deptFilter    : null,
         p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
-        p_eans:        selectedEans.length > 0 ? selectedEans : null,
       })
       if (cancelled) return
       if (error) console.error('[rpc_top20]', error.message)
@@ -920,7 +910,7 @@ export default function Home() {
 
     loadTop20()
     return () => { cancelled = true }
-  }, [storeCodes, selectedDates, deptFilter, subDeptFilter, selectedEans])
+  }, [storeCodes, selectedDates, deptFilter, subDeptFilter])
 
   // ── derive dept chips from deptSummary ─────────────────────────────────────
   // deptSummary has no is_placeholder filter so service depts (HMR, Butchery,
@@ -1061,32 +1051,24 @@ export default function Home() {
     return Object.values(m)
   }, [kpiData])
 
-  // deptSummary already has one pre-summed row per dept (from rpc_dept_summary).
-  // When selectedEans is non-empty, deptSummary is EAN-filtered server-side, so
-  // we always sum through deptSummary in that case to honour the product filter.
+  // deptSummary already has one pre-summed row per dept (from rpc_dept_summary)
   const kpiSales = useMemo(() => {
-    if (selectedEans.length > 0 || deptFilter !== 'all')
-      return deptSummary
-        .filter(r => deptFilter === 'all' || normalizeDept(r.dept_name) === deptFilter)
-        .reduce((s, r) => s + (r.total_sales ?? 0), 0)
+    if (deptFilter !== 'all')
+      return deptSummary.filter(r => normalizeDept(r.dept_name) === deptFilter).reduce((s, r) => s + (r.total_sales ?? 0), 0)
     return kpiData.reduce((s, r) => s + (r.total_sales ?? 0), 0)
-  }, [kpiData, deptSummary, deptFilter, selectedEans.length])
+  }, [kpiData, deptSummary, deptFilter])
 
   const kpiCost = useMemo(() => {
-    if (selectedEans.length > 0 || deptFilter !== 'all')
-      return deptSummary
-        .filter(r => deptFilter === 'all' || normalizeDept(r.dept_name) === deptFilter)
-        .reduce((s, r) => s + (r.total_cost ?? 0), 0)
+    if (deptFilter !== 'all')
+      return deptSummary.filter(r => normalizeDept(r.dept_name) === deptFilter).reduce((s, r) => s + (r.total_cost ?? 0), 0)
     return kpiData.reduce((s, r) => s + (r.total_cost ?? 0), 0)
-  }, [kpiData, deptSummary, deptFilter, selectedEans.length])
+  }, [kpiData, deptSummary, deptFilter])
 
   const kpiQty = useMemo(() => {
-    if (selectedEans.length > 0 || deptFilter !== 'all')
-      return deptSummary
-        .filter(r => deptFilter === 'all' || normalizeDept(r.dept_name) === deptFilter)
-        .reduce((s, r) => s + (r.total_qty ?? 0), 0)
+    if (deptFilter !== 'all')
+      return deptSummary.filter(r => normalizeDept(r.dept_name) === deptFilter).reduce((s, r) => s + (r.total_qty ?? 0), 0)
     return kpiData.reduce((s, r) => s + (r.total_qty ?? 0), 0)
-  }, [kpiData, deptSummary, deptFilter, selectedEans.length])
+  }, [kpiData, deptSummary, deptFilter])
 
   const kpiGP       = kpiSales > 0 ? gpPct(kpiSales, kpiCost) : 0
   const kpiNegSOH   = latestKpiByStore.reduce((s, r) => s + (r.neg_soh_count   ?? 0), 0)
@@ -1150,6 +1132,11 @@ export default function Home() {
     setCurrentReport(key)
     if (!reportLoaded && !reportLoading) loadReport()
   }
+
+  // ── search mode — true when the user has made a product selection ────────────
+  // Triggers the layout switch: Top 20 + Sales by Dept hide; Product Detail or
+  // Focus Area fills that space instead.
+  const isSearchMode = selectedProduct !== null || (focusBasket.length > 0 && !isDefaultBasket)
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DISPLAY VALUES
@@ -1332,26 +1319,6 @@ export default function Home() {
               emptyMsg="No sub-depts available"
             />
 
-            {/* EAN product filter chip — appears when user has "+" added products */}
-            {selectedEans.length > 0 && (
-              <button
-                onClick={() => setSelectedEans([])}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 5,
-                  padding: '5px 10px',
-                  background: 'rgba(74,222,128,0.12)',
-                  border: '1px solid rgba(74,222,128,0.35)',
-                  borderRadius: 8, cursor: 'pointer',
-                  color: '#4ade80',
-                  fontFamily: 'Geist, sans-serif', fontSize: 11, fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {selectedEans.length} {selectedEans.length === 1 ? 'product' : 'products'}
-                <span style={{ opacity: 0.6, marginLeft: 2 }}>×</span>
-              </button>
-            )}
-
             {(viewsLoading || top20Loading) && (
               <span style={{ fontSize: 10, color: 'rgba(74,222,128,0.6)', fontFamily: 'Geist Mono, monospace', marginLeft: 4, animation: 'pulse 1.5s infinite' }}>loading…</span>
             )}
@@ -1442,82 +1409,86 @@ export default function Home() {
             }
           </div>
 
-          {/* ── TOP 20 + DEPT CHART ───────────────────────────────────────────── */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+          {/* ── TOP 20 + DEPT CHART — hidden while search mode is active ────────── */}
+          {!isSearchMode && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
 
-            {/* Top 20 Movers */}
-            <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
-                <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>Top 20 Movers</span>
-                <div style={{ display: 'flex', gap: 3, background: 'rgba(255,255,255,0.04)', padding: 3, borderRadius: 8 }}>
-                  {['qty', 'value'].map(m => (
-                    <button key={m} onClick={() => setMoverMode(m)} style={{ padding: '4px 12px', fontSize: 11, background: moverMode === m ? 'rgba(255,255,255,0.1)' : 'transparent', color: moverMode === m ? '#f5f5f4' : 'rgba(245,245,244,0.4)', border: 'none', borderRadius: 6, cursor: 'pointer', fontFamily: 'Geist, sans-serif', fontWeight: 500, transition: 'all 0.15s' }}>
-                      {m === 'qty' ? 'By Qty' : 'By Value'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {(viewsLoading || top20Loading)
-                ? <div>{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} h={40} r={8} mb={6} />)}</div>
-                : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
-                    {top20.length === 0 && <p style={{ color: 'rgba(245,245,244,0.3)', fontSize: 13, padding: '20px 0', textAlign: 'center', fontStyle: 'italic' }}>No sales data for current filter</p>}
-                    {top20.map((r, i) => {
-                      const ros = selectedDates.length > 0 ? r.total_qty / selectedDates.length : 0
-                      return (
-                        <div key={r.ean} onClick={() => handleProductClick(r)} style={{ display: 'grid', gridTemplateColumns: '22px 1fr auto auto', gap: 10, alignItems: 'center', padding: '8px 10px', background: 'rgba(255,255,255,0.025)', borderRadius: 8, cursor: 'pointer' }}>
-                          <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 12, fontWeight: 600, color: i < 3 ? '#4ade80' : 'rgba(245,245,244,0.3)', textAlign: 'center' }}>{i + 1}</span>
-                          <div style={{ overflow: 'hidden' }}>
-                            <p style={{ fontSize: 12, color: '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
-                            <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace", marginTop: 2 }}>
-                              {r.dept_name}
-                              {(r.size || r.unit) && (
-                                <span style={{ marginLeft: 6, color: 'rgba(245,245,244,0.25)' }}>
-                                  · {[r.size, r.unit].filter(Boolean).join(' ')}
-                                </span>
-                              )}
-                            </p>
-                          </div>
-                          <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: '#4ade80', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                            {moverMode === 'qty' ? num(r.total_qty, 0) : zarShort(r.total_sales)}
-                          </span>
-                          <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10, color: 'rgba(245,245,244,0.4)', whiteSpace: 'nowrap', textAlign: 'right' }}>
-                            {ros.toFixed(2)}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(245,245,244,0.25)' }}>u/d</span>
-                          </span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )
-              }
-            </div>
-
-            {/* Sales by Dept */}
-            <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
-              <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600, marginBottom: 14 }}>Sales by Department</p>
-              {viewsLoading
-                ? <div>{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} h={28} r={4} mb={5} />)}</div>
-                : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 0, maxHeight: 360, overflowY: 'auto' }}>
-                    {deptChart.length === 0 && <p style={{ color: 'rgba(245,245,244,0.3)', fontSize: 13, padding: '20px 0', textAlign: 'center', fontStyle: 'italic' }}>No sales data</p>}
-                    {deptChart.map(d => (
-                      <div key={d.name}
-                        onClick={() => clickDept(d.name)}
-                        style={{ display: 'grid', gridTemplateColumns: '1fr 72px 1fr', gap: 12, alignItems: 'center', padding: '7px 0', borderBottom: '1px dashed rgba(255,255,255,0.04)', opacity: deptFilter !== 'all' && deptFilter !== d.name ? 0.35 : 1, transition: 'opacity 0.2s', cursor: 'pointer' }}>
-                        <span style={{ fontSize: 12, color: deptFilter === d.name ? '#4ade80' : '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: deptFilter === d.name ? 600 : 400 }}>{d.name}</span>
-                        <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#4ade80', textAlign: 'right' }}>{zarShort(d.val)}</span>
-                        <div style={{ height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 999, overflow: 'hidden' }}>
-                          <div style={{ height: '100%', width: `${d.pct}%`, background: 'linear-gradient(90deg, #4ade80, #22d3ee)', borderRadius: 999, transition: 'width 0.5s ease' }} />
-                        </div>
-                      </div>
+              {/* Top 20 Movers */}
+              <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
+                  <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>Top 20 Movers</span>
+                  <div style={{ display: 'flex', gap: 3, background: 'rgba(255,255,255,0.04)', padding: 3, borderRadius: 8 }}>
+                    {['qty', 'value'].map(m => (
+                      <button key={m} onClick={() => setMoverMode(m)} style={{ padding: '4px 12px', fontSize: 11, background: moverMode === m ? 'rgba(255,255,255,0.1)' : 'transparent', color: moverMode === m ? '#f5f5f4' : 'rgba(245,245,244,0.4)', border: 'none', borderRadius: 6, cursor: 'pointer', fontFamily: 'Geist, sans-serif', fontWeight: 500, transition: 'all 0.15s' }}>
+                        {m === 'qty' ? 'By Qty' : 'By Value'}
+                      </button>
                     ))}
                   </div>
-                )
-              }
+                </div>
+                {(viewsLoading || top20Loading)
+                  ? <div>{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} h={40} r={8} mb={6} />)}</div>
+                  : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
+                      {top20.length === 0 && <p style={{ color: 'rgba(245,245,244,0.3)', fontSize: 13, padding: '20px 0', textAlign: 'center', fontStyle: 'italic' }}>No sales data for current filter</p>}
+                      {top20.map((r, i) => {
+                        const ros = selectedDates.length > 0 ? r.total_qty / selectedDates.length : 0
+                        return (
+                          <div key={r.ean} onClick={() => handleProductClick(r)} style={{ display: 'grid', gridTemplateColumns: '22px 1fr auto auto', gap: 10, alignItems: 'center', padding: '8px 10px', background: 'rgba(255,255,255,0.025)', borderRadius: 8, cursor: 'pointer' }}>
+                            <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 12, fontWeight: 600, color: i < 3 ? '#4ade80' : 'rgba(245,245,244,0.3)', textAlign: 'center' }}>{i + 1}</span>
+                            <div style={{ overflow: 'hidden' }}>
+                              <p style={{ fontSize: 12, color: '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
+                              <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace", marginTop: 2 }}>
+                                {r.dept_name}
+                                {(r.size || r.unit) && (
+                                  <span style={{ marginLeft: 6, color: 'rgba(245,245,244,0.25)' }}>
+                                    · {[r.size, r.unit].filter(Boolean).join(' ')}
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: '#4ade80', fontWeight: 500, whiteSpace: 'nowrap' }}>
+                              {moverMode === 'qty' ? num(r.total_qty, 0) : zarShort(r.total_sales)}
+                            </span>
+                            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10, color: 'rgba(245,245,244,0.4)', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                              {ros.toFixed(2)}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(245,245,244,0.25)' }}>u/d</span>
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                }
+              </div>
+
+              {/* Sales by Dept */}
+              <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
+                <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600, marginBottom: 14 }}>Sales by Department</p>
+                {viewsLoading
+                  ? <div>{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} h={28} r={4} mb={5} />)}</div>
+                  : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 0, maxHeight: 360, overflowY: 'auto' }}>
+                      {deptChart.length === 0 && <p style={{ color: 'rgba(245,245,244,0.3)', fontSize: 13, padding: '20px 0', textAlign: 'center', fontStyle: 'italic' }}>No sales data</p>}
+                      {deptChart.map(d => (
+                        <div key={d.name}
+                          onClick={() => clickDept(d.name)}
+                          style={{ display: 'grid', gridTemplateColumns: '1fr 72px 1fr', gap: 12, alignItems: 'center', padding: '7px 0', borderBottom: '1px dashed rgba(255,255,255,0.04)', opacity: deptFilter !== 'all' && deptFilter !== d.name ? 0.35 : 1, transition: 'opacity 0.2s', cursor: 'pointer' }}>
+                          <span style={{ fontSize: 12, color: deptFilter === d.name ? '#4ade80' : '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: deptFilter === d.name ? 600 : 400 }}>{d.name}</span>
+                          <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#4ade80', textAlign: 'right' }}>{zarShort(d.val)}</span>
+                          <div style={{ height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 999, overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${d.pct}%`, background: 'linear-gradient(90deg, #4ade80, #22d3ee)', borderRadius: 999, transition: 'width 0.5s ease' }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                }
+              </div>
             </div>
-          </div>
+          )}
 
           {/* ── PRODUCT DETAIL PANEL ──────────────────────────────────────────── */}
+          {/* In search mode this fills the space where Top 20 + Dept were.       */}
+          {/* Closing it (onClose) clears selectedProduct → isSearchMode recalcs. */}
           <div ref={panelRef}>
             {selectedProduct && !productLoading && (
               <ProductDetailPanel
@@ -1537,8 +1508,10 @@ export default function Home() {
           </div>
 
           {/* ── FOCUS AREA PANEL ──────────────────────────────────────────────── */}
-          {/* Always rendered once dates are set — default top-5 auto-populates */}
-          {selectedDates.length > 0 && (
+          {/* • isSearchMode + no product detail open → fills the Top 20 space    */}
+          {/* • not search mode → sits below Top 20 with default top-5 basket     */}
+          {/* • product detail open → hidden (product detail takes precedence)    */}
+          {selectedDates.length > 0 && !selectedProduct && !productLoading && (
             <FocusAreaPanel
               basket={focusBasket}
               onRemove={removeFromFocus}
