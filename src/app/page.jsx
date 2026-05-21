@@ -755,12 +755,13 @@ export default function Home() {
   const [moverMode,     setMoverMode]     = useState('qty')
 
   // ── aggregation view data ────────────────────────────────────────────────────
-  const [kpiData,      setKpiData]      = useState([])
-  const [deptSummary,  setDeptSummary]  = useState([])   // rpc_dept_summary — one aggregated row per dept
-  const [top20Data,    setTop20Data]    = useState([])   // rpc_top20 — up to 40 pre-aggregated rows
-  const [deptNormMap,  setDeptNormMap]  = useState(new Map())
-  const [viewsLoading, setViewsLoading] = useState(false)
-  const [top20Loading, setTop20Loading] = useState(false)
+  const [kpiData,        setKpiData]        = useState([])
+  const [deptSummary,    setDeptSummary]    = useState([])   // rpc_dept_summary — one aggregated row per dept
+  const [deptSohCounts,  setDeptSohCounts]  = useState([])   // rpc_kpi_dept_counts — neg/slow per dept (Bug 3)
+  const [top20Data,      setTop20Data]      = useState([])   // rpc_top20 — up to 40 pre-aggregated rows
+  const [deptNormMap,    setDeptNormMap]    = useState(new Map())
+  const [viewsLoading,   setViewsLoading]   = useState(false)
+  const [top20Loading,   setTop20Loading]   = useState(false)
 
   // ── dept/sub-dept chips ─────────────────────────────────────────────────────
   const [depts,       setDepts]       = useState([])
@@ -880,7 +881,7 @@ export default function Home() {
       setStoreRosData([])
       setSelectedProduct(null)
 
-      const [kpiRes, deptRes, subDeptRes] = await Promise.all([
+      const [kpiRes, deptRes, subDeptRes, deptSohRes] = await Promise.all([
         supabase.from('mv_kpi_by_date')
           .select('store_code,store_name,snapshot_date,total_sales,total_cost,total_qty,neg_soh_count,slow_mover_count')
           .in('store_code', storeCodes)
@@ -901,13 +902,21 @@ export default function Home() {
           p_dates:       selectedDates,
           p_dept_names:  null,
         }),
+        // rpc_kpi_dept_counts: per-dept neg_soh_count + slow_mover_count
+        // Used by Bug-3 fix so the SOH KPI cards respond to the dept filter.
+        supabase.rpc('rpc_kpi_dept_counts', {
+          p_store_codes: storeCodes,
+          p_dates:       selectedDates,
+        }),
       ])
 
       if (cancelled) return
-      if (kpiRes.error)  console.error('[v_kpi_by_date]',    kpiRes.error.message)
-      if (deptRes.error) console.error('[rpc_dept_summary]', deptRes.error.message)
-      setKpiData(kpiRes.data    ?? [])
-      setDeptSummary(deptRes.data ?? [])
+      if (kpiRes.error)     console.error('[v_kpi_by_date]',       kpiRes.error.message)
+      if (deptRes.error)    console.error('[rpc_dept_summary]',    deptRes.error.message)
+      if (deptSohRes.error) console.error('[rpc_kpi_dept_counts]', deptSohRes.error.message)
+      setKpiData(kpiRes.data       ?? [])
+      setDeptSummary(deptRes.data  ?? [])
+      setDeptSohCounts(deptSohRes.data ?? [])
       const allSubs = [...new Set((subDeptRes.data ?? []).map(r => r.sub_dept_name))].filter(Boolean).sort()
       setAllSubDepts(allSubs)
       setViewsLoading(false)
@@ -1109,9 +1118,22 @@ export default function Home() {
     return kpiData.reduce((s, r) => s + (r.total_qty ?? 0), 0)
   }, [kpiData, deptSummary, deptFilter])
 
-  const kpiGP       = kpiSales > 0 ? gpPct(kpiSales, kpiCost) : 0
-  const kpiNegSOH   = latestKpiByStore.reduce((s, r) => s + (r.neg_soh_count   ?? 0), 0)
-  const kpiSlowMove = latestKpiByStore.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
+  const kpiGP = kpiSales > 0 ? gpPct(kpiSales, kpiCost) : 0
+
+  // Bug 3: when a dept is selected, use the dept-filtered SOH counts from
+  // rpc_kpi_dept_counts; otherwise fall back to the pre-aggregated MV totals.
+  // deptSohCounts rows have dept_name already normalised (dots stripped).
+  const kpiNegSOH = useMemo(() => {
+    if (deptFilter !== 'all')
+      return deptSohCounts.filter(r => r.dept_name === deptFilter).reduce((s, r) => s + (r.neg_soh_count ?? 0), 0)
+    return latestKpiByStore.reduce((s, r) => s + (r.neg_soh_count ?? 0), 0)
+  }, [deptFilter, deptSohCounts, latestKpiByStore])
+
+  const kpiSlowMove = useMemo(() => {
+    if (deptFilter !== 'all')
+      return deptSohCounts.filter(r => r.dept_name === deptFilter).reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
+    return latestKpiByStore.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
+  }, [deptFilter, deptSohCounts, latestKpiByStore])
   const kpiReorder  = reportLoaded
     ? mergedReportRows.filter(r => !r.is_placeholder && (r.soh ?? 0) <= 0 && (r.period_qty ?? 0) > 0).length
     : null
