@@ -751,8 +751,9 @@ export default function Home() {
   const [includeParents, setIncludeParents] = useState(true)
 
   // ── report ───────────────────────────────────────────────────────────────────
-  const [currentReport, setCurrentReport] = useState('diwaais')
-  const [moverMode,     setMoverMode]     = useState('qty')
+  const [currentReport,  setCurrentReport]  = useState('diwaais')
+  const [moverMode,      setMoverMode]      = useState('qty')
+  const [top20Activity,  setTop20Activity]  = useState('movers')
 
   // ── aggregation view data ────────────────────────────────────────────────────
   const [kpiData,        setKpiData]        = useState([])
@@ -964,6 +965,8 @@ export default function Home() {
         p_dates:       selectedDates,
         p_dept:        deptFilter    !== 'all' ? deptFilter    : null,
         p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
+        p_activity:    top20Activity,
+        p_parents:     includeParents,
       })
       if (cancelled) return
       if (error) console.error('[rpc_top20]', error.message)
@@ -973,7 +976,7 @@ export default function Home() {
 
     loadTop20()
     return () => { cancelled = true }
-  }, [storeCodes, selectedDates, deptFilter, subDeptFilter])
+  }, [storeCodes, selectedDates, deptFilter, subDeptFilter, top20Activity, includeParents])
 
   // ── search index — one row per EAN; loaded per dept/store combo ───────────
   // When any dept is selected, OR when a subset of stores is selected,
@@ -1502,23 +1505,40 @@ export default function Home() {
           {!isSelectionActive && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
 
-              {/* Top 20 Movers */}
+              {/* Top 20 Movers / Non-Movers */}
               <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
-                  <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>Top 20 Movers</span>
-                  <div style={{ display: 'flex', gap: 3, background: 'rgba(255,255,255,0.04)', padding: 3, borderRadius: 8 }}>
-                    {['qty', 'value'].map(m => (
-                      <button key={m} onClick={() => setMoverMode(m)} style={{ padding: '4px 12px', fontSize: 11, background: moverMode === m ? 'rgba(255,255,255,0.1)' : 'transparent', color: moverMode === m ? '#f5f5f4' : 'rgba(245,245,244,0.4)', border: 'none', borderRadius: 6, cursor: 'pointer', fontFamily: 'Geist, sans-serif', fontWeight: 500, transition: 'all 0.15s' }}>
-                        {m === 'qty' ? 'By Qty' : 'By Value'}
-                      </button>
-                    ))}
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>
+                      {top20Activity === 'movers' ? 'Top 20 Movers' : 'Top 20 Non-Movers'}
+                    </span>
+                    <div style={{ display: 'flex', gap: 3, background: 'rgba(255,255,255,0.04)', padding: 3, borderRadius: 8 }}>
+                      {['qty', 'value'].map(m => (
+                        <button key={m} onClick={() => setMoverMode(m)} style={{ padding: '4px 12px', fontSize: 11, background: moverMode === m ? 'rgba(255,255,255,0.1)' : 'transparent', color: moverMode === m ? '#f5f5f4' : 'rgba(245,245,244,0.4)', border: 'none', borderRadius: 6, cursor: 'pointer', fontFamily: 'Geist, sans-serif', fontWeight: 500, transition: 'all 0.15s' }}>
+                          {m === 'qty' ? 'By Qty' : 'By Value'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <div style={{ display: 'flex', gap: 3, background: 'rgba(255,255,255,0.04)', padding: 3, borderRadius: 8 }}>
+                      {[['movers', 'Movers'], ['non_movers', 'Non-Movers']].map(([act, label]) => (
+                        <button key={act} onClick={() => setTop20Activity(act)} style={{ padding: '4px 12px', fontSize: 11, background: top20Activity === act ? 'rgba(255,255,255,0.1)' : 'transparent', color: top20Activity === act ? '#f5f5f4' : 'rgba(245,245,244,0.4)', border: 'none', borderRadius: 6, cursor: 'pointer', fontFamily: 'Geist, sans-serif', fontWeight: 500, transition: 'all 0.15s' }}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
                 {(viewsLoading || top20Loading)
                   ? <div>{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} h={40} r={8} mb={6} />)}</div>
                   : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
-                      {top20.length === 0 && <p style={{ color: 'rgba(245,245,244,0.3)', fontSize: 13, padding: '20px 0', textAlign: 'center', fontStyle: 'italic' }}>No sales data for current filter</p>}
+                      {top20.length === 0 && (
+                        <p style={{ color: 'rgba(245,245,244,0.3)', fontSize: 13, padding: '20px 0', textAlign: 'center', fontStyle: 'italic' }}>
+                          {top20Activity === 'non_movers' ? 'No non-moving stock for current filter' : 'No sales data for current filter'}
+                        </p>
+                      )}
                       {top20.map((r, i) => {
                         const ros = selectedDates.length > 0 ? r.total_qty / selectedDates.length : 0
                         return (
@@ -1538,9 +1558,12 @@ export default function Home() {
                             <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: '#4ade80', fontWeight: 500, whiteSpace: 'nowrap' }}>
                               {moverMode === 'qty' ? num(r.total_qty, 0) : zarShort(r.total_sales)}
                             </span>
-                            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10, color: 'rgba(245,245,244,0.4)', whiteSpace: 'nowrap', textAlign: 'right' }}>
-                              {ros.toFixed(2)}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(245,245,244,0.25)' }}>u/d</span>
-                            </span>
+                            {top20Activity === 'non_movers'
+                              ? <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10, color: 'rgba(245,245,244,0.25)', whiteSpace: 'nowrap', textAlign: 'right' }}>on shelf</span>
+                              : <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10, color: 'rgba(245,245,244,0.4)', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                                  {ros.toFixed(2)}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(245,245,244,0.25)' }}>u/d</span>
+                                </span>
+                            }
                           </div>
                         )
                       })}
