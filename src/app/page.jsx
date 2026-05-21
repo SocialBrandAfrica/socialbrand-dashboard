@@ -1481,12 +1481,13 @@ export default function Home() {
                         : `Sales · ${selectedDates[0] ?? ''}`,
                     value: zarShort(kpiSales), sub: `${num(kpiQty, 0)} units`, accent: true },
                   { label: 'Gross Profit',  value: pct(kpiGP),          sub: `Cost ${zarShort(kpiCost)}`, warn: kpiGP < 15 },
-                  { label: 'Reorder Items', value: kpiReorder != null ? num(kpiReorder) : '—', sub: kpiReorder != null ? 'SOH ≤ 0 with period sales' : 'Open report drawer', onSub: kpiReorder == null ? () => setDrawerOpen(true) : undefined, danger: kpiReorder != null && kpiReorder > 100 },
+                  { label: 'Reorder Items', value: kpiReorder != null ? num(kpiReorder) : '—', sub: kpiReorder != null ? 'SOH ≤ 0 with period sales' : 'Open report drawer', onClick: () => { setCurrentReport('reorder'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() }, danger: kpiReorder != null && kpiReorder > 100 },
                   { label: 'Slow Movers',   value: num(kpiSlowMove), sub: 'In stock, no period sales', warn: true },
                   { label: 'Negative SOH',  value: num(kpiNegSOH),   sub: 'Stock errors / shrinkage', danger: kpiNegSOH > 0 },
                 ].map(k => (
-                  <div key={k.label} className="sb-glass" style={{
+                  <div key={k.label} className="sb-glass" onClick={k.onClick} style={{
                     padding: '18px 20px',
+                    cursor: k.onClick ? 'pointer' : 'default',
                     background: k.accent ? 'linear-gradient(135deg,rgba(74,222,128,0.1),rgba(74,222,128,0.03))' :
                       k.danger && k.value !== '0' ? 'linear-gradient(135deg,rgba(239,68,68,0.09),rgba(239,68,68,0.02))' :
                       k.warn ? 'linear-gradient(135deg,rgba(245,158,11,0.08),rgba(245,158,11,0.02))' : undefined,
@@ -1495,7 +1496,7 @@ export default function Home() {
                   }}>
                     <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 10 }}>{k.label}</p>
                     <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 28, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1, color: k.accent ? '#4ade80' : k.danger && k.value !== '0' ? '#fca5a5' : k.warn ? '#f59e0b' : '#f5f5f4' }}>{k.value}</p>
-                    <p onClick={k.onSub} style={{ fontSize: 11, color: k.onSub ? 'rgba(34,211,238,0.7)' : 'rgba(245,245,244,0.35)', marginTop: 8, fontFamily: "'Geist Mono', monospace", cursor: k.onSub ? 'pointer' : 'default', textDecoration: k.onSub ? 'underline' : 'none' }}>{k.sub}</p>
+                    <p style={{ fontSize: 11, color: k.onClick ? 'rgba(34,211,238,0.7)' : 'rgba(245,245,244,0.35)', marginTop: 8, fontFamily: "'Geist Mono', monospace", textDecoration: k.onClick ? 'underline' : 'none' }}>{k.sub}</p>
                   </div>
                 ))
             }
