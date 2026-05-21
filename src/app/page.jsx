@@ -1509,11 +1509,11 @@ export default function Home() {
 
               {/* Top 20 Movers / Non-Movers */}
               <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
-                <div style={{ marginBottom: 14 }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>
-                      {top20Activity === 'movers' ? 'Top 20 Movers' : 'Top 20 Non-Movers'}
-                    </span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                  <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>
+                    {top20Activity === 'movers' ? 'Top 20 Movers' : 'Top 20 Non-Movers'}
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <div style={{ display: 'flex', gap: 3, background: 'rgba(255,255,255,0.04)', padding: 3, borderRadius: 8 }}>
                       {['qty', 'value'].map(m => (
                         <button key={m} onClick={() => setMoverMode(m)} style={{ padding: '4px 12px', fontSize: 11, background: moverMode === m ? 'rgba(255,255,255,0.1)' : 'transparent', color: moverMode === m ? '#f5f5f4' : 'rgba(245,245,244,0.4)', border: 'none', borderRadius: 6, cursor: 'pointer', fontFamily: 'Geist, sans-serif', fontWeight: 500, transition: 'all 0.15s' }}>
@@ -1521,8 +1521,7 @@ export default function Home() {
                         </button>
                       ))}
                     </div>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
                     <div style={{ display: 'flex', gap: 3, background: 'rgba(255,255,255,0.04)', padding: 3, borderRadius: 8 }}>
                       {[['movers', 'Movers'], ['non_movers', 'Non-Movers']].map(([act, label]) => (
                         <button key={act} onClick={() => setTop20Activity(act)} style={{ padding: '4px 12px', fontSize: 11, background: top20Activity === act ? 'rgba(255,255,255,0.1)' : 'transparent', color: top20Activity === act ? '#f5f5f4' : 'rgba(245,245,244,0.4)', border: 'none', borderRadius: 6, cursor: 'pointer', fontFamily: 'Geist, sans-serif', fontWeight: 500, transition: 'all 0.15s' }}>

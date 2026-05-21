@@ -121,6 +121,12 @@ GRANT EXECUTE ON FUNCTION public.rpc_kpi_dept_counts(text[], text[], text)
 
 
 -- ---------------------------------------------------------------------------
+-- STEP 4 -- Reload PostgREST schema cache
+-- ---------------------------------------------------------------------------
+SELECT pg_notify('pgrst', 'reload schema');
+
+
+-- ---------------------------------------------------------------------------
 -- VERIFY -- should return exactly 2 rows
 -- ---------------------------------------------------------------------------
 SELECT
@@ -132,4 +138,5 @@ WHERE  n.nspname = 'public'
   AND  p.proname IN ('rpc_dept_summary', 'rpc_kpi_dept_counts')
 ORDER  BY p.proname;
 -- Expected: 2 rows, 1 per function, no overloads.
--- After running, a page load should show Sales by Department in under 3 seconds.
+-- After running, hard-refresh the dashboard.
+-- Sales by Department should load in under 3 seconds (index-scan instead of seqscan).

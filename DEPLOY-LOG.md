@@ -49,6 +49,36 @@ PM's report was based on a pre-fix version.
 To confirm: click anywhere on the Reorder Items KPI card — the Reports & Downloads
 drawer must slide open with Reorder List pre-selected.
 
+### Issue 4 — Top 20 button layout: two rows instead of one coherent group (Frontend)
+**Status: Deployed in this batch**
+
+Root cause: By Qty/By Value toggle and Movers/Non-Movers toggle were rendered in two
+separate `<div>` rows with `justifyContent: 'flex-end'` on the second. Looked broken —
+the two controls were visually disconnected.
+
+Fix: Collapsed to a single flex row in the panel header. Title on the left; on the right,
+both pill-groups sit inline with a 1px vertical divider (height 14, rgba(255,255,255,0.12))
+between them. Layout: `[By Qty][By Value] | [Movers][Non-Movers]`.
+
+To confirm: Top 20 Movers panel header shows title on left and both toggle groups on the
+right as one inline control bar separated by a thin vertical rule.
+
+### Issue 5 — Non-Movers definition wrong (SQL)
+**Status: SQL file written — must be run in Supabase SQL Editor**
+**File:** `sql/fix_non_movers_definition.sql`
+
+Root cause: The non_movers branch of `rpc_top20` filtered on `soh > 0 AND period_qty = 0`
+only. This included every zero-selling in-stock product including true dead stock and
+catalogue stubs that have never sold. Not actionable for a store manager.
+
+Fix: Added `NULLIF(s.last_sales_date_iso, '')::date >= (CURRENT_DATE - INTERVAL '365 days')`
+to the non_movers WHERE clause. NULLIF handles empty strings (avoids cast error). Only
+products that have sold at least once in the last 365 days are included — recently active
+items that have since stalled. These are actionable.
+
+Movers branch is unchanged. Function signature unchanged (still 7 params).
+After running, Non-Movers mode should show a materially shorter, more focused list.
+
 ---
 
 ## 2026-05-21 — Session 2, Batch 2
