@@ -64,7 +64,7 @@ To confirm: Top 20 Movers panel header shows title on left and both toggle group
 right as one inline control bar separated by a thin vertical rule.
 
 ### Issue 5 — Non-Movers definition wrong (SQL)
-**Status: SQL file written — must be run in Supabase SQL Editor**
+**Status: Deployed and verified in Supabase**
 **File:** `sql/fix_non_movers_definition.sql`
 
 Root cause: The non_movers branch of `rpc_top20` filtered on `soh > 0 AND period_qty = 0`
