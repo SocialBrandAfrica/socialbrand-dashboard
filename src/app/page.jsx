@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import * as XLSX from 'xlsx'
-import { ProductDetailPanel } from '@/components/ProductDetailPanel'
+import { ProductDetailPanelConnected } from '@/components/ProductDetailPanel'
 import { FocusAreaPanel }    from '@/components/FocusAreaPanel'
 import { CalendarPopover } from '@/components/CalendarPopover'
 import PushStatusStrip from '@/components/PushStatusStrip'
@@ -738,10 +738,7 @@ export default function Home() {
   const [storeRosData,  setStoreRosData]  = useState([])
 
   // ── product detail panel ────────────────────────────────────────────────────
-  const [selectedProduct,   setSelectedProduct]   = useState(null)
-  const [productDetailRows, setProductDetailRows] = useState([])
-  const [productRosData,    setProductRosData]    = useState([])
-  const [productLoading,    setProductLoading]    = useState(false)
+  const [selectedProduct, setSelectedProduct] = useState(null)
 
   // ── focus area basket ────────────────────────────────────────────────────
   // Each entry: { ean, description, store_code, dept_name, sub_dept_name, ... }
@@ -979,41 +976,14 @@ export default function Home() {
   }, [storeCodes, selectedDates])
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // PRODUCT DETAIL
+  // PRODUCT DETAIL — sync; data fetch moved into ProductDetailPanelConnected
   // ─────────────────────────────────────────────────────────────────────────────
-  const handleProductClick = useCallback(async (row) => {
+  const handleProductClick = useCallback((row) => {
     const ean = String(row['EAN'] ?? row.ean ?? '')
-    if (!ean || !storeCodes.length) return
-
+    if (!ean) return
     setSelectedProduct(row)
-    setProductDetailRows([])
-    setProductRosData([])
-    setProductLoading(true)
-
     setTimeout(() => panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
-
-    // rpc_product_detail is SECURITY DEFINER — direct daily_snapshots reads are
-    // blocked by RLS for the anon key.  Uses availableDates (full history) so
-    // the 5 charts span the complete date range, not just the KPI filter window.
-    const [detailRes, rosRes] = await Promise.all([
-      supabase.rpc('rpc_product_detail', {
-        p_ean:         ean,
-        p_store_codes: storeCodes,
-        p_dates:       availableDates,
-      }),
-      supabase
-        .from('v_rate_of_sale')
-        .select('store_code,store_name,soh,daily_ros,days_cover')
-        .eq('ean', ean)
-        .in('store_code', storeCodes)
-        .then(r => r.data ?? [])
-        .catch(() => []),
-    ])
-
-    setProductDetailRows(detailRes.data ?? [])
-    setProductRosData(rosRes)
-    setProductLoading(false)
-  }, [storeCodes, availableDates])
+  }, [])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DERIVED — report rows
@@ -1133,10 +1103,16 @@ export default function Home() {
     if (!reportLoaded && !reportLoading) loadReport()
   }
 
-  // ── search mode — true when the user has made a product selection ────────────
-  // Triggers the layout switch: Top 20 + Sales by Dept hide; Product Detail or
-  // Focus Area fills that space instead.
-  const isSearchMode = selectedProduct !== null || (focusBasket.length > 0 && !isDefaultBasket)
+  // ── active products — drives the layout switch ────────────────────────────
+  // When focusBasket has manual items, all show as stacked ProductDetailPanels.
+  // When only a single product is clicked, just that one shows.
+  // isSelectionActive hides Top 20 + Sales by Dept and fills that space instead.
+  const activeProducts = (focusBasket.length > 0 && !isDefaultBasket)
+    ? focusBasket
+    : selectedProduct
+      ? [selectedProduct]
+      : []
+  const isSelectionActive = activeProducts.length > 0
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DISPLAY VALUES
@@ -1409,8 +1385,8 @@ export default function Home() {
             }
           </div>
 
-          {/* ── TOP 20 + DEPT CHART — hidden while search mode is active ────────── */}
-          {!isSearchMode && (
+          {/* ── TOP 20 + DEPT CHART — hidden while a product selection is active ─── */}
+          {!isSelectionActive && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
 
               {/* Top 20 Movers */}
@@ -1486,32 +1462,32 @@ export default function Home() {
             </div>
           )}
 
-          {/* ── PRODUCT DETAIL PANEL ──────────────────────────────────────────── */}
-          {/* In search mode this fills the space where Top 20 + Dept were.       */}
-          {/* Closing it (onClose) clears selectedProduct → isSearchMode recalcs. */}
+          {/* ── PRODUCT DETAIL PANELS ─────────────────────────────────────────── */}
+          {/* One card per active product, stacked vertically.                     */}
+          {/* isSelectionActive hides Top 20 + Sales by Dept above.                */}
           <div ref={panelRef}>
-            {selectedProduct && !productLoading && (
-              <ProductDetailPanel
-                product={selectedProduct}
-                detailRows={productDetailRows}
-                rosData={productRosData}
-                storeCodes={storeCodes}
-                storeMap={STORE_MAP}
-                onClose={() => setSelectedProduct(null)}
-              />
-            )}
-            {productLoading && (
-              <div className="sb-glass" style={{ padding: '40px 24px', textAlign: 'center' }}>
-                <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontStyle: 'italic', color: 'rgba(245,245,244,0.4)' }}>Loading product detail…</p>
-              </div>
-            )}
+            {activeProducts.map(p => {
+              const pEan = String(p['EAN'] ?? p.ean ?? '')
+              const pKey = `${pEan}|${p.description ?? p['Description'] ?? ''}`
+              const handleClose = (focusBasket.length > 0 && !isDefaultBasket)
+                ? () => removeFromFocus(p)
+                : () => setSelectedProduct(null)
+              return (
+                <ProductDetailPanelConnected
+                  key={pKey}
+                  product={p}
+                  storeCodes={storeCodes}
+                  storeMap={STORE_MAP}
+                  availableDates={availableDates}
+                  onClose={handleClose}
+                />
+              )
+            })}
           </div>
 
           {/* ── FOCUS AREA PANEL ──────────────────────────────────────────────── */}
-          {/* • isSearchMode + no product detail open → fills the Top 20 space    */}
-          {/* • not search mode → sits below Top 20 with default top-5 basket     */}
-          {/* • product detail open → hidden (product detail takes precedence)    */}
-          {selectedDates.length > 0 && !selectedProduct && !productLoading && (
+          {/* Always visible at the bottom whenever dates are loaded.              */}
+          {selectedDates.length > 0 && (
             <FocusAreaPanel
               basket={focusBasket}
               onRemove={removeFromFocus}

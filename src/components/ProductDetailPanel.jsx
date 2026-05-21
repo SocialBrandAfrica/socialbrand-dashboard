@@ -1,5 +1,6 @@
 'use client'
-import { useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { supabase } from '@/lib/supabase'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ComposedChart, Bar,
@@ -251,5 +252,67 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
         </div>
       </div>
     </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONNECTED WRAPPER — self-fetching; one per product in the activeProducts map
+// ─────────────────────────────────────────────────────────────────────────────
+export function ProductDetailPanelConnected({ product, storeCodes, storeMap, availableDates, onClose }) {
+  const [detailRows, setDetailRows] = useState([])
+  const [rosData,    setRosData]    = useState([])
+  const [loading,    setLoading]    = useState(true)
+
+  const ean = String(product['EAN'] ?? product.ean ?? '')
+
+  useEffect(() => {
+    if (!ean || !storeCodes.length || !availableDates.length) return
+    let cancelled = false
+    setLoading(true)
+    setDetailRows([])
+    setRosData([])
+
+    Promise.all([
+      supabase.rpc('rpc_product_detail', {
+        p_ean:         ean,
+        p_store_codes: storeCodes,
+        p_dates:       availableDates,
+      }),
+      supabase
+        .from('v_rate_of_sale')
+        .select('store_code,store_name,soh,daily_ros,days_cover')
+        .eq('ean', ean)
+        .in('store_code', storeCodes),
+    ]).then(([detailRes, rosRes]) => {
+      if (cancelled) return
+      setDetailRows(detailRes.data ?? [])
+      setRosData(rosRes.data ?? [])
+      setLoading(false)
+    })
+
+    return () => { cancelled = true }
+  }, [ean, storeCodes, availableDates])
+
+  if (loading) {
+    return (
+      <div style={{ marginTop: 14 }}>
+        <div className="sb-glass" style={{ padding: '40px 24px', textAlign: 'center' }}>
+          <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontStyle: 'italic', color: 'rgba(245,245,244,0.4)' }}>
+            Loading product detail…
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <ProductDetailPanel
+      product={product}
+      detailRows={detailRows}
+      rosData={rosData}
+      storeCodes={storeCodes}
+      storeMap={storeMap}
+      onClose={onClose}
+    />
   )
 }
