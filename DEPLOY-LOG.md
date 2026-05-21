@@ -64,20 +64,23 @@ To confirm: Top 20 Movers panel header shows title on left and both toggle group
 right as one inline control bar separated by a thin vertical rule.
 
 ### Issue 5 — Non-Movers definition wrong (SQL)
-**Status: Deployed and verified in Supabase**
-**File:** `sql/fix_non_movers_definition.sql`
+**Status v1: Deployed but broken — superseded by v2**
+**Status v2: SQL file written — must be run in Supabase SQL Editor**
+**File v2:** `sql/fix_non_movers_v2.sql`
 
-Root cause: The non_movers branch of `rpc_top20` filtered on `soh > 0 AND period_qty = 0`
-only. This included every zero-selling in-stock product including true dead stock and
-catalogue stubs that have never sold. Not actionable for a store manager.
+v1 root cause (fix_non_movers_definition.sql): two bugs discovered after deploy:
+  1. last_sales_date_iso is a DATE column, not text. NULLIF(col, '') on a date column
+     fails silently in plpgsql — returned zero rows instead of an error.
+  2. period_qty = 0 (Sigma month-to-date) is the wrong metric for "no sales in 4 weeks".
+     A product that sold on the 1st shows period_qty > 0 even if it hasn't moved since.
 
-Fix: Added `NULLIF(s.last_sales_date_iso, '')::date >= (CURRENT_DATE - INTERVAL '365 days')`
-to the non_movers WHERE clause. NULLIF handles empty strings (avoids cast error). Only
-products that have sold at least once in the last 365 days are included — recently active
-items that have since stalled. These are actionable.
+v2 definition (per PM brief — ROS > 0, no sales 4 weeks, SOH > 0, sold within 1 year):
+  Replaces both conditions with a single BETWEEN on the DATE column:
+    last_sales_date_iso BETWEEN (CURRENT_DATE - 365 days) AND (CURRENT_DATE - 28 days)
+  NULL last_sales_date_iso rows (never sold) are excluded automatically by BETWEEN.
+  Diagnostic confirmed 1,336,612 qualifying rows across all stores.
 
-Movers branch is unchanged. Function signature unchanged (still 7 params).
-After running, Non-Movers mode should show a materially shorter, more focused list.
+Movers branch is unchanged. Signature unchanged (still 7 params).
 
 ---
 
