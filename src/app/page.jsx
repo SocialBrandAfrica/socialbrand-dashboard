@@ -576,7 +576,8 @@ function ProductSearchBar({ storeCodes, selectedDates, onSelect, onAddToFocus, f
       setOpen(true)
       setLoading(false)
     }, 300)
-  }, [query, storeCodes, selectedDates, searchIndex])
+    return () => { if (timerRef.current) clearTimeout(timerRef.current) }
+  }, [query, storeCodes, selectedDates, searchIndex, deptFilter, subDeptFilter, deptNormMap])
 
   function handleSelect(row) {
     onSelect(row)
