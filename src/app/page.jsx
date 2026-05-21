@@ -881,19 +881,15 @@ export default function Home() {
       setStoreRosData([])
       setSelectedProduct(null)
 
-      const [kpiRes, deptRes, subDeptRes, deptSohRes] = await Promise.all([
+      // Only fetch mv_kpi_by_date (store+date totals) and rpc_subdepts here.
+      // rpc_dept_summary and rpc_kpi_dept_counts are handled by the separate
+      // sub-dept effect below so they always run with the correct p_subdept value
+      // and don't race against this effect when stores/dates change.
+      const [kpiRes, subDeptRes] = await Promise.all([
         supabase.from('mv_kpi_by_date')
           .select('store_code,store_name,snapshot_date,total_sales,total_cost,total_qty,neg_soh_count,slow_mover_count')
           .in('store_code', storeCodes)
           .in('snapshot_date', selectedDates),
-        // rpc_dept_summary: Postgres aggregates across ALL stores+dates before returning.
-        // Returns one row per dept — no row-cap risk, accurate multi-date sums.
-        // No is_placeholder filter — matches v_kpi_by_date which also includes all rows,
-        // and ensures service depts (HMR, Deli, Butchery) appear in dept chips.
-        supabase.rpc('rpc_dept_summary', {
-          p_store_codes: storeCodes,
-          p_dates:       selectedDates,
-        }),
         // All unique sub-dept names for the current store+date — powers the
         // sub-dept dropdown when no dept filter is selected.
         // rpc_subdepts is SECURITY DEFINER — direct daily_snapshots reads are blocked by RLS.
@@ -902,21 +898,11 @@ export default function Home() {
           p_dates:       selectedDates,
           p_dept_names:  null,
         }),
-        // rpc_kpi_dept_counts: per-dept neg_soh_count + slow_mover_count
-        // Used by Bug-3 fix so the SOH KPI cards respond to the dept filter.
-        supabase.rpc('rpc_kpi_dept_counts', {
-          p_store_codes: storeCodes,
-          p_dates:       selectedDates,
-        }),
       ])
 
       if (cancelled) return
-      if (kpiRes.error)     console.error('[v_kpi_by_date]',       kpiRes.error.message)
-      if (deptRes.error)    console.error('[rpc_dept_summary]',    deptRes.error.message)
-      if (deptSohRes.error) console.error('[rpc_kpi_dept_counts]', deptSohRes.error.message)
-      setKpiData(kpiRes.data       ?? [])
-      setDeptSummary(deptRes.data  ?? [])
-      setDeptSohCounts(deptSohRes.data ?? [])
+      if (kpiRes.error) console.error('[v_kpi_by_date]', kpiRes.error.message)
+      setKpiData(kpiRes.data ?? [])
       const allSubs = [...new Set((subDeptRes.data ?? []).map(r => r.sub_dept_name))].filter(Boolean).sort()
       setAllSubDepts(allSubs)
       setViewsLoading(false)
@@ -925,6 +911,34 @@ export default function Home() {
     loadViews()
     return () => { cancelled = true }
   }, [storeCodes, selectedDates])
+
+  // ── re-fetch KPI aggregates when sub-dept filter changes (Bug 4) ──────────────
+  // Lighter than loadViews — only updates deptSummary and deptSohCounts.
+  // Does NOT clear selectedProduct or reportRows so UX state is preserved.
+  useEffect(() => {
+    if (!storeCodes.length || !selectedDates.length) return
+    let cancelled = false
+
+    const subdeptParam = subDeptFilter !== 'all' ? subDeptFilter : null
+    Promise.all([
+      supabase.rpc('rpc_dept_summary', {
+        p_store_codes: storeCodes,
+        p_dates:       selectedDates,
+        p_subdept:     subdeptParam,
+      }),
+      supabase.rpc('rpc_kpi_dept_counts', {
+        p_store_codes: storeCodes,
+        p_dates:       selectedDates,
+        p_subdept:     subdeptParam,
+      }),
+    ]).then(([deptRes, deptSohRes]) => {
+      if (cancelled) return
+      if (!deptRes.error)    setDeptSummary(deptRes.data    ?? [])
+      if (!deptSohRes.error) setDeptSohCounts(deptSohRes.data ?? [])
+    })
+
+    return () => { cancelled = true }
+  }, [storeCodes, selectedDates, subDeptFilter])
 
   // ── fetch Top 20 via RPC — re-runs when dept or sub-dept filter changes ──────
   // rpc_top20 accepts p_dept / p_subdept and returns at most 40 pre-aggregated rows
