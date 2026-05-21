@@ -41,6 +41,9 @@ $$;
 -- -----------------------------------------------------------------------------
 -- 2.  rpc_top20 — now accepts optional p_eans filter
 --     When p_eans is non-null, only the specified EANs appear in the top-20.
+--     NOTE: written without a CTE so the EAN filter runs inside each branch
+--     before aggregation — avoids a full-table materialisation that caused
+--     statement timeouts when p_eans was supplied.
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION rpc_top20(
     p_store_codes  text[],
@@ -60,7 +63,7 @@ RETURNS TABLE(
     total_qty     numeric
 )
 LANGUAGE sql STABLE SECURITY DEFINER AS $$
-    WITH agg AS (
+    (
         SELECT
             ean,
             MAX(description)                    AS description,
@@ -79,8 +82,30 @@ LANGUAGE sql STABLE SECURITY DEFINER AS $$
           AND (p_subdept IS NULL OR sub_dept_name = p_subdept)
           AND (p_eans    IS NULL OR ean            = ANY(p_eans))
         GROUP BY ean
+        ORDER BY total_sales DESC
+        LIMIT 20
     )
-    (SELECT * FROM agg ORDER BY total_sales DESC LIMIT 20)
     UNION
-    (SELECT * FROM agg ORDER BY total_qty   DESC LIMIT 20);
+    (
+        SELECT
+            ean,
+            MAX(description)                    AS description,
+            MAX(dept_name)                      AS dept_name,
+            MAX(sub_dept_name)                  AS sub_dept_name,
+            MAX(size)                           AS size,
+            MAX(unit)                           AS unit,
+            ROUND(SUM(today_sales)::numeric, 2) AS total_sales,
+            SUM(today_qty)::numeric             AS total_qty
+        FROM  daily_snapshots
+        WHERE store_code         = ANY(p_store_codes)
+          AND snapshot_date::text = ANY(p_dates)
+          AND today_sales         > 0
+          AND is_placeholder      = FALSE
+          AND (p_dept    IS NULL OR dept_name     = p_dept)
+          AND (p_subdept IS NULL OR sub_dept_name = p_subdept)
+          AND (p_eans    IS NULL OR ean            = ANY(p_eans))
+        GROUP BY ean
+        ORDER BY total_qty DESC
+        LIMIT 20
+    );
 $$;

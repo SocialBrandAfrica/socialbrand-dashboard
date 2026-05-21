@@ -933,8 +933,15 @@ export default function Home() {
       }),
     ]).then(([deptRes, deptSohRes]) => {
       if (cancelled) return
-      if (!deptRes.error)    setDeptSummary(deptRes.data    ?? [])
-      if (!deptSohRes.error) setDeptSohCounts(deptSohRes.data ?? [])
+      if (deptRes.error)    console.error('[rpc_dept_summary]',    deptRes.error.message)
+      if (deptSohRes.error) console.error('[rpc_kpi_dept_counts]', deptSohRes.error.message)
+      setDeptSummary(deptRes.data       ?? [])
+      setDeptSohCounts(deptSohRes.data  ?? [])
+    }).catch(err => {
+      if (cancelled) return
+      console.error('[dept effect]', err)
+      setDeptSummary([])
+      setDeptSohCounts([])
     })
 
     return () => { cancelled = true }
