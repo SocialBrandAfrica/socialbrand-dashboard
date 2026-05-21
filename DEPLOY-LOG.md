@@ -9,7 +9,7 @@ Reverse-chronological. Each entry = one production deploy.
 **Commits:** pending push after this entry
 
 ### Issue 1 — rpc_dept_summary + rpc_kpi_dept_counts 18-second regression (SQL)
-**Status: SQL file written — must be run in Supabase SQL Editor**
+**Status: Deployed and verified in Supabase**
 **File:** `sql/fix_index_rule_dept_rpcs.sql`
 
 Root cause: `snapshot_date::text = ANY(p_dates)` in both functions. Casting the column
