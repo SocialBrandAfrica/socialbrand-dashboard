@@ -65,7 +65,7 @@ right as one inline control bar separated by a thin vertical rule.
 
 ### Issue 5 — Non-Movers definition wrong (SQL)
 **Status v1: Deployed but broken — superseded by v2**
-**Status v2: SQL file written — must be run in Supabase SQL Editor**
+**Status v2: Deployed and verified in Supabase**
 **File v2:** `sql/fix_non_movers_v2.sql`
 
 v1 root cause (fix_non_movers_definition.sql): two bugs discovered after deploy:
