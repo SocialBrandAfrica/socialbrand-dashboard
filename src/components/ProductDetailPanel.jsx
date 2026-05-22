@@ -33,6 +33,8 @@ function ChartBox({ title, sub, children, wide }) {
       borderRadius: 12,
       padding: '14px 16px',
       gridColumn: wide ? '1 / -1' : undefined,
+      minWidth: 0,
+      overflow: 'hidden',
     }}>
       <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 14, fontWeight: 600, marginBottom: 2 }}>{title}</p>
       <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', marginBottom: 12, fontFamily: "'Geist Mono', monospace" }}>{sub}</p>
@@ -173,7 +175,7 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
                         return (
                           <div key={date}
                             title={`${date}  SOH: ${row?.soh ?? '—'}`}
-                            style={{ flex: 1, height: 22, borderRadius: 3, background: availColour(row?.soh ?? null, ros), minWidth: 6 }}
+                            style={{ flexShrink: 0, width: 8, height: 22, borderRadius: 3, background: availColour(row?.soh ?? null, ros) }}
                           />
                         )
                       })}
@@ -276,7 +278,7 @@ export function ProductDetailPanelConnected({ product, storeCodes, storeMap, ava
       supabase.rpc('rpc_product_detail', {
         p_ean:         ean,
         p_store_codes: storeCodes,
-        p_dates:       availableDates,
+        p_dates:       availableDates.slice(-90),
       }),
       supabase
         .from('v_rate_of_sale')
