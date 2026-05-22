@@ -4,9 +4,10 @@
     Nightly push from Sigma TAC zip (PRSSALE.DAT) to Supabase daily_snapshots.
 .DESCRIPTION
     Reads PRSSALE.DAT from S:\sigma\comms\Catman\TAC*.zip.
-    Pushes daily_snapshots (all 27 columns, full catalog including zero-sale rows).
+    Pushes daily_snapshots (all 28 columns incl client_id, full catalog including zero-sale rows).
     Also pushes stock_snapshots (from dewas_PLU_s) and ref tables.
     daily_aggregates is retired - this script no longer writes to it.
+    Requires C:\socialbrand\sb-key.txt containing the Supabase service_role key (first line).
 .PARAMETER Mode
     nightly  - daily_snapshots + stock_snapshots + ref tables (default)
     intraday - reserved for Phase 2 (transactions)
@@ -34,7 +35,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.0'
+$ScriptVersion = 'v3.1'
 $ClientName    = 'SocialBrand'
 
 # Store identity - auto-detected from hostname. Same script deploys to all servers.
@@ -63,9 +64,14 @@ $SigmaServer = 'localhost\SIGMA'
 $NposDb      = 'npos'
 $DwDb        = 'DW220sDB'
 
-# Supabase - service_role key only. Never logged, never in queries.
+# Supabase - service_role key loaded from local file. Never stored in this script.
+# Create C:\socialbrand\sb-key.txt on the server with the key on the first line.
 $SupabaseUrl = 'https://crklvhfwyxlisfcvqenc.supabase.co'
-$SupabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNya2x2aGZ3eXhsaXNmY3ZxZW5jIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODQxNTAxNSwiZXhwIjoyMDkzOTkxMDE1fQ.krsIfIwVEkCdl3BJnUJYb04A1f2mKJu1n8wsTi04dG0'
+$KeyFile = 'C:\socialbrand\sb-key.txt'
+if (-not (Test-Path $KeyFile)) {
+    throw "Supabase key file not found: $KeyFile. Create the file with the service_role key on the first line."
+}
+$SupabaseKey = (Get-Content $KeyFile -Raw).Trim()
 
 # Push tuning
 $BatchSize     = 500
@@ -548,6 +554,7 @@ function Invoke-ParsePrssaleForSnapshots {
                     }
 
         $record = [ordered]@{
+            client_id           = $ClientId
             store_code          = $StoreCode
             store_name          = $StoreName
             file_date           = $fileDate
@@ -690,7 +697,7 @@ function Push-DailySnapshotsNightly {
             $batch.Add($rec)
             if ($batch.Count -ge $BatchSize) {
                 $pushed += Send-Batch -TableName 'daily_snapshots' `
-                                      -ConflictCols 'store_code,snapshot_date,ean' `
+                                      -ConflictCols 'client_id,store_code,snapshot_date,ean' `
                                       -Rows $batch.ToArray() -LogId $logId
                 $batch.Clear()
                 Write-Host "  Pushed $pushed rows so far..."
@@ -698,7 +705,7 @@ function Push-DailySnapshotsNightly {
         }
         if ($batch.Count -gt 0) {
             $pushed += Send-Batch -TableName 'daily_snapshots' `
-                                  -ConflictCols 'store_code,snapshot_date,ean' `
+                                  -ConflictCols 'client_id,store_code,snapshot_date,ean' `
                                   -Rows $batch.ToArray() -LogId $logId
         }
 
@@ -778,14 +785,14 @@ function Push-DailySnapshotsBackfill {
                 $batch.Add($rec)
                 if ($batch.Count -ge $BatchSize) {
                     $pushed += Send-Batch -TableName 'daily_snapshots' `
-                                          -ConflictCols 'store_code,snapshot_date,ean' `
+                                          -ConflictCols 'client_id,store_code,snapshot_date,ean' `
                                           -Rows $batch.ToArray() -LogId $logId
                     $batch.Clear()
                 }
             }
             if ($batch.Count -gt 0) {
                 $pushed += Send-Batch -TableName 'daily_snapshots' `
-                                      -ConflictCols 'store_code,snapshot_date,ean' `
+                                      -ConflictCols 'client_id,store_code,snapshot_date,ean' `
                                       -Rows $batch.ToArray() -LogId $logId
             }
 
