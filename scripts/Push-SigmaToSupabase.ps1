@@ -35,7 +35,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.1'
+$ScriptVersion = 'v3.2'
 $ClientName    = 'SocialBrand'
 
 # Store identity - auto-detected from hostname. Same script deploys to all servers.
@@ -95,7 +95,7 @@ $PlaceholderDate = '01/01/1990'
 function Get-ClientId {
     $url  = "$SupabaseUrl/rest/v1/clients?select=*&limit=1"
     $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
-    $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs
+    $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
     if (-not $rows -or $rows.Count -eq 0) {
         throw "Client not found in Supabase clients table."
     }
@@ -159,7 +159,7 @@ function Get-Watermark {
            "&limit=1"
     $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
     try {
-        $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs
+        $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
         if ($rows -and $rows.Count -gt 0 -and $rows[0].completed_at) {
             return [datetime]$rows[0].completed_at
         }
@@ -178,7 +178,7 @@ function Clear-StuckRuns {
               "&started_at=lt.$cutoff"
     $hdrs   = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
     try {
-        $stuck = Invoke-RestMethod -Uri ($url + '&select=push_id,table_name') -Method GET -Headers $hdrs
+        $stuck = Invoke-RestMethod -Uri ($url + '&select=push_id,table_name') -Method GET -Headers $hdrs -TimeoutSec 30
         if ($stuck -and $stuck.Count -gt 0) {
             Write-Warning "Found $($stuck.Count) stuck RUNNING entry/entries - marking FAILED before starting."
             $body = [ordered]@{
@@ -186,7 +186,7 @@ function Clear-StuckRuns {
                 completed_at  = (Get-Date -Format 'o')
                 error_message = 'Marked FAILED by new run startup - previous run did not complete cleanly.'
             } | ConvertTo-Json
-            $null = Invoke-RestMethod -Uri $url -Method PATCH -Headers (Get-Headers) -Body $body
+            $null = Invoke-RestMethod -Uri $url -Method PATCH -Headers (Get-Headers) -Body $body -TimeoutSec 30
         }
     }
     catch {
@@ -205,7 +205,7 @@ function Start-PushLog {
         started_at     = (Get-Date -Format 'o')
         script_version = $ScriptVersion
     } | ConvertTo-Json
-    $result = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log" -Method POST -Headers (Get-ReturnHeaders) -Body $body
+    $result = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log" -Method POST -Headers (Get-ReturnHeaders) -Body $body -TimeoutSec 30
     return $result[0].push_id
 }
 
@@ -219,7 +219,7 @@ function Complete-PushLog {
     }
     if ($Msg) { $body['error_message'] = $Msg }
     $json = $body | ConvertTo-Json
-    $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log?push_id=eq.$LogId" -Method PATCH -Headers (Get-Headers) -Body $json
+    $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log?push_id=eq.$LogId" -Method PATCH -Headers (Get-Headers) -Body $json -TimeoutSec 30
 }
 
 function Write-PushError {
@@ -232,7 +232,7 @@ function Write-PushError {
         row_data      = $Payload.Substring(0, [Math]::Min(2000, $Payload.Length))
     } | ConvertTo-Json
     try {
-        $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_errors" -Method POST -Headers (Get-Headers) -Body $body
+        $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_errors" -Method POST -Headers (Get-Headers) -Body $body -TimeoutSec 30
     }
     catch {
         Write-Warning "push_errors write failed: $_"
@@ -247,12 +247,15 @@ function Send-Batch {
         [object]$LogId
     )
     $url  = "$SupabaseUrl/rest/v1/$TableName`?on_conflict=$ConflictCols"
-    $json = ConvertTo-Json -InputObject @($Rows) -Depth 5 -Compress
 
+    # ConvertTo-Json is inside the try so a bad character in any field
+    # (null byte, lone surrogate, etc.) is caught here rather than propagating
+    # up to the outer push function and marking the entire date as FAILED.
     $attempt = 0
     while ($attempt -lt $RetryMax) {
         try {
-            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json
+            $json = ConvertTo-Json -InputObject @($Rows) -Depth 5 -Compress
+            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json -TimeoutSec 60
             return $Rows.Count
         }
         catch {
@@ -275,13 +278,13 @@ function Send-Batch {
     Write-Warning "Falling back to row-by-row for $($Rows.Count) rows in $TableName."
     $pushed = 0
     foreach ($row in $Rows) {
-        $rowJson = ConvertTo-Json -InputObject @($row) -Depth 5 -Compress
         try {
-            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $rowJson
+            $rowJson = ConvertTo-Json -InputObject @($row) -Depth 5 -Compress
+            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $rowJson -TimeoutSec 60
             $pushed++
         }
         catch {
-            Write-PushError -LogId $LogId -TableName $TableName -Message $_.ToString() -Payload $rowJson
+            Write-PushError -LogId $LogId -TableName $TableName -Message $_.ToString() -Payload ($row | Out-String)
         }
     }
     return $pushed
@@ -474,7 +477,7 @@ function Test-DateExists {
             "&limit=1"
     $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
     try {
-        $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs
+        $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
         return ($rows -and $rows.Count -gt 0)
     }
     catch { return $false }
@@ -498,6 +501,10 @@ function Invoke-ParsePrssaleForSnapshots {
 
     foreach ($line in $lines) {
         if (-not $line.StartsWith('P,')) { continue }
+
+        # Outer try-catch ensures a single bad row (control characters, encoding
+        # artefacts, unexpected field layout) never aborts the whole parse.
+        try {
 
         $raw    = $line -split ','
         $fields = if ($raw.Count -eq 34) {
@@ -595,9 +602,14 @@ function Invoke-ParsePrssaleForSnapshots {
             is_placeholder      = $isPlaceholder
         }
         $records.Add($record)
+
+        } catch {
+            $skipped++
+            Write-Warning "Row processing error - skipped: $($line.Substring(0, [Math]::Min(120, $line.Length))) | $_"
+        }
     }
 
-    if ($skipped -gt 0) { Write-Warning "Skipped $skipped unparseable rows in $FilePath" }
+    if ($skipped -gt 0) { Write-Warning "Skipped $skipped unparseable/errored rows in $FilePath" }
     return ,$records
 }
 
@@ -632,7 +644,7 @@ WHERE ABTLBEZ IS NOT NULL
         if ($deptBatch.Count -gt 0) {
             $url  = "$SupabaseUrl/rest/v1/departments?on_conflict=client_id,store_code,dept_code"
             $json = ConvertTo-Json -InputObject @($deptBatch) -Depth 3 -Compress
-            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json
+            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json -TimeoutSec 60
             Write-Host "  departments upserted: $($deptBatch.Count)" -ForegroundColor Green
         }
 
@@ -660,7 +672,7 @@ WHERE WGRBEZ IS NOT NULL
         if ($subBatch.Count -gt 0) {
             $url  = "$SupabaseUrl/rest/v1/sub_departments?on_conflict=client_id,store_code,sub_dept_code"
             $json = ConvertTo-Json -InputObject @($subBatch) -Depth 3 -Compress
-            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json
+            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json -TimeoutSec 60
             Write-Host "  sub_departments upserted: $($subBatch.Count)" -ForegroundColor Green
         }
 
@@ -917,7 +929,7 @@ function Invoke-RefreshKpiView {
         'Content-Type'  = 'application/json'
     }
     try {
-        $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body '{}'
+        $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body '{}' -TimeoutSec 120
         Write-Host "  Dashboard view refreshed - Pulse is live." -ForegroundColor Green
     }
     catch {
@@ -942,7 +954,7 @@ function Invoke-UpsertSearchIndex {
     }
     $body = '{"p_store_code":"' + $StoreCode + '"}'
     try {
-        $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body $body
+        $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body $body -TimeoutSec 120
         Write-Host "  Search index updated for store $StoreCode." -ForegroundColor Green
     }
     catch {
