@@ -10,7 +10,7 @@
 -- migration's Step 5 drops this constraint and replaces it with one that
 -- also includes client_id.
 --
--- Safe to re-run: ADD CONSTRAINT IF NOT EXISTS guard.
+-- Safe to re-run: DO $$ guard checks pg_constraint before adding.
 -- =============================================================================
 
 
@@ -28,10 +28,23 @@ LIMIT  20;
 
 -- ---------------------------------------------------------------------------
 -- STEP 2 -- Add the constraint
+--           DO $$ block is the Postgres-safe way to guard against re-runs.
+--           (ADD CONSTRAINT IF NOT EXISTS is MySQL syntax, not supported here.)
 -- ---------------------------------------------------------------------------
-ALTER TABLE daily_snapshots
-ADD CONSTRAINT IF NOT EXISTS daily_snapshots_store_date_ean_key
-UNIQUE (store_code, snapshot_date, ean);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE  conname = 'daily_snapshots_store_date_ean_key'
+    ) THEN
+        ALTER TABLE daily_snapshots
+        ADD CONSTRAINT daily_snapshots_store_date_ean_key
+        UNIQUE (store_code, snapshot_date, ean);
+        RAISE NOTICE 'Constraint added.';
+    ELSE
+        RAISE NOTICE 'Constraint already exists - skipped.';
+    END IF;
+END $$;
 
 
 -- ---------------------------------------------------------------------------

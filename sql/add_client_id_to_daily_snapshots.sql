@@ -63,9 +63,20 @@ ALTER TABLE daily_snapshots DROP CONSTRAINT IF EXISTS daily_snapshots_store_date
 -- ---------------------------------------------------------------------------
 -- STEP 6 -- Add new unique constraint including client_id
 -- ---------------------------------------------------------------------------
-ALTER TABLE daily_snapshots
-ADD CONSTRAINT IF NOT EXISTS daily_snapshots_client_store_date_ean_key
-UNIQUE (client_id, store_code, snapshot_date, ean);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE  conname = 'daily_snapshots_client_store_date_ean_key'
+    ) THEN
+        ALTER TABLE daily_snapshots
+        ADD CONSTRAINT daily_snapshots_client_store_date_ean_key
+        UNIQUE (client_id, store_code, snapshot_date, ean);
+        RAISE NOTICE 'Constraint added.';
+    ELSE
+        RAISE NOTICE 'Constraint already exists - skipped.';
+    END IF;
+END $$;
 
 
 -- ---------------------------------------------------------------------------
