@@ -55,9 +55,9 @@ ALTER COLUMN client_id SET NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- STEP 5 -- Drop the old unique constraint (store_code, snapshot_date, ean)
---           Replace <CONSTRAINT_NAME> with the name from STEP 1 output.
+--           Name is known: set by add_unique_constraint_daily_snapshots.sql
 -- ---------------------------------------------------------------------------
--- ALTER TABLE daily_snapshots DROP CONSTRAINT <CONSTRAINT_NAME>;
+ALTER TABLE daily_snapshots DROP CONSTRAINT IF EXISTS daily_snapshots_store_date_ean_key;
 
 
 -- ---------------------------------------------------------------------------
