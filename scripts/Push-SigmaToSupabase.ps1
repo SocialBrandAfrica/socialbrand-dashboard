@@ -436,11 +436,21 @@ function Invoke-TacExtract {
     }
     if (-not $dateRaw) { throw "No P row found in PRSSALE.dat extracted from $ZipPath" }
 
-    # KI-002: normalise DD-MM-YYYY to DD/MM/YYYY before splitting
+    # KI-002: normalise DD-MM-YYYY / DD/MM/YYYY → ISO.
+    # KI-003: some TOPS stores (e.g. Dice) emit dates already in YYYY-MM-DD
+    # inside the P row. Detect by checking if the first segment is 4 digits
+    # (the year). If so, treat as-is; otherwise invert DD/MM/YYYY → YYYY-MM-DD.
     $dateNorm = $dateRaw.Replace('-', '/')
     $p        = $dateNorm -split '/'
-    $yyyymmdd = "$($p[2])$($p[1])$($p[0])"
-    $isoDate  = "$($p[2])-$($p[1])-$($p[0])"
+    if ($p[0].Length -eq 4) {
+        # Already YYYY/MM/DD — no inversion needed
+        $yyyymmdd = "$($p[0])$($p[1])$($p[2])"
+        $isoDate  = "$($p[0])-$($p[1])-$($p[2])"
+    } else {
+        # DD/MM/YYYY — invert to YYYY-MM-DD
+        $yyyymmdd = "$($p[2])$($p[1])$($p[0])"
+        $isoDate  = "$($p[2])-$($p[1])-$($p[0])"
+    }
 
     $storeTag = $StoreName.Replace(' ', '_')
     $newName  = "PRSSALE_${storeTag}_${yyyymmdd}.dat"
@@ -760,7 +770,7 @@ function Push-DailySnapshotsBackfill {
             $snapDate  = $extracted.AggDate
             Write-Host "  Date: $snapDate"
 
-            if ([datetime]$snapDate -lt $BackfillFrom) {
+            if ([DateTime]::ParseExact($snapDate, 'yyyy-MM-dd', $null) -lt $BackfillFrom) {
                 Write-Host "  SKIP - $snapDate is before BackfillFrom $($BackfillFrom.ToString('yyyy-MM-dd'))." -ForegroundColor DarkGray
                 Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed 0 `
                     -Msg "Skipped - before BackfillFrom threshold"

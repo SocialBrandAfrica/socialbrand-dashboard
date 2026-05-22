@@ -50,8 +50,9 @@ export default function PushStatusStrip() {
   )
 
   return (
-    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16, alignItems: 'center' }}>
-      <span style={{ fontSize: 9, color: 'rgba(245,245,244,0.3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginRight: 2 }}>Last push</span>
+    <div style={{ marginBottom: 16 }}>
+    <div className="sb-push-strip-inner">
+      <span style={{ fontSize: 9, color: 'rgba(245,245,244,0.3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginRight: 2, flexShrink: 0 }}>Last push</span>
       {STORES.map(s => {
         const ts       = data?.[s.code]
         const diffHr   = ts ? (Date.now() - new Date(ts).getTime()) / 3600000 : null
@@ -79,6 +80,7 @@ export default function PushStatusStrip() {
           </div>
         )
       })}
+    </div>
     </div>
   )
 }

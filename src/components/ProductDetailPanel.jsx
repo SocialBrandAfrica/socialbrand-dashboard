@@ -8,6 +8,10 @@ import {
 
 const STORE_COLORS = ['#4ade80', '#22d3ee', '#f59e0b', '#f472b6', '#818cf8']
 
+// Module-level cache — survives re-renders, cleared only on page reload.
+// Key: `${ean}|${sortedStoreCodes}|${lastDate}`
+const _detailCache = new Map()
+
 const TOOLTIP  = { background: 'rgba(10,14,26,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11, fontFamily: "'Geist Mono', monospace" }
 const AX_TICK  = { fontSize: 10, fill: 'rgba(245,245,244,0.4)' }
 const GRID_CLR = { stroke: 'rgba(255,255,255,0.05)' }
@@ -43,7 +47,7 @@ function ChartBox({ title, sub, children, wide }) {
   )
 }
 
-export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, storeMap, onClose }) {
+export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, storeMap, onClose, compact }) {
   if (!product) return null
 
   const dates = useMemo(
@@ -141,8 +145,8 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
           </table>
         </div>
 
-        {/* ── 5 Charts ──────────────────────────────────────────────────────── */}
-        <div style={{ padding: '20px 22px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        {/* ── 5 Charts — only when not compact ─────────────────────────────── */}
+        {!compact && <div className="sb-two-col" style={{ padding: '20px 22px' }}>
 
           {/* 1. Daily Sales Trend */}
           <ChartBox title="Daily Sales Trend" sub="units sold per day per store">
@@ -169,7 +173,7 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
                 return (
                   <div key={s.code} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                     <span style={{ fontSize: 10, color: s.color, minWidth: 108, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
-                    <div style={{ display: 'flex', gap: 2, flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', gap: 2 }}>
                       {dates.map(date => {
                         const row = detailRows.find(r => r.snapshot_date === date && r.store_code === s.code)
                         return (
@@ -184,7 +188,7 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
                 )
               })}
               {dates.length > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 116, marginTop: 2 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
                   <span style={{ fontSize: 9, color: 'rgba(245,245,244,0.3)', fontFamily: "'Geist Mono', monospace" }}>{dates[0]}</span>
                   {dates.length > 1 && <span style={{ fontSize: 9, color: 'rgba(245,245,244,0.3)', fontFamily: "'Geist Mono', monospace" }}>{dates[dates.length - 1]}</span>}
                 </div>
@@ -251,7 +255,7 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
             }
           </ChartBox>
 
-        </div>
+        </div>}
       </div>
     </div>
   )
@@ -260,7 +264,7 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
 // ─────────────────────────────────────────────────────────────────────────────
 // CONNECTED WRAPPER — self-fetching; one per product in the activeProducts map
 // ─────────────────────────────────────────────────────────────────────────────
-export function ProductDetailPanelConnected({ product, storeCodes, storeMap, availableDates, onClose }) {
+export function ProductDetailPanelConnected({ product, storeCodes, storeMap, availableDates, onClose, compact }) {
   const [detailRows, setDetailRows] = useState([])
   const [rosData,    setRosData]    = useState([])
   const [loading,    setLoading]    = useState(true)
@@ -268,32 +272,55 @@ export function ProductDetailPanelConnected({ product, storeCodes, storeMap, ava
   const ean = String(product['EAN'] ?? product.ean ?? '')
 
   useEffect(() => {
-    if (!ean || !storeCodes.length || !availableDates.length) return
+    if (!ean || !storeCodes.length) return
+    if (!compact && !availableDates.length) return
     let cancelled = false
+
+    // Layer 3 cache — module-level Map, survives re-renders within the tab session.
+    const lastDate  = availableDates.slice(-1)[0] ?? ''
+    const cacheKey  = `${ean}|${[...storeCodes].sort().join(',')}|${lastDate}|${compact ? 'c' : 'f'}`
+    const cached    = _detailCache.get(cacheKey)
+    if (cached) {
+      setDetailRows(cached.detailRows)
+      setRosData(cached.rosData)
+      setLoading(false)
+      return
+    }
+
     setLoading(true)
     setDetailRows([])
     setRosData([])
 
-    Promise.all([
-      supabase.rpc('rpc_product_detail', {
-        p_ean:         ean,
-        p_store_codes: storeCodes,
-        p_dates:       availableDates.slice(-90),
-      }),
-      supabase
-        .from('v_rate_of_sale')
-        .select('store_code,store_name,soh,daily_ros,days_cover')
-        .eq('ean', ean)
-        .in('store_code', storeCodes),
-    ]).then(([detailRes, rosRes]) => {
+    const calls = compact
+      ? [
+          Promise.resolve({ data: [], error: null }),
+          supabase.from('v_rate_of_sale')
+            .select('store_code,store_name,soh,daily_ros,days_cover')
+            .eq('ean', ean).in('store_code', storeCodes),
+        ]
+      : [
+          supabase.rpc('rpc_product_detail', {
+            p_ean:         ean,
+            p_store_codes: storeCodes,
+            p_dates:       availableDates.slice(-90),
+          }),
+          supabase.from('v_rate_of_sale')
+            .select('store_code,store_name,soh,daily_ros,days_cover')
+            .eq('ean', ean).in('store_code', storeCodes),
+        ]
+
+    Promise.all(calls).then(([detailRes, rosRes]) => {
       if (cancelled) return
-      setDetailRows(detailRes.data ?? [])
-      setRosData(rosRes.data ?? [])
+      const dr = detailRes.data ?? []
+      const rr = rosRes.data    ?? []
+      _detailCache.set(cacheKey, { detailRows: dr, rosData: rr })
+      setDetailRows(dr)
+      setRosData(rr)
       setLoading(false)
     })
 
     return () => { cancelled = true }
-  }, [ean, storeCodes, availableDates])
+  }, [ean, storeCodes, availableDates, compact])
 
   if (loading) {
     return (
@@ -315,6 +342,7 @@ export function ProductDetailPanelConnected({ product, storeCodes, storeMap, ava
       storeCodes={storeCodes}
       storeMap={storeMap}
       onClose={onClose}
+      compact={compact}
     />
   )
 }

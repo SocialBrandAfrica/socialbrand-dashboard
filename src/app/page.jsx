@@ -506,6 +506,7 @@ function ProductSearchBar({ storeCodes, selectedDates, onSelect, onAddToFocus, f
       const q = query.trim().toLowerCase()
 
       // ── Local index path (fast, zero RPC per keystroke) ──────────────────
+      let localResultCount = 0
       if (searchIndex && searchIndex.length > 0) {
         const local = searchIndex.filter(p =>
           p.description.toLowerCase().includes(q) ||
@@ -514,24 +515,32 @@ function ProductSearchBar({ storeCodes, selectedDates, onSelect, onAddToFocus, f
           subDeptFilter === 'all' || !subDeptFilter || p.subdept === subDeptFilter
         )
 
-        if (local.length > 0 || q.length < 3) {
-          // Map index rows to the shape ProductSearchBar dropdown expects
+        if (local.length > 0) {
+          // Show local results immediately — user gets instant feedback.
+          // If q is long enough we still fall through to RPC for more results.
           const mapped = local.slice(0, 25).map(p => ({
             ean:           p.ean,
             description:   p.description,
             dept_name:     p.dept,
             sub_dept_name: p.subdept ?? null,
-            store_code:    null,   // no per-store row; FocusAreaPanel handles null gracefully
+            store_code:    null,
             is_placeholder: false,
             internal_ref:  null,
           }))
           setResults(mapped)
-          setOpen(mapped.length > 0)
+          setOpen(true)
+          setLoading(false)
+          localResultCount = mapped.length
+          if (q.length < 4) return   // short query — local is enough
+          // q.length >= 4: continue to RPC so additional matches can update results
+        } else if (q.length < 4) {
+          // No local results and query too short to bother the RPC
+          setResults([])
+          setOpen(false)
           setLoading(false)
           return
         }
-        // Local returned 0 results with 3+ chars — fall through to RPC in case
-        // this product hasn't been indexed yet (first push after a new line lands)
+        // If local returned 0 results with 4+ chars: fall through to RPC
       }
 
       // ── RPC fallback ─────────────────────────────────────────────────────
@@ -543,7 +552,7 @@ function ProductSearchBar({ storeCodes, selectedDates, onSelect, onAddToFocus, f
       if (!latestDate) { setResults([]); setOpen(false); setLoading(false); return }
 
       const hasContext = (deptFilter && deptFilter !== 'all') || (subDeptFilter && subDeptFilter !== 'all')
-      const fetchLimit = hasContext ? 100 : Math.min(50 * (storeCodes.length || 1), 1000)
+      const fetchLimit = hasContext ? 50 : Math.min(30 * (storeCodes.length || 1), 150)
 
       // Pass all raw dept name variants (e.g. "HMR" and "H.M.R.") so the RPC
       // can match regardless of how the dept_name was stored in the database.
@@ -572,8 +581,11 @@ function ProductSearchBar({ storeCodes, selectedDates, onSelect, onAddToFocus, f
         seen.add(key)
         return true
       }).slice(0, 25)
-      setResults(unique)
-      setOpen(true)
+      // Only replace local results if RPC found more — local is already visible
+      if (unique.length > localResultCount) {
+        setResults(unique)
+        setOpen(true)
+      }
       setLoading(false)
     }, 300)
     return () => { if (timerRef.current) clearTimeout(timerRef.current) }
@@ -731,9 +743,56 @@ function Skeleton({ h = 32, w = '100%', r = 6, mb = 0 }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MOBILE BREAKPOINT HOOK
+// ─────────────────────────────────────────────────────────────────────────────
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false)
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+  return isMobile
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEARCH INDEX LOCAL STORAGE CACHE (Layer 1)
+// Persists between sessions. Key is scoped to dept+stores so different
+// filter combos don't overwrite each other.
+// ─────────────────────────────────────────────────────────────────────────────
+const SEARCH_IDX_KEY = 'sb_pulse_search_index_v1'
+const SEARCH_IDX_TTL = 24 * 60 * 60 * 1000
+
+function loadCachedSearchIndex(scopeKey) {
+  try {
+    const raw = localStorage.getItem(SEARCH_IDX_KEY + '|' + scopeKey)
+    if (!raw) return null
+    const { data, ts } = JSON.parse(raw)
+    return Date.now() - ts < SEARCH_IDX_TTL ? data : null
+  } catch { return null }
+}
+function saveCachedSearchIndex(scopeKey, data) {
+  try {
+    localStorage.setItem(
+      SEARCH_IDX_KEY + '|' + scopeKey,
+      JSON.stringify({ data, ts: Date.now() })
+    )
+  } catch { /* quota — ignore */ }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 export default function Home() {
+  const isMobile = useIsMobile()
+
+  // ── session-level RPC caches (Layer 2) ──────────────────────────────────────
+  // Maps keyed by sorted store+date (+ filter) strings. Cleared on page reload.
+  const viewsCache  = useRef(new Map())   // kpiData + allSubDepts
+  const deptCache   = useRef(new Map())   // deptSummary + deptSohCounts
+  const top20Cache  = useRef(new Map())   // top20Data
+
   // ── dates & stores ──────────────────────────────────────────────────────────
   const [availableDates, setAvailableDates] = useState([])
   const [selectedDates,  setSelectedDates]  = useState([])
@@ -877,11 +936,21 @@ export default function Home() {
     let cancelled = false
 
     async function loadViews() {
-      setViewsLoading(true)
       setReportRows([])
       setReportLoaded(false)
       setStoreRosData([])
       setSelectedProduct(null)
+
+      const vKey = [...storeCodes].sort().join(',') + '|' + [...selectedDates].sort().join(',')
+      const hit  = viewsCache.current.get(vKey)
+      if (hit) {
+        setKpiData(hit.kpiData)
+        setAllSubDepts(hit.allSubDepts)
+        setViewsLoading(false)
+        return
+      }
+
+      setViewsLoading(true)
 
       // Only fetch mv_kpi_by_date (store+date totals) and rpc_subdepts here.
       // rpc_dept_summary and rpc_kpi_dept_counts are handled by the separate
@@ -904,9 +973,11 @@ export default function Home() {
 
       if (cancelled) return
       if (kpiRes.error) console.error('[v_kpi_by_date]', kpiRes.error.message)
-      setKpiData(kpiRes.data ?? [])
-      const allSubs = [...new Set((subDeptRes.data ?? []).map(r => r.sub_dept_name))].filter(Boolean).sort()
-      setAllSubDepts(allSubs)
+      const kpiData    = kpiRes.data ?? []
+      const allSubDepts = [...new Set((subDeptRes.data ?? []).map(r => r.sub_dept_name))].filter(Boolean).sort()
+      viewsCache.current.set(vKey, { kpiData, allSubDepts })
+      setKpiData(kpiData)
+      setAllSubDepts(allSubDepts)
       setViewsLoading(false)
     }
 
@@ -922,6 +993,14 @@ export default function Home() {
     let cancelled = false
 
     const subdeptParam = subDeptFilter !== 'all' ? subDeptFilter : null
+    const dKey = [...storeCodes].sort().join(',') + '|' + [...selectedDates].sort().join(',') + '|' + (subdeptParam ?? '')
+    const dHit = deptCache.current.get(dKey)
+    if (dHit) {
+      setDeptSummary(dHit.deptSummary)
+      setDeptSohCounts(dHit.deptSohCounts)
+      return
+    }
+
     Promise.all([
       supabase.rpc('rpc_dept_summary', {
         p_store_codes: storeCodes,
@@ -937,8 +1016,11 @@ export default function Home() {
       if (cancelled) return
       if (deptRes.error)    console.error('[rpc_dept_summary]',    deptRes.error.message)
       if (deptSohRes.error) console.error('[rpc_kpi_dept_counts]', deptSohRes.error.message)
-      setDeptSummary(deptRes.data       ?? [])
-      setDeptSohCounts(deptSohRes.data  ?? [])
+      const ds  = deptRes.data    ?? []
+      const dsc = deptSohRes.data ?? []
+      deptCache.current.set(dKey, { deptSummary: ds, deptSohCounts: dsc })
+      setDeptSummary(ds)
+      setDeptSohCounts(dsc)
     }).catch(err => {
       if (cancelled) return
       console.error('[dept effect]', err)
@@ -960,6 +1042,17 @@ export default function Home() {
     let cancelled = false
 
     async function loadTop20() {
+      const t20Key = [...storeCodes].sort().join(',') + '|' + [...selectedDates].sort().join(',') + '|' +
+                     (deptFilter !== 'all' ? deptFilter : '') + '|' +
+                     (subDeptFilter !== 'all' ? subDeptFilter : '') + '|' +
+                     top20Activity + '|' + String(includeParents)
+      const t20Hit = top20Cache.current.get(t20Key)
+      if (t20Hit) {
+        setTop20Data(t20Hit)
+        setTop20Loading(false)
+        return
+      }
+
       setTop20Loading(true)
       const { data, error } = await supabase.rpc('rpc_top20', {
         p_store_codes: storeCodes,
@@ -971,7 +1064,9 @@ export default function Home() {
       })
       if (cancelled) return
       if (error) console.error('[rpc_top20]', error.message)
-      setTop20Data(data ?? [])
+      const t20 = data ?? []
+      top20Cache.current.set(t20Key, t20)
+      setTop20Data(t20)
       setTop20Loading(false)
     }
 
@@ -995,6 +1090,13 @@ export default function Home() {
       return
     }
 
+    const scopeKey = (deptFilter === 'all' ? 'ALL' : deptFilter) + '|' + [...storeCodes].sort().join(',')
+    const cached   = loadCachedSearchIndex(scopeKey)
+    if (cached) {
+      setSearchIndex(cached)
+      return
+    }
+
     let cancelled = false
     let query = supabase
       .from('product_search_index')
@@ -1006,7 +1108,9 @@ export default function Home() {
     query.then(({ data, error }) => {
       if (cancelled) return
       if (error) { console.error('[search_index]', error.message); return }
-      setSearchIndex(data ?? [])
+      const rows = data ?? []
+      saveCachedSearchIndex(scopeKey, rows)
+      setSearchIndex(rows)
     })
 
     return () => { cancelled = true }
@@ -1296,10 +1400,10 @@ export default function Home() {
         borderBottom: '1px solid rgba(255,255,255,0.09)',
         backdropFilter: 'blur(32px)',
       }}>
-        <div style={{ width: 'min(100%, 1800px)', margin: '0 auto', padding: '10px 32px' }}>
+        <div style={{ width: 'min(100%, 1800px)', margin: '0 auto' }} className="sb-filter-pad">
 
           {/* Row 1 — stores + date + reports button */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+          <div className="sb-store-row" style={{ marginBottom: 8 }}>
 
             {/* Store shortcuts */}
             <button onClick={selectAllStores} style={{ padding: '4px 10px', fontSize: 10, background: isAllStores ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)', border: `1px solid ${isAllStores ? 'rgba(74,222,128,0.3)' : 'rgba(255,255,255,0.12)'}`, borderRadius: 999, color: isAllStores ? '#4ade80' : 'rgba(245,245,244,0.45)', cursor: 'pointer', fontFamily: 'Geist, sans-serif', letterSpacing: '0.05em', transition: 'all 0.15s' }}>All</button>
@@ -1349,24 +1453,26 @@ export default function Home() {
 
             <div style={{ flex: 1 }} />
 
-            {/* Reports drawer toggle */}
-            <button
-              onClick={() => setDrawerOpen(true)}
-              style={{
-                padding: '6px 14px', fontSize: 12, fontWeight: 600,
-                background: 'rgba(34,211,238,0.08)',
-                border: '1px solid rgba(34,211,238,0.22)',
-                borderRadius: 8, cursor: 'pointer', color: '#22d3ee',
-                fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', flexShrink: 0,
-                transition: 'all 0.15s',
-              }}
-            >
-              Reports & Downloads ›
-            </button>
+            {/* Reports drawer toggle — desktop only */}
+            {!isMobile && (
+              <button
+                onClick={() => setDrawerOpen(true)}
+                style={{
+                  padding: '6px 14px', fontSize: 12, fontWeight: 600,
+                  background: 'rgba(34,211,238,0.08)',
+                  border: '1px solid rgba(34,211,238,0.22)',
+                  borderRadius: 8, cursor: 'pointer', color: '#22d3ee',
+                  fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', flexShrink: 0,
+                  transition: 'all 0.15s',
+                }}
+              >
+                Reports & Downloads ›
+              </button>
+            )}
           </div>
 
           {/* Row 2 — compact filter dropdowns */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+          <div className="sb-filter-row2">
 
             {/* Activity dropdown */}
             <FilterDropdown
@@ -1428,13 +1534,32 @@ export default function Home() {
               deptNormMap={deptNormMap}
               searchIndex={searchIndex}
             />
+
+            {/* Mobile Reports button — sits at end of Row 2 */}
+            {isMobile && (
+              <>
+                <div style={{ flex: 1 }} />
+                <button
+                  onClick={() => setDrawerOpen(true)}
+                  style={{
+                    padding: '6px 12px', fontSize: 11, fontWeight: 600,
+                    background: 'rgba(34,211,238,0.08)',
+                    border: '1px solid rgba(34,211,238,0.22)',
+                    borderRadius: 8, cursor: 'pointer', color: '#22d3ee',
+                    fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', flexShrink: 0,
+                  }}
+                >
+                  Reports ›
+                </button>
+              </>
+            )}
           </div>
 
         </div>
       </div>
 
       {/* ── MAIN CONTENT ─────────────────────────────────────────────────────── */}
-      <div style={{ width: 'min(100%, 1800px)', margin: '0 auto', padding: '0 32px 80px', position: 'relative', zIndex: 1 }}>
+      <div className="sb-page-pad" style={{ width: 'min(100%, 1800px)', margin: '0 auto', paddingBottom: 80, position: 'relative', zIndex: 1 }}>
 
         {/* ── HEADER ─────────────────────────────────────────────────────────── */}
         <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 0 18px', marginBottom: 20, borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
@@ -1449,7 +1574,7 @@ export default function Home() {
               <p style={{ fontSize: 11, color: 'rgba(245,245,244,0.35)', textTransform: 'uppercase', letterSpacing: '0.14em', marginTop: 4 }}>SocialBrand Pulse</p>
             </div>
           </div>
-          <div style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: 'rgba(245,245,244,0.5)', textAlign: 'right', lineHeight: 1.6 }}>
+          <div className="sb-header-context">
             <span style={{ display: 'inline-block', width: 6, height: 6, background: '#4ade80', borderRadius: '50%', marginRight: 6, animation: 'pulse 2s infinite', boxShadow: '0 0 8px #4ade80' }} />
             {activeStoreName || '…'}
             {' · '}{displayDate}
@@ -1465,7 +1590,7 @@ export default function Home() {
         <div style={{ display: 'grid', gap: 14 }}>
 
           {/* ── KPI STRIP ─────────────────────────────────────────────────────── */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+          <div className="sb-kpi-strip">
             {viewsLoading
               ? Array.from({ length: 5 }, (_, i) => (
                   <div key={i} className="sb-glass" style={{ padding: '18px 20px' }}>
@@ -1505,7 +1630,7 @@ export default function Home() {
 
           {/* ── TOP 20 + DEPT CHART — hidden while a product selection is active ─── */}
           {!isSelectionActive && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div className="sb-two-col">
 
               {/* Top 20 Movers / Non-Movers */}
               <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
@@ -1617,6 +1742,7 @@ export default function Home() {
                   storeMap={STORE_MAP}
                   availableDates={availableDates}
                   onClose={handleClose}
+                  compact={activeProducts.length > 1}
                 />
               )
             })}
@@ -1647,14 +1773,7 @@ export default function Home() {
             onClick={() => setDrawerOpen(false)}
           />
           {/* Panel */}
-          <div style={{
-            position: 'absolute', top: 0, right: 0, bottom: 0, width: 460,
-            background: 'rgba(10,14,26,0.98)',
-            borderLeft: '1px solid rgba(255,255,255,0.1)',
-            backdropFilter: 'blur(32px)',
-            display: 'flex', flexDirection: 'column',
-            zIndex: 1,
-          }}>
+          <div className="sb-drawer-panel">
             {/* Drawer header */}
             <div style={{ padding: '18px 22px 14px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
               <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 18, fontWeight: 600 }}>Reports & Downloads</p>
@@ -1671,7 +1790,7 @@ export default function Home() {
             </div>
 
             {/* Report cards */}
-            <div style={{ padding: '14px 18px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, flexShrink: 0 }}>
+            <div className="sb-report-grid" style={{ padding: '14px 18px', flexShrink: 0 }}>
               {REPORTS.map(r => (
                 <button key={r.key} className={`sb-report-card${currentReport === r.key ? ' on' : ''}`}
                   onClick={() => handleReportCardClick(r.key)}>

@@ -129,3 +129,136 @@
   transition: all 0.15s;
 }
 .sb-btn-sm:hover { background: rgba(255,255,255,0.09); color: #f5f5f4; }
+
+/* ── RESPONSIVE LAYOUT ─────────────────────────────────────────────────── */
+
+/* Responsive padding helpers */
+.sb-page-pad    { padding-left: 32px; padding-right: 32px; }
+.sb-filter-pad  { padding: 10px 32px; }
+
+/* Two-column grid that stacks on mobile */
+.sb-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+/* Store chips row — scrolls horizontally on mobile instead of wrapping */
+.sb-store-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Filter row 2 */
+.sb-filter-row2 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Push strip — horizontal scroll on mobile */
+.sb-push-strip-inner {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Header context string */
+.sb-header-context {
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px;
+  color: rgba(245,245,244,0.5);
+  text-align: right;
+  line-height: 1.6;
+}
+
+/* Reports drawer panel */
+.sb-drawer-panel {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 460px;
+  background: rgba(10,14,26,0.98);
+  border-left: 1px solid rgba(255,255,255,0.1);
+  backdrop-filter: blur(32px);
+  display: flex;
+  flex-direction: column;
+  z-index: 1;
+}
+
+/* Report cards inside drawer */
+.sb-report-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+/* KPI strip — auto-fit on desktop */
+.sb-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+/* ── MOBILE OVERRIDES ───────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+
+  .sb-page-pad   { padding-left: 16px; padding-right: 16px; }
+  .sb-filter-pad { padding: 10px 16px; }
+
+  /* Stack 2-column grids */
+  .sb-two-col { grid-template-columns: 1fr; }
+
+  /* Stack report cards */
+  .sb-report-grid { grid-template-columns: 1fr; }
+
+  /* KPI — 2 per row on mobile */
+  .sb-kpi-strip { grid-template-columns: repeat(2, 1fr); }
+
+  /* Store chips — horizontal scroll, no wrap */
+  .sb-store-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .sb-store-row::-webkit-scrollbar { display: none; }
+
+  /* Filter row 2 — allow wrap */
+  .sb-filter-row2 { gap: 6px; }
+
+  /* Hide the long context string in the header — too wide for mobile */
+  .sb-header-context { display: none; }
+
+  /* Reports drawer goes full screen on mobile */
+  .sb-drawer-panel {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid rgba(255,255,255,0.1);
+  }
+
+  /* Push strip — scrollable on mobile */
+  .sb-push-strip-inner {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .sb-push-strip-inner::-webkit-scrollbar { display: none; }
+
+  /* Minimum touch target height */
+  .sb-chip, .sb-tab, .sb-date-btn {
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* Prevent tiny font sizes on mobile */
+  .sb-table th { font-size: 10px; }
+  .sb-table td { font-size: 12px; }
+}
