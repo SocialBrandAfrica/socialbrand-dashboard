@@ -35,7 +35,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.2'
+$ScriptVersion = 'v3.3'
 $ClientName    = 'SocialBrand'
 
 # Store identity - auto-detected from hostname. Same script deploys to all servers.
@@ -719,7 +719,7 @@ function Push-DailySnapshotsNightly {
             $batch.Add($rec)
             if ($batch.Count -ge $BatchSize) {
                 $pushed += Send-Batch -TableName 'daily_snapshots' `
-                                      -ConflictCols 'client_id,store_code,snapshot_date,ean' `
+                                      -ConflictCols 'store_code,snapshot_date,ean' `
                                       -Rows $batch.ToArray() -LogId $logId
                 $batch.Clear()
                 Write-Host "  Pushed $pushed rows so far..."
@@ -727,7 +727,7 @@ function Push-DailySnapshotsNightly {
         }
         if ($batch.Count -gt 0) {
             $pushed += Send-Batch -TableName 'daily_snapshots' `
-                                  -ConflictCols 'client_id,store_code,snapshot_date,ean' `
+                                  -ConflictCols 'store_code,snapshot_date,ean' `
                                   -Rows $batch.ToArray() -LogId $logId
         }
 
@@ -807,14 +807,14 @@ function Push-DailySnapshotsBackfill {
                 $batch.Add($rec)
                 if ($batch.Count -ge $BatchSize) {
                     $pushed += Send-Batch -TableName 'daily_snapshots' `
-                                          -ConflictCols 'client_id,store_code,snapshot_date,ean' `
+                                          -ConflictCols 'store_code,snapshot_date,ean' `
                                           -Rows $batch.ToArray() -LogId $logId
                     $batch.Clear()
                 }
             }
             if ($batch.Count -gt 0) {
                 $pushed += Send-Batch -TableName 'daily_snapshots' `
-                                      -ConflictCols 'client_id,store_code,snapshot_date,ean' `
+                                      -ConflictCols 'store_code,snapshot_date,ean' `
                                       -Rows $batch.ToArray() -LogId $logId
             }
 
