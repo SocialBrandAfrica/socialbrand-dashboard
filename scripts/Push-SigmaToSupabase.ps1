@@ -35,7 +35,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.3'
+$ScriptVersion = 'v3.4'
 $ClientName    = 'SocialBrand'
 
 # Store identity - auto-detected from hostname. Same script deploys to all servers.
@@ -168,6 +168,42 @@ function Get-Watermark {
         Write-Warning "Watermark read failed for $TableName - defaulting to last $DefaultDays days. ($_)"
     }
     return (Get-Date).AddDays(-$DefaultDays)
+}
+
+function Invoke-SelfUpdate {
+    # Downloads the latest script from GitHub. If the remote version is newer,
+    # overwrites this file on disk. The new version takes effect on the next run.
+    # All failures are non-fatal warnings - the push continues regardless.
+    $remoteUrl = 'https://raw.githubusercontent.com/SocialBrandAfrica/socialbrand-dashboard/main/scripts/Push-SigmaToSupabase.ps1'
+    $tempPath  = "$env:TEMP\SBPush_update.tmp"
+
+    if (-not $PSCommandPath) {
+        Write-Host "  [self-update] Script path unknown - skipping." -ForegroundColor DarkGray
+        return
+    }
+
+    try {
+        Invoke-WebRequest -Uri $remoteUrl -OutFile $tempPath -UseBasicParsing -TimeoutSec 30
+        $remoteContent = Get-Content $tempPath -Raw
+        if ($remoteContent -match '\$ScriptVersion\s*=\s*''(v[\d.]+)''') {
+            $remoteVerStr = $Matches[1] -replace '^v', ''
+            $localVerStr  = $ScriptVersion -replace '^v', ''
+            if ([Version]$remoteVerStr -gt [Version]$localVerStr) {
+                Copy-Item -Path $tempPath -Destination $PSCommandPath -Force
+                Write-Host "  [self-update] Updated $ScriptVersion -> v$remoteVerStr. New version active next run." -ForegroundColor Green
+            } else {
+                Write-Host "  [self-update] Up to date ($ScriptVersion)." -ForegroundColor DarkGray
+            }
+        } else {
+            Write-Warning "[self-update] Could not read version from remote script - skipping."
+        }
+    }
+    catch {
+        Write-Warning "[self-update] Update check failed (non-fatal): $_"
+    }
+    finally {
+        if (Test-Path $tempPath) { Remove-Item $tempPath -Force -ErrorAction SilentlyContinue }
+    }
 }
 
 function Clear-StuckRuns {
@@ -973,6 +1009,8 @@ if ($Backfill) {
     $forceLabel = if ($Force) { ' + Force' } else { '' }
     Write-Host "Backfill mode ON$forceLabel" -ForegroundColor Yellow
 }
+
+Invoke-SelfUpdate
 
 $ClientId = Get-ClientId
 Write-Host "Client UUID: $ClientId"
