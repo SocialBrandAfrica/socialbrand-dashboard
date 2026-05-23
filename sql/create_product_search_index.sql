@@ -53,7 +53,10 @@ $$;
 --     On CONFLICT: merges the stores array (UNION) and keeps the latest last_seen.
 --     dept is stored normalised (dots stripped) to match the UI chip labels.
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION upsert_search_index(p_store_code text)
+CREATE FUNCTION upsert_search_index(
+    p_store_code    text,
+    p_snapshot_date date DEFAULT NULL
+)
 RETURNS void
 LANGUAGE sql VOLATILE SECURITY DEFINER AS $$
     INSERT INTO product_search_index (ean, description, dept, subdept, stores, last_seen)
@@ -70,6 +73,7 @@ LANGUAGE sql VOLATILE SECURITY DEFINER AS $$
       AND description   IS NOT NULL
       AND dept_name     IS NOT NULL
       AND snapshot_date IS NOT NULL
+      AND (p_snapshot_date IS NULL OR snapshot_date = p_snapshot_date)
     GROUP BY ean
     ON CONFLICT (ean) DO UPDATE
         SET description = EXCLUDED.description,

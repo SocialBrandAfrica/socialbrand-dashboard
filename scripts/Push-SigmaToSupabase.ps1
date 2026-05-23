@@ -35,7 +35,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.5'
+$ScriptVersion = 'v3.6'
 $ClientName    = 'SocialBrand'
 
 # Store identity - auto-detected from hostname. Same script deploys to all servers.
@@ -81,6 +81,10 @@ $RetryWaitSecs = 10
 
 # Placeholder sentinel used by Sigma for products with no sales history
 $PlaceholderDate = '01/01/1990'
+
+# Set by Push-DailySnapshotsNightly on success; used by Invoke-UpsertSearchIndex
+# for delta mode. Empty string = full rebuild (backfill mode or nightly failure).
+$script:LastNightlySnapDate = ''
 
 # =============================================================================
 # TLS
@@ -329,6 +333,17 @@ function Send-Batch {
 # =============================================================================
 # PRSSALE PARSING
 # =============================================================================
+
+function Test-IsoDate {
+    # Returns $true only if DateStr parses as a valid yyyy-MM-dd date.
+    param([string]$DateStr)
+    $d = [datetime]::MinValue
+    return ([datetime]::TryParseExact(
+        $DateStr, 'yyyy-MM-dd',
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::None,
+        [ref]$d))
+}
 
 function Parse-NumericField {
     # Strip leading + and whitespace. Negative values keep their sign.
@@ -746,6 +761,13 @@ function Push-DailySnapshotsNightly {
         $snapDate  = $extracted.AggDate
         Write-Host "  Snapshot date: $snapDate"
 
+        if (-not (Test-IsoDate $snapDate)) {
+            $msg = "Invalid snapshot_date '$snapDate' extracted from $($latest.Name) -- push aborted."
+            Write-Warning $msg
+            Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg
+            return
+        }
+
         $records = Invoke-ParsePrssaleForSnapshots -FilePath $extracted.FilePath -SnapDate $snapDate
         Write-Host "  Rows to push (full catalog, excl Delete + pure placeholders): $($records.Count)"
 
@@ -768,6 +790,7 @@ function Push-DailySnapshotsNightly {
         }
 
         Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed $pushed
+        $script:LastNightlySnapDate = $snapDate
         Write-Host "  [daily_snapshots] Done. $pushed rows pushed." -ForegroundColor Green
     }
     catch {
@@ -817,6 +840,14 @@ function Push-DailySnapshotsBackfill {
             $tempDir   = $extracted.TempDir
             $snapDate  = $extracted.AggDate
             Write-Host "  Date: $snapDate"
+
+            if (-not (Test-IsoDate $snapDate)) {
+                $msg = "Invalid snapshot_date '$snapDate' in $($zip.Name) -- date skipped."
+                Write-Warning $msg
+                Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg
+                $totalSkipped++
+                continue
+            }
 
             if ([DateTime]::ParseExact($snapDate, 'yyyy-MM-dd', $null) -lt $BackfillFrom) {
                 Write-Host "  SKIP - $snapDate is before BackfillFrom $($BackfillFrom.ToString('yyyy-MM-dd'))." -ForegroundColor DarkGray
@@ -908,17 +939,21 @@ function Invoke-RefreshKpiView {
 # =============================================================================
 
 function Invoke-UpsertSearchIndex {
-    Write-Host "`n[search_index] Updating product_search_index for store $StoreCode..." -ForegroundColor Cyan
+    param([string]$SnapDate = '')
+    $modeLabel = if ($SnapDate) { "delta $SnapDate" } else { "full rebuild" }
+    Write-Host "`n[search_index] Updating product_search_index for store $StoreCode ($modeLabel)..." -ForegroundColor Cyan
     $url  = "$SupabaseUrl/rest/v1/rpc/upsert_search_index"
     $hdrs = @{
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
     }
-    $body = '{"p_store_code":"' + $StoreCode + '"}'
+    $bodyHt = [ordered]@{ p_store_code = $StoreCode }
+    if ($SnapDate) { $bodyHt['p_snapshot_date'] = $SnapDate }
+    $body = ConvertTo-Json $bodyHt -Compress
     try {
         $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body $body -TimeoutSec 120
-        Write-Host "  Search index updated for store $StoreCode." -ForegroundColor Green
+        Write-Host "  Search index updated for store $StoreCode ($modeLabel)." -ForegroundColor Green
     }
     catch {
         Write-Warning "Search index upsert failed: $_"
@@ -955,7 +990,7 @@ switch ($Mode) {
             Push-DailySnapshotsNightly
         }
         Invoke-RefreshKpiView
-        Invoke-UpsertSearchIndex
+        Invoke-UpsertSearchIndex -SnapDate $script:LastNightlySnapDate
     }
     'intraday' {
         Write-Host "Intraday mode not yet implemented (Phase 2)." -ForegroundColor Yellow
