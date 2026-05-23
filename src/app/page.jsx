@@ -983,6 +983,7 @@ export default function Home() {
         if (data.length < batchSize) break
         from += batchSize
       }
+      allDates.delete(null)
       if (!allDates.size) return
       const unique = [...allDates].sort((a, b) => b.localeCompare(a))
       setAvailableDates(unique)
