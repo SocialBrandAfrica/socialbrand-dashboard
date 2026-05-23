@@ -35,7 +35,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.4'
+$ScriptVersion = 'v3.5'
 $ClientName    = 'SocialBrand'
 
 # Store identity - auto-detected from hostname. Same script deploys to all servers.

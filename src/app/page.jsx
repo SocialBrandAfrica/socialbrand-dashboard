@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import * as XLSX from 'xlsx'
 import { ProductDetailPanelConnected } from '@/components/ProductDetailPanel'
 import { FocusAreaPanel }    from '@/components/FocusAreaPanel'
+import { SalesTrendPanel }   from '@/components/SalesTrendPanel'
 import { CalendarPopover } from '@/components/CalendarPopover'
 import PushStatusStrip from '@/components/PushStatusStrip'
 import './dashboard.css'
@@ -80,6 +81,24 @@ const normalizeDept = name => (name ?? '').replace(/\./g, '').trim()
 function gpPct(sales, cost) {
   if (!sales || sales === 0) return 0
   return ((sales - cost) / sales) * 100
+}
+
+function shiftDate(isoDate, days) {
+  const d = new Date(isoDate)
+  d.setDate(d.getDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+function deltaInfo(current, prior) {
+  if (!prior || prior === 0 || current == null) return null
+  const pct = ((current - prior) / Math.abs(prior)) * 100
+  return { pct, positive: pct >= 0, label: (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%' }
+}
+
+function ppDeltaInfo(currentPP, priorPP) {
+  if (priorPP == null || currentPP == null) return null
+  const diff = currentPP - priorPP
+  return { diff, positive: diff >= 0, label: (diff >= 0 ? '+' : '') + diff.toFixed(1) + 'pp' }
 }
 
 function dateSummaryLabel(selectedDates, availableDates) {
@@ -743,6 +762,41 @@ function Skeleton({ h = 32, w = '100%', r = 6, mb = 0 }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SPARKLINE — 14-point inline trend line for KPI cards
+// ─────────────────────────────────────────────────────────────────────────────
+function Sparkline({ values, color = '#4ade80', height = 28 }) {
+  if (!values || values.length < 2) return null
+  const min   = Math.min(...values)
+  const max   = Math.max(...values)
+  const range = max - min || 1
+  const pad   = 2
+  const pts   = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * 100
+    const y = height - pad - ((v - min) / range) * (height - pad * 2)
+    return `${x},${y}`
+  }).join(' ')
+  return (
+    <svg
+      width="100%"
+      height={height}
+      viewBox={`0 0 100 ${height}`}
+      preserveAspectRatio="none"
+      style={{ display: 'block', overflow: 'visible' }}
+    >
+      <polyline
+        points={pts}
+        fill="none"
+        stroke={color}
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MOBILE BREAKPOINT HOOK
 // ─────────────────────────────────────────────────────────────────────────────
 function useIsMobile() {
@@ -823,6 +877,14 @@ export default function Home() {
   const [deptNormMap,    setDeptNormMap]    = useState(new Map())
   const [viewsLoading,   setViewsLoading]   = useState(false)
   const [top20Loading,   setTop20Loading]   = useState(false)
+
+  // ── historical comparison data (Phase 3.2) ──────────────────────────────────
+  const [sparklineData,  setSparklineData]  = useState([])   // mv_sparkline_14d — fetched once on mount
+  const [lyKpiData,      setLyKpiData]      = useState([])   // v_kpi_by_date for LY equivalent dates
+  const [wowKpiData,     setWowKpiData]     = useState([])   // v_kpi_by_date for WoW equivalent dates
+  const [lyDeptSummary,  setLyDeptSummary]  = useState([])   // rpc_dept_summary for LY dates
+  const [trendData,      setTrendData]      = useState([])   // v_kpi_by_date for trend chart (90 days)
+  const [lyTrendData,    setLyTrendData]    = useState([])   // v_kpi_by_date for LY trend window
 
   // ── dept/sub-dept chips ─────────────────────────────────────────────────────
   const [depts,       setDepts]       = useState([])
@@ -930,6 +992,18 @@ export default function Home() {
     init()
   }, [])
 
+  // ── on mount: fetch sparkline data (most recent 14 days, all stores) ──────────
+  useEffect(() => {
+    supabase
+      .from('mv_sparkline_14d')
+      .select('store_code,snapshot_date,total_sales,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
+      .order('snapshot_date', { ascending: true })
+      .then(({ data, error }) => {
+        if (error) { console.error('mv_sparkline_14d:', error.message); return }
+        setSparklineData(data ?? [])
+      })
+  }, [])
+
   // ── fetch KPI + dept summary on store / date change (server-side aggregation via RPC) ──
   useEffect(() => {
     if (!storeCodes.length || !selectedDates.length) return
@@ -952,32 +1026,88 @@ export default function Home() {
 
       setViewsLoading(true)
 
-      // Only fetch mv_kpi_by_date (store+date totals) and rpc_subdepts here.
-      // rpc_dept_summary and rpc_kpi_dept_counts are handled by the separate
-      // sub-dept effect below so they always run with the correct p_subdept value
-      // and don't race against this effect when stores/dates change.
-      const [kpiRes, subDeptRes] = await Promise.all([
+      // LY dates: each selected date shifted back 364 days (52 weeks — preserves day-of-week)
+      const lyDates = selectedDates
+        .map(d => shiftDate(d, -364))
+        .filter(d => availableDates.includes(d))
+
+      // WoW dates: each selected date shifted back 7 days
+      const wowDates = selectedDates
+        .map(d => shiftDate(d, -7))
+        .filter(d => availableDates.includes(d))
+
+      // Trend window: last 90 available dates (time-series for trend chart)
+      const trendDates = availableDates.slice(0, 90)
+
+      // LY trend window: map trendDates back 364 days
+      const lyTrendDates = trendDates
+        .map(d => shiftDate(d, -364))
+        .filter(d => availableDates.includes(d))
+
+      const [kpiRes, subDeptRes, lyKpiRes, wowKpiRes, lyDeptRes, trendRes, lyTrendRes] = await Promise.all([
+        // Current KPI (mv_kpi_by_date — pre-aggregated, fast)
         supabase.from('mv_kpi_by_date')
-          .select('store_code,store_name,snapshot_date,total_sales,total_cost,total_qty,neg_soh_count,slow_mover_count')
+          .select('store_code,store_name,snapshot_date,total_sales,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
           .in('store_code', storeCodes)
           .in('snapshot_date', selectedDates),
-        // All unique sub-dept names for the current store+date — powers the
-        // sub-dept dropdown when no dept filter is selected.
-        // rpc_subdepts is SECURITY DEFINER — direct daily_snapshots reads are blocked by RLS.
+
+        // Sub-dept names for the current store+date
         supabase.rpc('rpc_subdepts', {
           p_store_codes: storeCodes,
           p_dates:       selectedDates,
           p_dept_names:  null,
         }),
+
+        // LY KPI
+        lyDates.length > 0
+          ? supabase.from('v_kpi_by_date')
+              .select('store_code,snapshot_date,total_sales,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
+              .in('store_code', storeCodes)
+              .in('snapshot_date', lyDates)
+          : Promise.resolve({ data: [], error: null }),
+
+        // WoW KPI
+        wowDates.length > 0
+          ? supabase.from('v_kpi_by_date')
+              .select('store_code,snapshot_date,total_sales,total_cost,total_qty')
+              .in('store_code', storeCodes)
+              .in('snapshot_date', wowDates)
+          : Promise.resolve({ data: [], error: null }),
+
+        // LY dept summary
+        lyDates.length > 0
+          ? supabase.rpc('rpc_dept_summary', { p_store_codes: storeCodes, p_dates: lyDates })
+          : Promise.resolve({ data: [], error: null }),
+
+        // Trend data (90-day window)
+        supabase.from('v_kpi_by_date')
+          .select('store_code,snapshot_date,total_sales,total_cost,total_qty')
+          .in('store_code', storeCodes)
+          .in('snapshot_date', trendDates)
+          .order('snapshot_date', { ascending: true }),
+
+        // LY trend data
+        lyTrendDates.length > 0
+          ? supabase.from('v_kpi_by_date')
+              .select('store_code,snapshot_date,total_sales')
+              .in('store_code', storeCodes)
+              .in('snapshot_date', lyTrendDates)
+              .order('snapshot_date', { ascending: true })
+          : Promise.resolve({ data: [], error: null }),
       ])
 
       if (cancelled) return
-      if (kpiRes.error) console.error('[v_kpi_by_date]', kpiRes.error.message)
+      if (kpiRes.error) console.error('[mv_kpi_by_date]', kpiRes.error.message)
       const kpiData    = kpiRes.data ?? []
       const allSubDepts = [...new Set((subDeptRes.data ?? []).map(r => r.sub_dept_name))].filter(Boolean).sort()
       viewsCache.current.set(vKey, { kpiData, allSubDepts })
       setKpiData(kpiData)
       setAllSubDepts(allSubDepts)
+      setLyKpiData(lyKpiRes.data   ?? [])
+      setWowKpiData(wowKpiRes.data ?? [])
+      setLyDeptSummary(lyDeptRes.data ?? [])
+      setTrendData(trendRes.data   ?? [])
+      setLyTrendData(lyTrendRes.data ?? [])
       setViewsLoading(false)
     }
 
@@ -1278,6 +1408,68 @@ export default function Home() {
     const max = sorted[0]?.[1] ?? 1
     return sorted.map(([name, val]) => ({ name, val, pct: (val / max) * 100 }))
   }, [deptSummary])
+
+  // ── Phase 3.2 derived values ─────────────────────────────────────────────────
+  const lyKpiSales    = lyKpiData.reduce((s, r) => s + (r.total_sales ?? 0), 0)
+  const lyKpiCost     = lyKpiData.reduce((s, r) => s + (r.total_cost  ?? 0), 0)
+  const lyKpiQty      = lyKpiData.reduce((s, r) => s + (r.total_qty   ?? 0), 0)
+  const lyKpiGP       = lyKpiSales > 0 ? gpPct(lyKpiSales, lyKpiCost) : null
+  const lyKpiNegSOH   = lyKpiData.reduce((s, r) => s + (r.neg_soh_count   ?? 0), 0)
+  const lyKpiSlowMove = lyKpiData.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
+  const lyKpiCapTied  = lyKpiData.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
+  const hasLY         = lyKpiData.length > 0
+
+  const wowKpiSales = wowKpiData.reduce((s, r) => s + (r.total_sales ?? 0), 0)
+  const hasWoW      = wowKpiData.length > 0
+
+  const kpiCapTied  = kpiData.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
+
+  const sameWeekdayBenchmark = useMemo(() => {
+    if (selectedDates.length !== 1) return null
+    const dow = new Date(selectedDates[0]).getDay()
+    const compareDates = availableDates.filter(d =>
+      d !== selectedDates[0] && new Date(d).getDay() === dow
+    )
+    const totals = compareDates
+      .map(d => kpiData.filter(r => storeCodes.includes(r.store_code) && r.snapshot_date === d)
+        .reduce((s, r) => s + (r.total_sales ?? 0), 0))
+      .filter(v => v > 0)
+    if (totals.length < 4) return null
+    const avg = totals.reduce((a, b) => a + b, 0) / totals.length
+    return { avgSales: avg, n: totals.length, dow: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dow] }
+  }, [kpiData, selectedDates, storeCodes, availableDates])
+
+  const sparklineArrays = useMemo(() => {
+    const byDate = {}
+    for (const r of sparklineData) {
+      if (!storeCodes.includes(r.store_code)) continue
+      if (!byDate[r.snapshot_date]) byDate[r.snapshot_date] = { sales: 0, cost: 0, neg_soh: 0, slow_movers: 0, capital_tied: 0 }
+      byDate[r.snapshot_date].sales        += r.total_sales      ?? 0
+      byDate[r.snapshot_date].cost         += r.total_cost       ?? 0
+      byDate[r.snapshot_date].neg_soh      += r.neg_soh_count    ?? 0
+      byDate[r.snapshot_date].slow_movers  += r.slow_mover_count ?? 0
+      byDate[r.snapshot_date].capital_tied += r.capital_tied     ?? 0
+    }
+    const sorted = Object.entries(byDate).sort(([a], [b]) => a.localeCompare(b))
+    return {
+      sales:       sorted.map(([, v]) => v.sales),
+      gpPct:       sorted.map(([, v]) => v.sales > 0 ? gpPct(v.sales, v.cost) : 0),
+      negSoh:      sorted.map(([, v]) => v.neg_soh),
+      slowMovers:  sorted.map(([, v]) => v.slow_movers),
+      capitalTied: sorted.map(([, v]) => v.capital_tied),
+    }
+  }, [sparklineData, storeCodes])
+
+  const lyDeptMap = useMemo(() => {
+    const m = new Map()
+    for (const r of lyDeptSummary) {
+      const k = normalizeDept(r.dept_name)
+      m.set(k, (m.get(k) ?? 0) + (r.total_sales ?? 0))
+    }
+    return m
+  }, [lyDeptSummary])
+
+  const showLYDept = lyDeptSummary.length > 0
 
   // ── top 20 — RPC already aggregated + filtered; just sort and slice ──────────
   const top20 = useMemo(() => {
@@ -1592,41 +1784,179 @@ export default function Home() {
           {/* ── KPI STRIP ─────────────────────────────────────────────────────── */}
           <div className="sb-kpi-strip">
             {viewsLoading
-              ? Array.from({ length: 5 }, (_, i) => (
+              ? Array.from({ length: 6 }, (_, i) => (
                   <div key={i} className="sb-glass" style={{ padding: '18px 20px' }}>
                     <Skeleton h={10} w={80} r={4} mb={12} />
-                    <Skeleton h={30} w={120} r={6} mb={10} />
-                    <Skeleton h={10} w={100} r={4} />
+                    <Skeleton h={30} w={120} r={6} mb={8} />
+                    <Skeleton h={28} w="100%" r={4} mb={8} />
+                    <Skeleton h={10} w={140} r={4} />
                   </div>
                 ))
-              : [
-                  { label: selectedDates.length > 1
-                      ? `Total Sales · ${selectedDates.length} dates`
-                      : selectedDates[0] === availableDates[0]
-                        ? "Yesterday's Sales"
-                        : `Sales · ${selectedDates[0] ?? ''}`,
-                    value: zarShort(kpiSales), sub: `${num(kpiQty, 0)} units`, accent: true },
-                  { label: 'Gross Profit',  value: pct(kpiGP),          sub: `Cost ${zarShort(kpiCost)}`, warn: kpiGP < 15 },
-                  { label: 'Reorder Items', value: kpiReorder != null ? num(kpiReorder) : '—', sub: kpiReorder != null ? 'SOH ≤ 0 with period sales' : 'Open report drawer', onClick: () => { setCurrentReport('reorder'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() }, danger: kpiReorder != null && kpiReorder > 100 },
-                  { label: 'Slow Movers',   value: num(kpiSlowMove), sub: 'In stock, no period sales', warn: true },
-                  { label: 'Negative SOH',  value: num(kpiNegSOH),   sub: 'Stock errors / shrinkage', danger: kpiNegSOH > 0 },
-                ].map(k => (
-                  <div key={k.label} className="sb-glass" onClick={k.onClick} style={{
-                    padding: '18px 20px',
-                    cursor: k.onClick ? 'pointer' : 'default',
-                    background: k.accent ? 'linear-gradient(135deg,rgba(74,222,128,0.1),rgba(74,222,128,0.03))' :
-                      k.danger && k.value !== '0' ? 'linear-gradient(135deg,rgba(239,68,68,0.09),rgba(239,68,68,0.02))' :
-                      k.warn ? 'linear-gradient(135deg,rgba(245,158,11,0.08),rgba(245,158,11,0.02))' : undefined,
-                    borderColor: k.accent ? 'rgba(74,222,128,0.22)' :
-                      k.danger && k.value !== '0' ? 'rgba(239,68,68,0.18)' : undefined,
-                  }}>
-                    <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 10 }}>{k.label}</p>
-                    <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 28, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1, color: k.accent ? '#4ade80' : k.danger && k.value !== '0' ? '#fca5a5' : k.warn ? '#f59e0b' : '#f5f5f4' }}>{k.value}</p>
-                    <p style={{ fontSize: 11, color: k.onClick ? 'rgba(34,211,238,0.7)' : 'rgba(245,245,244,0.35)', marginTop: 8, fontFamily: "'Geist Mono', monospace", textDecoration: k.onClick ? 'underline' : 'none' }}>{k.sub}</p>
-                  </div>
-                ))
+              : (() => {
+                  const kpiCards = [
+                    {
+                      key:           'sales',
+                      label:         selectedDates.length > 1 ? `Total Sales · ${selectedDates.length} dates` : `Sales · ${selectedDates[0] ?? ''}`,
+                      value:         zarShort(kpiSales),
+                      sparkline:     sparklineArrays.sales,
+                      lyRef:         hasLY ? zarShort(lyKpiSales) : null,
+                      lyDelta:       hasLY ? deltaInfo(kpiSales, lyKpiSales) : null,
+                      wowDelta:      hasWoW ? deltaInfo(kpiSales, wowKpiSales) : null,
+                      bench:         sameWeekdayBenchmark ? `avg ${sameWeekdayBenchmark.dow}: ${zarShort(sameWeekdayBenchmark.avgSales)}` : null,
+                      benchN:        sameWeekdayBenchmark?.n,
+                      sub:           `${num(kpiQty, 0)} units`,
+                      accent:        true,
+                    },
+                    {
+                      key:           'gp',
+                      label:         'Gross Profit',
+                      value:         pct(kpiGP),
+                      sparkline:     sparklineArrays.gpPct,
+                      lyRef:         hasLY && lyKpiGP != null ? pct(lyKpiGP) : null,
+                      lyDelta:       hasLY && lyKpiGP != null ? ppDeltaInfo(kpiGP, lyKpiGP) : null,
+                      wowDelta:      null,
+                      bench:         null,
+                      sub:           `Cost ${zarShort(kpiCost)}`,
+                      warn:          kpiGP < 15,
+                    },
+                    {
+                      key:           'reorder',
+                      label:         'Reorder Items',
+                      value:         kpiReorder != null ? num(kpiReorder) : '—',
+                      sparkline:     null,
+                      lyRef:         null,
+                      lyDelta:       null,
+                      wowDelta:      null,
+                      bench:         null,
+                      sub:           kpiReorder != null ? 'SOH <= 0 with period sales' : 'Open report drawer',
+                      onClick:       () => { setCurrentReport('reorder'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
+                      danger:        kpiReorder != null && kpiReorder > 100,
+                    },
+                    {
+                      key:           'slowmovers',
+                      label:         'Slow Movers',
+                      value:         num(kpiSlowMove),
+                      sparkline:     sparklineArrays.slowMovers,
+                      lyRef:         hasLY ? num(lyKpiSlowMove) : null,
+                      lyDelta:       hasLY ? deltaInfo(kpiSlowMove, lyKpiSlowMove) : null,
+                      lyDeltaInvert: true,
+                      wowDelta:      null,
+                      bench:         null,
+                      sub:           'In stock, no period sales',
+                      warn:          true,
+                    },
+                    {
+                      key:           'negsoh',
+                      label:         'Negative SOH',
+                      value:         num(kpiNegSOH),
+                      sparkline:     sparklineArrays.negSoh,
+                      lyRef:         hasLY ? num(lyKpiNegSOH) : null,
+                      lyDelta:       hasLY ? deltaInfo(kpiNegSOH, lyKpiNegSOH) : null,
+                      lyDeltaInvert: true,
+                      wowDelta:      null,
+                      bench:         null,
+                      sub:           'Stock errors / shrinkage',
+                      danger:        kpiNegSOH > 0,
+                    },
+                    {
+                      key:           'captied',
+                      label:         'Capital Tied',
+                      value:         zarShort(kpiCapTied),
+                      sparkline:     sparklineArrays.capitalTied,
+                      lyRef:         hasLY ? zarShort(lyKpiCapTied) : null,
+                      lyDelta:       hasLY ? deltaInfo(kpiCapTied, lyKpiCapTied) : null,
+                      lyDeltaInvert: true,
+                      wowDelta:      null,
+                      bench:         null,
+                      sub:           'Slow-mover stock value',
+                      warn:          true,
+                    },
+                  ]
+                  return kpiCards.map(k => {
+                    const lyUp   = k.lyDelta?.positive
+                    const lyGood = k.lyDeltaInvert ? !lyUp : lyUp
+                    const wowUp  = k.wowDelta?.positive
+                    return (
+                      <div key={k.key} className="sb-glass" onClick={k.onClick} style={{
+                        padding: '18px 20px',
+                        cursor: k.onClick ? 'pointer' : 'default',
+                        background: k.accent
+                          ? 'linear-gradient(135deg,rgba(74,222,128,0.1),rgba(74,222,128,0.03))'
+                          : k.danger && k.value !== '0'
+                          ? 'linear-gradient(135deg,rgba(239,68,68,0.09),rgba(239,68,68,0.02))'
+                          : k.warn
+                          ? 'linear-gradient(135deg,rgba(245,158,11,0.08),rgba(245,158,11,0.02))'
+                          : undefined,
+                        borderColor: k.accent
+                          ? 'rgba(74,222,128,0.22)'
+                          : k.danger && k.value !== '0'
+                          ? 'rgba(239,68,68,0.18)'
+                          : undefined,
+                      }}>
+                        <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 8 }}>{k.label}</p>
+                        <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 28, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1,
+                          color: k.accent ? '#4ade80' : k.danger && k.value !== '0' ? '#fca5a5' : k.warn ? '#f59e0b' : '#f5f5f4' }}>
+                          {k.value}
+                        </p>
+
+                        {k.sparkline && (
+                          <div style={{ margin: '8px 0 6px', height: 28 }}>
+                            <Sparkline
+                              values={k.sparkline}
+                              color={k.accent ? '#4ade80' : k.warn || k.danger ? '#f59e0b' : 'rgba(245,245,244,0.4)'}
+                              height={28}
+                            />
+                          </div>
+                        )}
+
+                        {(k.lyDelta || k.lyRef || k.wowDelta) && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: k.sparkline ? 4 : 10 }}>
+                            {k.lyDelta && (
+                              <span style={{
+                                fontSize: 10, padding: '2px 6px', borderRadius: 4, fontFamily: "'Geist Mono', monospace",
+                                background: lyGood ? 'rgba(74,222,128,0.12)' : 'rgba(239,68,68,0.12)',
+                                color:      lyGood ? '#4ade80'               : '#fca5a5',
+                              }}>{k.lyDelta.label}</span>
+                            )}
+                            {k.lyRef && (
+                              <span style={{ fontSize: 10, color: 'rgba(245,245,244,0.3)', fontFamily: "'Geist Mono', monospace" }}>
+                                LY {k.lyRef}
+                              </span>
+                            )}
+                            {k.wowDelta && (
+                              <span style={{
+                                fontSize: 10, padding: '2px 5px', borderRadius: 4, fontFamily: "'Geist Mono', monospace",
+                                borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 8, marginLeft: 2,
+                                color: wowUp ? 'rgba(74,222,128,0.7)' : 'rgba(239,68,68,0.7)',
+                              }}>WoW {k.wowDelta.label}</span>
+                            )}
+                          </div>
+                        )}
+
+                        {k.bench && (
+                          <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.2)', fontFamily: "'Geist Mono', monospace", marginTop: 4 }}>
+                            {k.bench} ({k.benchN}w avg)
+                          </p>
+                        )}
+
+                        {!k.lyDelta && !k.lyRef && !k.wowDelta && !k.bench && (
+                          <p style={{ fontSize: 11, color: k.onClick ? 'rgba(34,211,238,0.7)' : 'rgba(245,245,244,0.35)', marginTop: 8, fontFamily: "'Geist Mono', monospace", textDecoration: k.onClick ? 'underline' : 'none' }}>
+                            {k.sub}
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })
+                })()
             }
           </div>
+
+          {/* ── SALES TREND ──────────────────────────────────────────────────── */}
+          <SalesTrendPanel
+            trendData={trendData}
+            lyTrendData={lyTrendData}
+            storeCodes={storeCodes}
+          />
 
           {/* ── TOP 20 + DEPT CHART — hidden while a product selection is active ─── */}
           {!isSelectionActive && (
@@ -1700,23 +2030,42 @@ export default function Home() {
 
               {/* Sales by Dept */}
               <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
-                <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600, marginBottom: 14 }}>Sales by Department</p>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
+                  <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>Sales by Department</p>
+                  {showLYDept && (
+                    <span style={{ fontSize: 10, color: 'rgba(74,222,128,0.5)', fontFamily: "'Geist Mono', monospace" }}>vs LY shown</span>
+                  )}
+                </div>
                 {viewsLoading
                   ? <div>{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} h={28} r={4} mb={5} />)}</div>
                   : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 0, maxHeight: 360, overflowY: 'auto' }}>
                       {deptChart.length === 0 && <p style={{ color: 'rgba(245,245,244,0.3)', fontSize: 13, padding: '20px 0', textAlign: 'center', fontStyle: 'italic' }}>No sales data</p>}
-                      {deptChart.map(d => (
-                        <div key={d.name}
-                          onClick={() => clickDept(d.name)}
-                          style={{ display: 'grid', gridTemplateColumns: '1fr 72px 1fr', gap: 12, alignItems: 'center', padding: '7px 0', borderBottom: '1px dashed rgba(255,255,255,0.04)', opacity: deptFilter !== 'all' && deptFilter !== d.name ? 0.35 : 1, transition: 'opacity 0.2s', cursor: 'pointer' }}>
-                          <span style={{ fontSize: 12, color: deptFilter === d.name ? '#4ade80' : '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: deptFilter === d.name ? 600 : 400 }}>{d.name}</span>
-                          <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#4ade80', textAlign: 'right' }}>{zarShort(d.val)}</span>
-                          <div style={{ height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 999, overflow: 'hidden' }}>
-                            <div style={{ height: '100%', width: `${d.pct}%`, background: 'linear-gradient(90deg, #4ade80, #22d3ee)', borderRadius: 999, transition: 'width 0.5s ease' }} />
+                      {deptChart.map(d => {
+                        const lyVal   = lyDeptMap.get(d.name) ?? 0
+                        const lyDelta = showLYDept && lyVal > 0 ? ((d.val - lyVal) / lyVal) * 100 : null
+                        return (
+                          <div key={d.name}
+                            onClick={() => clickDept(d.name)}
+                            style={{ display: 'grid', gridTemplateColumns: showLYDept ? '1fr 72px 46px 1fr' : '1fr 72px 1fr', gap: 10, alignItems: 'center', padding: '7px 0', borderBottom: '1px dashed rgba(255,255,255,0.04)', opacity: deptFilter !== 'all' && deptFilter !== d.name ? 0.35 : 1, transition: 'opacity 0.2s', cursor: 'pointer' }}>
+                            <span style={{ fontSize: 12, color: deptFilter === d.name ? '#4ade80' : '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: deptFilter === d.name ? 600 : 400 }}>{d.name}</span>
+                            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#4ade80', textAlign: 'right' }}>{zarShort(d.val)}</span>
+                            {showLYDept && (
+                              <span style={{
+                                fontFamily: "'Geist Mono', monospace", fontSize: 10, textAlign: 'right',
+                                color: lyDelta == null ? 'transparent'
+                                     : lyDelta >= 0   ? 'rgba(74,222,128,0.8)'
+                                                      : 'rgba(239,68,68,0.8)',
+                              }}>
+                                {lyDelta == null ? '' : (lyDelta >= 0 ? '+' : '') + lyDelta.toFixed(1) + '%'}
+                              </span>
+                            )}
+                            <div style={{ height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 999, overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${d.pct}%`, background: 'linear-gradient(90deg, #4ade80, #22d3ee)', borderRadius: 999, transition: 'width 0.5s ease' }} />
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   )
                 }
