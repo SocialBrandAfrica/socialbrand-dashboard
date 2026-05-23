@@ -5,11 +5,11 @@
 .DESCRIPTION
     Reads PRSSALE.DAT from S:\sigma\comms\Catman\TAC*.zip.
     Pushes daily_snapshots (all 28 columns incl client_id, full catalog including zero-sale rows).
-    Also pushes stock_snapshots (from dewas_PLU_s) and ref tables.
-    daily_aggregates is retired - this script no longer writes to it.
+    stock_snapshots dropped (SB-SCH-001 Block 1 -- 2026-05-23). No longer written.
+    daily_aggregates is retired -- this script no longer writes to it.
     Requires C:\socialbrand\sb-key.txt containing the Supabase service_role key (first line).
 .PARAMETER Mode
-    nightly  - daily_snapshots + stock_snapshots + ref tables (default)
+    nightly  - daily_snapshots + ref tables (default)
     intraday - reserved for Phase 2 (transactions)
 .PARAMETER Backfill
     Process all TAC*.zip files in TacZipDir instead of only the latest.
@@ -880,79 +880,6 @@ function Push-DailySnapshotsBackfill {
 }
 
 # =============================================================================
-# PUSH: stock_snapshots  <-  npos.dbo.dewas_PLU_s
-# Retained for intraday SOH readings. Not used by the dashboard.
-# =============================================================================
-
-function Push-StockSnapshots {
-    Write-Host "`n[stock_snapshots] Starting push from dewas_PLU_s..." -ForegroundColor Cyan
-    $logId = $null
-
-    try {
-        $logId      = Start-PushLog -TableName 'stock_snapshots'
-        $snapshotAt = (Get-Date).ToString('o')
-
-        $sql = @"
-SELECT PLU_nr, CAST(SUM(s_stock) AS FLOAT) AS soh
-FROM $NposDb.dbo.dewas_PLU_s
-WHERE s_stock IS NOT NULL
-GROUP BY PLU_nr
-"@
-        $conn = New-SqlConn -Database $NposDb
-        $dt   = Invoke-Sql -Conn $conn -Sql $sql
-        $conn.Dispose()
-
-        Write-Host "  Rows from dewas_PLU_s: $($dt.Rows.Count)"
-
-        $pushed = 0
-        $batch  = [System.Collections.Generic.List[hashtable]]::new()
-
-        foreach ($row in $dt.Rows) {
-            $ean = [string]$row['PLU_nr']
-            $soh = [Math]::Round([double]$row['soh'], 3)
-
-            $record = [ordered]@{
-                client_id     = $ClientId
-                store_code    = $StoreCode
-                snapshot_at   = $snapshotAt
-                ean           = $ean
-                plu_code      = $ean
-                soh           = $soh
-                reserved_qty  = 0
-                available_qty = $soh
-            }
-            $batch.Add($record)
-
-            if ($batch.Count -ge $BatchSize) {
-                $pushed += Send-Batch -TableName 'stock_snapshots' `
-                                      -ConflictCols 'client_id,store_code,snapshot_at,ean' `
-                                      -Rows $batch.ToArray() -LogId $logId
-                $batch.Clear()
-                Write-Host "  Pushed $pushed rows so far..."
-            }
-        }
-        if ($batch.Count -gt 0) {
-            $pushed += Send-Batch -TableName 'stock_snapshots' `
-                                  -ConflictCols 'client_id,store_code,snapshot_at,ean' `
-                                  -Rows $batch.ToArray() -LogId $logId
-        }
-
-        Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed $pushed
-        Write-Host "  [stock_snapshots] Done. $pushed rows pushed." -ForegroundColor Green
-    }
-    catch {
-        $msg = $_.ToString()
-        try {
-            $stream = $_.Exception.Response.GetResponseStream()
-            $reader = New-Object System.IO.StreamReader($stream)
-            $msg   += ' | ' + $reader.ReadToEnd()
-        } catch {}
-        Write-Host "  [stock_snapshots] FAILED: $msg" -ForegroundColor Red
-        if ($logId) { try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg } catch {} }
-    }
-}
-
-# =============================================================================
 # REFRESH: mv_kpi_by_date materialized view
 # =============================================================================
 
@@ -1027,7 +954,6 @@ switch ($Mode) {
         } else {
             Push-DailySnapshotsNightly
         }
-        Push-StockSnapshots
         Invoke-RefreshKpiView
         Invoke-UpsertSearchIndex
     }
