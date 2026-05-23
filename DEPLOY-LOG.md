@@ -4,6 +4,28 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-05-23 — Session 11, v3.6 + SQL
+
+**Commit:** 93a587a
+
+### Push script v3.6 + upsert_search_index delta (Push script + SQL)
+**Status: Script committed. SQL pending Pieter running upsert_search_index_delta.sql in Supabase.**
+**Files:** `scripts/Push-SigmaToSupabase.ps1`, `sql/upsert_search_index_delta.sql`
+
+**NULL-date guard:** `Test-IsoDate` validates snapshot_date extracted from each TAC zip before
+any rows are pushed. Invalid date writes FAILED to push_log and aborts that date cleanly.
+Applies in both nightly and backfill modes.
+
+**Delta search index:** `upsert_search_index` now accepts optional `p_snapshot_date date`.
+Nightly mode passes today's date -- only re-indexes EANs seen in today's push (fast).
+Backfill mode passes nothing -- full rebuild (existing behaviour).
+Self-updater will deploy v3.6 to all 5 servers on next nightly push (after SQL runs).
+
+**How to verify:** Check push_log output tomorrow morning -- search_index line should show
+"delta YYYY-MM-DD" not "full rebuild".
+
+---
+
 ## 2026-05-23 — Session 11, Bug Fix
 
 **Commit:** 92f6a78
