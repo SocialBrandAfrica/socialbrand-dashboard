@@ -4,6 +4,26 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-05-23 — Session 11, Bug Fix
+
+**Commit:** 92f6a78
+
+### upsert_search_index — null last_seen on dormant products (SQL)
+**Status: Deployed and verified in Supabase**
+**File:** `sql/fix_upsert_search_index_null_last_seen.sql`
+
+Root cause: dormant/placeholder products in daily_snapshots have snapshot_date IS NULL.
+MAX(snapshot_date) over an all-NULL group returns NULL, which violated the NOT NULL
+constraint on product_search_index.last_seen. GREATEST(existing, NULL) also returns NULL
+on the conflict-update path, making it hit even for existing rows.
+
+Fix: added `AND snapshot_date IS NOT NULL` to the WHERE clause in upsert_search_index.
+Products with no valid snapshot date are excluded from the search index.
+
+Verified: SELECT upsert_search_index('80579') ran without error and returned NULL (void).
+
+---
+
 ## 2026-05-21 — Session 2, Batch 3
 
 **Commits:** pending push after this entry
