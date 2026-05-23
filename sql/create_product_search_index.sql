@@ -69,6 +69,7 @@ LANGUAGE sql VOLATILE SECURITY DEFINER AS $$
       AND ean           IS NOT NULL
       AND description   IS NOT NULL
       AND dept_name     IS NOT NULL
+      AND snapshot_date IS NOT NULL
     GROUP BY ean
     ON CONFLICT (ean) DO UPDATE
         SET description = EXCLUDED.description,
