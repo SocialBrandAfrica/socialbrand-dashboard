@@ -20,6 +20,10 @@
            included Prefer: resolution=merge-duplicates (an INSERT hint) on PATCH calls.
            Added Get-PatchHeaders for PATCH-only calls (omits resolution=merge-duplicates).
            Complete-PushLog and Clear-StuckRuns now use Get-PatchHeaders.
+    v3.11: Fix parse error on line 965 in backfill path. $finalStatus: was being parsed
+           as a namespace-scoped variable reference by PowerShell (like $env:PATH).
+           Changed to ${finalStatus}: so the colon is treated as a string literal.
+           This parse error silently prevented the entire script from loading.
     Requires C:\socialbrand\sb-key.txt containing the Supabase service_role key (first line).
 .PARAMETER Mode
     nightly  - daily_snapshots + ref tables (default)
@@ -48,7 +52,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.10'
+$ScriptVersion = 'v3.11'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -962,7 +966,7 @@ function Push-DailySnapshotsBackfill {
             Complete-PushLog -LogId $logId -Status $finalStatus -RowsPushed $pushed -RowsFailed $rowsFailed `
                 -SnapDate $snapDate -RowsExpected $rowsExpected -TacFilename $zip.Name -DurationSecs $durationSecs
 
-            Write-Host "  $finalStatus: $pushed/$rowsExpected rows for $snapDate in ${durationSecs}s." -ForegroundColor $(if ($finalStatus -eq 'SUCCESS') { 'Green' } else { 'Yellow' })
+            Write-Host "  ${finalStatus}: $pushed/$rowsExpected rows for $snapDate in ${durationSecs}s." -ForegroundColor $(if ($finalStatus -eq 'SUCCESS') { 'Green' } else { 'Yellow' })
             $totalPushed += $pushed
         }
         catch {
