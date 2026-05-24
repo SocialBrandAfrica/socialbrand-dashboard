@@ -7,6 +7,8 @@
     Pushes daily_snapshots (all 28 columns incl client_id, full catalog including zero-sale rows).
     stock_snapshots dropped (SB-SCH-001 Block 1 -- 2026-05-23). No longer written.
     daily_aggregates is retired -- this script no longer writes to it.
+    v3.7: push_log now records snapshot_date, rows_expected, tac_filename, duration_seconds.
+          PARTIAL status written when some rows fail (rows_pushed > 0 AND rows_failed > 0).
     Requires C:\socialbrand\sb-key.txt containing the Supabase service_role key (first line).
 .PARAMETER Mode
     nightly  - daily_snapshots + ref tables (default)
@@ -35,7 +37,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.6'
+$ScriptVersion = 'v3.7'
 $ClientName    = 'SocialBrand'
 
 # Store identity - auto-detected from hostname. Same script deploys to all servers.
@@ -250,14 +252,28 @@ function Start-PushLog {
 }
 
 function Complete-PushLog {
-    param([object]$LogId, [string]$Status, [int]$RowsPushed = 0, [int]$RowsFailed = 0, [string]$Msg = '')
+    param(
+        [object]$LogId,
+        [string]$Status,
+        [int]$RowsPushed    = 0,
+        [int]$RowsFailed    = 0,
+        [string]$Msg        = '',
+        [string]$SnapDate   = '',
+        [int]$RowsExpected  = 0,
+        [string]$TacFilename = '',
+        [int]$DurationSecs  = 0
+    )
     $body = [ordered]@{
         status       = $Status
         completed_at = (Get-Date -Format 'o')
         rows_pushed  = $RowsPushed
         rows_failed  = $RowsFailed
     }
-    if ($Msg) { $body['error_message'] = $Msg }
+    if ($Msg)          { $body['error_message']    = $Msg }
+    if ($SnapDate)     { $body['snapshot_date']    = $SnapDate }
+    if ($RowsExpected) { $body['rows_expected']    = $RowsExpected }
+    if ($TacFilename)  { $body['tac_filename']     = $TacFilename }
+    if ($DurationSecs) { $body['duration_seconds'] = $DurationSecs }
     $json = $body | ConvertTo-Json
     $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log?push_id=eq.$LogId" -Method PATCH -Headers (Get-Headers) -Body $json -TimeoutSec 30
 }
@@ -743,8 +759,9 @@ WHERE WGRBEZ IS NOT NULL
 
 function Push-DailySnapshotsNightly {
     Write-Host "`n[daily_snapshots] Starting nightly push from PRSSALE.DAT..." -ForegroundColor Cyan
-    $logId   = $null
-    $tempDir = $null
+    $logId    = $null
+    $tempDir  = $null
+    $startTime = Get-Date
 
     try {
         $logId = Start-PushLog -TableName 'daily_snapshots'
@@ -764,12 +781,13 @@ function Push-DailySnapshotsNightly {
         if (-not (Test-IsoDate $snapDate)) {
             $msg = "Invalid snapshot_date '$snapDate' extracted from $($latest.Name) -- push aborted."
             Write-Warning $msg
-            Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg
+            Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg -TacFilename $latest.Name
             return
         }
 
-        $records = Invoke-ParsePrssaleForSnapshots -FilePath $extracted.FilePath -SnapDate $snapDate
-        Write-Host "  Rows to push (full catalog, excl Delete + pure placeholders): $($records.Count)"
+        $records      = Invoke-ParsePrssaleForSnapshots -FilePath $extracted.FilePath -SnapDate $snapDate
+        $rowsExpected = $records.Count
+        Write-Host "  Rows to push (full catalog, excl Delete + pure placeholders): $rowsExpected"
 
         $pushed = 0
         $batch  = [System.Collections.Generic.List[hashtable]]::new()
@@ -789,9 +807,19 @@ function Push-DailySnapshotsNightly {
                                   -Rows $batch.ToArray() -LogId $logId
         }
 
-        Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed $pushed
-        $script:LastNightlySnapDate = $snapDate
-        Write-Host "  [daily_snapshots] Done. $pushed rows pushed." -ForegroundColor Green
+        $rowsFailed   = $rowsExpected - $pushed
+        $durationSecs = [int]((Get-Date) - $startTime).TotalSeconds
+        $finalStatus  = if ($rowsFailed -eq 0) { 'SUCCESS' } elseif ($pushed -gt 0) { 'PARTIAL' } else { 'FAILED' }
+
+        Complete-PushLog -LogId $logId -Status $finalStatus -RowsPushed $pushed -RowsFailed $rowsFailed `
+            -SnapDate $snapDate -RowsExpected $rowsExpected -TacFilename $latest.Name -DurationSecs $durationSecs
+
+        if ($finalStatus -eq 'SUCCESS') {
+            $script:LastNightlySnapDate = $snapDate
+            Write-Host "  [daily_snapshots] Done. $pushed rows pushed in ${durationSecs}s." -ForegroundColor Green
+        } else {
+            Write-Warning "  [daily_snapshots] $finalStatus. $pushed/$rowsExpected rows pushed. $rowsFailed failed."
+        }
     }
     catch {
         $msg = $_.ToString()
@@ -801,7 +829,8 @@ function Push-DailySnapshotsNightly {
             $msg   += ' | ' + $reader.ReadToEnd()
         } catch {}
         Write-Host "  [daily_snapshots] FAILED: $msg" -ForegroundColor Red
-        if ($logId) { try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg } catch {} }
+        $durationSecs = [int]((Get-Date) - $startTime).TotalSeconds
+        if ($logId) { try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg -DurationSecs $durationSecs } catch {} }
     }
     finally {
         if ($tempDir -and (Test-Path $tempDir)) {
@@ -829,8 +858,9 @@ function Push-DailySnapshotsBackfill {
     $totalSkipped = 0
 
     foreach ($zip in $zips) {
-        $logId   = $null
-        $tempDir = $null
+        $logId     = $null
+        $tempDir   = $null
+        $startTime = Get-Date
 
         try {
             Write-Host "`n  ZIP: $($zip.Name)"
@@ -844,7 +874,7 @@ function Push-DailySnapshotsBackfill {
             if (-not (Test-IsoDate $snapDate)) {
                 $msg = "Invalid snapshot_date '$snapDate' in $($zip.Name) -- date skipped."
                 Write-Warning $msg
-                Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg
+                Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg -TacFilename $zip.Name
                 $totalSkipped++
                 continue
             }
@@ -852,6 +882,7 @@ function Push-DailySnapshotsBackfill {
             if ([DateTime]::ParseExact($snapDate, 'yyyy-MM-dd', $null) -lt $BackfillFrom) {
                 Write-Host "  SKIP - $snapDate is before BackfillFrom $($BackfillFrom.ToString('yyyy-MM-dd'))." -ForegroundColor DarkGray
                 Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed 0 `
+                    -SnapDate $snapDate -TacFilename $zip.Name `
                     -Msg "Skipped - before BackfillFrom threshold"
                 $totalSkipped++
                 continue
@@ -860,13 +891,15 @@ function Push-DailySnapshotsBackfill {
             if (-not $Force -and (Test-DateExists -SnapDate $snapDate)) {
                 Write-Host "  SKIP - $snapDate already in daily_snapshots. Use -Force to overwrite." -ForegroundColor Yellow
                 Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed 0 `
+                    -SnapDate $snapDate -TacFilename $zip.Name `
                     -Msg "Skipped - $snapDate already loaded for store $StoreCode"
                 $totalSkipped++
                 continue
             }
 
-            $records = Invoke-ParsePrssaleForSnapshots -FilePath $extracted.FilePath -SnapDate $snapDate
-            Write-Host "  Rows to push: $($records.Count)"
+            $records      = Invoke-ParsePrssaleForSnapshots -FilePath $extracted.FilePath -SnapDate $snapDate
+            $rowsExpected = $records.Count
+            Write-Host "  Rows to push: $rowsExpected"
 
             $pushed = 0
             $batch  = [System.Collections.Generic.List[hashtable]]::new()
@@ -885,8 +918,14 @@ function Push-DailySnapshotsBackfill {
                                       -Rows $batch.ToArray() -LogId $logId
             }
 
-            Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed $pushed
-            Write-Host "  Pushed $pushed rows for $snapDate." -ForegroundColor Green
+            $rowsFailed   = $rowsExpected - $pushed
+            $durationSecs = [int]((Get-Date) - $startTime).TotalSeconds
+            $finalStatus  = if ($rowsFailed -eq 0) { 'SUCCESS' } elseif ($pushed -gt 0) { 'PARTIAL' } else { 'FAILED' }
+
+            Complete-PushLog -LogId $logId -Status $finalStatus -RowsPushed $pushed -RowsFailed $rowsFailed `
+                -SnapDate $snapDate -RowsExpected $rowsExpected -TacFilename $zip.Name -DurationSecs $durationSecs
+
+            Write-Host "  $finalStatus: $pushed/$rowsExpected rows for $snapDate in ${durationSecs}s." -ForegroundColor $(if ($finalStatus -eq 'SUCCESS') { 'Green' } else { 'Yellow' })
             $totalPushed += $pushed
         }
         catch {
@@ -897,7 +936,8 @@ function Push-DailySnapshotsBackfill {
                 $msg   += ' | ' + $reader.ReadToEnd()
             } catch {}
             Write-Host "  FAILED ($($zip.Name)): $msg" -ForegroundColor Red
-            if ($logId) { try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg } catch {} }
+            $durationSecs = [int]((Get-Date) - $startTime).TotalSeconds
+            if ($logId) { try { Complete-PushLog -LogId $logId -Status 'FAILED' -Msg $msg -TacFilename $zip.Name -DurationSecs $durationSecs } catch {} }
         }
         finally {
             if ($tempDir -and (Test-Path $tempDir)) {

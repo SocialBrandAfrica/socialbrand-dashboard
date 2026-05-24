@@ -29,19 +29,17 @@ BEGIN
     -- Formula keeps 16 full months including the current partial month.
     v_cutoff := DATE_TRUNC('month', CURRENT_DATE) - (v_retention_months || ' months')::interval;
 
-    RAISE NOTICE 'purge_old_snapshots: cutoff = %, retention = % months', v_cutoff, v_retention_months;
-
     -- Purge row-level error log first (FK dependency on push_log)
     DELETE FROM push_errors
-    WHERE push_log_id IN (
-        SELECT id FROM push_log
-        WHERE pushed_at < v_cutoff
+    WHERE push_id IN (
+        SELECT push_id FROM push_log
+        WHERE completed_at < v_cutoff
     );
     GET DIAGNOSTICS v_del_push_errors = ROW_COUNT;
 
     -- Purge push_log
     DELETE FROM push_log
-    WHERE pushed_at < v_cutoff;
+    WHERE completed_at < v_cutoff;
     GET DIAGNOSTICS v_del_push_log = ROW_COUNT;
 
     -- Purge daily_snapshots (primary table -- largest)
@@ -53,8 +51,6 @@ BEGIN
     REFRESH MATERIALIZED VIEW mv_kpi_by_date;
     REFRESH MATERIALIZED VIEW CONCURRENTLY mv_sparkline_14d;
 
-    RAISE NOTICE 'purge_old_snapshots complete. Deleted: % snapshots, % push_log, % push_errors.',
-        v_del_snapshots, v_del_push_log, v_del_push_errors;
 END;
 $$;
 
