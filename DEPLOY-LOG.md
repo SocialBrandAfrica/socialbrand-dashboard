@@ -4,6 +4,69 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-05-24 — Session 18, MOBILE-AUTH-BRIEF (commit b1f4e38)
+
+**New package:** `@supabase/ssr` ^0.5.2
+
+### Google OAuth + Supabase Auth
+- `middleware.js`: auth guard — all routes redirect to `/login` if no valid session.
+  Allows `/login`, `/auth/*`, and static `.html` files through unauthenticated.
+- `src/app/auth/callback/route.js`: PKCE callback — exchanges OAuth code for session cookie.
+- `src/app/login/page.jsx`: dark-theme Google sign-in page. No email/password.
+- `src/lib/supabase.js`: switched from `createClient` to `createBrowserClient` from `@supabase/ssr`.
+  Cookie-based session storage required for middleware auth checks.
+
+### Store isolation
+- `src/app/page.jsx`:
+  - `storeCodes` now initialises to `[]` (populated after profile load, not on mount).
+  - Auth useEffect: fetches `user_profiles` on mount; sets `storeCodes` to all stores (owner)
+    or `[profile.store_code]` (manager).
+  - `isManagerLocked`: hides store selector chips for non-owner roles.
+  - Loading screen while profile loads; "Access Pending" screen if no profile row found.
+  - Sign-out button in header (top-right): shows user's first name + exit icon.
+
+### Phone layout
+- `src/app/globals.css`: `zoom: 1.25` overridden to `zoom: 1` at max-width 767px.
+  Without this, 375px phones render at an effective 300px width causing overflow.
+- `src/app/dashboard.css`: mobile touch targets raised from 36px to 44px (WCAG minimum).
+
+### SQL migration
+- `sql/mobile_auth_setup.sql`: adds `full_name` + `updated_at` columns to `user_profiles`,
+  updates role CHECK constraint to include `owner` and `manager`, adds RLS policy
+  `users_read_own_profile` (auth.uid() = id), adds FK to auth.users.
+  **Pieter must run this in Supabase SQL Editor.**
+
+### Pending (Pieter's manual steps)
+See `PIETER-OAUTH-SETUP.md` on the Desktop for step-by-step instructions:
+1. Create OAuth credentials in Google Cloud Console (~5 min)
+2. Enable Google provider in Supabase Auth settings + set redirect URLs
+3. Run `sql/mobile_auth_setup.sql` in Supabase SQL Editor
+4. Sign in and seed Pieter's owner row in user_profiles
+
+---
+
+## 2026-05-24 — Session 17, data verification + push_log fix (v3.10)
+
+**Commits:** af8c8b8 (Capital Tied fix), 8c360d0 (v3.10 push script)
+
+### Bug fix: Capital Tied multi-date accumulation
+- `src/app/page.jsx` line 1452: `kpiCapTied` changed from `kpiData.reduce()` to
+  `latestKpiByStore.reduce()`. Stock KPIs are point-in-time; summing across dates gave 7x value on 7-day range.
+
+### Bug fix: push_log snapshot_date / tac_filename always NULL (v3.10)
+- Root cause: `Get-Headers` included `Prefer: resolution=merge-duplicates` on PATCH calls.
+  This is an INSERT hint that caused PostgREST to silently drop unrecognised columns (the
+  4 new push_log columns were added without `pg_notify` so cache was stale).
+- Fix: added `Get-PatchHeaders` (omits resolution=merge-duplicates). Updated
+  `Complete-PushLog` and `Clear-StuckRuns` to use it.
+- `sql/fix_push_log_schema_cache.sql` -- **run once in Supabase SQL Editor** to reload
+  PostgREST schema cache. Required before v3.10 will actually populate snapshot_date.
+- `sql/sb_sch_001_step5_push_log_migration.sql` -- added pg_notify step for future re-runs.
+
+**Pending:** deploy v3.10 to all 5 servers (Invoke-WebRequest from GitHub raw URL).
+
+---
+
 ## 2026-05-24 — Session 16, CC-BRIEF-2026-05-24 (diagnostic + two-tier storage)
 
 **Commit:** 5d877d4
