@@ -20,6 +20,9 @@
            included Prefer: resolution=merge-duplicates (an INSERT hint) on PATCH calls.
            Added Get-PatchHeaders for PATCH-only calls (omits resolution=merge-duplicates).
            Complete-PushLog and Clear-StuckRuns now use Get-PatchHeaders.
+    v3.13: Stagger now skipped on manual (interactive) runs. Scheduled tasks run
+           non-interactively so they still stagger. Use [Environment]::UserInteractive
+           to detect. Manual runs push immediately; scheduled runs keep the fixed offset.
     v3.12: Add User-Agent: SocialBrand-PushScript/3.12 to all HTTP calls. PowerShell
            default user-agent starts with Mozilla/5.0 which Supabase new key validation
            treats as a browser -- causing "Forbidden use of secret API key in browser"
@@ -56,7 +59,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.12'
+$ScriptVersion = 'v3.13'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -125,7 +128,7 @@ $script:LastNightlySnapDate = ''
 
 function Get-ClientId {
     $url  = "$SupabaseUrl/rest/v1/clients?select=*&limit=1"
-    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.12 PowerShell' }
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.13 PowerShell' }
     $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
     if (-not $rows -or $rows.Count -eq 0) {
         throw "Client not found in Supabase clients table."
@@ -142,7 +145,7 @@ function Get-Headers {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'resolution=merge-duplicates,return=minimal'
-        'User-Agent'    = 'SocialBrand-PushScript/3.12 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.13 PowerShell'
     }
 }
 
@@ -155,7 +158,7 @@ function Get-PatchHeaders {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'return=minimal'
-        'User-Agent'    = 'SocialBrand-PushScript/3.12 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.13 PowerShell'
     }
 }
 
@@ -165,7 +168,7 @@ function Get-ReturnHeaders {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'return=representation'
-        'User-Agent'    = 'SocialBrand-PushScript/3.12 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.13 PowerShell'
     }
 }
 
@@ -258,7 +261,7 @@ function Clear-StuckRuns {
               "?store_code=eq.$StoreCode" +
               "&status=eq.RUNNING" +
               "&started_at=lt.$cutoff"
-    $hdrs   = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.12 PowerShell' }
+    $hdrs   = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.13 PowerShell' }
     try {
         $stuck = Invoke-RestMethod -Uri ($url + '&select=push_id,table_name') -Method GET -Headers $hdrs -TimeoutSec 30
         if ($stuck -and $stuck.Count -gt 0) {
@@ -1063,8 +1066,9 @@ if ($Backfill) {
 Invoke-SelfUpdate
 
 # Nightly stagger: each store waits a fixed offset so 5 servers do not all
-# hit the DB simultaneously. Skipped in backfill mode (manual runs, no wait).
-if (-not $Backfill) {
+# hit the DB simultaneously. Skipped in backfill mode and in interactive (manual)
+# runs -- [Environment]::UserInteractive is false only in scheduled tasks.
+if (-not $Backfill -and -not [Environment]::UserInteractive) {
     $staggerMap = @{
         '10116' = 0    # SPAR Delareyville  -- fires immediately
         '21355' = 180  # TOPS Delareyville  -- +3 min
