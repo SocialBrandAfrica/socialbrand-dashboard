@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+html {
+  zoom: 1.25;
+}
+
 :root {
   --bg: #1A1A2E;
   --card: #16213E;
