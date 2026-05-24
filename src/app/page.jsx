@@ -1449,7 +1449,7 @@ export default function Home() {
   const wowKpiSales = wowKpiData.reduce((s, r) => s + (r.total_sales ?? 0), 0)
   const hasWoW      = wowKpiData.length > 0
 
-  const kpiCapTied  = kpiData.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
+  const kpiCapTied  = latestKpiByStore.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
 
   const sameWeekdayBenchmark = useMemo(() => {
     if (selectedDates.length !== 1) return null
