@@ -370,13 +370,14 @@ const ROW_BANDS = {
   '80579': null,  // bimodal -- handled separately
 };
 
-// Minimum expected movement rate: % of rows with today_qty != 0 on a normal trading day
-const MOV_BENCH = {
-  '10116': 20,
-  '21355': 12,
-  '80175': 20,
-  '80176': 12,
-  '80579': 8,   // partial-export only includes active planogram
+// Minimum expected movement rate: % of rows with today_qty != 0 on a normal trading day.
+// Set at ~half the observed median so warnings fire only on genuinely anomalous days.
+const MOV_BENCHMARKS = {
+  '10116': 8,   // SPAR Delareyville -- observed ~10%, warn below 8%
+  '21355': 4,   // TOPS Delareyville -- observed ~6-7%, warn below 4%
+  '80175': 6,   // SPAR Roosville -- observed ~8-11%, warn below 6%
+  '80176': 4,   // TOPS Roosville -- observed ~6-7%, warn below 4%
+  '80579': 4,   // TOPS Dice partial export -- observed ~7%, warn below 4%
 };
 
 // ---------------------------------------------------------------------------
@@ -809,7 +810,7 @@ async function runDiagnostic() {
           // Movement health (partial days only -- full-catalog days are near-zero by design)
           const partMovPcts = partData.map(r => pct(parseInt(r.has_movement||0), parseInt(r.row_count||1)));
           const partMovMed  = partMovPcts.length ? Math.round(median(partMovPcts)) : 0;
-          const movB = MOV_BENCH[sc];
+          const movB = MOV_BENCHMARKS[sc];
           s3Html += flag(partMovMed < movB ? 'WARN' : 'OK', `Partial-day movement: ${partMovMed}% median (benchmark >=${movB}%)`);
           const lowMovPart = partData.filter(r => pct(parseInt(r.has_movement||0), parseInt(r.row_count||1)) < movB / 2);
           if (lowMovPart.length) s3Html += flag('WARN', `${lowMovPart.length} partial date(s) with very low movement (<${Math.round(movB/2)}%)`,
@@ -821,7 +822,7 @@ async function runDiagnostic() {
         } else {
           const band = ROW_BANDS[sc];
           const [lo, hi] = band || [Math.round(medRows*0.4), Math.round(medRows*2.5)];
-          const movB = MOV_BENCH[sc];
+          const movB = MOV_BENCHMARKS[sc];
 
           s3Html += flag('INFO', `${name}: ${data.length} dates | med ${medRows.toLocaleString()} rows | movement ${medMov}% | zero-SOH ${medSoh}%`);
 
@@ -876,10 +877,12 @@ async function runDiagnostic() {
       const spikes = entries.filter(e => e.sales > med_*3.5).sort((a,b) => b.sales-a.sales);
       const veryLow = entries.filter(e => e.sales > 0 && e.sales < med_*0.12);
 
-      // Period trend: first half vs second half median
+      // Period trend (spike-adjusted): exclude days > 3x overall median from both halves
+      // before comparing, so Sigma multi-day rollover spikes don't distort the result.
       const mid = Math.floor(entries.length / 2);
-      const firstMed  = median(entries.slice(0, mid).map(e=>e.sales).filter(s=>s>0));
-      const secondMed = median(entries.slice(mid).map(e=>e.sales).filter(s=>s>0));
+      const notSpike  = e => e.sales > 0 && e.sales <= med_ * 3;
+      const firstMed  = median(entries.slice(0, mid).filter(notSpike).map(e => e.sales));
+      const secondMed = median(entries.slice(mid).filter(notSpike).map(e => e.sales));
       const trendPct  = firstMed > 0 ? Math.round((secondMed - firstMed) / firstMed * 100) : 0;
 
       s4Html += `<div style="margin:10px 0">`;
@@ -923,7 +926,7 @@ async function runDiagnostic() {
       if (entries.length >= 14) {
         const trendStr = trendPct >= 0 ? `+${trendPct}%` : `${trendPct}%`;
         s4Html += flag(Math.abs(trendPct) >= 30 ? 'WARN' : 'INFO',
-          `Period trend: first-half median ${fmtR(firstMed)} vs second-half ${fmtR(secondMed)} (${trendStr})`);
+          `Period trend (spike-adjusted): first-half median ${fmtR(firstMed)} vs second-half ${fmtR(secondMed)} (${trendStr})`);
       }
 
       // 5 lowest non-zero days
@@ -961,7 +964,7 @@ async function runDiagnostic() {
                   : d.medRows < band[0] * 0.8 ? 'ERR' : 'WARN';
       }
 
-      const movB      = MOV_BENCH[sc];
+      const movB      = MOV_BENCHMARKS[sc];
       const movStatus = d.medMovPct >= movB ? 'OK' : d.medMovPct >= movB / 2 ? 'WARN' : 'ERR';
       const sohStatus = d.medSoh <= 60 ? 'OK' : d.medSoh <= 80 ? 'WARN' : 'ERR';
       const worst     = ['ERR','WARN','INFO','OK'].find(s => [rowStatus, movStatus, sohStatus].includes(s)) || 'OK';
