@@ -4,6 +4,33 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-05-24 — Session 16, CC-BRIEF-2026-05-24 (diagnostic + two-tier storage)
+
+**Commit:** 5d877d4
+
+### Diagnostic security fix (Item 1)
+- `sql/rpc_diag_push_log.sql` — SECURITY DEFINER RPC replaces direct push_log REST query.
+  **Must be run in Supabase SQL Editor before /diagnostics.html push_log section will work.**
+- `public/diagnostics.html` — diagnose.html deployed to Vercel static at `/diagnostics.html`.
+  Secret key removed; all queries use anon key via SECURITY DEFINER RPCs.
+- Footer: subtle "Data Quality" link added to dashboard bottom, opens `/diagnostics.html`.
+- `globals.css` — `zoom: 1.25` added (125% scale, from earlier in this session).
+
+### Two-tier storage (Item 2 — SQL files ready, run order below)
+- `sql/sb_ret_002_quarterly_aggregates.sql` — CREATE TABLE quarterly_aggregates + 2 indexes.
+  **Run first.**
+- `sql/sb_ret_002_purge_function_v2.sql` — Replaces purge_old_snapshots() with aggregate-then-delete.
+  pg_cron job id=4 unchanged (same function name). **Run second.**
+  Verify after: `SELECT jobid, jobname, active FROM cron.job WHERE jobname = 'sb-monthly-purge';`
+
+### Other fixes this session
+- `sql/add_pgcron_kpi_refresh.sql` — pg_cron job 5 created (nightly-kpi-refresh at 22:00 UTC).
+  Already run and confirmed (job id=5 active).
+- TAC50525.zip backfill: 33,537 rows pushed for TOPS Dice 2025-05-25.
+- mv_kpi_by_date manually refreshed (view was stale -- 2025-05-25 now visible).
+
+---
+
 ## 2026-05-24 — Session 14, Supabase secret key rotation
 
 **No commit — key not stored in repo.**
