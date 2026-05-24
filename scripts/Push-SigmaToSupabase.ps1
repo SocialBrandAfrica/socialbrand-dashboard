@@ -16,6 +16,10 @@
     v3.9: Nightly stagger -- each store waits a fixed number of minutes before starting
           so all 5 servers do not hammer the DB simultaneously at 20:00. Stagger is
           skipped in -Backfill mode (manual runs should not wait).
+    v3.10: Fix push_log snapshot_date/tac_filename always NULL. Root cause: Get-Headers
+           included Prefer: resolution=merge-duplicates (an INSERT hint) on PATCH calls.
+           Added Get-PatchHeaders for PATCH-only calls (omits resolution=merge-duplicates).
+           Complete-PushLog and Clear-StuckRuns now use Get-PatchHeaders.
     Requires C:\socialbrand\sb-key.txt containing the Supabase service_role key (first line).
 .PARAMETER Mode
     nightly  - daily_snapshots + ref tables (default)
@@ -44,7 +48,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.9'
+$ScriptVersion = 'v3.10'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -130,6 +134,18 @@ function Get-Headers {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'resolution=merge-duplicates,return=minimal'
+    }
+}
+
+function Get-PatchHeaders {
+    # For PATCH (UPDATE) calls only. Omits resolution=merge-duplicates which is
+    # an INSERT hint -- including it on PATCH can cause PostgREST to silently
+    # drop columns it does not recognise in its schema cache.
+    return @{
+        'apikey'        = $SupabaseKey
+        'Authorization' = "Bearer $SupabaseKey"
+        'Content-Type'  = 'application/json'
+        'Prefer'        = 'return=minimal'
     }
 }
 
@@ -241,7 +257,7 @@ function Clear-StuckRuns {
                 completed_at  = (Get-Date -Format 'o')
                 error_message = 'Marked FAILED by new run startup - previous run did not complete cleanly.'
             } | ConvertTo-Json
-            $null = Invoke-RestMethod -Uri $url -Method PATCH -Headers (Get-Headers) -Body $body -TimeoutSec 30
+            $null = Invoke-RestMethod -Uri $url -Method PATCH -Headers (Get-PatchHeaders) -Body $body -TimeoutSec 30
         }
     }
     catch {
@@ -288,7 +304,7 @@ function Complete-PushLog {
     if ($TacFilename)  { $body['tac_filename']     = $TacFilename }
     if ($DurationSecs) { $body['duration_seconds'] = $DurationSecs }
     $json = $body | ConvertTo-Json
-    $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log?push_id=eq.$LogId" -Method PATCH -Headers (Get-Headers) -Body $json -TimeoutSec 30
+    $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log?push_id=eq.$LogId" -Method PATCH -Headers (Get-PatchHeaders) -Body $json -TimeoutSec 30
 }
 
 function Write-PushError {

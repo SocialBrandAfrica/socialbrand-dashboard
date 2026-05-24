@@ -46,6 +46,12 @@ CREATE INDEX IF NOT EXISTS idx_push_log_snapshot_date
 
 
 -- ---------------------------------------------------------------------------
+-- STEP 4 -- Reload PostgREST schema cache so new columns are visible immediately
+-- ---------------------------------------------------------------------------
+SELECT pg_notify('pgrst', 'reload schema');
+
+
+-- ---------------------------------------------------------------------------
 -- VERIFY
 -- ---------------------------------------------------------------------------
 SELECT column_name, data_type, is_nullable
