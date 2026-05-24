@@ -124,6 +124,7 @@ async function fetchAllRows({ storeCodes, dates }) {
   if (!storeCodes.length || !dates.length) return []
   const allRows = []
   const batchSize = 1000
+  const maxRows   = 10000
   let from = 0
   while (true) {
     const { data, error } = await supabase.rpc('rpc_all_rows', {
@@ -135,6 +136,7 @@ async function fetchAllRows({ storeCodes, dates }) {
     if (error) { console.error('rpc_all_rows:', error.message); break }
     if (!data || data.length === 0) break
     allRows.push(...data)
+    if (allRows.length >= maxRows) { console.warn('[fetchAllRows] row cap reached — truncated at', maxRows); break }
     if (data.length < batchSize) break
     from += batchSize
   }
@@ -1372,41 +1374,52 @@ export default function Home() {
     return Object.values(m)
   }, [kpiData])
 
-  // deptSummary already has one pre-summed row per dept (from rpc_dept_summary)
+  // deptSummary is pre-filtered by the RPC (p_subdept, p_eans). Use it whenever
+  // any dept or sub-dept filter is active (BUG-4: sub-dept was ignored before).
   const kpiSales = useMemo(() => {
     if (deptFilter !== 'all')
       return deptSummary.filter(r => normalizeDept(r.dept_name) === deptFilter).reduce((s, r) => s + (r.total_sales ?? 0), 0)
+    if (subDeptFilter !== 'all')
+      return deptSummary.reduce((s, r) => s + (r.total_sales ?? 0), 0)
     return kpiData.reduce((s, r) => s + (r.total_sales ?? 0), 0)
-  }, [kpiData, deptSummary, deptFilter])
+  }, [kpiData, deptSummary, deptFilter, subDeptFilter])
 
   const kpiCost = useMemo(() => {
     if (deptFilter !== 'all')
       return deptSummary.filter(r => normalizeDept(r.dept_name) === deptFilter).reduce((s, r) => s + (r.total_cost ?? 0), 0)
+    if (subDeptFilter !== 'all')
+      return deptSummary.reduce((s, r) => s + (r.total_cost ?? 0), 0)
     return kpiData.reduce((s, r) => s + (r.total_cost ?? 0), 0)
-  }, [kpiData, deptSummary, deptFilter])
+  }, [kpiData, deptSummary, deptFilter, subDeptFilter])
 
   const kpiQty = useMemo(() => {
     if (deptFilter !== 'all')
       return deptSummary.filter(r => normalizeDept(r.dept_name) === deptFilter).reduce((s, r) => s + (r.total_qty ?? 0), 0)
+    if (subDeptFilter !== 'all')
+      return deptSummary.reduce((s, r) => s + (r.total_qty ?? 0), 0)
     return kpiData.reduce((s, r) => s + (r.total_qty ?? 0), 0)
-  }, [kpiData, deptSummary, deptFilter])
+  }, [kpiData, deptSummary, deptFilter, subDeptFilter])
 
   const kpiGP = kpiSales > 0 ? gpPct(kpiSales, kpiCost) : 0
 
-  // Bug 3: when a dept is selected, use the dept-filtered SOH counts from
-  // rpc_kpi_dept_counts; otherwise fall back to the pre-aggregated MV totals.
-  // deptSohCounts rows have dept_name already normalised (dots stripped).
+  // BUG-3: normalize dept_name before comparing — dots stripped in deptFilter but
+  // rpc_kpi_dept_counts may return the raw name (e.g. "GROCERIES.FOODS").
+  // BUG-4: also respond to subDeptFilter (deptSohCounts already pre-filtered by RPC).
   const kpiNegSOH = useMemo(() => {
     if (deptFilter !== 'all')
-      return deptSohCounts.filter(r => r.dept_name === deptFilter).reduce((s, r) => s + (r.neg_soh_count ?? 0), 0)
+      return deptSohCounts.filter(r => normalizeDept(r.dept_name) === deptFilter).reduce((s, r) => s + (r.neg_soh_count ?? 0), 0)
+    if (subDeptFilter !== 'all')
+      return deptSohCounts.reduce((s, r) => s + (r.neg_soh_count ?? 0), 0)
     return latestKpiByStore.reduce((s, r) => s + (r.neg_soh_count ?? 0), 0)
-  }, [deptFilter, deptSohCounts, latestKpiByStore])
+  }, [deptFilter, subDeptFilter, deptSohCounts, latestKpiByStore])
 
   const kpiSlowMove = useMemo(() => {
     if (deptFilter !== 'all')
-      return deptSohCounts.filter(r => r.dept_name === deptFilter).reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
+      return deptSohCounts.filter(r => normalizeDept(r.dept_name) === deptFilter).reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
+    if (subDeptFilter !== 'all')
+      return deptSohCounts.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
     return latestKpiByStore.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
-  }, [deptFilter, deptSohCounts, latestKpiByStore])
+  }, [deptFilter, subDeptFilter, deptSohCounts, latestKpiByStore])
   const kpiReorder  = reportLoaded
     ? mergedReportRows.filter(r => !r.is_placeholder && (r.soh ?? 0) <= 0 && (r.period_qty ?? 0) > 0).length
     : null
@@ -1487,10 +1500,11 @@ export default function Home() {
 
   // ── top 20 — RPC already aggregated + filtered; just sort and slice ──────────
   const top20 = useMemo(() => {
+    if (top20Activity === 'non_movers') return [...top20Data].slice(0, 20)
     return moverMode === 'qty'
       ? [...top20Data].filter(r => (r.total_qty   ?? 0) > 0).sort((a, b) => (b.total_qty   ?? 0) - (a.total_qty   ?? 0)).slice(0, 20)
       : [...top20Data].filter(r => (r.total_sales ?? 0) > 0).sort((a, b) => (b.total_sales ?? 0) - (a.total_sales ?? 0)).slice(0, 20)
-  }, [top20Data, moverMode])
+  }, [top20Data, moverMode, top20Activity])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // STORE HANDLERS
@@ -1512,7 +1526,7 @@ export default function Home() {
   }
 
   function clearStoreSelection() {
-    setStoreCodes([...ALL_STORE_CODES])
+    setStoreCodes([])
   }
 
   function clickDept(name) {
@@ -1533,10 +1547,10 @@ export default function Home() {
   // When focusBasket has manual items, all show as stacked ProductDetailPanels.
   // When only a single product is clicked, just that one shows.
   // isSelectionActive hides Top 20 + Sales by Dept and fills that space instead.
-  const activeProducts = (focusBasket.length > 0 && !isDefaultBasket)
-    ? focusBasket
-    : selectedProduct
-      ? [selectedProduct]
+  const activeProducts = selectedProduct
+    ? [selectedProduct]
+    : (focusBasket.length > 0 && !isDefaultBasket)
+      ? focusBasket
       : []
   const isSelectionActive = activeProducts.length > 0
 
@@ -1858,6 +1872,7 @@ export default function Home() {
                       bench:         null,
                       sub:           'In stock, no period sales',
                       warn:          true,
+                      onClick:       () => { setCurrentReport('slowmovers'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
                     },
                     {
                       key:           'negsoh',
@@ -1871,6 +1886,7 @@ export default function Home() {
                       bench:         null,
                       sub:           'Stock errors / shrinkage',
                       danger:        kpiNegSOH > 0,
+                      onClick:       () => { setCurrentReport('negative'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
                     },
                     {
                       key:           'captied',
@@ -2094,9 +2110,9 @@ export default function Home() {
             {activeProducts.map(p => {
               const pEan = String(p['EAN'] ?? p.ean ?? '')
               const pKey = `${pEan}|${p.description ?? p['Description'] ?? ''}`
-              const handleClose = (focusBasket.length > 0 && !isDefaultBasket)
-                ? () => removeFromFocus(p)
-                : () => setSelectedProduct(null)
+              const handleClose = selectedProduct != null
+                ? () => setSelectedProduct(null)
+                : () => removeFromFocus(p)
               return (
                 <ProductDetailPanelConnected
                   key={pKey}
