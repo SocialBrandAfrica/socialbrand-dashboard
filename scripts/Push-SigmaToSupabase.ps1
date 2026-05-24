@@ -13,6 +13,9 @@
           DATE_TRUNC('month', today) - 16 months are skipped without pushing. Backfill
           effective cutoff = max(BackfillFrom, RetentionCutoff). Prevents purged data
           from being re-pushed on subsequent backfill runs.
+    v3.9: Nightly stagger -- each store waits a fixed number of minutes before starting
+          so all 5 servers do not hammer the DB simultaneously at 20:00. Stagger is
+          skipped in -Backfill mode (manual runs should not wait).
     Requires C:\socialbrand\sb-key.txt containing the Supabase service_role key (first line).
 .PARAMETER Mode
     nightly  - daily_snapshots + ref tables (default)
@@ -41,7 +44,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.8'
+$ScriptVersion = 'v3.9'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -1031,6 +1034,23 @@ if ($Backfill) {
 }
 
 Invoke-SelfUpdate
+
+# Nightly stagger: each store waits a fixed offset so 5 servers do not all
+# hit the DB simultaneously. Skipped in backfill mode (manual runs, no wait).
+if (-not $Backfill) {
+    $staggerMap = @{
+        '10116' = 0    # SPAR Delareyville  -- fires immediately
+        '21355' = 180  # TOPS Delareyville  -- +3 min
+        '80175' = 360  # SPAR Roosville     -- +6 min
+        '80176' = 540  # TOPS Roosville     -- +9 min
+        '80579' = 720  # TOPS Dice          -- +12 min
+    }
+    $staggerSecs = $staggerMap[$StoreCode]
+    if ($staggerSecs -gt 0) {
+        Write-Host "Stagger: waiting ${staggerSecs}s before push to spread DB load across stores..." -ForegroundColor DarkGray
+        Start-Sleep -Seconds $staggerSecs
+    }
+}
 
 $ClientId = Get-ClientId
 Write-Host "Client UUID: $ClientId"
