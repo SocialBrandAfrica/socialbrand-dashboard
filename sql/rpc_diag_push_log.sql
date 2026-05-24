@@ -46,7 +46,7 @@ GRANT EXECUTE ON FUNCTION public.rpc_diag_push_log(timestamptz, int)
 SELECT pg_notify('pgrst', 'reload schema');
 
 -- Verify
-SELECT proname, pg_get_function_arguments(oid) AS args, prosecdef AS secdef
+SELECT proname, pg_get_function_arguments(p.oid) AS args, prosecdef AS secdef
 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = 'public' AND p.proname = 'rpc_diag_push_log';
 -- Expected: 1 row, secdef = true
