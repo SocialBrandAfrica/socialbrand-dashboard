@@ -9,6 +9,10 @@
     daily_aggregates is retired -- this script no longer writes to it.
     v3.7: push_log now records snapshot_date, rows_expected, tac_filename, duration_seconds.
           PARTIAL status written when some rows fail (rows_pushed > 0 AND rows_failed > 0).
+    v3.8: Retention cutoff enforced in both nightly and backfill paths. Dates before
+          DATE_TRUNC('month', today) - 16 months are skipped without pushing. Backfill
+          effective cutoff = max(BackfillFrom, RetentionCutoff). Prevents purged data
+          from being re-pushed on subsequent backfill runs.
     Requires C:\socialbrand\sb-key.txt containing the Supabase service_role key (first line).
 .PARAMETER Mode
     nightly  - daily_snapshots + ref tables (default)
@@ -37,8 +41,14 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.7'
+$ScriptVersion = 'v3.8'
 $ClientName    = 'SocialBrand'
+
+# Retention cutoff - mirrors purge_old_snapshots() formula exactly.
+# Any snapshot_date before this threshold is skipped in both nightly and backfill.
+# Recalculated fresh each run so it rolls forward automatically as months pass.
+$_today           = Get-Date
+$RetentionCutoff  = (Get-Date -Year $_today.Year -Month $_today.Month -Day 1).AddMonths(-16)
 
 # Store identity - auto-detected from hostname. Same script deploys to all servers.
 # StoreName uses spaces to match prssale_parser_v2.py STORE_MAP output.
@@ -785,6 +795,13 @@ function Push-DailySnapshotsNightly {
             return
         }
 
+        if ([datetime]::ParseExact($snapDate, 'yyyy-MM-dd', $null) -lt $RetentionCutoff) {
+            $msg = "Skipped: snapshot_date $snapDate is before retention cutoff $($RetentionCutoff.ToString('yyyy-MM-dd'))."
+            Write-Warning $msg
+            Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed 0 -SnapDate $snapDate -TacFilename $latest.Name -Msg $msg
+            return
+        }
+
         $records      = Invoke-ParsePrssaleForSnapshots -FilePath $extracted.FilePath -SnapDate $snapDate
         $rowsExpected = $records.Count
         Write-Host "  Rows to push (full catalog, excl Delete + pure placeholders): $rowsExpected"
@@ -879,11 +896,12 @@ function Push-DailySnapshotsBackfill {
                 continue
             }
 
-            if ([DateTime]::ParseExact($snapDate, 'yyyy-MM-dd', $null) -lt $BackfillFrom) {
-                Write-Host "  SKIP - $snapDate is before BackfillFrom $($BackfillFrom.ToString('yyyy-MM-dd'))." -ForegroundColor DarkGray
+            $effectiveCutoff = if ($BackfillFrom -gt $RetentionCutoff) { $BackfillFrom } else { $RetentionCutoff }
+            if ([DateTime]::ParseExact($snapDate, 'yyyy-MM-dd', $null) -lt $effectiveCutoff) {
+                Write-Host "  SKIP - $snapDate before cutoff $($effectiveCutoff.ToString('yyyy-MM-dd')) (BackfillFrom=$($BackfillFrom.ToString('yyyy-MM-dd')), Retention=$($RetentionCutoff.ToString('yyyy-MM-dd')))." -ForegroundColor DarkGray
                 Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed 0 `
                     -SnapDate $snapDate -TacFilename $zip.Name `
-                    -Msg "Skipped - before BackfillFrom threshold"
+                    -Msg "Skipped - before retention cutoff"
                 $totalSkipped++
                 continue
             }
