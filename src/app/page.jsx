@@ -918,6 +918,7 @@ export default function Home() {
     if (!isDefaultBasket) return
     if (!storeCodes.length || !selectedDates.length) return
 
+    let cancelled = false
     setFocusBasket([])   // clear immediately so old data never lingers
 
     supabase.rpc('rpc_focus_top5', {
@@ -926,6 +927,7 @@ export default function Home() {
       p_dept:        deptFilter    !== 'all' ? deptFilter    : null,
       p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
     }).then(({ data, error }) => {
+      if (cancelled) return
       if (error) { console.error('rpc_focus_top5 error', error); return }
       if (!data?.length) return
       const top5 = data.slice(0, 5).map(r => ({
@@ -937,6 +939,7 @@ export default function Home() {
       }))
       setFocusBasket(top5)
     })
+    return () => { cancelled = true }
   }, [isDefaultBasket, storeCodes, selectedDates, deptFilter, subDeptFilter])
 
   const addToFocus = useCallback((row) => {
@@ -963,6 +966,12 @@ export default function Home() {
     setFocusBasket([])
     setIsDefaultBasket(true)
   }, [])
+
+  // EANs from manually-curated basket — null when auto-populated (default)
+  const focusEans = useMemo(() => {
+    if (isDefaultBasket || !focusBasket.length) return null
+    return [...new Set(focusBasket.map(b => b.ean))]
+  }, [focusBasket, isDefaultBasket])
 
   // ── on mount: load ALL available dates ──────────────────────────────────────
   // v_kpi_by_date has one row per store per date (5 rows/date), so we paginate
@@ -1124,7 +1133,7 @@ export default function Home() {
     let cancelled = false
 
     const subdeptParam = subDeptFilter !== 'all' ? subDeptFilter : null
-    const dKey = [...storeCodes].sort().join(',') + '|' + [...selectedDates].sort().join(',') + '|' + (subdeptParam ?? '')
+    const dKey = [...storeCodes].sort().join(',') + '|' + [...selectedDates].sort().join(',') + '|' + (subdeptParam ?? '') + '|' + (focusEans ? focusEans.slice().sort().join(',') : '')
     const dHit = deptCache.current.get(dKey)
     if (dHit) {
       setDeptSummary(dHit.deptSummary)
@@ -1137,11 +1146,13 @@ export default function Home() {
         p_store_codes: storeCodes,
         p_dates:       selectedDates,
         p_subdept:     subdeptParam,
+        p_eans:        focusEans,
       }),
       supabase.rpc('rpc_kpi_dept_counts', {
         p_store_codes: storeCodes,
         p_dates:       selectedDates,
         p_subdept:     subdeptParam,
+        p_eans:        focusEans,
       }),
     ]).then(([deptRes, deptSohRes]) => {
       if (cancelled) return
@@ -1160,7 +1171,7 @@ export default function Home() {
     })
 
     return () => { cancelled = true }
-  }, [storeCodes, selectedDates, subDeptFilter])
+  }, [storeCodes, selectedDates, subDeptFilter, focusEans])
 
   // ── fetch Top 20 via RPC — re-runs when dept or sub-dept filter changes ──────
   // rpc_top20 accepts p_dept / p_subdept and returns at most 40 pre-aggregated rows
@@ -1176,7 +1187,8 @@ export default function Home() {
       const t20Key = [...storeCodes].sort().join(',') + '|' + [...selectedDates].sort().join(',') + '|' +
                      (deptFilter !== 'all' ? deptFilter : '') + '|' +
                      (subDeptFilter !== 'all' ? subDeptFilter : '') + '|' +
-                     top20Activity + '|' + String(includeParents)
+                     top20Activity + '|' + String(includeParents) + '|' +
+                     (focusEans ? focusEans.slice().sort().join(',') : '')
       const t20Hit = top20Cache.current.get(t20Key)
       if (t20Hit) {
         setTop20Data(t20Hit)
@@ -1192,6 +1204,7 @@ export default function Home() {
         p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
         p_activity:    top20Activity,
         p_parents:     includeParents,
+        p_eans:        focusEans,
       })
       if (cancelled) return
       if (error) console.error('[rpc_top20]', error.message)
@@ -1203,7 +1216,7 @@ export default function Home() {
 
     loadTop20()
     return () => { cancelled = true }
-  }, [storeCodes, selectedDates, deptFilter, subDeptFilter, top20Activity, includeParents])
+  }, [storeCodes, selectedDates, deptFilter, subDeptFilter, top20Activity, includeParents, focusEans])
 
   // ── search index — one row per EAN; loaded per dept/store combo ───────────
   // When any dept is selected, OR when a subset of stores is selected,
