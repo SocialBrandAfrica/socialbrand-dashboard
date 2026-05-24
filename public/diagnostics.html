@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SocialBrand Diagnostic</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0a0e1a;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 24px 16px 48px;
+  }
+
+  h1 {
+    font-size: 18px;
+    font-weight: 700;
+    color: #f5f5f4;
+    letter-spacing: 0.04em;
+  }
+
+  .header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .header-sub {
+    font-size: 12px;
+    color: rgba(245,245,244,0.35);
+    font-family: 'Courier New', monospace;
+  }
+
+  .card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+
+  .card-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: rgba(245,245,244,0.4);
+    margin-bottom: 14px;
+  }
+
+  /* Controls */
+  .store-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .chip {
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.05);
+    color: rgba(245,245,244,0.6);
+    transition: all 0.15s;
+    user-select: none;
+  }
+
+  .chip.active {
+    background: rgba(74,222,128,0.15);
+    border-color: rgba(74,222,128,0.4);
+    color: #4ade80;
+  }
+
+  .presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .custom-dates {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .custom-dates label { font-size: 11px; color: rgba(245,245,244,0.4); }
+
+  .custom-dates input[type="date"] {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 6px;
+    color: #e2e8f0;
+    padding: 4px 8px;
+    font-size: 12px;
+    color-scheme: dark;
+  }
+
+  #run-btn {
+    margin-top: 18px;
+    width: 100%;
+    padding: 11px;
+    background: rgba(74,222,128,0.12);
+    border: 1px solid rgba(74,222,128,0.3);
+    border-radius: 8px;
+    color: #4ade80;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    transition: all 0.15s;
+  }
+
+  #run-btn:hover { background: rgba(74,222,128,0.2); }
+  #run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Progress */
+  .progress-bar {
+    height: 3px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: #4ade80;
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.4s ease;
+  }
+
+  /* Result sections */
+  .result-section {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+
+  .section-header {
+    padding: 12px 16px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(245,245,244,0.5);
+    background: rgba(255,255,255,0.02);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+  }
+
+  .section-header:hover { background: rgba(255,255,255,0.04); }
+
+  .section-body {
+    padding: 0 16px 14px;
+  }
+
+  /* Flag rows */
+  .flag {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 6px 0;
+    font-size: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+
+  .flag:last-child { border-bottom: none; }
+
+  .badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    font-family: 'Courier New', monospace;
+    letter-spacing: 0.05em;
+    margin-top: 1px;
+  }
+
+  .badge-ok   { background: rgba(74,222,128,0.15); color: #4ade80; }
+  .badge-info { background: rgba(148,163,184,0.15); color: #94a3b8; }
+  .badge-warn { background: rgba(251,191,36,0.15);  color: #fbbf24; }
+  .badge-err  { background: rgba(248,113,113,0.15); color: #f87171; }
+
+  .flag-text { color: #e2e8f0; line-height: 1.5; }
+
+  .flag-sub {
+    margin-top: 4px;
+    padding-left: 12px;
+    font-size: 11px;
+    color: rgba(245,245,244,0.5);
+    font-family: 'Courier New', monospace;
+  }
+
+  /* Table */
+  .diag-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    margin: 10px 0 6px;
+    font-family: 'Courier New', monospace;
+  }
+
+  .diag-table th {
+    text-align: left;
+    color: rgba(245,245,244,0.35);
+    font-weight: 600;
+    padding: 0 8px 6px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    letter-spacing: 0.06em;
+  }
+
+  .diag-table td {
+    padding: 5px 8px 5px 0;
+    color: #e2e8f0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    vertical-align: top;
+  }
+
+  .diag-table tr:last-child td { border-bottom: none; }
+
+  .status-pill {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .pill-ok      { background: rgba(74,222,128,0.15);  color: #4ade80; }
+  .pill-failed  { background: rgba(248,113,113,0.15); color: #f87171; }
+  .pill-partial { background: rgba(251,191,36,0.15);  color: #fbbf24; }
+  .pill-null    { background: rgba(148,163,184,0.12); color: #94a3b8; }
+
+  /* Coverage bar */
+  .cov-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 4px 0;
+  }
+
+  .cov-track {
+    flex: 1;
+    height: 6px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .cov-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.6s ease;
+  }
+
+  .cov-label { font-size: 11px; font-family: 'Courier New', monospace; min-width: 40px; text-align: right; }
+
+  /* Copy button */
+  #copy-btn {
+    margin-top: 4px;
+    padding: 7px 16px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 6px;
+    color: rgba(245,245,244,0.5);
+    font-size: 11px;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    transition: all 0.15s;
+  }
+
+  #copy-btn:hover { background: rgba(255,255,255,0.09); color: #e2e8f0; }
+
+  .placeholder { color: rgba(245,245,244,0.2); font-size: 12px; padding: 20px 0; text-align: center; }
+
+  .spinner {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border: 2px solid rgba(74,222,128,0.3);
+    border-top-color: #4ade80;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .store-name-cell { color: rgba(245,245,244,0.7); }
+  .mono { font-family: 'Courier New', monospace; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>SocialBrand Diagnostic</h1>
+  <span class="header-sub">data quality tool</span>
+</div>
+
+<!-- Controls -->
+<div class="card">
+  <div class="card-title">Stores</div>
+  <div class="store-grid" id="store-grid"></div>
+
+  <div class="card-title" style="margin-top:14px">Date range</div>
+  <div class="presets" id="presets"></div>
+  <div class="custom-dates" id="custom-dates" style="display:none">
+    <label>From</label>
+    <input type="date" id="date-from">
+    <label>To</label>
+    <input type="date" id="date-to">
+  </div>
+
+  <button id="run-btn" onclick="runDiagnostic()">Run Diagnostic</button>
+</div>
+
+<!-- Progress -->
+<div class="progress-bar" id="progress-bar" style="display:none">
+  <div class="progress-fill" id="progress-fill"></div>
+</div>
+
+<!-- Results -->
+<div id="results">
+  <div class="placeholder">Select criteria above and click Run Diagnostic.</div>
+</div>
+
+<div id="footer" style="display:none; margin-top:8px">
+  <button id="copy-btn" onclick="copyReport()">Copy plain-text report</button>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Config  -- LOCAL TOOL ONLY, do not host this file publicly
+// ---------------------------------------------------------------------------
+const URL_BASE  = 'https://crklvhfwyxlisfcvqenc.supabase.co/rest/v1';
+const ANON_KEY  = 'sb_publishable__5cXLbkpdth-iLFkeqTTNA_kRUvfYgr';
+// SVC_KEY removed -- fn_diag_snapshot_counts uses SECURITY DEFINER; ANON_KEY covers all calls
+
+const STORES = {
+  '10116': 'SPAR Delareyville',
+  '21355': 'TOPS Delareyville',
+  '80175': 'SPAR Roosville',
+  '80176': 'TOPS Roosville',
+  '80579': 'TOPS Dice',
+};
+
+// Expected row-count band per store per day (normal partial-export)
+const ROW_BANDS = {
+  '10116': [14000, 20000],
+  '21355': [1800,  2800],
+  '80175': [10000, 16000],
+  '80176': [1800,  2800],
+  '80579': null,  // bimodal -- handled separately
+};
+
+// Minimum expected movement rate: % of rows with today_qty != 0 on a normal trading day
+const MOV_BENCH = {
+  '10116': 20,
+  '21355': 12,
+  '80175': 20,
+  '80176': 12,
+  '80579': 8,   // partial-export only includes active planogram
+};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let selectedStores = new Set(Object.keys(STORES));
+let fromDate = '', toDate = '';
+let activePreset = '30d';
+
+// ---------------------------------------------------------------------------
+// Init controls
+// ---------------------------------------------------------------------------
+(function initControls() {
+  const grid = document.getElementById('store-grid');
+
+  // All toggle
+  const allChip = document.createElement('div');
+  allChip.className = 'chip active';
+  allChip.textContent = 'All stores';
+  allChip.dataset.code = 'all';
+  allChip.onclick = () => {
+    if (selectedStores.size === Object.keys(STORES).length) {
+      selectedStores.clear();
+    } else {
+      selectedStores = new Set(Object.keys(STORES));
+    }
+    renderStoreChips();
+  };
+  grid.appendChild(allChip);
+
+  Object.entries(STORES).forEach(([code, name]) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip active';
+    chip.textContent = name;
+    chip.dataset.code = code;
+    chip.onclick = () => {
+      if (selectedStores.has(code)) selectedStores.delete(code);
+      else selectedStores.add(code);
+      renderStoreChips();
+    };
+    grid.appendChild(chip);
+  });
+
+  // Date presets
+  const presets = [
+    ['7d',   'Last 7 days'],
+    ['30d',  'Last 30 days'],
+    ['90d',  'Last 90 days'],
+    ['6mo',  'Last 6 months'],
+    ['full', 'Full history'],
+    ['custom','Custom...'],
+  ];
+  const presetsEl = document.getElementById('presets');
+  presets.forEach(([key, label]) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (key === '30d' ? ' active' : '');
+    chip.textContent = label;
+    chip.onclick = () => {
+      activePreset = key;
+      document.getElementById('custom-dates').style.display = key === 'custom' ? 'flex' : 'none';
+      presetsEl.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+    };
+    presetsEl.appendChild(chip);
+  });
+
+  // Default custom dates
+  const today = new Date();
+  document.getElementById('date-to').value   = today.toISOString().slice(0,10);
+  document.getElementById('date-from').value = new Date(today - 30*86400000).toISOString().slice(0,10);
+})();
+
+function renderStoreChips() {
+  const allCount = Object.keys(STORES).length;
+  document.querySelectorAll('#store-grid .chip').forEach(chip => {
+    const code = chip.dataset.code;
+    if (code === 'all') {
+      chip.classList.toggle('active', selectedStores.size === allCount);
+    } else {
+      chip.classList.toggle('active', selectedStores.has(code));
+    }
+  });
+}
+
+function getDateRange() {
+  const today = new Date();
+  const iso = d => d.toISOString().slice(0,10);
+  const sub = days => new Date(today - days*86400000);
+  switch (activePreset) {
+    case '7d':    return [iso(sub(6)),   iso(today)];
+    case '30d':   return [iso(sub(29)),  iso(today)];
+    case '90d':   return [iso(sub(89)),  iso(today)];
+    case '6mo':   return [iso(sub(179)), iso(today)];
+    case 'full':  return ['2025-02-01',  iso(today)];
+    case 'custom':
+      return [document.getElementById('date-from').value,
+              document.getElementById('date-to').value];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP helpers
+// ---------------------------------------------------------------------------
+async function apiFetch(table, params) {
+  const qs = Object.entries(params)
+    .map(([k,v]) => `${k}=${encodeURIComponent(v).replace(/%2C/g,',')}`)
+    .join('&');
+  const url = `${URL_BASE}/${table}?${qs}`;
+  const r = await fetch(url, { headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` } });
+  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  return r.json();
+}
+
+async function rpcCall(fn, body) {
+  const r = await fetch(`${URL_BASE}/rpc/${fn}`, {
+    method: 'POST',
+    headers: {
+      apikey: ANON_KEY,
+      Authorization: `Bearer ${ANON_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: '',
+    },
+    body: JSON.stringify(body),
+  });
+  if (r.status === 404) return null;
+  const txt = await r.text();
+  if (!r.ok) {
+    if (txt.includes('does not exist') || txt.includes('Could not find')) return null;
+    throw new Error(txt);
+  }
+  return JSON.parse(txt);
+}
+
+// ---------------------------------------------------------------------------
+// Statistics
+// ---------------------------------------------------------------------------
+function median(arr) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a,b) => a-b);
+  const m = Math.floor(s.length/2);
+  return s.length % 2 ? s[m] : (s[m-1]+s[m])/2;
+}
+
+function fmtR(n) {
+  return 'R ' + Math.round(n).toLocaleString('en-ZA');
+}
+
+function pct(num, den) {
+  return den > 0 ? Math.round(num / den * 100) : 0;
+}
+
+function findConsecutiveZeros(sortedEntries) {
+  const runs = [];
+  let run = [];
+  for (const e of sortedEntries) {
+    if (e.sales === 0) { run.push(e.date); }
+    else { if (run.length >= 3) runs.push([...run]); run = []; }
+  }
+  if (run.length >= 3) runs.push(run);
+  return runs;
+}
+
+// ---------------------------------------------------------------------------
+// Report text accumulator
+// ---------------------------------------------------------------------------
+let reportLines = [];
+function rLine(s) { reportLines.push(s); }
+
+// ---------------------------------------------------------------------------
+// Render helpers
+// ---------------------------------------------------------------------------
+function badge(sev) {
+  const map = { OK:'badge-ok', INFO:'badge-info', WARN:'badge-warn', ERR:'badge-err' };
+  return `<span class="badge ${map[sev]||'badge-info'}">${sev}</span>`;
+}
+
+function flag(sev, msg, subs=[]) {
+  rLine(`  [${sev}]  ${msg}`);
+  subs.forEach(s => rLine(`         ${s}`));
+  const subHtml = subs.length
+    ? `<div class="flag-sub">${subs.map(s=>`<div>${s}</div>`).join('')}</div>` : '';
+  return `<div class="flag">${badge(sev)}<div class="flag-text">${msg}${subHtml}</div></div>`;
+}
+
+function section(num, title, htmlContent) {
+  rLine('');
+  rLine(`${num}. ${title}`);
+  rLine('-'.repeat(60));
+  return `
+    <div class="result-section">
+      <div class="section-header" onclick="toggleSection(this)">
+        <span>${num}. ${title}</span><span style="font-size:10px;opacity:0.4">click to collapse</span>
+      </div>
+      <div class="section-body">${htmlContent}</div>
+    </div>`;
+}
+
+function toggleSection(el) {
+  const body = el.nextElementSibling;
+  body.style.display = body.style.display === 'none' ? '' : 'none';
+}
+
+function setProgress(pct) {
+  document.getElementById('progress-fill').style.width = pct + '%';
+}
+
+// ---------------------------------------------------------------------------
+// Main diagnostic
+// ---------------------------------------------------------------------------
+async function runDiagnostic() {
+  if (!selectedStores.size) { alert('Select at least one store.'); return; }
+  const [from, to] = getDateRange();
+  if (!from || !to) { alert('Set a date range.'); return; }
+
+  reportLines = [];
+  const stores = [...selectedStores];
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Running...';
+  document.getElementById('progress-bar').style.display = 'block';
+  document.getElementById('footer').style.display = 'none';
+  setProgress(5);
+
+  const title = `SocialBrand Diagnostic  |  ${from} to ${to}  |  ${stores.length === 5 ? 'All stores' : stores.map(s=>STORES[s]).join(', ')}`;
+  rLine('='.repeat(70));
+  rLine(title);
+  rLine('='.repeat(70));
+
+  try {
+    const resultsEl = document.getElementById('results');
+    resultsEl.innerHTML = '';
+
+    // -- Section 1: Push log --------------------------------------------------
+    setProgress(15);
+    const pushRows = (await rpcCall('rpc_diag_push_log', { p_from: from + 'T00:00:00Z', p_limit: 2000 })) ?? [];
+
+    // Most recent entry per store (any status) + most recent SUCCESS per store
+    const byStore   = {};
+    const byStoreOk = {};
+    pushRows.forEach(r => {
+      const sc = r.store_code;
+      if (!sc) return;
+      if (!byStore[sc])                            byStore[sc]   = r;
+      if (r.status === 'SUCCESS' && !byStoreOk[sc]) byStoreOk[sc] = r;
+    });
+
+    let s1Html = '<table class="diag-table"><thead><tr>'
+      + '<th>Store</th><th>Snap date</th><th>Pushed at</th><th>Status</th><th>Rows pushed</th><th>TAC file</th>'
+      + '</tr></thead><tbody>';
+
+    stores.forEach(sc => {
+      const name = STORES[sc];
+      const e    = byStore[sc];
+      const eOk  = byStoreOk[sc];
+      if (!e) {
+        s1Html += `<tr><td class="store-name-cell">${name}</td><td colspan="5" style="color:rgba(245,245,244,0.3)">(no entries)</td></tr>`;
+        rLine(`  ${name}: no entries`);
+        return;
+      }
+      const snap     = e.snapshot_date || '(pre-v3.7)';
+      const pushedAt = (e.started_at || '').slice(0, 16).replace('T', ' ');
+      const status   = e.status || '?';
+      const pushed   = (e.rows_pushed || 0).toLocaleString();
+      const tac      = (e.tac_filename || '(null)').slice(0, 20);
+      const pillCls  = status === 'SUCCESS' ? 'pill-ok' : status === 'FAILED' ? 'pill-failed' : 'pill-partial';
+      // If most recent is not a SUCCESS but a later success exists, show it as a sub-note
+      const lastOkNote = (status !== 'SUCCESS' && eOk)
+        ? `<div style="font-size:10px;color:rgba(74,222,128,0.55);margin-top:2px">last ok: ${(eOk.started_at||'').slice(0,16).replace('T',' ')} &mdash; ${eOk.snapshot_date||'pre-v3.7'}</div>`
+        : '';
+      s1Html += `<tr>
+        <td class="store-name-cell">${name}</td>
+        <td class="mono">${snap}</td>
+        <td class="mono" style="color:rgba(245,245,244,0.45)">${pushedAt}</td>
+        <td><span class="status-pill ${pillCls}">${status}</span>${lastOkNote}</td>
+        <td class="mono" style="text-align:right">${pushed}</td>
+        <td class="mono" style="color:rgba(245,245,244,0.4)">${tac}</td>
+      </tr>`;
+      rLine(`  ${name.padEnd(22)} ${snap.padEnd(12)} ${status.padEnd(10)} ${pushed}`);
+    });
+    s1Html += '</tbody></table>';
+
+    // Real failures: exclude pre-v3.7 backfill noise (null snapshot_date + null tac_filename + 0 rows)
+    const isPreV37Noise = r => !r.snapshot_date && !r.tac_filename && !(r.rows_pushed > 0);
+    const failures  = pushRows.filter(r => r.status === 'FAILED' && stores.includes(r.store_code) && !isPreV37Noise(r));
+    const nullSnaps = pushRows.filter(r => !r.snapshot_date && r.status === 'SUCCESS' && (r.rows_pushed||0) > 0 && stores.includes(r.store_code));
+    const cutoff    = new Date(new Date(to) - 2*86400000).toISOString().slice(0,10);
+    // Stale = no SUCCESS within the cutoff window (not just any entry)
+    const stale     = stores.filter(sc => {
+      const ok = byStoreOk[sc];
+      return !ok || (ok.started_at||'').slice(0,10) < cutoff;
+    });
+
+    if (failures.length) {
+      const subs = failures.slice(0,6).map(f =>
+        `${STORES[f.store_code]||f.store_code} -- date=${f.snapshot_date||'null'} at=${(f.started_at||'').slice(0,16)}`);
+      s1Html += flag('WARN', `${failures.length} FAILED push(es) in period`, subs);
+    } else {
+      s1Html += flag('OK', 'No FAILED entries in period');
+    }
+
+    if (nullSnaps.length) {
+      s1Html += flag('INFO', `${nullSnaps.length} SUCCESS entries with null snapshot_date (pre-v3.7 backfill on 2026-05-23 -- expected)`);
+    }
+
+    if (stale.length) {
+      s1Html += flag('WARN', `No push in last 48 h: ${stale.map(s=>STORES[s]).join(', ')}`);
+    } else {
+      s1Html += flag('OK', 'All stores pushed successfully within last 48 h');
+    }
+
+    resultsEl.insertAdjacentHTML('beforeend', section('1', 'Push Log', s1Html));
+    setProgress(35);
+
+    // -- Section 2: Date coverage ---------------------------------------------
+    const kpiRows = await apiFetch('mv_kpi_by_date', {
+      select: 'store_code,snapshot_date,total_sales,total_qty',
+      snapshot_date: `gte.${from}`,
+      order: 'store_code,snapshot_date',
+      limit: '50000',
+    });
+    const filteredKpi = kpiRows.filter(r => r.snapshot_date <= to);
+
+    const datesByStore = {};
+    const salesByStore = {};
+    filteredKpi.forEach(r => {
+      const sc = r.store_code;
+      if (!stores.includes(sc)) return;
+      if (!datesByStore[sc]) { datesByStore[sc] = []; salesByStore[sc] = []; }
+      datesByStore[sc].push(r.snapshot_date);
+      salesByStore[sc].push({ date: r.snapshot_date, sales: parseFloat(r.total_sales)||0 });
+    });
+
+    const fromD = new Date(from), toD = new Date(to);
+    const totalDays = Math.round((toD - fromD)/86400000) + 1;
+
+    let s2Html = '';
+    stores.forEach(sc => {
+      const name  = STORES[sc];
+      const dates = (datesByStore[sc] || []).sort();
+      const n     = dates.length;
+      const pct   = totalDays ? n/totalDays*100 : 0;
+      const color = pct >= 90 ? '#4ade80' : pct >= 60 ? '#fbbf24' : '#f87171';
+      const sev   = pct >= 90 ? 'OK' : pct >= 60 ? 'WARN' : 'ERR';
+
+      s2Html += `<div style="margin:10px 0">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+          <span style="color:rgba(245,245,244,0.7)">${name}</span>
+          <span style="color:${color}" class="mono">${n} / ${totalDays} (${Math.round(pct)}%)</span>
+        </div>
+        <div class="cov-track">
+          <div class="cov-fill" style="width:${pct}%;background:${color}"></div>
+        </div>`;
+
+      const gaps = [];
+      for (let i = 1; i < dates.length; i++) {
+        const d1 = new Date(dates[i-1]), d2 = new Date(dates[i]);
+        const g  = Math.round((d2 - d1)/86400000);
+        if (g > 2) gaps.push({ before: dates[i-1], after: dates[i], g });
+      }
+
+      if (gaps.length) {
+        const subs = gaps.sort((a,b) => b.g-a.g).slice(0,8).map(({before, after, g}) => {
+          const mFrom = new Date(new Date(before).getTime()+86400000).toISOString().slice(0,10);
+          const mTo   = new Date(new Date(after ).getTime()-86400000).toISOString().slice(0,10);
+          return `${before} -> ${after}  (${g-1} missing: ${mFrom} to ${mTo})`;
+        });
+        s2Html += flag('WARN', `${gaps.length} gap(s) > 2 days`, subs);
+      } else if (n > 0) {
+        s2Html += flag('OK', 'No gaps > 2 days');
+      } else {
+        s2Html += flag('ERR', 'No data at all in this range');
+      }
+
+      s2Html += '</div>';
+      rLine(`  ${name}: ${n}/${totalDays} days (${Math.round(pct)}%)  ${gaps.length ? gaps.length+' gaps' : 'no gaps'}`);
+    });
+
+    resultsEl.insertAdjacentHTML('beforeend', section('2', 'Date Coverage & Gaps', s2Html));
+    setProgress(55);
+
+    // -- Section 3: Row Counts & Movement Health ------------------------------
+    const countRows = await rpcCall('fn_diag_snapshot_counts', { p_from: from, p_to: to });
+
+    const s5Data = {};  // collected here, rendered in Section 5
+
+    let s3Html = '';
+    if (countRows === null) {
+      s3Html = flag('WARN', 'fn_diag_snapshot_counts not found -- run sql/sb_diag_001_snapshot_counts.sql in Supabase to enable this section');
+    } else {
+      const countByStore = {};
+      countRows.forEach(r => {
+        if (!stores.includes(r.store_code)) return;
+        if (!countByStore[r.store_code]) countByStore[r.store_code] = [];
+        countByStore[r.store_code].push(r);
+      });
+
+      stores.forEach(sc => {
+        const name = STORES[sc];
+        const data = (countByStore[sc] || []).sort((a,b) => a.snapshot_date.localeCompare(b.snapshot_date));
+        if (!data.length) { s3Html += `<div style="margin:8px 0">${flag('INFO', name+': no data in range')}</div>`; return; }
+
+        const counts   = data.map(r => parseInt(r.row_count));
+        const movPcts  = data.map(r => pct(parseInt(r.has_movement||0), parseInt(r.row_count||1)));
+        const sohPcts  = data.map(r => pct(parseInt(r.zero_soh||0),     parseInt(r.row_count||1)));
+        const medRows  = Math.round(median(counts));
+        const medMov   = Math.round(median(movPcts));
+        const medSoh   = Math.round(median(sohPcts));
+
+        s3Html += `<div style="margin:10px 0">`;
+
+        if (sc === '80579') {
+          // TOPS Dice bimodal
+          const partData = data.filter(r => parseInt(r.row_count) < 10000);
+          const fullData = data.filter(r => parseInt(r.row_count) >= 10000);
+          const pCounts  = partData.map(r => parseInt(r.row_count));
+          const fCounts  = fullData.map(r => parseInt(r.row_count));
+          const pMed = partData.length ? Math.round(median(pCounts)) : 0;
+          const fMed = fullData.length ? Math.round(median(fCounts)) : 0;
+          const fullDates = fullData.map(r => r.snapshot_date);
+
+          s3Html += flag('INFO', `${name}: ${partData.length} partial days (med ${pMed.toLocaleString()} rows) | ${fullData.length} full-catalog days (med ${fMed.toLocaleString()} rows)`);
+          if (fullDates.length) s3Html += flag('INFO', `Full-catalog dates: ${fullDates.join(', ')}`);
+
+          // Row anomalies
+          const anom = [];
+          if (partData.length) { const pm = median(pCounts); partData.filter(r=>parseInt(r.row_count)<pm*0.5).forEach(r=>anom.push(`${r.snapshot_date}: ${parseInt(r.row_count).toLocaleString()} rows [partial-thin]`)); }
+          if (fullData.length) { const fm = median(fCounts); fullData.filter(r=>parseInt(r.row_count)<fm*0.5).forEach(r=>anom.push(`${r.snapshot_date}: ${parseInt(r.row_count).toLocaleString()} rows [full-thin]`)); }
+          s3Html += anom.length ? flag('WARN', `${anom.length} row-count anomaly(ies)`, anom) : flag('OK', 'No row-count anomalies within each export mode');
+
+          // Movement health (partial days only -- full-catalog days are near-zero by design)
+          const partMovPcts = partData.map(r => pct(parseInt(r.has_movement||0), parseInt(r.row_count||1)));
+          const partMovMed  = partMovPcts.length ? Math.round(median(partMovPcts)) : 0;
+          const movB = MOV_BENCH[sc];
+          s3Html += flag(partMovMed < movB ? 'WARN' : 'OK', `Partial-day movement: ${partMovMed}% median (benchmark >=${movB}%)`);
+          const lowMovPart = partData.filter(r => pct(parseInt(r.has_movement||0), parseInt(r.row_count||1)) < movB / 2);
+          if (lowMovPart.length) s3Html += flag('WARN', `${lowMovPart.length} partial date(s) with very low movement (<${Math.round(movB/2)}%)`,
+            lowMovPart.slice(0,6).map(r=>`${r.snapshot_date}: ${pct(parseInt(r.has_movement||0),parseInt(r.row_count||1))}%`));
+
+          s5Data[sc] = { medRows: pMed, medMovPct: partMovMed, medSoh, isBimodal: true, fullDays: fullData.length };
+          rLine(`  ${name}: ${partData.length} partial (med ${pMed.toLocaleString()}) | ${fullData.length} full`);
+
+        } else {
+          const band = ROW_BANDS[sc];
+          const [lo, hi] = band || [Math.round(medRows*0.4), Math.round(medRows*2.5)];
+          const movB = MOV_BENCH[sc];
+
+          s3Html += flag('INFO', `${name}: ${data.length} dates | med ${medRows.toLocaleString()} rows | movement ${medMov}% | zero-SOH ${medSoh}%`);
+
+          // Row count anomalies
+          const rowAnom = data.filter(r => { const c=parseInt(r.row_count); return c<lo||c>hi; });
+          if (rowAnom.length) {
+            s3Html += flag('WARN', `${rowAnom.length} date(s) outside row benchmark (${lo.toLocaleString()}-${hi.toLocaleString()})`,
+              rowAnom.slice(0,10).map(r => { const c=parseInt(r.row_count); return `${r.snapshot_date}: ${c.toLocaleString()} rows [${c<lo?'LOW':'HIGH'}]`; }));
+          } else {
+            s3Html += flag('OK', `Row counts within benchmark (${lo.toLocaleString()}-${hi.toLocaleString()})`);
+          }
+
+          // Movement health
+          s3Html += flag(medMov < movB ? 'WARN' : 'OK', `Movement rate: ${medMov}% median (benchmark >=${movB}%)`);
+          const lowMovDates = data.filter(r => pct(parseInt(r.has_movement||0), parseInt(r.row_count||1)) < movB / 2);
+          if (lowMovDates.length) s3Html += flag('WARN', `${lowMovDates.length} date(s) with very low movement (<${Math.round(movB/2)}%) -- possible partial export or EOD not closed`,
+            lowMovDates.slice(0,8).map(r=>`${r.snapshot_date}: ${pct(parseInt(r.has_movement||0),parseInt(r.row_count||1))}% (${parseInt(r.has_movement||0).toLocaleString()} movers / ${parseInt(r.row_count).toLocaleString()} rows)`));
+
+          // Zero-SOH health
+          const highSohDates = data.filter(r => pct(parseInt(r.zero_soh||0), parseInt(r.row_count||1)) > 60);
+          if (highSohDates.length) {
+            s3Html += flag('WARN', `${highSohDates.length} date(s) where >60% of SKUs have zero stock`,
+              highSohDates.slice(0,5).map(r=>`${r.snapshot_date}: ${pct(parseInt(r.zero_soh||0),parseInt(r.row_count||1))}% zero-SOH`));
+          } else {
+            s3Html += flag('OK', `Zero-SOH normal (median ${medSoh}%)`);
+          }
+
+          s5Data[sc] = { medRows, medMovPct: medMov, medSoh, isBimodal: false, fullDays: 0 };
+          rLine(`  ${name}: med ${medRows.toLocaleString()} rows, mov ${medMov}%, zero-SOH ${medSoh}%`);
+        }
+        s3Html += '</div>';
+      });
+    }
+
+    resultsEl.insertAdjacentHTML('beforeend', section('3', 'Row Counts & Movement Health', s3Html));
+    setProgress(72);
+
+    // -- Section 4: Sales Analysis --------------------------------------------
+    let s4Html = '';
+    stores.forEach(sc => {
+      const name    = STORES[sc];
+      const entries = (salesByStore[sc] || []).sort((a,b) => a.date.localeCompare(b.date));
+      if (!entries.length) { s4Html += flag('INFO', `${name}: no data`); return; }
+
+      const allSales = entries.map(e => e.sales);
+      const nonzero  = allSales.filter(s => s > 0);
+      if (!nonzero.length) { s4Html += flag('ERR', `${name}: no non-zero sales in entire period`); return; }
+
+      const med_   = median(nonzero);
+      const total  = nonzero.reduce((a,b)=>a+b, 0);
+      const zeros  = entries.filter(e => e.sales === 0).map(e => e.date);
+      const spikes = entries.filter(e => e.sales > med_*3.5).sort((a,b) => b.sales-a.sales);
+      const veryLow = entries.filter(e => e.sales > 0 && e.sales < med_*0.12);
+
+      // Period trend: first half vs second half median
+      const mid = Math.floor(entries.length / 2);
+      const firstMed  = median(entries.slice(0, mid).map(e=>e.sales).filter(s=>s>0));
+      const secondMed = median(entries.slice(mid).map(e=>e.sales).filter(s=>s>0));
+      const trendPct  = firstMed > 0 ? Math.round((secondMed - firstMed) / firstMed * 100) : 0;
+
+      s4Html += `<div style="margin:10px 0">`;
+      s4Html += flag('INFO', `${name}: median ${fmtR(med_)}/day | total ${fmtR(total)} | ${entries.length} dates`);
+      rLine(`  ${name}: med ${fmtR(med_)}/day, total ${fmtR(total)}`);
+
+      if (s5Data[sc]) s5Data[sc].totalSales = total;
+
+      // Zero-sales days
+      if (zeros.length) {
+        s4Html += flag(zeros.length >= 3 ? 'WARN' : 'INFO',
+          `${zeros.length} zero-sales date(s): ${zeros.slice(0,6).join(', ')}${zeros.length>6?' ...':''}`);
+      } else {
+        s4Html += flag('OK', 'No zero-sales dates');
+      }
+
+      // Consecutive zero runs (3+ in a row)
+      const zeroRuns = findConsecutiveZeros(entries);
+      if (zeroRuns.length) {
+        s4Html += flag('WARN', `${zeroRuns.length} run(s) of 3+ consecutive zero-sales days`,
+          zeroRuns.map(run => `${run[0]} to ${run[run.length-1]}  (${run.length} days)`));
+      }
+
+      // Spikes > 3.5x median (likely Sigma multi-day rollover)
+      if (spikes.length) {
+        s4Html += flag('WARN', `${spikes.length} spike(s) > 3.5x median -- possible Sigma multi-day rollover`,
+          spikes.slice(0,6).map(e => `${e.date}: ${fmtR(e.sales)}  (${(e.sales/med_).toFixed(1)}x median)`));
+      } else {
+        s4Html += flag('OK', 'No sales spikes > 3.5x median');
+      }
+
+      // Very low non-zero days (<12% of median -- possible partial close or corrupt export)
+      if (veryLow.length) {
+        s4Html += flag('WARN', `${veryLow.length} date(s) with very low non-zero sales (<12% of median) -- possible partial close`,
+          veryLow.slice(0,6).map(e => `${e.date}: ${fmtR(e.sales)}  (${(e.sales/med_*100).toFixed(0)}% of median)`));
+      } else {
+        s4Html += flag('OK', 'No unusually low non-zero sales days');
+      }
+
+      // Period trend
+      if (entries.length >= 14) {
+        const trendStr = trendPct >= 0 ? `+${trendPct}%` : `${trendPct}%`;
+        s4Html += flag(Math.abs(trendPct) >= 30 ? 'WARN' : 'INFO',
+          `Period trend: first-half median ${fmtR(firstMed)} vs second-half ${fmtR(secondMed)} (${trendStr})`);
+      }
+
+      // 5 lowest non-zero days
+      const low5 = entries.filter(e=>e.sales>0).sort((a,b)=>a.sales-b.sales).slice(0,5);
+      s4Html += flag('INFO', '5 lowest non-zero days:', low5.map(e=>`${e.date}: ${fmtR(e.sales)}`));
+      s4Html += '</div>';
+    });
+
+    resultsEl.insertAdjacentHTML('beforeend', section('4', 'Sales Analysis', s4Html));
+    setProgress(88);
+
+    // -- Section 5: Benchmark Overview ----------------------------------------
+    let s5Html = '<table class="diag-table"><thead><tr>'
+      + '<th>Store</th><th>Rows/day (med)</th><th>Row benchmark</th>'
+      + '<th>Movement %</th><th>Zero-SOH %</th><th>Total sales</th><th>Status</th>'
+      + '</tr></thead><tbody>';
+
+    const pillMap = { OK:'pill-ok', WARN:'pill-partial', ERR:'pill-failed', INFO:'pill-null' };
+
+    stores.forEach(sc => {
+      const name = STORES[sc];
+      const d    = s5Data[sc];
+      if (!d) {
+        s5Html += `<tr><td class="store-name-cell">${name}</td><td colspan="6" style="color:rgba(245,245,244,0.3)">(no data)</td></tr>`;
+        return;
+      }
+
+      let bandStr = '', rowStatus = 'INFO';
+      if (d.isBimodal) {
+        bandStr = `bimodal (+${d.fullDays} full)`;
+      } else {
+        const band = ROW_BANDS[sc] || [0, 999999];
+        bandStr = `${band[0].toLocaleString()}-${band[1].toLocaleString()}`;
+        rowStatus = (d.medRows >= band[0] && d.medRows <= band[1]) ? 'OK'
+                  : d.medRows < band[0] * 0.8 ? 'ERR' : 'WARN';
+      }
+
+      const movB      = MOV_BENCH[sc];
+      const movStatus = d.medMovPct >= movB ? 'OK' : d.medMovPct >= movB / 2 ? 'WARN' : 'ERR';
+      const sohStatus = d.medSoh <= 60 ? 'OK' : d.medSoh <= 80 ? 'WARN' : 'ERR';
+      const worst     = ['ERR','WARN','INFO','OK'].find(s => [rowStatus, movStatus, sohStatus].includes(s)) || 'OK';
+
+      s5Html += `<tr>
+        <td class="store-name-cell">${name}</td>
+        <td class="mono">${d.medRows ? d.medRows.toLocaleString() : '-'}</td>
+        <td class="mono" style="color:rgba(245,245,244,0.45)">${bandStr}</td>
+        <td class="mono" style="color:${d.medMovPct < movB ? '#fbbf24' : '#4ade80'}">${d.medMovPct !== undefined ? d.medMovPct+'%' : '-'}</td>
+        <td class="mono" style="color:${d.medSoh > 60 ? '#fbbf24' : '#e2e8f0'}">${d.medSoh !== undefined ? d.medSoh+'%' : '-'}</td>
+        <td class="mono">${d.totalSales ? fmtR(d.totalSales) : '-'}</td>
+        <td><span class="status-pill ${pillMap[worst]}">${worst}</span></td>
+      </tr>`;
+      rLine(`  ${name.padEnd(22)} rows=${d.medRows||'-'} mov=${d.medMovPct||0}% soh0=${d.medSoh||0}% total=${d.totalSales?fmtR(d.totalSales):'-'}`);
+    });
+
+    s5Html += '</tbody></table>';
+    s5Html += flag('INFO', 'Movement %: share of SKUs with today_qty != 0. Low value means most products showed no sales -- check for partial export or EOD not closed.');
+    s5Html += flag('INFO', 'Zero-SOH %: share of SKUs with stock on hand <= 0. Above 60% warrants investigation.');
+
+    resultsEl.insertAdjacentHTML('beforeend', section('5', 'Benchmark Overview', s5Html));
+    setProgress(100);
+
+    rLine('');
+    rLine('='.repeat(70));
+    rLine('End of diagnostic');
+
+    document.getElementById('footer').style.display = 'block';
+    setTimeout(() => { document.getElementById('progress-bar').style.display = 'none'; }, 600);
+
+  } catch (err) {
+    document.getElementById('results').innerHTML =
+      `<div class="card" style="border-color:rgba(248,113,113,0.3)">
+        <div style="color:#f87171;font-size:13px;font-weight:600">Error</div>
+        <div style="color:rgba(245,245,244,0.5);font-size:12px;margin-top:6px">${err.message}</div>
+      </div>`;
+    setProgress(0);
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = 'Run Diagnostic';
+}
+
+function copyReport() {
+  navigator.clipboard.writeText(reportLines.join('\n')).then(() => {
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy plain-text report', 1500);
+  });
+}
+</script>
+</body>
+</html>

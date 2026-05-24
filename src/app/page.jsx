@@ -2140,6 +2140,18 @@ export default function Home() {
             />
           )}
 
+          {/* ── FOOTER ───────────────────────────────────────────────────────── */}
+          <div style={{ padding: '28px 0 12px', textAlign: 'center' }}>
+            <a
+              href="/diagnostics.html"
+              target="_blank"
+              rel="noreferrer"
+              style={{ fontSize: 11, color: 'rgba(245,245,244,0.18)', fontFamily: "'Geist Mono', monospace", textDecoration: 'none', letterSpacing: '0.06em' }}
+            >
+              Data Quality
+            </a>
+          </div>
+
         </div>
       </div>
 
