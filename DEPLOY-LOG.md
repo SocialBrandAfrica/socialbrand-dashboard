@@ -4,6 +4,23 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-05-24 — Session 14, Supabase secret key rotation
+
+**No commit — key not stored in repo.**
+
+- Old key: legacy JWT service_role (was in git history of public repo -- CRITICAL)
+- New key: `sb_secret__rpmX...` (Supabase new-style Secret key, named "push-scripts")
+- Updated: `upload_snapshots.py` line 39 (local machine, not in git)
+- Updated: `C:\socialbrand\sb-key.txt` on all 5 store servers (SPAR Del, TOPS Del, SPAR Roos, TOPS Roos, TOPS Dice)
+- Verified: `Get-Content` on each server returned new key
+
+**Still to do to fully close the old key:**
+1. Update dashboard to use new publishable key (`sb_publishable__5cXL...`) instead of legacy anon JWT
+2. Click "Disable JWT-based API keys" on Supabase legacy API keys page
+   (this will make the old service_role JWT in git history permanently invalid)
+
+---
+
 ## 2026-05-24 — Session 14, PULSE-BUG-001 + MOBILE-BRIEF complete
 
 **Commits:** a0fe5f6, 09fc30a, 8e5c67b
