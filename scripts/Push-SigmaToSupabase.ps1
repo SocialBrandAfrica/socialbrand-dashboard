@@ -210,7 +210,7 @@ function Get-Watermark {
            "&status=eq.SUCCESS" +
            "&order=completed_at.desc" +
            "&limit=1"
-    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.14 PowerShell' }
     try {
         $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
         if ($rows -and $rows.Count -gt 0 -and $rows[0].completed_at) {
@@ -589,7 +589,7 @@ function Test-DateExists {
             "&store_code=eq.$StoreCode" +
             "&snapshot_date=eq.$SnapDate" +
             "&limit=1"
-    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.14 PowerShell' }
     try {
         $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
         return ($rows -and $rows.Count -gt 0)
@@ -1043,6 +1043,7 @@ function Invoke-UpsertSearchIndex {
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
+        'User-Agent'    = 'SocialBrand-PushScript/3.14 PowerShell'
     }
     $bodyHt = [ordered]@{ p_store_code = $StoreCode }
     if ($SnapDate) { $bodyHt['p_snapshot_date'] = $SnapDate }
