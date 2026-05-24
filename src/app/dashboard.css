@@ -251,9 +251,9 @@
   }
   .sb-push-strip-inner::-webkit-scrollbar { display: none; }
 
-  /* Minimum touch target height */
+  /* Minimum touch target — 44px per WCAG / Apple HIG */
   .sb-chip, .sb-tab, .sb-date-btn {
-    min-height: 36px;
+    min-height: 44px;
     display: flex;
     align-items: center;
   }

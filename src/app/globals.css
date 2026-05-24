@@ -6,6 +6,10 @@ html {
   zoom: 1.25;
 }
 
+@media (max-width: 767px) {
+  html { zoom: 1; }
+}
+
 :root {
   --bg: #1A1A2E;
   --card: #16213E;

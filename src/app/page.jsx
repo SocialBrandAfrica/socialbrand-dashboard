@@ -852,7 +852,9 @@ export default function Home() {
   // ── dates & stores ──────────────────────────────────────────────────────────
   const [availableDates, setAvailableDates] = useState([])
   const [selectedDates,  setSelectedDates]  = useState([])
-  const [storeCodes,     setStoreCodes]     = useState([...ALL_STORE_CODES])
+  const [storeCodes,     setStoreCodes]     = useState([])   // populated after profile load
+  const [userProfile,    setUserProfile]    = useState(undefined) // undefined=loading, null=pending
+  const [authUser,       setAuthUser]       = useState(null)
   const [calOpen,        setCalOpen]        = useState(false)
   const calAnchorRef = useRef(null)
   const panelRef     = useRef(null)
@@ -911,6 +913,39 @@ export default function Home() {
   //   "Clear all" resets back to isDefaultBasket = true and re-fetches the top 5.
   const [focusBasket,      setFocusBasket]      = useState([])
   const [isDefaultBasket,  setIsDefaultBasket]  = useState(true)
+
+  // ── auth: load user + profile on mount ───────────────────────────────────────
+  // Sets storeCodes based on role: owner=all stores, manager=their one store.
+  useEffect(() => {
+    async function loadProfile() {
+      const { data: { user } } = await supabase.auth.getUser()
+      setAuthUser(user)
+      if (!user) {
+        window.location.href = '/login'
+        return
+      }
+      const { data } = await supabase
+        .from('user_profiles')
+        .select('store_code, full_name, role')
+        .eq('id', user.id)
+        .maybeSingle()
+      setUserProfile(data ?? null)
+      if (data?.role !== 'owner' && data?.store_code) {
+        setStoreCodes([data.store_code])
+      } else {
+        setStoreCodes([...ALL_STORE_CODES])
+      }
+    }
+    loadProfile()
+  }, [])
+
+  const handleSignOut = useCallback(async () => {
+    await supabase.auth.signOut()
+    window.location.href = '/login'
+  }, [])
+
+  // Managers are locked to their one store; owners see all
+  const isManagerLocked = userProfile != null && userProfile?.role !== 'owner'
 
   // Auto-populate Focus Area with the top 5 products by period sales value.
   // Uses rpc_focus_top5 (SECURITY DEFINER) — direct daily_snapshots reads are
@@ -1603,6 +1638,37 @@ export default function Home() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // AUTH GUARDS — rendered before main dashboard when session state is known
+  // ─────────────────────────────────────────────────────────────────────────────
+  if (userProfile === undefined) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#0a0e1a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Geist', sans-serif" }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ width: 36, height: 36, border: '3px solid rgba(74,222,128,0.2)', borderTopColor: '#4ade80', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }} />
+          <p style={{ color: 'rgba(245,245,244,0.35)', fontSize: 13 }}>Loading…</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (userProfile === null) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#0a0e1a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Geist', sans-serif", padding: 24 }}>
+        <div style={{ maxWidth: 380, textAlign: 'center' }}>
+          <h2 style={{ fontFamily: 'Fraunces, Georgia, serif', color: '#f5f5f4', marginBottom: 12, fontSize: 24 }}>Access Pending</h2>
+          <p style={{ color: 'rgba(245,245,244,0.5)', marginBottom: 28, lineHeight: 1.7, fontSize: 14 }}>
+            Your account ({authUser?.email}) is not yet assigned to a store.<br />
+            Contact Pieter van der Westhuizen to get access.
+          </p>
+          <button onClick={handleSignOut} style={{ padding: '10px 24px', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, color: '#f5f5f4', cursor: 'pointer', fontFamily: "'Geist', sans-serif", fontSize: 13 }}>
+            Sign out
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────────
   return (
@@ -1625,21 +1691,23 @@ export default function Home() {
           {/* Row 1 — stores + date + reports button */}
           <div className="sb-store-row" style={{ marginBottom: 8 }}>
 
-            {/* Store shortcuts */}
-            <button onClick={selectAllStores} style={{ padding: '4px 10px', fontSize: 10, background: isAllStores ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)', border: `1px solid ${isAllStores ? 'rgba(74,222,128,0.3)' : 'rgba(255,255,255,0.12)'}`, borderRadius: 999, color: isAllStores ? '#4ade80' : 'rgba(245,245,244,0.45)', cursor: 'pointer', fontFamily: 'Geist, sans-serif', letterSpacing: '0.05em', transition: 'all 0.15s' }}>All</button>
-            <button onClick={clearStoreSelection} style={{ padding: '4px 10px', fontSize: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 999, color: 'rgba(245,245,244,0.35)', cursor: 'pointer', fontFamily: 'Geist, sans-serif', letterSpacing: '0.05em' }}>Clear</button>
-
-            {STORES.map(s => (
-              <button key={s.code}
-                className={`sb-chip${storeCodes.includes(s.code) ? ' on' : ''}`}
-                style={{ padding: '5px 12px', fontSize: 11 }}
-                onClick={() => toggleStore(s.code)}
-              >
-                {s.name}
-              </button>
-            ))}
-
-            <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.1)', flexShrink: 0, margin: '0 2px' }} />
+            {/* Store selector — hidden for managers (locked to their one store) */}
+            {!isManagerLocked && (
+              <>
+                <button onClick={selectAllStores} style={{ padding: '4px 10px', fontSize: 10, background: isAllStores ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)', border: `1px solid ${isAllStores ? 'rgba(74,222,128,0.3)' : 'rgba(255,255,255,0.12)'}`, borderRadius: 999, color: isAllStores ? '#4ade80' : 'rgba(245,245,244,0.45)', cursor: 'pointer', fontFamily: 'Geist, sans-serif', letterSpacing: '0.05em', transition: 'all 0.15s' }}>All</button>
+                <button onClick={clearStoreSelection} style={{ padding: '4px 10px', fontSize: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 999, color: 'rgba(245,245,244,0.35)', cursor: 'pointer', fontFamily: 'Geist, sans-serif', letterSpacing: '0.05em' }}>Clear</button>
+                {STORES.map(s => (
+                  <button key={s.code}
+                    className={`sb-chip${storeCodes.includes(s.code) ? ' on' : ''}`}
+                    style={{ padding: '5px 12px', fontSize: 11 }}
+                    onClick={() => toggleStore(s.code)}
+                  >
+                    {s.name}
+                  </button>
+                ))}
+                <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.1)', flexShrink: 0, margin: '0 2px' }} />
+              </>
+            )}
 
             {/* Date picker trigger */}
             <div style={{ position: 'relative' }}>
@@ -1794,14 +1862,37 @@ export default function Home() {
               <p style={{ fontSize: 11, color: 'rgba(245,245,244,0.35)', textTransform: 'uppercase', letterSpacing: '0.14em', marginTop: 4 }}>SocialBrand Pulse</p>
             </div>
           </div>
-          <div className="sb-header-context">
-            <span style={{ display: 'inline-block', width: 6, height: 6, background: '#4ade80', borderRadius: '50%', marginRight: 6, animation: 'pulse 2s infinite', boxShadow: '0 0 8px #4ade80' }} />
-            {activeStoreName || '…'}
-            {' · '}{displayDate}
-            {' · '}{ACTIVITY_OPTIONS.find(o => o.key === activityFilter)?.label ?? activityFilter}
-            {' · '}{includeParents ? 'Inc. Parents' : 'Excl. Parents'}
-            {deptFilter    !== 'all' ? ` · ${deptFilter}`    : ''}
-            {subDeptFilter !== 'all' ? ` › ${subDeptFilter}` : ''}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div className="sb-header-context">
+              <span style={{ display: 'inline-block', width: 6, height: 6, background: '#4ade80', borderRadius: '50%', marginRight: 6, animation: 'pulse 2s infinite', boxShadow: '0 0 8px #4ade80' }} />
+              {activeStoreName || '…'}
+              {' · '}{displayDate}
+              {' · '}{ACTIVITY_OPTIONS.find(o => o.key === activityFilter)?.label ?? activityFilter}
+              {' · '}{includeParents ? 'Inc. Parents' : 'Excl. Parents'}
+              {deptFilter    !== 'all' ? ` · ${deptFilter}`    : ''}
+              {subDeptFilter !== 'all' ? ` › ${subDeptFilter}` : ''}
+            </div>
+            <button
+              onClick={handleSignOut}
+              title="Sign out"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '5px 10px',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: 8, cursor: 'pointer',
+                color: 'rgba(245,245,244,0.45)',
+                fontFamily: "'Geist', sans-serif", fontSize: 11,
+                whiteSpace: 'nowrap', transition: 'all 0.15s', flexShrink: 0,
+              }}
+              onMouseOver={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#f5f5f4' }}
+              onMouseOut={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = 'rgba(245,245,244,0.45)' }}
+            >
+              {userProfile?.full_name?.split(' ')[0] ?? authUser?.email?.split('@')[0] ?? 'Account'}
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+            </button>
           </div>
         </header>
 
