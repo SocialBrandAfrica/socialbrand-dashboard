@@ -20,6 +20,10 @@
            included Prefer: resolution=merge-duplicates (an INSERT hint) on PATCH calls.
            Added Get-PatchHeaders for PATCH-only calls (omits resolution=merge-duplicates).
            Complete-PushLog and Clear-StuckRuns now use Get-PatchHeaders.
+    v3.12: Add User-Agent: SocialBrand-PushScript/3.12 to all HTTP calls. PowerShell
+           default user-agent starts with Mozilla/5.0 which Supabase new key validation
+           treats as a browser -- causing "Forbidden use of secret API key in browser"
+           error on sb_secret__ keys. Custom UA bypasses this detection.
     v3.11: Fix parse error on line 965 in backfill path. $finalStatus: was being parsed
            as a namespace-scoped variable reference by PowerShell (like $env:PATH).
            Changed to ${finalStatus}: so the colon is treated as a string literal.
@@ -52,7 +56,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.11'
+$ScriptVersion = 'v3.12'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -121,7 +125,7 @@ $script:LastNightlySnapDate = ''
 
 function Get-ClientId {
     $url  = "$SupabaseUrl/rest/v1/clients?select=*&limit=1"
-    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.12 PowerShell' }
     $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
     if (-not $rows -or $rows.Count -eq 0) {
         throw "Client not found in Supabase clients table."
@@ -138,6 +142,7 @@ function Get-Headers {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'resolution=merge-duplicates,return=minimal'
+        'User-Agent'    = 'SocialBrand-PushScript/3.12 PowerShell'
     }
 }
 
@@ -150,6 +155,7 @@ function Get-PatchHeaders {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'return=minimal'
+        'User-Agent'    = 'SocialBrand-PushScript/3.12 PowerShell'
     }
 }
 
@@ -159,6 +165,7 @@ function Get-ReturnHeaders {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'return=representation'
+        'User-Agent'    = 'SocialBrand-PushScript/3.12 PowerShell'
     }
 }
 
@@ -251,7 +258,7 @@ function Clear-StuckRuns {
               "?store_code=eq.$StoreCode" +
               "&status=eq.RUNNING" +
               "&started_at=lt.$cutoff"
-    $hdrs   = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
+    $hdrs   = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.12 PowerShell' }
     try {
         $stuck = Invoke-RestMethod -Uri ($url + '&select=push_id,table_name') -Method GET -Headers $hdrs -TimeoutSec 30
         if ($stuck -and $stuck.Count -gt 0) {
