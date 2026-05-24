@@ -153,7 +153,7 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={timeSeries} margin={CM}>
                 <CartesianGrid {...GRID_CLR} />
-                <XAxis dataKey="label" tick={AX_TICK} />
+                <XAxis dataKey="label" tick={AX_TICK} interval={Math.max(0, Math.floor(timeSeries.length / 12) - 1)} />
                 <YAxis tick={AX_TICK} width={36} />
                 <Tooltip contentStyle={TOOLTIP} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -201,7 +201,7 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={timeSeries} margin={CM}>
                 <CartesianGrid {...GRID_CLR} />
-                <XAxis dataKey="label" tick={AX_TICK} />
+                <XAxis dataKey="label" tick={AX_TICK} interval={Math.max(0, Math.floor(timeSeries.length / 12) - 1)} />
                 <YAxis tick={AX_TICK} width={36} />
                 <Tooltip contentStyle={TOOLTIP} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -218,7 +218,7 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={timeSeries} margin={CM}>
                 <CartesianGrid {...GRID_CLR} />
-                <XAxis dataKey="label" tick={AX_TICK} />
+                <XAxis dataKey="label" tick={AX_TICK} interval={Math.max(0, Math.floor(timeSeries.length / 12) - 1)} />
                 <YAxis tick={AX_TICK} width={48} tickFormatter={v => `R${v}`} />
                 <Tooltip contentStyle={TOOLTIP} formatter={v => ['R ' + Number(v).toFixed(2)]} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
