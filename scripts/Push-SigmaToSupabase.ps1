@@ -20,6 +20,10 @@
            included Prefer: resolution=merge-duplicates (an INSERT hint) on PATCH calls.
            Added Get-PatchHeaders for PATCH-only calls (omits resolution=merge-duplicates).
            Complete-PushLog and Clear-StuckRuns now use Get-PatchHeaders.
+    v3.14: Add User-Agent header to Invoke-RefreshKpiView. The inline header block
+           was missed in v3.12 -- refresh_kpi_view RPC was still being blocked by
+           Supabase browser detection on the service role key, so mv_kpi_by_date
+           was never refreshed after nightly pushes.
     v3.13: Stagger now skipped on manual (interactive) runs. Scheduled tasks run
            non-interactively so they still stagger. Use [Environment]::UserInteractive
            to detect. Manual runs push immediately; scheduled runs keep the fixed offset.
@@ -59,7 +63,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.13'
+$ScriptVersion = 'v3.14'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -128,7 +132,7 @@ $script:LastNightlySnapDate = ''
 
 function Get-ClientId {
     $url  = "$SupabaseUrl/rest/v1/clients?select=*&limit=1"
-    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.13 PowerShell' }
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.14 PowerShell' }
     $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
     if (-not $rows -or $rows.Count -eq 0) {
         throw "Client not found in Supabase clients table."
@@ -145,7 +149,7 @@ function Get-Headers {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'resolution=merge-duplicates,return=minimal'
-        'User-Agent'    = 'SocialBrand-PushScript/3.13 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.14 PowerShell'
     }
 }
 
@@ -158,7 +162,7 @@ function Get-PatchHeaders {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'return=minimal'
-        'User-Agent'    = 'SocialBrand-PushScript/3.13 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.14 PowerShell'
     }
 }
 
@@ -168,7 +172,7 @@ function Get-ReturnHeaders {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'return=representation'
-        'User-Agent'    = 'SocialBrand-PushScript/3.13 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.14 PowerShell'
     }
 }
 
@@ -261,7 +265,7 @@ function Clear-StuckRuns {
               "?store_code=eq.$StoreCode" +
               "&status=eq.RUNNING" +
               "&started_at=lt.$cutoff"
-    $hdrs   = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.13 PowerShell' }
+    $hdrs   = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.14 PowerShell' }
     try {
         $stuck = Invoke-RestMethod -Uri ($url + '&select=push_id,table_name') -Method GET -Headers $hdrs -TimeoutSec 30
         if ($stuck -and $stuck.Count -gt 0) {
@@ -1012,6 +1016,7 @@ function Invoke-RefreshKpiView {
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
+        'User-Agent'    = 'SocialBrand-PushScript/3.14 PowerShell'
     }
     try {
         $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body '{}' -TimeoutSec 120
