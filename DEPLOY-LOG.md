@@ -4,6 +4,38 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-05-24 — Session 18, push v3.11 parse fix (commit 07e7108)
+
+**Bug:** `$finalStatus:` in backfill Write-Host line was parsed by PowerShell as a
+namespace-scoped variable reference (`$env:PATH` pattern). Hard parse error prevented
+the entire script from loading — all 5 servers failed silently, no push_log entries.
+**Fix:** `${finalStatus}:` — curly braces delimit the variable name.
+Self-updater cannot fix a parse error (script can't load to run the updater).
+Servers must be manually updated to v3.11 via Invoke-WebRequest.
+
+---
+
+## 2026-05-24 — Session 18, Google OAuth live + super-admin decision
+
+**Google Cloud OAuth credentials configured (2026-05-24):**
+- Project: `dashboardsocialbrandafrica`
+- Client ID + Secret: stored in Supabase Auth > Providers > Google (not in git -- public repo)
+- Authorized redirect URI: `https://crklvhfwyxlisfcvqenc.supabase.co/auth/v1/callback`
+- Supabase Google provider: **ENABLED**
+
+**PM decision — Phase 1 access tiers:**
+All authenticated users have super-admin (owner) access until access tiers are
+formally introduced. user_profiles row is optional — if missing, full access is
+granted anyway. Store isolation by role is code-complete but disabled.
+
+**Code change (page.jsx):**
+- `loadProfile` no longer blocks on user_profiles row.
+  Missing row → synthetic `{ role: 'owner' }` profile → all 5 stores visible.
+- `isManagerLocked` hardcoded `false` (store selector always shown).
+- "Access Pending" screen remains in code but is unreachable until tiers are wired.
+
+---
+
 ## 2026-05-24 — Session 18, MOBILE-AUTH-BRIEF (commit b1f4e38)
 
 **New package:** `@supabase/ssr` ^0.5.2

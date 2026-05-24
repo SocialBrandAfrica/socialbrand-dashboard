@@ -915,7 +915,9 @@ export default function Home() {
   const [isDefaultBasket,  setIsDefaultBasket]  = useState(true)
 
   // ── auth: load user + profile on mount ───────────────────────────────────────
-  // Sets storeCodes based on role: owner=all stores, manager=their one store.
+  // PHASE 1 (current): all authenticated users are treated as owner (super-admin).
+  // user_profiles row is optional — if missing, full access is granted anyway.
+  // Store isolation by role will be wired up when access tiers are introduced.
   useEffect(() => {
     async function loadProfile() {
       const { data: { user } } = await supabase.auth.getUser()
@@ -929,12 +931,11 @@ export default function Home() {
         .select('store_code, full_name, role')
         .eq('id', user.id)
         .maybeSingle()
-      setUserProfile(data ?? null)
-      if (data?.role !== 'owner' && data?.store_code) {
-        setStoreCodes([data.store_code])
-      } else {
-        setStoreCodes([...ALL_STORE_CODES])
-      }
+      // Until tiers are live: all signed-in users get owner (full) access.
+      // If a user_profiles row exists use it for display name; role is ignored.
+      const effectiveProfile = data ?? { role: 'owner', full_name: null, store_code: null }
+      setUserProfile(effectiveProfile)
+      setStoreCodes([...ALL_STORE_CODES])
     }
     loadProfile()
   }, [])
@@ -944,8 +945,9 @@ export default function Home() {
     window.location.href = '/login'
   }, [])
 
-  // Managers are locked to their one store; owners see all
-  const isManagerLocked = userProfile != null && userProfile?.role !== 'owner'
+  // Phase 1: always false — store selector visible for all users.
+  // Set to true for role==='manager' when access tiers are introduced.
+  const isManagerLocked = false
 
   // Auto-populate Focus Area with the top 5 products by period sales value.
   // Uses rpc_focus_top5 (SECURITY DEFINER) — direct daily_snapshots reads are
