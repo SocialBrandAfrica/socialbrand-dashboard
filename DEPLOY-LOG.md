@@ -4,6 +4,67 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-05-24 — Session 14, PULSE-BUG-001 + MOBILE-BRIEF complete
+
+**Commits:** a0fe5f6, 09fc30a, 8e5c67b
+
+### PULSE-BUG-001 — all 8 bugs fixed
+**Status: Deployed to GitHub main.**
+**File:** `src/app/page.jsx`
+
+- **BUG-1:** focusEans wired into rpc_top20, rpc_dept_summary, rpc_kpi_dept_counts — Focus Area basket now actually filters all data panels
+- **BUG-2:** Cancellation flag on rpc_focus_top5 auto-populate effect — prevents race condition overwriting manual basket
+- **BUG-3:** normalizeDept() applied before dept_name comparisons in kpiNegSOH + kpiSlowMove (dotted names e.g. GROCERIES.FOODS now match)
+- **BUG-4:** KPI useMemos now branch on subDeptFilter using pre-filtered deptSummary/deptSohCounts — KPI strip responds to sub-dept filter
+- **BUG-5:** clearStoreSelection sets [] not ALL_STORE_CODES (was a no-op)
+- **BUG-6:** fetchAllRows capped at 10,000 rows — prevents 17+ RPC calls on large multi-store multi-date sets
+- **BUG-7:** slowmovers + negsoh KPI cards now have onClick (open drawer), matching the reorder card
+- **BUG-8:** activeProducts gives selectedProduct priority over focusBasket; top20 useMemo skips filter for non_movers; handleClose corrected
+
+### MOBILE-BRIEF — all 17 items + critical bugs
+**Status: Deployed to GitHub main.**
+**Files:** `src/app/layout.jsx`, `src/app/dashboard.css`, `src/app/page.jsx`, `src/components/ProductDetailPanel.jsx`, `src/components/PushStatusStrip.jsx`
+
+- Viewport meta tag (layout.jsx)
+- useIsMobile hook; isMobile conditionals for drawer/Reports button
+- Responsive CSS classes + @media (max-width: 767px) overrides in dashboard.css
+- Filter bar, main padding, header context, KPI strip, Top20+Dept grid, Reports drawer — all converted to CSS classes
+- PushStatusStrip: sb-push-strip-inner (horizontal scroll on mobile)
+- ProductDetailPanel BUG 0 (slice -90 dates), BUG A (minWidth:0/overflow:hidden), BUG B (XAxis interval max 12 ticks), BUG C (fixed 8px bars)
+- ITEM 15: compact prop — skip charts + rpc_product_detail when multiple products active
+- ITEM 16: min chars 4 before RPC; fetchLimit 150 cap; local results shown immediately while RPC runs
+- ITEM 17: localStorage search index cache (24h TTL); viewsCache + deptCache + top20Cache (session Maps); _detailCache (module Map)
+
+---
+
+## 2026-05-24 — Session 12, v3.7 + Block 8 complete
+
+**Commit:** dcc7667
+
+### Push script v3.7 (Block 8 Step 12)
+**Status: Pushed to GitHub main. Self-updater deploys tonight.**
+**Files:** `scripts/Push-SigmaToSupabase.ps1`
+
+**push_log enrichment:** `Complete-PushLog` now writes `snapshot_date`, `rows_expected`,
+`tac_filename`, `duration_seconds` on every push_log update.
+
+**PARTIAL status:** When `rows_pushed > 0 AND rows_failed > 0`, status is `PARTIAL` (not SUCCESS).
+Full failure stays `FAILED`. Zero failures stays `SUCCESS`.
+
+**Both nightly and backfill** modes updated with timing + new columns.
+
+### Block 8 SQL files (all run in Supabase)
+- `sql/sb_sch_001_step5_push_log_migration.sql` — push_log 4 new columns + index
+- `sql/sb_sch_001_step6_push_errors.sql` — push_errors snapshot_date added
+- `sql/sb_sch_001_step7_orders.sql` — orders shell
+- `sql/sb_sch_001_step8_product_aliases.sql` — product_aliases shell
+- `sql/sb_sch_001_step9_user_profiles.sql` — user_profiles shell (RLS, no policies)
+- `sql/sb_sch_001_step10_audit_log.sql` — audit_log shell
+- `sql/sb_ret_001_purge_function.sql` — purge_old_snapshots() + pg_cron job id=4
+- `sql/sb_rhy_001_mini_payday_seed.sql` — 5th community_rhythm profile (Mini-payday, 13-16, x1.10)
+
+---
+
 ## 2026-05-23 — Session 11, v3.6 + SQL
 
 **Commit:** 93a587a
