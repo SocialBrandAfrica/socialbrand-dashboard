@@ -1013,27 +1013,20 @@ export default function Home() {
   }, [focusBasket, isDefaultBasket])
 
   // ── on mount: load ALL available dates ──────────────────────────────────────
-  // v_kpi_by_date has one row per store per date (5 rows/date), so we paginate
-  // in 1 000-row batches to capture every date in the database — past and future.
+  // Source: push_log (status=SUCCESS, snapshot_date NOT NULL).
+  // push_log is written at push time so it reflects the latest data immediately
+  // without depending on mv_kpi_by_date being refreshed.
   useEffect(() => {
     async function init() {
-      const allDates = new Set()
-      let from = 0
-      const batchSize = 1000
-      while (true) {
-        const { data, error } = await supabase
-          .from('mv_kpi_by_date')
-          .select('snapshot_date')
-          .order('snapshot_date', { ascending: false })
-          .range(from, from + batchSize - 1)
-        if (error || !data?.length) break
-        data.forEach(r => allDates.add(r.snapshot_date))
-        if (data.length < batchSize) break
-        from += batchSize
-      }
-      allDates.delete(null)
-      if (!allDates.size) return
-      const unique = [...allDates].sort((a, b) => b.localeCompare(a))
+      const { data, error } = await supabase
+        .from('push_log')
+        .select('snapshot_date')
+        .eq('status', 'SUCCESS')
+        .not('snapshot_date', 'is', null)
+        .order('snapshot_date', { ascending: false })
+      if (error || !data?.length) return
+      const unique = [...new Set(data.map(r => r.snapshot_date))].sort((a, b) => b.localeCompare(a))
+      if (!unique.length) return
       setAvailableDates(unique)
       setSelectedDates([unique[0]])
       setStoreCodes([...ALL_STORE_CODES])
@@ -1094,8 +1087,8 @@ export default function Home() {
         .filter(d => availableDates.includes(d))
 
       const [kpiRes, subDeptRes, lyKpiRes, wowKpiRes, lyDeptRes, trendRes, lyTrendRes] = await Promise.all([
-        // Current KPI (mv_kpi_by_date — pre-aggregated, fast)
-        supabase.from('mv_kpi_by_date')
+        // Current KPI (v_kpi_by_date — live view, always reflects latest daily_snapshots)
+        supabase.from('v_kpi_by_date')
           .select('store_code,store_name,snapshot_date,total_sales,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
           .in('store_code', storeCodes)
           .in('snapshot_date', selectedDates),
