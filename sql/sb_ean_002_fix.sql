@@ -51,6 +51,8 @@ WHERE pc.store_code    = ds_raw.store_code
 
 -- ── Step B: Rename raw PLU rows to synthetic EAN ───────────────────────────
 -- Joins on (store_code, plu_raw) index — no full table scan.
+-- EAN_REAL_SHORT rows have is_plu=FALSE and plu_raw=NULL so they are
+-- automatically excluded — their short codes stay as-is in daily_snapshots.
 UPDATE public.daily_snapshots ds
 SET    ean = pc.ean
 FROM   public.product_catalog pc

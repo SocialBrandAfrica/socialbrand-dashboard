@@ -20,6 +20,11 @@
            included Prefer: resolution=merge-duplicates (an INSERT hint) on PATCH calls.
            Added Get-PatchHeaders for PATCH-only calls (omits resolution=merge-duplicates).
            Complete-PushLog and Clear-StuckRuns now use Get-PatchHeaders.
+    v3.16: EAN classification now consults product_catalog at startup. Short codes
+           (<=8 digits) that are confirmed cross-store real barcodes (EAN_REAL_SHORT
+           in product_catalog) are kept as-is instead of being expanded to synthetic
+           EANs. Falls back silently to full expansion if catalog is unavailable.
+    v3.15: Fix -lt 8 -> -le 8 so 8-digit PLUs are correctly expanded.
     v3.14: Add User-Agent header to Invoke-RefreshKpiView. The inline header block
            was missed in v3.12 -- refresh_kpi_view RPC was still being blocked by
            Supabase browser detection on the service role key, so mv_kpi_by_date
@@ -63,7 +68,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.15'
+$ScriptVersion = 'v3.16'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -120,6 +125,11 @@ $PlaceholderDate = '01/01/1990'
 # for delta mode. Empty string = full rebuild (backfill mode or nightly failure).
 $script:LastNightlySnapDate = ''
 
+# Loaded at startup from product_catalog (EAN_REAL_SHORT rows for this store).
+# Keys = raw short EAN strings that must NOT be expanded to synthetic EANs.
+# Empty hashtable = catalog unavailable; all short codes get expanded (safe fallback).
+$script:RealShortEanSet = @{}
+
 # =============================================================================
 # TLS
 # =============================================================================
@@ -132,7 +142,7 @@ $script:LastNightlySnapDate = ''
 
 function Get-ClientId {
     $url  = "$SupabaseUrl/rest/v1/clients?select=*&limit=1"
-    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.14 PowerShell' }
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.16 PowerShell' }
     $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
     if (-not $rows -or $rows.Count -eq 0) {
         throw "Client not found in Supabase clients table."
@@ -143,13 +153,43 @@ function Get-ClientId {
     throw "Could not find primary key on clients table. Columns: $($row.PSObject.Properties.Name -join ', ')"
 }
 
+function Initialize-RealShortEanSet {
+    # Load confirmed real cross-store barcodes from product_catalog.
+    # These are short EAN codes (<=8 digits) that appear in multiple stores
+    # with the same product description -- genuine EAN-8 format barcodes
+    # (imports, SPAR own-brand) that must NOT be expanded to synthetic EANs.
+    # If the catalog table does not exist or the query fails, the set stays
+    # empty and all short codes are expanded (v3.15 fallback behaviour).
+    $url  = "$SupabaseUrl/rest/v1/product_catalog" +
+            "?select=ean" +
+            "&store_code=eq.$StoreCode" +
+            "&ean_category=eq.EAN_REAL_SHORT"
+    $hdrs = @{
+        'apikey'        = $SupabaseKey
+        'Authorization' = "Bearer $SupabaseKey"
+        'User-Agent'    = 'SocialBrand-PushScript/3.16 PowerShell'
+    }
+    try {
+        $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 20
+        $set  = @{}
+        foreach ($row in $rows) { $set[$row.ean] = $true }
+        $script:RealShortEanSet = $set
+        Write-Host "  Catalog loaded: $($set.Count) real short EANs excluded from PLU expansion." -ForegroundColor DarkGray
+    }
+    catch {
+        Write-Warning "product_catalog lookup failed (table may not exist yet): $_"
+        Write-Warning "  Falling back to full expansion for all short codes (<= 8 digits)."
+        $script:RealShortEanSet = @{}
+    }
+}
+
 function Get-Headers {
     return @{
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'resolution=merge-duplicates,return=minimal'
-        'User-Agent'    = 'SocialBrand-PushScript/3.14 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.16 PowerShell'
     }
 }
 
@@ -162,7 +202,7 @@ function Get-PatchHeaders {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'return=minimal'
-        'User-Agent'    = 'SocialBrand-PushScript/3.14 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.16 PowerShell'
     }
 }
 
@@ -172,7 +212,7 @@ function Get-ReturnHeaders {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'return=representation'
-        'User-Agent'    = 'SocialBrand-PushScript/3.14 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.16 PowerShell'
     }
 }
 
@@ -210,7 +250,7 @@ function Get-Watermark {
            "&status=eq.SUCCESS" +
            "&order=completed_at.desc" +
            "&limit=1"
-    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.14 PowerShell' }
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.16 PowerShell' }
     try {
         $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
         if ($rows -and $rows.Count -gt 0 -and $rows[0].completed_at) {
@@ -265,7 +305,7 @@ function Clear-StuckRuns {
               "?store_code=eq.$StoreCode" +
               "&status=eq.RUNNING" +
               "&started_at=lt.$cutoff"
-    $hdrs   = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.14 PowerShell' }
+    $hdrs   = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.16 PowerShell' }
     try {
         $stuck = Invoke-RestMethod -Uri ($url + '&select=push_id,table_name') -Method GET -Headers $hdrs -TimeoutSec 30
         if ($stuck -and $stuck.Count -gt 0) {
@@ -589,7 +629,7 @@ function Test-DateExists {
             "&store_code=eq.$StoreCode" +
             "&snapshot_date=eq.$SnapDate" +
             "&limit=1"
-    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.14 PowerShell' }
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.16 PowerShell' }
     try {
         $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
         return ($rows -and $rows.Count -gt 0)
@@ -659,13 +699,17 @@ function Invoke-ParsePrssaleForSnapshots {
 
         # EAN synthesis: PLU codes (1-8 digits, all numeric) get a synthetic 13-digit EAN
         # to ensure global uniqueness across stores. Format: store_code(5) + PLU(8).
-        # Rule: Length <= 8 -> PLU/inhouse code -> expand.
+        # Rule: Length <= 8, NOT in RealShortEanSet -> PLU/inhouse code -> expand.
+        #       Length <= 8,     IN RealShortEanSet -> real EAN-8 barcode -> keep.
         #       Length  9-12 -> real barcode (UPC-A, ISBN, etc.) -> leave unchanged.
         #       Length 13    -> EAN-13 -> leave unchanged.
+        # NOTE: RealShortEanSet is loaded from product_catalog at startup (v3.16).
+        #       It contains confirmed cross-store barcodes (same code+desc at 2+ stores)
+        #       e.g. Camel cigarettes, SPAR imported fresh items.
         # IMPORTANT: use -le 8 (not -lt 8). The -lt 8 bug skipped 8-digit PLUs
         # (SPAR 299xxxxx fresh/weighed items). Fixed in v3.15.
         $rawEan = $fields[2].Trim()
-        $ean = if ($rawEan -match '^\d+$' -and $rawEan.Length -le 8) {
+        $ean = if ($rawEan -match '^\d+$' -and $rawEan.Length -le 8 -and -not $script:RealShortEanSet.ContainsKey($rawEan)) {
                    $StoreCode.PadLeft(5, '0') + $rawEan.PadLeft(8, '0')
                } else {
                    $rawEan
@@ -1021,7 +1065,7 @@ function Invoke-RefreshKpiView {
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
-        'User-Agent'    = 'SocialBrand-PushScript/3.14 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.16 PowerShell'
     }
     try {
         $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body '{}' -TimeoutSec 120
@@ -1048,7 +1092,7 @@ function Invoke-UpsertSearchIndex {
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
-        'User-Agent'    = 'SocialBrand-PushScript/3.14 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.16 PowerShell'
     }
     $bodyHt = [ordered]@{ p_store_code = $StoreCode }
     if ($SnapDate) { $bodyHt['p_snapshot_date'] = $SnapDate }
@@ -1096,6 +1140,9 @@ if (-not $Backfill -and -not [Environment]::UserInteractive) {
 
 $ClientId = Get-ClientId
 Write-Host "Client UUID: $ClientId"
+
+Write-Host "`n[catalog] Loading real short EAN exclusion list from product_catalog..." -ForegroundColor Cyan
+Initialize-RealShortEanSet
 
 Clear-StuckRuns
 

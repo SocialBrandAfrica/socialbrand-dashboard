@@ -24,11 +24,20 @@ Store codes (Sigma numeric IDs used in daily_snapshots.store_code):
   TOPS Dice           80579   (no DIWAAIS2 available yet)
   TOPS Roosville      80176   (no DIWAAIS2 available yet)
 
-EAN expansion rule (matches Push-SigmaToSupabase.ps1 v3.15+):
-  Length <= 8 AND all digits -> PLU -> store_code.zfill(5) + plu.zfill(8)
-  Length  9-12               -> real barcode (UPC-A, ISBN) -> keep
-  Length 13                  -> EAN-13 -> keep
-  Empty / 0                  -> NO_EAN (production supplies) -> skip
+EAN expansion rule (two-pass, matches Push-SigmaToSupabase.ps1 v3.16+):
+
+  Pass 1: Parse all store files, collect raw codes + descriptions.
+
+  Pass 2: Classify each row using cross-store consensus:
+    Short code (<=8 digits, all numeric):
+      Same code + same description at 2+ stores -> EAN_REAL_SHORT
+        Real pre-barcoded product (EAN-8 format, imports, SPAR own-brand).
+        ean = raw code as-is.  plu_raw = None.  is_plu = False.
+      Otherwise -> PLU (store-specific code)
+        Expand: ean = store_code.zfill(5) + code.zfill(8).  plu_raw = code.
+    Length 9-12 -> EAN_SHORT (real barcode, UPC-A / ISBN) -> keep as-is
+    Length 13   -> EAN13 -> keep as-is
+    Empty / 0   -> NO_EAN (production supplies) -> skip
 """
 
 import argparse
@@ -37,6 +46,7 @@ import json
 import os
 import re
 import sys
+from collections import defaultdict
 from datetime import date, datetime
 
 try:
@@ -67,32 +77,94 @@ STORE_MAP = {
 
 BATCH_SIZE = 500   # rows per REST upsert call
 
-# ── EAN helpers ─────────────────────────────────────────────────────────────
 
-def classify_and_expand(raw_ean, store_code: str):
+# ── Raw EAN extraction ───────────────────────────────────────────────────────
+
+def _extract_raw_ean(raw_ean):
     """
-    Returns (ean_13, plu_raw, category) for a raw EAN value.
-      category: 'EAN13' | 'EAN_SHORT' | 'PLU' | 'NO_EAN'
+    Normalize the EAN field from Excel to a clean digit string.
+    Returns None for NO_EAN values (blank, 0, non-numeric).
     """
     if pd.isna(raw_ean) or str(raw_ean).strip() in ("", "0"):
-        return (None, None, "NO_EAN")
+        return None
     try:
         val = str(int(float(str(raw_ean).strip())))
     except (ValueError, TypeError):
-        return (None, None, "NO_EAN")
-
+        return None
     if not val.isdigit():
-        return (None, None, "NO_EAN")
+        return None
+    return val
 
-    length = len(val)
+
+# ── Cross-store consensus builder ────────────────────────────────────────────
+
+def build_real_barcode_set(pre_rows: list[dict]) -> set:
+    """
+    Examine all pre-rows (across all stores) and return a set of raw EAN
+    strings that qualify as real cross-store barcodes:
+
+      Same raw code (<=8 digits) + same normalised description in 2+ stores.
+
+    These are genuine EAN-8 format codes (imported products like Camel
+    cigarettes, SPAR own-brand fresh items).  They must NOT be expanded
+    to synthetic EANs because the code itself is the globally unique barcode.
+
+    If the same short code appears in multiple stores but with DIFFERENT
+    descriptions, it is a store-specific PLU collision -- each store gets
+    its own synthetic EAN.
+    """
+    def normalise(desc: str) -> str:
+        return " ".join((desc or "").upper().split())
+
+    # code -> {norm_desc -> {store_codes}}
+    code_map: dict[str, dict[str, set]] = defaultdict(lambda: defaultdict(set))
+
+    for row in pre_rows:
+        raw = row.get("_raw_ean_val")
+        if raw is None or len(raw) > 8:
+            continue  # only short codes can be real EAN-8
+        desc_norm = normalise(row.get("description", ""))
+        store     = row["store_code"]
+        code_map[raw][desc_norm].add(store)
+
+    real = set()
+    for code, desc_stores in code_map.items():
+        for desc_norm, stores in desc_stores.items():
+            if len(stores) >= 2:
+                # Same short code + same description in 2+ stores = real barcode
+                real.add(code)
+                break   # one qualifying description is enough
+
+    return real
+
+
+# ── Final EAN classification ─────────────────────────────────────────────────
+
+def classify_ean(raw_val: str, store_code: str, real_barcodes: set) -> tuple:
+    """
+    Returns (ean_13_or_short, plu_raw, category, is_plu) for a normalised EAN value.
+
+    category:
+      'EAN13'          -- 13-digit EAN, kept as-is
+      'EAN_SHORT'      -- 9-12 digit real barcode, kept as-is
+      'EAN_REAL_SHORT' -- <=8 digit real cross-store barcode, kept as-is
+      'PLU'            -- <=8 digit store-specific PLU, expanded to synthetic EAN
+    """
+    length = len(raw_val)
+
     if length <= 8:
-        synthetic = store_code.zfill(5) + val.zfill(8)
-        return (synthetic, val, "PLU")
+        if raw_val in real_barcodes:
+            return (raw_val, None, "EAN_REAL_SHORT", False)
+        else:
+            synthetic = store_code.zfill(5) + raw_val.zfill(8)
+            return (synthetic, raw_val, "PLU", True)
     elif length <= 12:
-        return (val, None, "EAN_SHORT")
+        return (raw_val, None, "EAN_SHORT", False)
     else:
-        return (val, None, "EAN13")
+        return (raw_val, None, "EAN13", False)
 
+
+# ── Field helpers ────────────────────────────────────────────────────────────
 
 def safe_text(v, maxlen=80):
     if pd.isna(v):
@@ -120,31 +192,34 @@ def safe_int(v):
         return None
 
 
-# ── XLS parser ──────────────────────────────────────────────────────────────
+# ── XLS parser -- Pass 1 ────────────────────────────────────────────────────
 
-def parse_diwaais2(path: str, store_code: str, pulled_date: str) -> list[dict]:
-    """Parse a DIWAAIS2 XLS file and return rows ready for product_catalog."""
+def parse_diwaais2_raw(path: str, store_code: str) -> list[dict]:
+    """
+    First pass: parse a DIWAAIS2 XLS file into pre-rows.
+    Each row includes '_raw_ean_val' (normalised digit string or None)
+    but no final EAN classification yet.
+    NO_EAN rows (blank/0 EAN) are excluded.
+    """
     print(f"  Reading {os.path.basename(path)} (store {store_code}) ...")
     df = pd.read_excel(path, header=1)   # row 0 blank, row 1 = header
 
-    has_last_rcvd = "Last Rcvd Cost" in df.columns
+    has_last_rcvd  = "Last Rcvd Cost"  in df.columns
     has_shelf_label = "Shelf Label Text" in df.columns
-    has_min_stock = "Min. Stock at SP" in df.columns
+    has_min_stock   = "Min. Stock at SP" in df.columns
 
-    rows = []
+    pre_rows = []
     skipped_no_ean = 0
 
     for _, r in df.iterrows():
-        ean_13, plu_raw, cat = classify_and_expand(r.get("EAN"), store_code)
-
-        if cat == "NO_EAN":
+        raw_val = _extract_raw_ean(r.get("EAN"))
+        if raw_val is None:
             skipped_no_ean += 1
-            continue      # production supplies — never at POS, skip
+            continue
 
-        rows.append({
+        pre_rows.append({
+            "_raw_ean_val":           raw_val,
             "store_code":             store_code,
-            "ean":                    ean_13,
-            "plu_raw":                plu_raw,
             "sigma_product_code":     safe_int(r.get("Product Code")),
             "dc_product_code":        safe_int(r.get("DC Product Code")),
             "description":            safe_text(r.get("Product Description"), 200) or "(no description)",
@@ -164,18 +239,56 @@ def parse_diwaais2(path: str, store_code: str, pulled_date: str) -> list[dict]:
             "soh":                    safe_num(r.get("SOH")),
             "on_order_qty":           safe_num(r.get("On Order Qty")),
             "status_diwaais":         safe_text(r.get("Status"), 1),
-            "is_plu":                 cat == "PLU",
-            "ean_category":           cat,
-            "pulled_date":            pulled_date,
         })
 
-    plu_count = sum(1 for r in rows if r["is_plu"])
-    print(f"    Parsed {len(rows):,} rows  "
-          f"({plu_count:,} PLU  |  {len(rows)-plu_count:,} EAN  |  {skipped_no_ean:,} NO_EAN skipped)")
+    print(f"    Raw rows: {len(pre_rows):,}  |  NO_EAN skipped: {skipped_no_ean:,}")
+    return pre_rows
+
+
+# ── Pass 2: finalise classification ─────────────────────────────────────────
+
+def finalise_rows(pre_rows: list[dict], real_barcodes: set, pulled_date: str) -> list[dict]:
+    """
+    Second pass: apply EAN classification using the cross-store consensus set.
+    Returns fully-populated product_catalog rows ready for upsert.
+    """
+    rows = []
+    for pr in pre_rows:
+        raw_val    = pr["_raw_ean_val"]
+        store_code = pr["store_code"]
+        ean, plu_raw, category, is_plu = classify_ean(raw_val, store_code, real_barcodes)
+
+        rows.append({
+            "store_code":             store_code,
+            "ean":                    ean,
+            "plu_raw":                plu_raw,
+            "sigma_product_code":     pr["sigma_product_code"],
+            "dc_product_code":        pr["dc_product_code"],
+            "description":            pr["description"],
+            "size_label":             pr["size_label"],
+            "detail_unit":            pr["detail_unit"],
+            "shelf_label_text":       pr["shelf_label_text"],
+            "supplier_code":          pr["supplier_code"],
+            "supplier_name":          pr["supplier_name"],
+            "supplier_product_code":  pr["supplier_product_code"],
+            "analysis_group":         pr["analysis_group"],
+            "dept_code":              pr["dept_code"],
+            "sub_dept_code":          pr["sub_dept_code"],
+            "sell_price":             pr["sell_price"],
+            "list_cost":              pr["list_cost"],
+            "last_rcvd_cost":         pr["last_rcvd_cost"],
+            "min_stock_sp":           pr["min_stock_sp"],
+            "soh":                    pr["soh"],
+            "on_order_qty":           pr["on_order_qty"],
+            "status_diwaais":         pr["status_diwaais"],
+            "is_plu":                 is_plu,
+            "ean_category":           category,
+            "pulled_date":            pulled_date,
+        })
     return rows
 
 
-# ── Supabase upserter ─────────────────────────────────────────────────────────
+# ── Supabase upserter ────────────────────────────────────────────────────────
 
 def upsert_to_supabase(rows: list[dict], dry_run: bool = False):
     if dry_run:
@@ -190,11 +303,11 @@ def upsert_to_supabase(rows: list[dict], dry_run: bool = False):
         "Prefer":        "resolution=merge-duplicates,return=minimal",
     }
 
-    total = len(rows)
+    total  = len(rows)
     pushed = 0
     for i in range(0, total, BATCH_SIZE):
         batch = rows[i : i + BATCH_SIZE]
-        resp = requests.post(url, headers=headers, data=json.dumps(batch), timeout=60)
+        resp  = requests.post(url, headers=headers, data=json.dumps(batch), timeout=60)
         if resp.status_code not in (200, 201):
             print(f"  ERROR batch {i//BATCH_SIZE}: {resp.status_code} {resp.text[:200]}")
         else:
@@ -221,7 +334,7 @@ def find_diwaais2_files():
             if sc:
                 found.append((path, sc))
             else:
-                print(f"  WARNING: cannot map {basename} to a store code — skipping")
+                print(f"  WARNING: cannot map {basename} to a store code -- skipping")
     return found
 
 
@@ -263,34 +376,62 @@ def main():
     for path, sc in files:
         print(f"  {os.path.basename(path)}  ->  store {sc}")
 
-    all_rows = []
+    # ── Pass 1: parse all files into pre-rows ────────────────────────────────
+    print("\n-- Pass 1: Parsing XLS files --")
+    all_pre_rows = []
     for path, sc in files:
-        rows = parse_diwaais2(path, sc, pulled_date)
-        all_rows.extend(rows)
+        pre = parse_diwaais2_raw(path, sc)
+        all_pre_rows.extend(pre)
 
-    print(f"\nTotal rows across all files: {len(all_rows):,}")
-    plu_total  = sum(1 for r in all_rows if r["is_plu"])
-    ean_total  = sum(1 for r in all_rows if not r["is_plu"])
-    print(f"  PLU (synthetic EAN):  {plu_total:,}")
-    print(f"  EAN (kept as-is):     {ean_total:,}")
+    print(f"\nTotal pre-rows across all files: {len(all_pre_rows):,}")
 
-    # Collision proof: PLUs that share code across stores but differ in product
-    plu_rows = [r for r in all_rows if r["is_plu"]]
-    from collections import defaultdict
+    # ── Build cross-store consensus ──────────────────────────────────────────
+    print("\n-- Building cross-store EAN consensus --")
+    real_barcodes = build_real_barcode_set(all_pre_rows)
+    print(f"  Confirmed real cross-store barcodes (EAN_REAL_SHORT): {len(real_barcodes):,}")
+    print(f"    These short codes appear in 2+ stores with the same description.")
+    print(f"    They will NOT be expanded to synthetic EANs (e.g. Camel, SPAR fresh).")
+
+    # ── Pass 2: finalise classification ──────────────────────────────────────
+    print("\n-- Pass 2: Finalising EAN classification --")
+    all_rows = finalise_rows(all_pre_rows, real_barcodes, pulled_date)
+
+    plu_count        = sum(1 for r in all_rows if r["ean_category"] == "PLU")
+    real_short_count = sum(1 for r in all_rows if r["ean_category"] == "EAN_REAL_SHORT")
+    ean_short_count  = sum(1 for r in all_rows if r["ean_category"] == "EAN_SHORT")
+    ean13_count      = sum(1 for r in all_rows if r["ean_category"] == "EAN13")
+
+    print(f"\nFinal row counts ({len(all_rows):,} total):")
+    print(f"  PLU (synthetic EAN, store-specific):  {plu_count:,}")
+    print(f"  EAN_REAL_SHORT (kept as-is, cross-store): {real_short_count:,}")
+    print(f"  EAN_SHORT (UPC-A/ISBN, kept as-is):   {ean_short_count:,}")
+    print(f"  EAN13 (full EAN-13, kept as-is):       {ean13_count:,}")
+
+    # ── PLU collision proof ───────────────────────────────────────────────────
+    plu_rows = [r for r in all_rows if r["ean_category"] == "PLU"]
     plu_by_raw: dict = defaultdict(list)
     for r in plu_rows:
         plu_by_raw[r["plu_raw"]].append(r)
-    collisions = {k: v for k, v in plu_by_raw.items() if len(v) > 1 and len({r["description"] for r in v}) > 1}
-    print(f"  Cross-store PLU collisions (same code, different product): {len(collisions):,}")
-    print(f"  -> Synthetic EAN correctly separates all of these.\n")
+    collisions = {
+        k: v for k, v in plu_by_raw.items()
+        if len(v) > 1 and len({r["description"] for r in v}) > 1
+    }
+    print(f"\n  Cross-store PLU collisions (same code, different product): {len(collisions):,}")
+    print(f"  -> Synthetic EAN correctly separates all of these.")
+    print(f"  -> EAN_REAL_SHORT set correctly excludes real barcodes from expansion.\n")
 
+    # ── Upsert ───────────────────────────────────────────────────────────────
     upsert_to_supabase(all_rows, dry_run=args.dry_run)
 
     if not args.dry_run:
         print("\nNext steps:")
         print("  1. Run sb_ean_001_diagnostic.sql to confirm PLU scope in daily_snapshots")
         print("  2. Run sb_ean_002_fix.sql to rename raw PLUs to synthetic EANs")
-        print("  3. Push script v3.15 must be deployed before next push (fix -lt 8 -> -le 8)")
+        print("     (EAN_REAL_SHORT rows are excluded automatically -- is_plu=FALSE)")
+        print("  3. Push script v3.16 must be deployed so future pushes use the catalog")
+        print("     for real-short-EAN detection (no more incorrect expansion).")
+        print(f"  4. product_catalog now carries {len(real_barcodes):,} real cross-store")
+        print("     barcode entries the push script will query at startup.")
 
 
 if __name__ == "__main__":
