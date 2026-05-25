@@ -63,7 +63,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.14'
+$ScriptVersion = 'v3.15'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -657,10 +657,15 @@ function Invoke-ParsePrssaleForSnapshots {
             }
         }
 
-        # EAN synthesis: PLU codes (< 8 digits, all numeric) get a synthetic 13-digit EAN
+        # EAN synthesis: PLU codes (1-8 digits, all numeric) get a synthetic 13-digit EAN
         # to ensure global uniqueness across stores. Format: store_code(5) + PLU(8).
+        # Rule: Length <= 8 -> PLU/inhouse code -> expand.
+        #       Length  9-12 -> real barcode (UPC-A, ISBN, etc.) -> leave unchanged.
+        #       Length 13    -> EAN-13 -> leave unchanged.
+        # IMPORTANT: use -le 8 (not -lt 8). The -lt 8 bug skipped 8-digit PLUs
+        # (SPAR 299xxxxx fresh/weighed items). Fixed in v3.15.
         $rawEan = $fields[2].Trim()
-        $ean = if ($rawEan -match '^\d+$' -and $rawEan.Length -lt 8) {
+        $ean = if ($rawEan -match '^\d+$' -and $rawEan.Length -le 8) {
                    $StoreCode.PadLeft(5, '0') + $rawEan.PadLeft(8, '0')
                } else {
                    $rawEan
