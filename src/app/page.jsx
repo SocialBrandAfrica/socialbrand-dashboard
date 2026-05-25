@@ -218,7 +218,7 @@ function applyFilters(rows, { activityFilter, deptFilter, subDeptFilter, include
 // ─────────────────────────────────────────────────────────────────────────────
 // BUILD REPORT
 // ─────────────────────────────────────────────────────────────────────────────
-function buildReport(report, rows, moverMode, refDate, rosMap = new Map()) {
+function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), supplierMap = new Map()) {
   switch (report) {
     case 'diwaais':
       return rows
@@ -324,6 +324,7 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map()) {
             'EAN':         r.ean,
             'Description': r.description,
             'Dept':        r.dept_name,
+            'Supplier':    supplierMap.get(r.ean) ?? '',
             'SOH':         r.soh ?? 0,
             'ROS':         ros.daily_ros  != null ? Number(ros.daily_ros)  : null,
             'Days':        ros.days_cover != null ? Number(ros.days_cover) : null,
@@ -349,6 +350,7 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map()) {
             'EAN':         r.ean,
             'Description': r.description,
             'Dept':        r.dept_name,
+            'Supplier':    supplierMap.get(r.ean) ?? '',
             'SOH':         r.soh ?? 0,
             'Price':       r.sell_price ?? 0,
             'Cost':        Math.round(uc * 100) / 100,
@@ -901,6 +903,8 @@ export default function Home() {
   const [reportLoaded,  setReportLoaded]  = useState(false)
   const [reportLoading, setReportLoading] = useState(false)
   const [storeRosData,  setStoreRosData]  = useState([])
+  const [supplierMap,   setSupplierMap]   = useState(new Map())  // ean → supplier_name from product_catalog
+  const [lostSalesItems, setLostSalesItems] = useState([])       // negative SOH lines sold in last 3 days
 
   // ── product detail panel ────────────────────────────────────────────────────
   const [selectedProduct, setSelectedProduct] = useState(null)
@@ -1040,7 +1044,11 @@ export default function Home() {
       if (!allDates.size) return
       const unique = [...allDates].sort((a, b) => b.localeCompare(a))
       setAvailableDates(unique)
-      setSelectedDates([unique[0]])
+      // Default to all available dates in the current calendar month (MTD).
+      // Falls back to latest single date only if no current-month snapshots exist.
+      const todayPrefix = new Date().toISOString().slice(0, 7)  // e.g. "2026-05"
+      const mtdDates = unique.filter(d => d.startsWith(todayPrefix))
+      setSelectedDates(mtdDates.length > 0 ? mtdDates : [unique[0]])
       setStoreCodes([...ALL_STORE_CODES])
     }
     init()
@@ -1057,6 +1065,36 @@ export default function Home() {
         setSparklineData(data ?? [])
       })
   }, [])
+
+  // ── Lost Sales: negative SOH items that sold in the last 3 days ─────────────
+  // Small targeted query — runs on the latest snapshot date per store.
+  // Does not depend on the full reportRows load.
+  useEffect(() => {
+    if (!storeCodes.length || !availableDates.length) return
+    let cancelled = false
+    const latestDate = availableDates[0]  // sorted newest-first
+    const threeDaysAgo = new Date()
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3)
+    const cutoff = threeDaysAgo.toISOString().slice(0, 10)  // YYYY-MM-DD
+
+    supabase
+      .from('daily_snapshots')
+      .select('ean,description,dept_name,soh,sell_price,last_sales_date_iso,store_name,store_code')
+      .in('store_code', storeCodes)
+      .eq('snapshot_date', latestDate)
+      .lt('soh', 0)
+      .gte('last_sales_date_iso', cutoff)
+      .eq('is_placeholder', false)
+      .order('soh', { ascending: true })
+      .limit(100)
+      .then(({ data, error }) => {
+        if (cancelled) return
+        if (error) { console.error('[lostSales]', error.message); return }
+        setLostSalesItems(data ?? [])
+      })
+
+    return () => { cancelled = true }
+  }, [storeCodes, availableDates])
 
   // ── fetch KPI + dept summary on store / date change (server-side aggregation via RPC) ──
   useEffect(() => {
@@ -1163,6 +1201,14 @@ export default function Home() {
       setTrendData(trendRes.data   ?? [])
       setLyTrendData(lyTrendRes.data ?? [])
       setViewsLoading(false)
+
+      // Load ROS/days-cover in background so Top 20 can show days cover without
+      // requiring the user to open the Reports tab first.
+      supabase
+        .from('mv_rate_of_sale')
+        .select('ean,store_code,daily_ros,days_cover')
+        .in('store_code', storeCodes)
+        .then(({ data }) => { if (!cancelled) setStoreRosData(data ?? []) })
     }
 
     loadViews()
@@ -1354,7 +1400,7 @@ export default function Home() {
     if (!storeCodes.length || !selectedDates.length || reportLoading) return
     setReportLoading(true)
 
-    const [rows, rosRes] = await Promise.all([
+    const [rows, rosRes, catalogRes] = await Promise.all([
       fetchAllRows({ storeCodes, dates: selectedDates }),
       supabase
         .from('mv_rate_of_sale')
@@ -1362,10 +1408,25 @@ export default function Home() {
         .in('store_code', storeCodes)
         .then(r => r.data ?? [])
         .catch(() => []),
+      // product_catalog carries supplier_name per EAN (loaded from DIWAAIS2 / PLU reference)
+      supabase
+        .from('product_catalog')
+        .select('ean,supplier_name')
+        .in('store_code', storeCodes)
+        .not('supplier_name', 'is', null)
+        .then(r => r.data ?? [])
+        .catch(() => []),
     ])
+
+    // Build ean → supplier_name lookup (last-write wins across stores — supplier is the same)
+    const suppMap = new Map()
+    for (const row of catalogRes) {
+      if (row.supplier_name) suppMap.set(row.ean, row.supplier_name)
+    }
 
     setReportRows(rows)
     setStoreRosData(rosRes)
+    setSupplierMap(suppMap)
     setReportLoaded(true)
     setReportLoading(false)
   }, [storeCodes, selectedDates])
@@ -1399,11 +1460,23 @@ export default function Home() {
     return m
   }, [storeRosData])
 
+  // EAN-level days cover for Top 20 display. When multiple stores are selected,
+  // takes the lowest (most urgent) days cover across stores for each EAN.
+  const eanDaysCoverMap = useMemo(() => {
+    const m = new Map()
+    for (const r of storeRosData) {
+      if (r.days_cover == null) continue
+      const existing = m.get(r.ean)
+      if (existing == null || r.days_cover < existing) m.set(r.ean, Number(r.days_cover))
+    }
+    return m
+  }, [storeRosData])
+
   const reportData = useMemo(() => {
     if (!reportLoaded) return []
     const refDate = selectedDates.length ? [...selectedDates].sort().reverse()[0] : null
-    return buildReport(currentReport, filteredReportRows, moverMode, refDate, rosMap)
-  }, [currentReport, filteredReportRows, moverMode, selectedDates, reportLoaded, rosMap])
+    return buildReport(currentReport, filteredReportRows, moverMode, refDate, rosMap, supplierMap)
+  }, [currentReport, filteredReportRows, moverMode, selectedDates, reportLoaded, rosMap, supplierMap])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DERIVED — KPIs
@@ -2126,8 +2199,14 @@ export default function Home() {
                       )}
                       {top20.map((r, i) => {
                         const ros = selectedDates.length > 0 ? r.total_qty / selectedDates.length : 0
+                        // Days cover from mv_rate_of_sale (pre-computed 91-day rolling window)
+                        const dc = eanDaysCoverMap.get(r.ean) ?? null
+                        const dcColour = dc == null  ? 'rgba(245,245,244,0.25)'
+                                       : dc <= 2     ? '#ef4444'   // red — reorder now
+                                       : dc <= 5     ? '#f97316'   // amber — reorder soon
+                                       :               'rgba(245,245,244,0.4)'  // normal
                         return (
-                          <div key={r.ean} onClick={() => handleProductClick(r)} style={{ display: 'grid', gridTemplateColumns: '22px 1fr auto auto', gap: 10, alignItems: 'center', padding: '8px 10px', background: 'rgba(255,255,255,0.025)', borderRadius: 8, cursor: 'pointer' }}>
+                          <div key={r.ean} onClick={() => handleProductClick(r)} style={{ display: 'grid', gridTemplateColumns: '22px 1fr auto auto auto', gap: 8, alignItems: 'center', padding: '8px 10px', background: 'rgba(255,255,255,0.025)', borderRadius: 8, cursor: 'pointer' }}>
                             <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 12, fontWeight: 600, color: i < 3 ? '#4ade80' : 'rgba(245,245,244,0.3)', textAlign: 'center' }}>{i + 1}</span>
                             <div style={{ overflow: 'hidden' }}>
                               <p style={{ fontSize: 12, color: '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
@@ -2142,6 +2221,13 @@ export default function Home() {
                             </div>
                             <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: '#4ade80', fontWeight: 500, whiteSpace: 'nowrap' }}>
                               {moverMode === 'qty' ? num(r.total_qty, 0) : zarShort(r.total_sales)}
+                            </span>
+                            {/* Days cover (91-day rolling ROS from mv_rate_of_sale) */}
+                            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10, color: dcColour, whiteSpace: 'nowrap', textAlign: 'right' }}>
+                              {dc != null
+                                ? <>{dc.toFixed(1)}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(245,245,244,0.25)' }}>d</span></>
+                                : <span style={{ color: 'rgba(245,245,244,0.15)' }}>—</span>
+                              }
                             </span>
                             {top20Activity === 'non_movers'
                               ? <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10, color: 'rgba(245,245,244,0.25)', whiteSpace: 'nowrap', textAlign: 'right' }}>on shelf</span>
@@ -2199,6 +2285,91 @@ export default function Home() {
                   )
                 }
               </div>
+            </div>
+          )}
+
+          {/* ── LOST SALES TRACKER ──────────────────────────────────────────────── */}
+          {/* Negative SOH items that sold in the last 3 days — estimated lost revenue */}
+          {lostSalesItems.length > 0 && (
+            <div className="sb-glass" style={{ padding: '20px 22px', marginBottom: 16 }}>
+              {(() => {
+                // Aggregate by dept for summary row
+                const deptMap = new Map()
+                let totalLost = 0
+                for (const r of lostSalesItems) {
+                  const lostVal = Math.abs(r.soh ?? 0) * (r.sell_price ?? 0)
+                  totalLost += lostVal
+                  const d = r.dept_name ?? 'Unknown'
+                  if (!deptMap.has(d)) deptMap.set(d, { count: 0, lostVal: 0 })
+                  const entry = deptMap.get(d)
+                  entry.count += 1
+                  entry.lostVal += lostVal
+                }
+                const deptSummary = [...deptMap.entries()]
+                  .sort((a, b) => b[1].lostVal - a[1].lostVal)
+                  .slice(0, 5)
+
+                return (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>Lost Sales</span>
+                        <span style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.4)', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 6, padding: '2px 8px' }}>
+                          Negative SOH · sold last 3 days
+                        </span>
+                      </div>
+                      <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 16, fontWeight: 700, color: '#ef4444' }}>
+                        {zarShort(totalLost)}
+                        <span style={{ fontSize: 10, marginLeft: 6, color: 'rgba(239,68,68,0.6)', fontWeight: 400 }}>estimated</span>
+                      </span>
+                    </div>
+
+                    {/* Dept summary pills */}
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+                      {deptSummary.map(([dept, info]) => (
+                        <span key={dept} style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.55)', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, padding: '3px 9px' }}>
+                          {dept} · {zarShort(info.lostVal)} ({info.count})
+                        </span>
+                      ))}
+                    </div>
+
+                    {/* Product rows — top 10 by lost value */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {lostSalesItems
+                        .slice()
+                        .sort((a, b) => (Math.abs(b.soh ?? 0) * (b.sell_price ?? 0)) - (Math.abs(a.soh ?? 0) * (a.sell_price ?? 0)))
+                        .slice(0, 10)
+                        .map(r => {
+                          const lostVal = Math.abs(r.soh ?? 0) * (r.sell_price ?? 0)
+                          return (
+                            <div key={r.ean} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 10, alignItems: 'center', padding: '6px 8px', background: 'rgba(239,68,68,0.05)', borderRadius: 6, borderLeft: '2px solid rgba(239,68,68,0.3)' }}>
+                              <div style={{ overflow: 'hidden' }}>
+                                <p style={{ fontSize: 12, color: '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
+                                <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace", marginTop: 1 }}>{r.dept_name}</p>
+                              </div>
+                              <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#ef4444', whiteSpace: 'nowrap' }}>
+                                {r.soh}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(239,68,68,0.5)' }}>SOH</span>
+                              </span>
+                              <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: 'rgba(245,245,244,0.4)', whiteSpace: 'nowrap' }}>
+                                {zarShort(r.sell_price)}
+                              </span>
+                              <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: '#ef4444', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                {zarShort(lostVal)}
+                              </span>
+                            </div>
+                          )
+                        })
+                      }
+                    </div>
+
+                    {lostSalesItems.length > 10 && (
+                      <p style={{ marginTop: 10, fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.3)', textAlign: 'center' }}>
+                        + {lostSalesItems.length - 10} more lines · open Lost Sales report for full list
+                      </p>
+                    )}
+                  </>
+                )
+              })()}
             </div>
           )}
 
