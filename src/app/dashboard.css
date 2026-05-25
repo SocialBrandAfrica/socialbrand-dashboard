@@ -252,10 +252,19 @@
   .sb-push-strip-inner::-webkit-scrollbar { display: none; }
 
   /* Minimum touch target — 44px per WCAG / Apple HIG */
-  .sb-chip, .sb-tab, .sb-date-btn {
+  .sb-chip, .sb-tab, .sb-date-btn, .sb-filter-btn {
     min-height: 44px;
     display: flex;
     align-items: center;
+  }
+
+  /* Sign-out button — larger touch target + more visible on mobile */
+  .sb-signout-btn {
+    min-height: 44px !important;
+    padding: 0 14px !important;
+    color: rgba(245,245,244,0.75) !important;
+    background: rgba(255,255,255,0.07) !important;
+    border-color: rgba(255,255,255,0.14) !important;
   }
 
   /* Prevent tiny font sizes on mobile */

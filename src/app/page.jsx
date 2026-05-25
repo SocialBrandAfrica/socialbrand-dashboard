@@ -458,7 +458,7 @@ function FilterDropdown({ label, value, options, onChange, emptyMsg }) {
   const isActive = options.length > 0 && value !== options[0].key
   return (
     <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
-      <button onClick={() => setOpen(o => !o)} style={{
+      <button onClick={() => setOpen(o => !o)} className="sb-filter-btn" style={{
         display: 'flex', alignItems: 'center', gap: 5,
         padding: '5px 11px',
         background: open ? 'rgba(74,222,128,0.12)' : isActive ? 'rgba(74,222,128,0.07)' : 'rgba(255,255,255,0.05)',
@@ -1767,7 +1767,7 @@ export default function Home() {
             />
 
             {/* Parents toggle */}
-            <button onClick={() => setIncludeParents(v => !v)} style={{
+            <button onClick={() => setIncludeParents(v => !v)} className="sb-filter-btn" style={{
               display: 'flex', alignItems: 'center', gap: 5,
               padding: '5px 11px',
               background: !includeParents ? 'rgba(74,222,128,0.07)' : 'rgba(255,255,255,0.05)',
@@ -1871,6 +1871,7 @@ export default function Home() {
             <button
               onClick={handleSignOut}
               title="Sign out"
+              className="sb-signout-btn"
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 padding: '5px 10px',
@@ -2081,7 +2082,7 @@ export default function Home() {
 
               {/* Top 20 Movers / Non-Movers */}
               <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
                   <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>
                     {top20Activity === 'movers' ? 'Top 20 Movers' : 'Top 20 Non-Movers'}
                   </span>
