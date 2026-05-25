@@ -62,17 +62,14 @@ ANON_KEY     = "sb_publishable__5cXLbkpdth-iLFkeqTTNA_kRUvfYgr"
 
 DIWAAIS_ROOT = r"C:\Users\User\Desktop\DIWAAIS"
 
-# Map filename fragments to Sigma store codes
+# Map parent folder name -> Sigma store code.
+# Each store's DIWAAIS2 file sits inside its own folder under DIWAAIS_ROOT.
 STORE_MAP = {
-    "Roosville_Spar":    "80175",
-    "Roosville_SPAR":    "80175",
-    "Roosville_Tops":    "80176",
-    "Roosville_TOPS":    "80176",
-    "Delareyville_Spar": "10116",
-    "Delareyville_SPAR": "10116",
-    "Delareyville_Tops": "21355",
-    "Delareyville_TOPS": "21355",
-    "Dice":              "80579",
+    "SPAR_Delareyville":  "10116",
+    "SPAR_Roosville":     "80175",
+    "TOPS1_Delareyville": "21355",
+    "TOPS_Roosville":     "80176",
+    "TOPS_Dice":          "80579",
 }
 
 BATCH_SIZE = 500   # rows per REST upsert call
@@ -321,20 +318,16 @@ def upsert_to_supabase(rows: list[dict], dry_run: bool = False):
 # ── Auto-discover DIWAAIS2 files ─────────────────────────────────────────────
 
 def find_diwaais2_files():
-    """Scan DIWAAIS_ROOT for DIWAAIS2_*.xls and return [(path, store_code)]."""
+    """Scan DIWAAIS_ROOT for DIWAAIS2*.xls inside known store folders."""
     found = []
     for pattern in ["**/*DIWAAIS2*.xls", "**/*DIWAAIS2*.xlsx"]:
         for path in glob.glob(os.path.join(DIWAAIS_ROOT, pattern), recursive=True):
-            basename = os.path.basename(path)
-            sc = None
-            for fragment, code in STORE_MAP.items():
-                if fragment in path:
-                    sc = code
-                    break
+            parent = os.path.basename(os.path.dirname(path))
+            sc = STORE_MAP.get(parent)
             if sc:
                 found.append((path, sc))
             else:
-                print(f"  WARNING: cannot map {basename} to a store code -- skipping")
+                print(f"  WARNING: cannot map folder '{parent}' to a store code -- skipping {os.path.basename(path)}")
     return found
 
 
@@ -356,13 +349,10 @@ def main():
     if args.file:
         files = []
         for path in args.file:
-            sc = None
-            for fragment, code in STORE_MAP.items():
-                if fragment in path:
-                    sc = code
-                    break
+            parent = os.path.basename(os.path.dirname(path))
+            sc = STORE_MAP.get(parent)
             if sc is None:
-                print(f"Cannot determine store code for: {path}")
+                print(f"Cannot determine store code for: {path}  (parent folder: '{parent}')")
                 sc = input("Enter store code (e.g. 80175): ").strip()
             files.append((path, sc))
     else:
