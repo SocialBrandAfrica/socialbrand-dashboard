@@ -36,7 +36,42 @@
       "Bash(cd /tmp)",
       "Bash(pandoc \"C:\\\\Users\\\\User\\\\Desktop\\\\DIWAAIS\\\\SB-VIS-001_Product_Vision_and_Philosophy.docx\" -t markdown)",
       "PowerShell(pandoc \"C:\\\\Users\\\\User\\\\Desktop\\\\DIWAAIS\\\\SB-VIS-001_Product_Vision_and_Philosophy.docx\" -t markdown 2>$null)",
-      "WebFetch(domain:supabase.com)"
+      "WebFetch(domain:supabase.com)",
+      "PowerShell(Get-ChildItem C:\\\\Users\\\\User\\\\Desktop\\\\DIWAAIS\\\\socialbrand-dashboard -Directory | Where-Object { $_.Name -ne 'node_modules' -and $_.Name -ne '.claude' } | Select-Object -ExpandProperty Name)",
+      "Bash(Select-String \"ScriptVersion|v3.9|v3.8\")",
+      "Bash(python diagnose_data.py --days 30)",
+      "Bash(python -c ' *)",
+      "Bash(New-Item -ItemType Directory -Force \"C:\\\\Users\\\\User\\\\Desktop\\\\DIWAAIS\\\\socialbrand-dashboard\\\\.claude\\\\commands\")",
+      "Bash(python upload_snapshots.py --tac TAC50525)",
+      "WebFetch(domain:dashboard.socialbrand.africa)",
+      "Bash(curl -s \"https://crklvhfwyxlisfcvqenc.supabase.co/rest/v1/push_log?select=store_code,started_at,status,script_version,rows_pushed,snapshot_date,tac_filename&started_at=gte.2026-05-24T00:00:00Z&order=started_at.desc\" -H \"apikey: sb_publishable__5cXLbkpdth-iLFkeqTTNA_kRUvfYgr\" -H \"Authorization: Bearer sb_publishable__5cXLbkpdth-iLFkeqTTNA_kRUvfYgr\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/SocialBrandAfrica/socialbrand-dashboard/main/scripts/Push-SigmaToSupabase.ps1\")",
+      "Bash(grep -n \"^#\\\\s*=\\\\|^#-\\\\|^try\\\\|^catch\\\\|^finally\\\\|^}\\\\s*$\\\\|^# =\\\\|Invoke-SelfUpdate\\\\|Clear-StuckRuns\\\\|Stagger\\\\|stagger\\\\|Start-Sleep\\\\|nightly\\\\|backfill\")",
+      "Bash(powershell -Command ' *)",
+      "Bash(awk 'NR==965')",
+      "Bash(grep -n '\\\\$finalStatus:')",
+      "Bash(pip install *)",
+      "Bash(wc -l \"/mnt/c/Users/User/Desktop/DIWAAIS/socialbrand-dashboard/src/app/page.jsx\")",
+      "PowerShell(\\(Get-Content \"C:\\\\Users\\\\User\\\\Desktop\\\\DIWAAIS\\\\socialbrand-dashboard\\\\src\\\\app\\\\page.jsx\"\\).Count)",
+      "PowerShell(python \"C:\\\\Users\\\\User\\\\Desktop\\\\DIWAAIS\\\\diagnose_data.py\" --days 30 2>&1)",
+
+      "Read(C:\\Users\\User\\Desktop\\DIWAAIS\\*)",
+      "Write(C:\\Users\\User\\Desktop\\DIWAAIS\\*)",
+      "Edit(C:\\Users\\User\\Desktop\\DIWAAIS\\*)",
+      "PowerShell(python \"C:\\\\Users\\\\User\\\\Desktop\\\\DIWAAIS\\\\*\")",
+      "PowerShell(python C:\\\\Users\\\\User\\\\Desktop\\\\DIWAAIS\\\\*)",
+
+      "mcp__Claude_in_Chrome__file_upload",
+      "mcp__Claude_in_Chrome__form_input",
+      "mcp__Claude_in_Chrome__get_page_text",
+      "mcp__Claude_in_Chrome__gif_creator",
+      "mcp__Claude_in_Chrome__resize_window",
+      "mcp__Claude_in_Chrome__select_browser",
+      "mcp__Claude_in_Chrome__shortcuts_execute",
+      "mcp__Claude_in_Chrome__shortcuts_list",
+      "mcp__Claude_in_Chrome__switch_browser",
+      "mcp__Claude_in_Chrome__tabs_close_mcp",
+      "mcp__Claude_in_Chrome__upload_image"
     ]
   }
 }
