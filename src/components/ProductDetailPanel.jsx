@@ -85,10 +85,15 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
     }
   }), [rosData, storeList])
 
-  // Summary table rows
+  // Summary table rows — SOH falls back to most-recent detailRow when v_rate_of_sale
+  // doesn't carry the product (e.g. sold-out before EOD scan, negative SOH excluded
+  // by an older view definition, or bakery item absent from latest snapshot).
   const summary = storeList.map(s => {
     const r = rosData.find(d => d.store_code === s.code)
-    return { ...s, soh: r?.soh, daily_ros: r?.daily_ros, days_cover: r?.days_cover }
+    const latestDetail = [...detailRows]
+      .filter(d => d.store_code === s.code)
+      .sort((a, b) => b.snapshot_date.localeCompare(a.snapshot_date))[0]
+    return { ...s, soh: r?.soh ?? latestDetail?.soh ?? null, daily_ros: r?.daily_ros, days_cover: r?.days_cover }
   })
 
   const ean  = product['EAN']  ?? product.ean  ?? '—'
@@ -199,10 +204,10 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
           {/* 3. SOH Movement */}
           <ChartBox title="SOH Movement" sub="closing stock per day — jumps = deliveries landed">
             <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={timeSeries} margin={CM}>
+              <LineChart data={timeSeries} margin={{ ...CM, left: 4 }}>
                 <CartesianGrid {...GRID_CLR} />
                 <XAxis dataKey="label" tick={AX_TICK} interval={Math.max(0, Math.floor(timeSeries.length / 12) - 1)} />
-                <YAxis tick={AX_TICK} width={36} />
+                <YAxis tick={AX_TICK} width={52} />
                 <Tooltip contentStyle={TOOLTIP} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 {storeList.map(s => (

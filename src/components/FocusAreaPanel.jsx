@@ -334,7 +334,7 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
           {/* Service dept note */}
           {totals.some(t => ['HMR', 'BUTCHERY', 'DELI', 'BAKERY'].some(d => (t.dept_name ?? '').toUpperCase().includes(d))) && (
             <p style={{ marginTop: 14, fontSize: 10, color: 'rgba(245,245,244,0.25)', fontStyle: 'italic', fontFamily: 'Geist, sans-serif' }}>
-              ℹ Service dept items — SOH may be negative or zero by design. Sales velocity (Avg/Day) is the meaningful metric here.
+              ℹ Service dept and high-velocity items — SOH may be negative or zero by design. Sales velocity (Avg/Day) is the meaningful metric here.
             </p>
           )}
         </>
