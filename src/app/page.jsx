@@ -1014,20 +1014,31 @@ export default function Home() {
   }, [focusBasket, isDefaultBasket])
 
   // ── on mount: load ALL available dates ──────────────────────────────────────
-  // Source: push_log (status=SUCCESS, snapshot_date NOT NULL).
-  // push_log is written at push time so it reflects the latest data immediately
-  // without depending on mv_kpi_by_date being refreshed.
+  // Two sources merged so the full date history is always available:
+  //   push_log  — snapshot_date set since v3.10 (2026-05-24); shows new dates
+  //               immediately after a push without waiting for mv refresh.
+  //   mv_kpi_by_date — pre-aggregated history; covers all dates before v3.10
+  //                    where push_log.snapshot_date was NULL.
   useEffect(() => {
     async function init() {
-      const { data, error } = await supabase
-        .from('push_log')
-        .select('snapshot_date')
-        .eq('status', 'SUCCESS')
-        .not('snapshot_date', 'is', null)
-        .order('snapshot_date', { ascending: false })
-      if (error || !data?.length) return
-      const unique = [...new Set(data.map(r => r.snapshot_date))].sort((a, b) => b.localeCompare(a))
-      if (!unique.length) return
+      const [pushRes, histRes] = await Promise.all([
+        supabase
+          .from('push_log')
+          .select('snapshot_date')
+          .eq('status', 'SUCCESS')
+          .not('snapshot_date', 'is', null),
+        supabase
+          .from('mv_kpi_by_date')
+          .select('snapshot_date')
+          .order('snapshot_date', { ascending: false })
+          .range(0, 1999)
+      ])
+      const allDates = new Set([
+        ...(pushRes.data ?? []).map(r => r.snapshot_date),
+        ...(histRes.data ?? []).map(r => r.snapshot_date)
+      ].filter(Boolean))
+      if (!allDates.size) return
+      const unique = [...allDates].sort((a, b) => b.localeCompare(a))
       setAvailableDates(unique)
       setSelectedDates([unique[0]])
       setStoreCodes([...ALL_STORE_CODES])
