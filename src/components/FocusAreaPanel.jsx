@@ -138,6 +138,7 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
   }, [basket, selectedDates, allStoreCodes])
 
   const combinedTotal = totals.reduce((s, t) => s + t.periodSales, 0)
+  const combinedQty   = totals.reduce((s, t) => s + t.periodQty,   0)
 
   return (
     <div style={{
@@ -265,7 +266,7 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: 'Geist, sans-serif' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                  {['Product', 'Store', 'Dept', 'Period Sales', 'Selling Days', 'Avg / Day', 'ROS (u/day)', 'Latest SOH'].map((h, i) => (
+                  {['Product', 'Store', 'Dept', 'Period Sales', 'Units Sold', 'Selling Days', 'Avg / Day', 'ROS (u/day)', 'Latest SOH'].map((h, i) => (
                     <th key={h} style={{
                       textAlign: i > 2 ? 'right' : 'left',
                       padding: '6px 10px',
@@ -298,6 +299,9 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
                     <td style={{ padding: '9px 10px', textAlign: 'right', color: '#4ade80', fontFamily: "'Geist Mono', monospace" }}>
                       R {Number(item.periodSales).toFixed(2)}
                     </td>
+                    <td style={{ padding: '9px 10px', textAlign: 'right', color: 'rgba(245,245,244,0.7)', fontFamily: "'Geist Mono', monospace" }}>
+                      {Number(item.periodQty).toFixed(0)}
+                    </td>
                     <td style={{ padding: '9px 10px', textAlign: 'right', color: 'rgba(245,245,244,0.6)', fontFamily: "'Geist Mono', monospace" }}>
                       {item.sellingDays}
                     </td>
@@ -324,6 +328,9 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
                   </td>
                   <td style={{ padding: '9px 10px', textAlign: 'right', color: '#4ade80', fontFamily: "'Geist Mono', monospace", fontWeight: 700, fontSize: 13 }}>
                     R {Number(combinedTotal).toFixed(2)}
+                  </td>
+                  <td style={{ padding: '9px 10px', textAlign: 'right', color: 'rgba(245,245,244,0.7)', fontFamily: "'Geist Mono', monospace", fontWeight: 700, fontSize: 13 }}>
+                    {Number(combinedQty).toFixed(0)}
                   </td>
                   <td colSpan={4} />
                 </tr>

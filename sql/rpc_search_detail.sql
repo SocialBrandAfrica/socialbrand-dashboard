@@ -72,7 +72,7 @@ LANGUAGE sql STABLE SECURITY DEFINER AS $$
         is_placeholder
     FROM  daily_snapshots
     WHERE store_code         = ANY(p_store_codes)
-      AND snapshot_date::text = p_date
+      AND snapshot_date = p_date::date
       AND (
               ean          ILIKE '%' || p_query || '%'
           OR  description  ILIKE '%' || p_query || '%'

@@ -716,6 +716,7 @@ function ProductSearchBar({ storeCodes, selectedDates, onSelect, onAddToFocus, f
                         </p>
                         <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace", margin: '2px 0 0' }}>
                           {r.ean}{r.internal_ref ? ` · ${r.internal_ref}` : ''}{r.sub_dept_name ? ` · ${r.sub_dept_name}` : ''}
+                          {(r.size || r.unit) && <span style={{ color: 'rgba(245,245,244,0.2)' }}>{' · '}{[r.size, r.unit].filter(Boolean).join(' ')}</span>}
                         </p>
                       </button>
                       {/* "+" button — adds to Focus Area basket */}
