@@ -31,6 +31,10 @@ ALTER TABLE public.product_catalog ADD COLUMN IF NOT EXISTS soh                 
 ALTER TABLE public.product_catalog ADD COLUMN IF NOT EXISTS on_order_qty          numeric(12,3);
 ALTER TABLE public.product_catalog ADD COLUMN IF NOT EXISTS status_diwaais        text;
 ALTER TABLE public.product_catalog ADD COLUMN IF NOT EXISTS ean_category          text;
+ALTER TABLE public.product_catalog ADD COLUMN IF NOT EXISTS description           text;
+ALTER TABLE public.product_catalog ADD COLUMN IF NOT EXISTS sell_price            numeric(12,4);
+ALTER TABLE public.product_catalog ADD COLUMN IF NOT EXISTS is_plu                boolean NOT NULL DEFAULT false;
+ALTER TABLE public.product_catalog ADD COLUMN IF NOT EXISTS loaded_at             timestamptz NOT NULL DEFAULT now();
 
 -- Confirm what was added:
 SELECT column_name, data_type
