@@ -191,14 +191,14 @@ def safe_int(v):
 
 # ── XLS parser -- Pass 1 ────────────────────────────────────────────────────
 
-def parse_diwaais2_raw(path: str, store_code: str) -> list[dict]:
+def parse_diwaais2_raw(path: str, store_code: str, pulled_date: str) -> list[dict]:
     """
     First pass: parse a DIWAAIS2 XLS file into pre-rows.
     Each row includes '_raw_ean_val' (normalised digit string or None)
-    but no final EAN classification yet.
-    NO_EAN rows (blank/0 EAN) are excluded.
+    and '_pulled_date' (from file mtime or override) but no final EAN
+    classification yet.  NO_EAN rows (blank/0 EAN) are excluded.
     """
-    print(f"  Reading {os.path.basename(path)} (store {store_code}) ...")
+    print(f"  Reading {os.path.basename(path)} (store {store_code}, pulled {pulled_date}) ...")
     df = pd.read_excel(path, header=1)   # row 0 blank, row 1 = header
 
     has_last_rcvd  = "Last Rcvd Cost"  in df.columns
@@ -216,6 +216,7 @@ def parse_diwaais2_raw(path: str, store_code: str) -> list[dict]:
 
         pre_rows.append({
             "_raw_ean_val":           raw_val,
+            "_pulled_date":           pulled_date,
             "store_code":             store_code,
             "sigma_product_code":     safe_int(r.get("Product Code")),
             "dc_product_code":        safe_int(r.get("DC Product Code")),
@@ -244,7 +245,7 @@ def parse_diwaais2_raw(path: str, store_code: str) -> list[dict]:
 
 # ── Pass 2: finalise classification ─────────────────────────────────────────
 
-def finalise_rows(pre_rows: list[dict], real_barcodes: set, pulled_date: str) -> list[dict]:
+def finalise_rows(pre_rows: list[dict], real_barcodes: set) -> list[dict]:
     """
     Second pass: apply EAN classification using the cross-store consensus set.
     Returns fully-populated product_catalog rows ready for upsert.
@@ -280,7 +281,7 @@ def finalise_rows(pre_rows: list[dict], real_barcodes: set, pulled_date: str) ->
             "status_diwaais":         pr["status_diwaais"],
             "is_plu":                 is_plu,
             "ean_category":           category,
-            "pulled_date":            pulled_date,
+            "pulled_date":            pr["_pulled_date"],
         })
     return rows
 
@@ -300,34 +301,59 @@ def upsert_to_supabase(rows: list[dict], dry_run: bool = False):
         "Prefer":        "resolution=merge-duplicates,return=minimal",
     }
 
+    import time
+    session = requests.Session()
+
     total  = len(rows)
     pushed = 0
+    errors = 0
     for i in range(0, total, BATCH_SIZE):
-        batch = rows[i : i + BATCH_SIZE]
-        resp  = requests.post(url, headers=headers, data=json.dumps(batch), timeout=60)
+        batch     = rows[i : i + BATCH_SIZE]
+        batch_num = i // BATCH_SIZE
+        # Retry up to 3 times on connection errors
+        for attempt in range(3):
+            try:
+                resp = session.post(url, headers=headers, data=json.dumps(batch), timeout=60)
+                break
+            except requests.exceptions.ConnectionError as e:
+                if attempt == 2:
+                    print(f"\n  FATAL batch {batch_num}: connection failed after 3 attempts: {e}")
+                    print("  Check that the missing columns (is_plu etc.) were added in Supabase SQL Editor.")
+                    return
+                time.sleep(2 ** attempt)
         if resp.status_code not in (200, 201):
-            print(f"  ERROR batch {i//BATCH_SIZE}: {resp.status_code} {resp.text[:200]}")
+            errors += 1
+            print(f"\n  ERROR batch {batch_num}: {resp.status_code} {resp.text[:300]}")
         else:
             pushed += len(batch)
             pct = pushed / total * 100
             print(f"  Uploaded {pushed:>6,}/{total:,}  ({pct:.0f}%)", end="\r")
 
-    print(f"\n  Done. {pushed:,} rows upserted.")
+    print(f"\n  Done. {pushed:,} rows upserted.  Errors: {errors}")
 
 
 # ── Auto-discover DIWAAIS2 files ─────────────────────────────────────────────
 
-def find_diwaais2_files():
-    """Scan DIWAAIS_ROOT for DIWAAIS2*.xls inside known store folders."""
+def find_diwaais2_files(date_override: str = None):
+    """
+    Scan DIWAAIS_ROOT for DIWAAIS2*.xls inside known store folders.
+    Returns [(path, store_code, pulled_date)] where pulled_date comes from
+    the file's modification date unless date_override is given.
+    """
     found = []
     for pattern in ["**/*DIWAAIS2*.xls", "**/*DIWAAIS2*.xlsx"]:
         for path in glob.glob(os.path.join(DIWAAIS_ROOT, pattern), recursive=True):
             parent = os.path.basename(os.path.dirname(path))
             sc = STORE_MAP.get(parent)
-            if sc:
-                found.append((path, sc))
-            else:
+            if not sc:
                 print(f"  WARNING: cannot map folder '{parent}' to a store code -- skipping {os.path.basename(path)}")
+                continue
+            if date_override:
+                pulled_date = date_override
+            else:
+                mtime = os.path.getmtime(path)
+                pulled_date = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
+            found.append((path, sc, pulled_date))
     return found
 
 
@@ -335,16 +361,16 @@ def find_diwaais2_files():
 
 def main():
     parser = argparse.ArgumentParser(description="Load DIWAAIS2 XLS into product_catalog")
-    parser.add_argument("--date",     default=date.today().isoformat(),
-                        help="Pull date (YYYY-MM-DD).  Defaults to today.")
+    parser.add_argument("--date",     default=None,
+                        help="Override pulled_date for all files (YYYY-MM-DD).  Defaults to each file's modification date.")
     parser.add_argument("--file",     nargs="*",
                         help="Explicit XLS paths.  If omitted, auto-discovers under DIWAAIS root.")
     parser.add_argument("--dry-run",  action="store_true",
                         help="Parse and report counts but do not upload.")
     args = parser.parse_args()
 
-    pulled_date = args.date
-    print(f"\n=== load_plu_reference.py  pulled_date={pulled_date} ===\n")
+    date_override = args.date
+    print(f"\n=== load_plu_reference.py  {'pulled_date=' + date_override if date_override else 'pulled_date=<from file mtime>'} ===\n")
 
     if args.file:
         files = []
@@ -354,23 +380,28 @@ def main():
             if sc is None:
                 print(f"Cannot determine store code for: {path}  (parent folder: '{parent}')")
                 sc = input("Enter store code (e.g. 80175): ").strip()
-            files.append((path, sc))
+            if date_override:
+                pulled_date = date_override
+            else:
+                mtime = os.path.getmtime(path)
+                pulled_date = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
+            files.append((path, sc, pulled_date))
     else:
-        files = find_diwaais2_files()
+        files = find_diwaais2_files(date_override)
 
     if not files:
         print("No DIWAAIS2 files found.  Pass --file or check DIWAAIS_ROOT.")
         sys.exit(1)
 
     print(f"Files to process: {len(files)}")
-    for path, sc in files:
-        print(f"  {os.path.basename(path)}  ->  store {sc}")
+    for path, sc, pd in files:
+        print(f"  {os.path.basename(path)}  ->  store {sc}  pulled {pd}")
 
     # ── Pass 1: parse all files into pre-rows ────────────────────────────────
     print("\n-- Pass 1: Parsing XLS files --")
     all_pre_rows = []
-    for path, sc in files:
-        pre = parse_diwaais2_raw(path, sc)
+    for path, sc, pd in files:
+        pre = parse_diwaais2_raw(path, sc, pd)
         all_pre_rows.extend(pre)
 
     print(f"\nTotal pre-rows across all files: {len(all_pre_rows):,}")
@@ -384,7 +415,7 @@ def main():
 
     # ── Pass 2: finalise classification ──────────────────────────────────────
     print("\n-- Pass 2: Finalising EAN classification --")
-    all_rows = finalise_rows(all_pre_rows, real_barcodes, pulled_date)
+    all_rows = finalise_rows(all_pre_rows, real_barcodes)
 
     plu_count        = sum(1 for r in all_rows if r["ean_category"] == "PLU")
     real_short_count = sum(1 for r in all_rows if r["ean_category"] == "EAN_REAL_SHORT")
