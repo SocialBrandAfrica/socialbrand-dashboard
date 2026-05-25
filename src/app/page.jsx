@@ -1345,7 +1345,7 @@ export default function Home() {
     const [rows, rosRes] = await Promise.all([
       fetchAllRows({ storeCodes, dates: selectedDates }),
       supabase
-        .from('v_rate_of_sale')
+        .from('mv_rate_of_sale')
         .select('ean,store_code,daily_ros,days_cover')
         .in('store_code', storeCodes)
         .then(r => r.data ?? [])

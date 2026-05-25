@@ -85,9 +85,9 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
     }
   }), [rosData, storeList])
 
-  // Summary table rows — SOH falls back to most-recent detailRow when v_rate_of_sale
+  // Summary table rows — SOH falls back to most-recent detailRow when mv_rate_of_sale
   // doesn't carry the product (e.g. sold-out before EOD scan, negative SOH excluded
-  // by an older view definition, or bakery item absent from latest snapshot).
+  // by the view definition, or bakery item absent from latest snapshot).
   const summary = storeList.map(s => {
     const r = rosData.find(d => d.store_code === s.code)
     const latestDetail = [...detailRows]
@@ -299,7 +299,7 @@ export function ProductDetailPanelConnected({ product, storeCodes, storeMap, ava
     const calls = compact
       ? [
           Promise.resolve({ data: [], error: null }),
-          supabase.from('v_rate_of_sale')
+          supabase.from('mv_rate_of_sale')
             .select('store_code,store_name,soh,daily_ros,days_cover')
             .eq('ean', ean).in('store_code', storeCodes),
         ]
@@ -309,7 +309,7 @@ export function ProductDetailPanelConnected({ product, storeCodes, storeMap, ava
             p_store_codes: storeCodes,
             p_dates:       availableDates.slice(-90),
           }),
-          supabase.from('v_rate_of_sale')
+          supabase.from('mv_rate_of_sale')
             .select('store_code,store_name,soh,daily_ros,days_cover')
             .eq('ean', ean).in('store_code', storeCodes),
         ]
