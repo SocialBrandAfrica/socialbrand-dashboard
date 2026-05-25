@@ -100,12 +100,25 @@ BEGIN
         v_del_snapshots, v_del_push_log, v_del_push_errors;
 
     -- -------------------------------------------------------------------------
-    -- STEP 4: Refresh materialized views (must run after DELETE)
+    -- STEP 4: Refresh materialized views (best-effort -- failures do not abort purge)
+    --
+    -- The nightly pg_cron job (nightly-kpi-refresh, 22:00 UTC) handles
+    -- mv_kpi_by_date independently, so a failed refresh here is harmless.
+    -- Exception blocks create implicit savepoints -- Steps 1-3 always commit.
     -- -------------------------------------------------------------------------
-    REFRESH MATERIALIZED VIEW public.mv_kpi_by_date;
-    REFRESH MATERIALIZED VIEW CONCURRENTLY public.mv_sparkline_14d;
+    BEGIN
+        REFRESH MATERIALIZED VIEW public.mv_kpi_by_date;
+        RAISE NOTICE 'mv_kpi_by_date refreshed.';
+    EXCEPTION WHEN others THEN
+        RAISE WARNING 'mv_kpi_by_date refresh failed (non-fatal): %', SQLERRM;
+    END;
 
-    RAISE NOTICE 'Materialized views refreshed.';
+    BEGIN
+        REFRESH MATERIALIZED VIEW CONCURRENTLY public.mv_sparkline_14d;
+        RAISE NOTICE 'mv_sparkline_14d refreshed.';
+    EXCEPTION WHEN others THEN
+        RAISE WARNING 'mv_sparkline_14d refresh failed (non-fatal): %', SQLERRM;
+    END;
 END;
 $$;
 
