@@ -2473,7 +2473,7 @@ export default function Home() {
                             <div key={r.ean} style={{ padding: '8px 10px', background: 'rgba(239,68,68,0.05)', borderRadius: 8, borderLeft: '2px solid rgba(239,68,68,0.3)' }}>
 
                               {/* Top row: name + numbers */}
-                              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 10, alignItems: 'center', marginBottom: timeline.length ? 8 : 0 }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 10, alignItems: 'center', marginBottom: storeRows.length ? 8 : 0 }}>
                                 <div style={{ overflow: 'hidden' }}>
                                   <p style={{ fontSize: 12, color: '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
                                   <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace", marginTop: 1 }}>{r.dept_name}</p>
