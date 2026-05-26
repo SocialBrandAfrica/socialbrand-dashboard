@@ -2198,6 +2198,19 @@ export default function Home() {
                   ? <div>{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} h={40} r={8} mb={6} />)}</div>
                   : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
+                      {top20.length > 0 && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '22px 1fr auto auto auto', gap: 8, padding: '0 10px 4px', borderBottom: '1px solid rgba(255,255,255,0.06)', marginBottom: 2 }}>
+                          <span />
+                          <span style={{ fontSize: 9, color: 'rgba(245,245,244,0.25)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: "'Geist Mono', monospace" }}>Product</span>
+                          <span style={{ fontSize: 9, color: 'rgba(245,245,244,0.25)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: "'Geist Mono', monospace", textAlign: 'right' }}>
+                            {moverMode === 'qty' ? 'Units' : 'Sales'}
+                          </span>
+                          <span style={{ fontSize: 9, color: 'rgba(245,245,244,0.25)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: "'Geist Mono', monospace", textAlign: 'right' }}>Cover</span>
+                          <span style={{ fontSize: 9, color: 'rgba(245,245,244,0.25)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: "'Geist Mono', monospace", textAlign: 'right' }}>
+                            {top20Activity === 'non_movers' ? 'SOH' : 'Avg/day'}
+                          </span>
+                        </div>
+                      )}
                       {top20.length === 0 && (
                         <p style={{ color: 'rgba(245,245,244,0.3)', fontSize: 13, padding: '20px 0', textAlign: 'center', fontStyle: 'italic' }}>
                           {top20Activity === 'non_movers' ? 'No non-moving stock for current filter' : 'No sales data for current filter'}
@@ -2236,7 +2249,9 @@ export default function Home() {
                               }
                             </span>
                             {top20Activity === 'non_movers'
-                              ? <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10, color: 'rgba(245,245,244,0.25)', whiteSpace: 'nowrap', textAlign: 'right' }}>on shelf</span>
+                              ? <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10, color: 'rgba(245,245,244,0.4)', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                                  {num(r.total_qty, 0)}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(245,245,244,0.25)' }}>u</span>
+                                </span>
                               : <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10, color: 'rgba(245,245,244,0.4)', whiteSpace: 'nowrap', textAlign: 'right' }}>
                                   {ros.toFixed(2)}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(245,245,244,0.25)' }}>u/d</span>
                                 </span>
