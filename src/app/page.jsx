@@ -886,7 +886,8 @@ export default function Home() {
   const [top20Loading,   setTop20Loading]   = useState(false)
 
   // ── historical comparison data (Phase 3.2) ──────────────────────────────────
-  const [sparklineData,  setSparklineData]  = useState([])   // mv_sparkline_14d — fetched once on mount
+  const [sparklineData,    setSparklineData]    = useState([])   // mv_sparkline_14d — fetched once on mount
+  const [rhythmProfiles,   setRhythmProfiles]   = useState([])   // community_rhythm — active profiles, fetched once
   const [lyKpiData,      setLyKpiData]      = useState([])   // v_kpi_by_date for LY equivalent dates
   const [wowKpiData,     setWowKpiData]     = useState([])   // v_kpi_by_date for WoW equivalent dates
   const [lyDeptSummary,  setLyDeptSummary]  = useState([])   // rpc_dept_summary for LY dates
@@ -904,7 +905,9 @@ export default function Home() {
   const [reportLoading, setReportLoading] = useState(false)
   const [storeRosData,  setStoreRosData]  = useState([])
   const [supplierMap,   setSupplierMap]   = useState(new Map())  // ean → supplier_name from product_catalog
-  const [lostSalesItems, setLostSalesItems] = useState([])       // negative SOH lines sold in last 3 days
+  const [lostSalesItems,    setLostSalesItems]    = useState([])  // negative SOH lines sold in last 3 days
+  const [lostSalesTimeline, setLostSalesTimeline] = useState(new Map()) // ean → [{snap_date,sold_bool,oos_bool,soh}] (merged across stores)
+  const [timelineLoading,   setTimelineLoading]   = useState(false)
 
   // ── product detail panel ────────────────────────────────────────────────────
   const [selectedProduct, setSelectedProduct] = useState(null)
@@ -1066,6 +1069,19 @@ export default function Home() {
       })
   }, [])
 
+  // ── Community Rhythm: fetch active profiles once on mount ───────────────────
+  useEffect(() => {
+    supabase
+      .from('community_rhythm')
+      .select('id,profile_name,start_day,end_day,multiplier,is_active')
+      .eq('is_active', true)
+      .order('start_day', { ascending: true })
+      .then(({ data, error }) => {
+        if (error) { console.error('[community_rhythm]', error.message); return }
+        setRhythmProfiles(data ?? [])
+      })
+  }, [])
+
   // ── Lost Sales: negative SOH items that sold in the last 3 days ─────────────
   // Small targeted query — runs on the latest snapshot date per store.
   // Does not depend on the full reportRows load.
@@ -1095,6 +1111,67 @@ export default function Home() {
 
     return () => { cancelled = true }
   }, [storeCodes, availableDates])
+
+  // ── Lost Sales Timeline: fetch 28-day sold/OOS bars once items are known ────
+  useEffect(() => {
+    if (!lostSalesItems.length || !availableDates.length || !storeCodes.length) {
+      setLostSalesTimeline(new Map())
+      return
+    }
+    let cancelled = false
+
+    async function loadTimeline() {
+      setTimelineLoading(true)
+      // Top 10 by lost value — same ordering as the widget rows
+      const top10 = [...lostSalesItems]
+        .sort((a, b) => (Math.abs(b.soh ?? 0) * (b.sell_price ?? 0)) - (Math.abs(a.soh ?? 0) * (a.sell_price ?? 0)))
+        .slice(0, 10)
+        .map(r => r.ean)
+
+      const endDate = availableDates[0] // newest date, same as lostSales query
+
+      const { data, error } = await supabase.rpc('rpc_lost_sales_timeline', {
+        p_eans:     top10,
+        p_stores:   storeCodes,
+        p_end_date: endDate,
+        p_days:     28,
+      })
+
+      if (cancelled) return
+      if (error) { console.error('[lostSalesTimeline]', error.message); setTimelineLoading(false); return }
+
+      // Merge rows across stores per EAN per date: sold > oos > neither
+      const byEan = new Map()
+      for (const row of (data ?? [])) {
+        if (!byEan.has(row.ean)) byEan.set(row.ean, new Map())
+        const byDate = byEan.get(row.ean)
+        const existing = byDate.get(row.snap_date)
+        if (!existing) {
+          byDate.set(row.snap_date, { snap_date: row.snap_date, sold_bool: row.sold_bool, oos_bool: row.oos_bool, soh: row.soh })
+        } else {
+          // sold wins; if any store sold that day, mark sold
+          byDate.set(row.snap_date, {
+            snap_date: row.snap_date,
+            sold_bool: existing.sold_bool || row.sold_bool,
+            oos_bool:  existing.oos_bool  || row.oos_bool,
+            soh:       Math.min(existing.soh ?? 0, row.soh ?? 0), // worst SOH across stores
+          })
+        }
+      }
+
+      // Convert inner Maps to sorted arrays
+      const merged = new Map()
+      for (const [ean, dateMap] of byEan) {
+        merged.set(ean, [...dateMap.values()].sort((a, b) => a.snap_date < b.snap_date ? -1 : 1))
+      }
+
+      setLostSalesTimeline(merged)
+      setTimelineLoading(false)
+    }
+
+    loadTimeline()
+    return () => { cancelled = true }
+  }, [lostSalesItems, storeCodes, availableDates])
 
   // ── fetch KPI + dept summary on store / date change (server-side aggregation via RPC) ──
   useEffect(() => {
@@ -2164,6 +2241,7 @@ export default function Home() {
             trendData={trendData}
             lyTrendData={lyTrendData}
             storeCodes={storeCodes}
+            rhythmProfiles={rhythmProfiles}
           />
 
           {/* ── TOP 20 + DEPT CHART — hidden while a product selection is active ─── */}
@@ -2355,28 +2433,73 @@ export default function Home() {
                     </div>
 
                     {/* Product rows — top 10 by lost value */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {lostSalesItems
                         .slice()
                         .sort((a, b) => (Math.abs(b.soh ?? 0) * (b.sell_price ?? 0)) - (Math.abs(a.soh ?? 0) * (a.sell_price ?? 0)))
                         .slice(0, 10)
                         .map(r => {
-                          const lostVal = Math.abs(r.soh ?? 0) * (r.sell_price ?? 0)
+                          const lostVal  = Math.abs(r.soh ?? 0) * (r.sell_price ?? 0)
+                          const timeline = lostSalesTimeline.get(r.ean) ?? []
                           return (
-                            <div key={r.ean} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 10, alignItems: 'center', padding: '6px 8px', background: 'rgba(239,68,68,0.05)', borderRadius: 6, borderLeft: '2px solid rgba(239,68,68,0.3)' }}>
-                              <div style={{ overflow: 'hidden' }}>
-                                <p style={{ fontSize: 12, color: '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
-                                <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace", marginTop: 1 }}>{r.dept_name}</p>
+                            <div key={r.ean} style={{ padding: '8px 10px', background: 'rgba(239,68,68,0.05)', borderRadius: 8, borderLeft: '2px solid rgba(239,68,68,0.3)' }}>
+
+                              {/* Top row: name + numbers */}
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 10, alignItems: 'center', marginBottom: timeline.length ? 8 : 0 }}>
+                                <div style={{ overflow: 'hidden' }}>
+                                  <p style={{ fontSize: 12, color: '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
+                                  <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace", marginTop: 1 }}>{r.dept_name}</p>
+                                </div>
+                                <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#ef4444', whiteSpace: 'nowrap' }}>
+                                  {r.soh}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(239,68,68,0.5)' }}>SOH</span>
+                                </span>
+                                <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: 'rgba(245,245,244,0.4)', whiteSpace: 'nowrap' }}>
+                                  {zarShort(r.sell_price)}
+                                </span>
+                                <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: '#ef4444', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                  {zarShort(lostVal)}
+                                </span>
                               </div>
-                              <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#ef4444', whiteSpace: 'nowrap' }}>
-                                {r.soh}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(239,68,68,0.5)' }}>SOH</span>
-                              </span>
-                              <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: 'rgba(245,245,244,0.4)', whiteSpace: 'nowrap' }}>
-                                {zarShort(r.sell_price)}
-                              </span>
-                              <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: '#ef4444', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                                {zarShort(lostVal)}
-                              </span>
+
+                              {/* Timeline bar — 28-day availability strip */}
+                              {timelineLoading && !timeline.length ? (
+                                <div style={{ height: 10, background: 'rgba(255,255,255,0.04)', borderRadius: 4, animation: 'pulse 1.5s infinite' }} />
+                              ) : timeline.length > 0 ? (
+                                <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                                  {/* Date label left */}
+                                  <span style={{ fontSize: 8, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.2)', flexShrink: 0, marginRight: 2 }}>
+                                    {timeline[0]?.snap_date?.slice(5)}
+                                  </span>
+                                  {/* Bars */}
+                                  <div style={{ display: 'flex', gap: 1.5, flex: 1, alignItems: 'center' }}>
+                                    {timeline.map(day => {
+                                      const bg = day.sold_bool
+                                        ? '#4ade80'                        // green — sold
+                                        : day.oos_bool
+                                          ? 'rgba(239,68,68,0.75)'        // red — OOS
+                                          : 'rgba(255,255,255,0.07)'      // grey — no movement, in stock
+                                      const title = `${day.snap_date}: ${day.sold_bool ? 'sold' : day.oos_bool ? 'OOS' : 'no movement'} · SOH ${day.soh}`
+                                      return (
+                                        <div
+                                          key={day.snap_date}
+                                          title={title}
+                                          style={{
+                                            flex: 1,
+                                            height: 10,
+                                            background: bg,
+                                            borderRadius: 2,
+                                            transition: 'background 0.15s',
+                                          }}
+                                        />
+                                      )
+                                    })}
+                                  </div>
+                                  {/* Date label right */}
+                                  <span style={{ fontSize: 8, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.2)', flexShrink: 0, marginLeft: 2 }}>
+                                    {timeline[timeline.length - 1]?.snap_date?.slice(5)}
+                                  </span>
+                                </div>
+                              ) : null}
                             </div>
                           )
                         })

@@ -12,9 +12,16 @@
 
 
 -- ---------------------------------------------------------------------------
--- STEP 1 -- Run this alone (VACUUM blocks are not allowed inside transactions)
+-- STEP 1 -- ANALYZE only (Supabase SQL Editor cannot run VACUUM)
+--
+-- VACUUM is blocked by the SQL Editor's 60-second timeout and implicit
+-- transaction wrapper. Skip it -- Supabase autovacuum reclaims dead tuples
+-- automatically in the background within a few hours.
+--
+-- ANALYZE updates the query planner statistics immediately (the part that
+-- actually matters for query performance after the EAN fix deletions).
 -- ---------------------------------------------------------------------------
-VACUUM ANALYZE daily_snapshots;
+ANALYZE daily_snapshots;
 
 
 -- ---------------------------------------------------------------------------

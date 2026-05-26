@@ -3,11 +3,11 @@
 @tailwind utilities;
 
 html {
-  zoom: 1.25;
+  font-size: 15px;
 }
 
 @media (max-width: 767px) {
-  html { zoom: 1; }
+  html { font-size: 14px; }
 }
 
 :root {
