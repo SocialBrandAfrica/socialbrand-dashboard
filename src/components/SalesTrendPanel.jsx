@@ -19,6 +19,33 @@ function shiftDate(isoDate, days) {
     return d.toISOString().slice(0, 10)
 }
 
+// Monday of the week containing isoDate (retail standard)
+function toWeekStart(isoDate) {
+    const d = new Date(isoDate + 'T12:00:00')
+    const day = d.getDay()
+    d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day))
+    return d.toISOString().slice(0, 10)
+}
+
+// Collapse daily points into Monday-anchored weekly totals
+function aggregateWeekly(dailyPoints) {
+    const weekMap = new Map()
+    for (const pt of dailyPoints) {
+        const ws = toWeekStart(pt.date)
+        if (!weekMap.has(ws)) weekMap.set(ws, { sales: 0, ly: 0, lyCount: 0 })
+        const w = weekMap.get(ws)
+        w.sales += pt.sales
+        if (pt.ly != null) { w.ly += pt.ly; w.lyCount++ }
+    }
+    return [...weekMap.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, w]) => ({
+            date,
+            sales: Math.round(w.sales),
+            ly:    w.lyCount > 0 ? Math.round(w.ly) : null,
+        }))
+}
+
 function rollingAverage(points, window) {
     return points.map((pt, i) => {
         const slice = points.slice(Math.max(0, i - window + 1), i + 1)
@@ -32,7 +59,7 @@ const CustomTooltip = ({ active, payload, label }) => {
     const labelDate = iso => new Date(iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
     return (
         <div style={{ background: 'rgba(10,14,26,0.95)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, padding: '10px 14px', fontFamily: 'Geist, sans-serif' }}>
-            <p style={{ fontSize: 11, color: 'rgba(245,245,244,0.5)', marginBottom: 6 }}>{labelDate(label)}</p>
+            <p style={{ fontSize: 11, color: 'rgba(245,245,244,0.5)', marginBottom: 6 }}>w/c {labelDate(label)}</p>
             {payload.map(p => (
                 <p key={p.name} style={{ fontSize: 12, color: p.color || p.stroke, marginBottom: 3 }}>
                     {p.name === 'sales' ? 'This year' : p.name === 'ly' ? 'Last year' : '4-wk avg'}: {zarShort(p.value)}
@@ -42,13 +69,12 @@ const CustomTooltip = ({ active, payload, label }) => {
     )
 }
 
-// Colour per rhythm profile — matched on profile_name prefix (case-insensitive)
 const RHYTHM_COLOURS = [
-    { match: 'payday',     fill: 'rgba(245,158,11,0.10)',  stroke: 'rgba(245,158,11,0.35)',  label: '#f59e0b' },
-    { match: 'pension',    fill: 'rgba(96,165,250,0.10)',  stroke: 'rgba(96,165,250,0.35)',  label: '#60a5fa' },
-    { match: 'pre-payday', fill: 'rgba(251,146,60,0.10)',  stroke: 'rgba(251,146,60,0.35)',  label: '#fb923c' },
-    { match: 'mini-payday',fill: 'rgba(251,191,36,0.09)',  stroke: 'rgba(251,191,36,0.35)',  label: '#fbbf24' },
-    { match: '',           fill: 'rgba(168,85,247,0.08)',  stroke: 'rgba(168,85,247,0.3)',   label: '#a855f7' }, // fallback
+    { match: 'payday',      fill: 'rgba(245,158,11,0.10)',  stroke: 'rgba(245,158,11,0.35)',  label: '#f59e0b' },
+    { match: 'pension',     fill: 'rgba(96,165,250,0.10)',  stroke: 'rgba(96,165,250,0.35)',  label: '#60a5fa' },
+    { match: 'pre-payday',  fill: 'rgba(251,146,60,0.10)',  stroke: 'rgba(251,146,60,0.35)',  label: '#fb923c' },
+    { match: 'mini-payday', fill: 'rgba(251,191,36,0.09)',  stroke: 'rgba(251,191,36,0.35)',  label: '#fbbf24' },
+    { match: '',            fill: 'rgba(168,85,247,0.08)',  stroke: 'rgba(168,85,247,0.3)',   label: '#a855f7' },
 ]
 
 function rhythmColour(profileName) {
@@ -56,24 +82,33 @@ function rhythmColour(profileName) {
     return RHYTHM_COLOURS.find(c => c.match && key.startsWith(c.match)) ?? RHYTHM_COLOURS[RHYTHM_COLOURS.length - 1]
 }
 
-// Compute [{ x1, x2, profile }] for every contiguous run of dates inside a rhythm window
-function getRhythmWindows(points, profiles) {
-    if (!profiles?.length || !points?.length) return []
+// True if any day of the 7-day week starting weekStart falls within [startDay, endDay]
+function weekIntersectsRange(weekStart, startDay, endDay) {
+    for (let i = 0; i < 7; i++) {
+        const d = new Date(weekStart + 'T12:00:00')
+        d.setDate(d.getDate() + i)
+        if (d.getDate() >= startDay && d.getDate() <= endDay) return true
+    }
+    return false
+}
+
+// Contiguous runs of weekly points that intersect a rhythm day-of-month range
+function getRhythmWindows(weeklyPoints, profiles) {
+    if (!profiles?.length || !weeklyPoints?.length) return []
     const windows = []
     for (const profile of profiles) {
         let runStart = null
-        for (let i = 0; i < points.length; i++) {
-            const day = new Date(points[i].date + 'T12:00:00').getDate() // noon avoids DST edge
-            const inside = day >= profile.start_day && day <= profile.end_day
+        for (let i = 0; i < weeklyPoints.length; i++) {
+            const inside = weekIntersectsRange(weeklyPoints[i].date, profile.start_day, profile.end_day)
             if (inside && runStart === null) {
-                runStart = points[i].date
+                runStart = weeklyPoints[i].date
             } else if (!inside && runStart !== null) {
-                windows.push({ x1: runStart, x2: points[i - 1].date, profile })
+                windows.push({ x1: runStart, x2: weeklyPoints[i - 1].date, profile })
                 runStart = null
             }
         }
         if (runStart !== null) {
-            windows.push({ x1: runStart, x2: points[points.length - 1].date, profile })
+            windows.push({ x1: runStart, x2: weeklyPoints[weeklyPoints.length - 1].date, profile })
         }
     }
     return windows
@@ -93,7 +128,7 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
     const lyByDate      = aggregate(lyTrendData)
     const hasLY         = Object.keys(lyByDate).length > 0
 
-    const rawPoints = Object.entries(currentByDate)
+    const dailyPoints = Object.entries(currentByDate)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([date, sales]) => ({
             date,
@@ -102,7 +137,9 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
         }))
         .filter(p => p.sales > 0)
 
-    const points = rollingAverage(rawPoints, 28)
+    // Weekly totals → 4-week rolling average — ~13 data points for a 90-day window
+    const weeklyPoints = aggregateWeekly(dailyPoints)
+    const points       = rollingAverage(weeklyPoints, 4)
 
     const labelDate = iso => new Date(iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
 
@@ -118,7 +155,6 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
 
     const rhythmWindows = getRhythmWindows(points, rhythmProfiles)
 
-    // Which profiles actually appear in this date range (for legend)
     const activeInRange = rhythmProfiles.filter(p =>
         rhythmWindows.some(w => w.profile.id === p.id)
     )
@@ -142,7 +178,6 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
                         <span style={{ width: 18, height: 1, background: 'rgba(245,245,244,0.3)', display: 'inline-block' }} />
                         4-wk avg
                     </span>
-                    {/* Rhythm window legend — only for profiles visible in this date range */}
                     {activeInRange.map(p => {
                         const col = rhythmColour(p.event_name)
                         return (
@@ -178,7 +213,6 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
                     />
                     <Tooltip content={<CustomTooltip />} />
 
-                    {/* Community Rhythm shaded bands — rendered before data lines so they sit behind */}
                     {rhythmWindows.map((w, i) => {
                         const col = rhythmColour(w.profile.event_name)
                         return (
@@ -191,7 +225,7 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
                                 strokeWidth={0}
                                 fillOpacity={1}
                                 label={{
-                                    value: w.profile.event_name.replace(/ \(.*\)/, ''), // strip day range if present
+                                    value: w.profile.event_name.replace(/ \(.*\)/, ''),
                                     position: 'insideTopLeft',
                                     fontSize: 8,
                                     fill: col.label,
