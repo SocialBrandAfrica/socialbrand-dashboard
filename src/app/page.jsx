@@ -1076,7 +1076,7 @@ export default function Home() {
   useEffect(() => {
     supabase
       .from('community_rhythm')
-      .select('id,profile_name,start_day,end_day,multiplier,is_active')
+      .select('id,event_name,start_day,end_day,multiplier_configured,is_active')
       .eq('is_active', true)
       .order('start_day', { ascending: true })
       .then(({ data, error }) => {

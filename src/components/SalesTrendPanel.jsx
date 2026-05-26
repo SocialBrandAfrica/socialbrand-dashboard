@@ -144,11 +144,11 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
                     </span>
                     {/* Rhythm window legend — only for profiles visible in this date range */}
                     {activeInRange.map(p => {
-                        const col = rhythmColour(p.profile_name)
+                        const col = rhythmColour(p.event_name)
                         return (
                             <span key={p.id} style={{ fontSize: 10, color: col.label, display: 'flex', alignItems: 'center', gap: 5 }}>
                                 <span style={{ width: 12, height: 12, background: col.fill, border: `1px solid ${col.stroke}`, borderRadius: 3, display: 'inline-block', flexShrink: 0 }} />
-                                {p.profile_name}
+                                {p.event_name}
                             </span>
                         )
                     })}
@@ -180,7 +180,7 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
 
                     {/* Community Rhythm shaded bands — rendered before data lines so they sit behind */}
                     {rhythmWindows.map((w, i) => {
-                        const col = rhythmColour(w.profile.profile_name)
+                        const col = rhythmColour(w.profile.event_name)
                         return (
                             <ReferenceArea
                                 key={`rhythm-${i}`}
@@ -191,7 +191,7 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
                                 strokeWidth={0}
                                 fillOpacity={1}
                                 label={{
-                                    value: w.profile.profile_name.replace(/ \(.*\)/, ''), // strip day range if present
+                                    value: w.profile.event_name.replace(/ \(.*\)/, ''), // strip day range if present
                                     position: 'insideTopLeft',
                                     fontSize: 8,
                                     fill: col.label,
