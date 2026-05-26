@@ -906,7 +906,7 @@ export default function Home() {
   const [storeRosData,  setStoreRosData]  = useState([])
   const [supplierMap,   setSupplierMap]   = useState(new Map())  // ean → supplier_name from product_catalog
   const [lostSalesItems,    setLostSalesItems]    = useState([])  // negative SOH lines sold in last 3 days
-  const [lostSalesTimeline, setLostSalesTimeline] = useState(new Map()) // ean → [{snap_date,sold_bool,oos_bool,soh}] (merged across stores)
+  const [lostSalesTimeline, setLostSalesTimeline] = useState(new Map()) // ean → [{store_code, store_name, days:[{snap_date,sold_bool,oos_bool,soh}]}]
   const [timelineLoading,   setTimelineLoading]   = useState(false)
 
   // ── product detail panel ────────────────────────────────────────────────────
@@ -1137,35 +1137,28 @@ export default function Home() {
         p_eans:     top10,
         p_stores:   storeCodes,
         p_end_date: endDate,
-        p_days:     28,
+        p_days:     56,
       })
 
       if (cancelled) return
       if (error) { console.error('[lostSalesTimeline]', error.message); setTimelineLoading(false); return }
 
-      // Merge rows across stores per EAN per date: sold > oos > neither
+      // Group by EAN → store → sorted day array — one strip per store, no cross-store merge
       const byEan = new Map()
       for (const row of (data ?? [])) {
         if (!byEan.has(row.ean)) byEan.set(row.ean, new Map())
-        const byDate = byEan.get(row.ean)
-        const existing = byDate.get(row.snap_date)
-        if (!existing) {
-          byDate.set(row.snap_date, { snap_date: row.snap_date, sold_bool: row.sold_bool, oos_bool: row.oos_bool, soh: row.soh })
-        } else {
-          // sold wins; if any store sold that day, mark sold
-          byDate.set(row.snap_date, {
-            snap_date: row.snap_date,
-            sold_bool: existing.sold_bool || row.sold_bool,
-            oos_bool:  existing.oos_bool  || row.oos_bool,
-            soh:       Math.min(existing.soh ?? 0, row.soh ?? 0), // worst SOH across stores
-          })
-        }
+        const byStore = byEan.get(row.ean)
+        if (!byStore.has(row.store_code)) byStore.set(row.store_code, [])
+        byStore.get(row.store_code).push({ snap_date: row.snap_date, sold_bool: row.sold_bool, oos_bool: row.oos_bool, soh: row.soh })
       }
 
-      // Convert inner Maps to sorted arrays
       const merged = new Map()
-      for (const [ean, dateMap] of byEan) {
-        merged.set(ean, [...dateMap.values()].sort((a, b) => a.snap_date < b.snap_date ? -1 : 1))
+      for (const [ean, byStore] of byEan) {
+        const storeRows = []
+        for (const [store_code, days] of byStore) {
+          storeRows.push({ store_code, store_name: STORE_MAP[store_code] ?? store_code, days: days.sort((a, b) => a.snap_date < b.snap_date ? -1 : 1) })
+        }
+        merged.set(ean, storeRows)
       }
 
       setLostSalesTimeline(merged)
@@ -2440,7 +2433,7 @@ export default function Home() {
                         .slice(0, 10)
                         .map(r => {
                           const lostVal  = Math.abs(r.soh ?? 0) * (r.sell_price ?? 0)
-                          const timeline = lostSalesTimeline.get(r.ean) ?? []
+                          const storeRows = lostSalesTimeline.get(r.ean) ?? []
                           return (
                             <div key={r.ean} style={{ padding: '8px 10px', background: 'rgba(239,68,68,0.05)', borderRadius: 8, borderLeft: '2px solid rgba(239,68,68,0.3)' }}>
 
@@ -2461,43 +2454,38 @@ export default function Home() {
                                 </span>
                               </div>
 
-                              {/* Timeline bar — 28-day availability strip */}
-                              {timelineLoading && !timeline.length ? (
-                                <div style={{ height: 10, background: 'rgba(255,255,255,0.04)', borderRadius: 4, animation: 'pulse 1.5s infinite' }} />
-                              ) : timeline.length > 0 ? (
-                                <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                                  {/* Date label left */}
-                                  <span style={{ fontSize: 8, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.2)', flexShrink: 0, marginRight: 2 }}>
-                                    {timeline[0]?.snap_date?.slice(5)}
-                                  </span>
-                                  {/* Bars */}
-                                  <div style={{ display: 'flex', gap: 1.5, flex: 1, alignItems: 'center' }}>
-                                    {timeline.map(day => {
-                                      const bg = day.sold_bool
-                                        ? '#4ade80'                        // green — sold
-                                        : day.oos_bool
-                                          ? 'rgba(239,68,68,0.75)'        // red — OOS
-                                          : 'rgba(255,255,255,0.07)'      // grey — no movement, in stock
-                                      const title = `${day.snap_date}: ${day.sold_bool ? 'sold' : day.oos_bool ? 'OOS' : 'no movement'} · SOH ${day.soh}`
-                                      return (
-                                        <div
-                                          key={day.snap_date}
-                                          title={title}
-                                          style={{
-                                            flex: 1,
-                                            height: 10,
-                                            background: bg,
-                                            borderRadius: 2,
-                                            transition: 'background 0.15s',
-                                          }}
-                                        />
-                                      )
-                                    })}
-                                  </div>
-                                  {/* Date label right */}
-                                  <span style={{ fontSize: 8, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.2)', flexShrink: 0, marginLeft: 2 }}>
-                                    {timeline[timeline.length - 1]?.snap_date?.slice(5)}
-                                  </span>
+                              {/* Timeline — 56-day availability strip, fixed-width cells like Stock Availability */}
+                              {timelineLoading && !storeRows.length ? (
+                                <div style={{ height: 20, background: 'rgba(255,255,255,0.04)', borderRadius: 3, animation: 'pulse 1.5s infinite' }} />
+                              ) : storeRows.length > 0 ? (
+                                <div style={{ overflowX: 'auto' }}>
+                                  {storeRows.map(sr => (
+                                    <div key={sr.store_code} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                                      <span style={{ fontSize: 9, color: 'rgba(245,245,244,0.4)', minWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sr.store_name}</span>
+                                      <div style={{ display: 'flex', gap: 2 }}>
+                                        {sr.days.map(day => {
+                                          const bg = day.sold_bool
+                                            ? '#4ade80'
+                                            : day.oos_bool
+                                              ? 'rgba(239,68,68,0.75)'
+                                              : 'rgba(255,255,255,0.06)'
+                                          return (
+                                            <div
+                                              key={day.snap_date}
+                                              title={`${day.snap_date}: ${day.sold_bool ? 'sold' : day.oos_bool ? 'OOS' : 'in stock · no sale'} · SOH ${day.soh}`}
+                                              style={{ flexShrink: 0, width: 6, height: 20, borderRadius: 2, background: bg }}
+                                            />
+                                          )
+                                        })}
+                                      </div>
+                                    </div>
+                                  ))}
+                                  {storeRows[0]?.days.length > 0 && (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2, paddingLeft: 98 }}>
+                                      <span style={{ fontSize: 8, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.2)' }}>{storeRows[0].days[0]?.snap_date?.slice(5)}</span>
+                                      <span style={{ fontSize: 8, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.2)' }}>{storeRows[0].days[storeRows[0].days.length - 1]?.snap_date?.slice(5)}</span>
+                                    </div>
+                                  )}
                                 </div>
                               ) : null}
                             </div>
