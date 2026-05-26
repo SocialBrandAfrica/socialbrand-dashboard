@@ -1034,11 +1034,14 @@ export default function Home() {
           .select('snapshot_date')
           .eq('status', 'SUCCESS')
           .not('snapshot_date', 'is', null),
+        // Fetch up to 5000 rows — 5 stores × 16 months × ~31 days = ~2,480 max.
+        // Using range(0,4999) ensures we never clip older dates off the picker,
+        // even if row count grows after new stores are added.
         supabase
           .from('mv_kpi_by_date')
           .select('snapshot_date')
           .order('snapshot_date', { ascending: false })
-          .range(0, 1999)
+          .range(0, 4999)
       ])
       const allDates = new Set([
         ...(pushRes.data ?? []).map(r => r.snapshot_date),
@@ -1196,22 +1199,19 @@ export default function Home() {
       setViewsLoading(true)
 
       // LY dates: each selected date shifted back 364 days (52 weeks — preserves day-of-week)
-      const lyDates = selectedDates
-        .map(d => shiftDate(d, -364))
-        .filter(d => availableDates.includes(d))
+      // No availableDates filter — let Supabase return what exists. Filtering here caused LY
+      // to silently drop when mv_kpi_by_date lagged behind push_log as the sole date source.
+      const lyDates = selectedDates.map(d => shiftDate(d, -364))
 
       // WoW dates: each selected date shifted back 7 days
-      const wowDates = selectedDates
-        .map(d => shiftDate(d, -7))
-        .filter(d => availableDates.includes(d))
+      // Same rationale — don't gate on availableDates; query and get real results or empty.
+      const wowDates = selectedDates.map(d => shiftDate(d, -7))
 
       // Trend window: last 90 available dates (time-series for trend chart)
       const trendDates = availableDates.slice(0, 90)
 
-      // LY trend window: map trendDates back 364 days
-      const lyTrendDates = trendDates
-        .map(d => shiftDate(d, -364))
-        .filter(d => availableDates.includes(d))
+      // LY trend window: map trendDates back 364 days (no availableDates filter — same rationale)
+      const lyTrendDates = trendDates.map(d => shiftDate(d, -364))
 
       // Rule (PM decision 2026-05-25):
       //   single date  → v_kpi_by_date  (live view — catches today's push immediately)
