@@ -1136,9 +1136,15 @@ export default function Home() {
         .map(d => shiftDate(d, -364))
         .filter(d => availableDates.includes(d))
 
+      // Rule (PM decision 2026-05-25):
+      //   single date  → v_kpi_by_date  (live view — catches today's push immediately)
+      //   multi date   → mv_kpi_by_date (pre-aggregated MV — no timeout risk on MTD/25+ dates)
+      // LY / WoW / trend are always historical so always use the MV.
+      const kpiTable = selectedDates.length === 1 ? 'v_kpi_by_date' : 'mv_kpi_by_date'
+
       const [kpiRes, subDeptRes, lyKpiRes, wowKpiRes, lyDeptRes, trendRes, lyTrendRes] = await Promise.all([
-        // Current KPI (v_kpi_by_date — live view, always reflects latest daily_snapshots)
-        supabase.from('v_kpi_by_date')
+        // Current KPI
+        supabase.from(kpiTable)
           .select('store_code,store_name,snapshot_date,total_sales,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
           .in('store_code', storeCodes)
           .in('snapshot_date', selectedDates),
@@ -1150,17 +1156,17 @@ export default function Home() {
           p_dept_names:  null,
         }),
 
-        // LY KPI
+        // LY KPI — always historical, use MV
         lyDates.length > 0
-          ? supabase.from('v_kpi_by_date')
+          ? supabase.from('mv_kpi_by_date')
               .select('store_code,snapshot_date,total_sales,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
               .in('store_code', storeCodes)
               .in('snapshot_date', lyDates)
           : Promise.resolve({ data: [], error: null }),
 
-        // WoW KPI
+        // WoW KPI — always historical, use MV
         wowDates.length > 0
-          ? supabase.from('v_kpi_by_date')
+          ? supabase.from('mv_kpi_by_date')
               .select('store_code,snapshot_date,total_sales,total_cost,total_qty')
               .in('store_code', storeCodes)
               .in('snapshot_date', wowDates)
@@ -1171,16 +1177,16 @@ export default function Home() {
           ? supabase.rpc('rpc_dept_summary', { p_store_codes: storeCodes, p_dates: lyDates })
           : Promise.resolve({ data: [], error: null }),
 
-        // Trend data (90-day window)
-        supabase.from('v_kpi_by_date')
+        // Trend data (90-day window) — always historical, use MV
+        supabase.from('mv_kpi_by_date')
           .select('store_code,snapshot_date,total_sales,total_cost,total_qty')
           .in('store_code', storeCodes)
           .in('snapshot_date', trendDates)
           .order('snapshot_date', { ascending: true }),
 
-        // LY trend data
+        // LY trend data — always historical, use MV
         lyTrendDates.length > 0
-          ? supabase.from('v_kpi_by_date')
+          ? supabase.from('mv_kpi_by_date')
               .select('store_code,snapshot_date,total_sales')
               .in('store_code', storeCodes)
               .in('snapshot_date', lyTrendDates)
