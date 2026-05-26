@@ -1085,31 +1085,48 @@ export default function Home() {
       })
   }, [])
 
-  // ── Lost Sales: negative SOH items that sold in the last 3 days ─────────────
-  // Small targeted query — runs on the latest snapshot date per store.
-  // Does not depend on the full reportRows load.
+  // ── Lost Sales: negative SOH items OOS on the last 2 snapshot dates ─────────
+  // Requires soh < 0 on BOTH the latest and previous date to filter one-day
+  // blips. Falls back to single-date if only one date is available.
   useEffect(() => {
     if (!storeCodes.length || !availableDates.length) return
     let cancelled = false
     const latestDate = availableDates[0]  // sorted newest-first
+    const prevDate   = availableDates[1] ?? null
+    const dates      = prevDate ? [latestDate, prevDate] : [latestDate]
+
     const threeDaysAgo = new Date()
     threeDaysAgo.setDate(threeDaysAgo.getDate() - 3)
-    const cutoff = threeDaysAgo.toISOString().slice(0, 10)  // YYYY-MM-DD
+    const cutoff = threeDaysAgo.toISOString().slice(0, 10)
 
     supabase
       .from('daily_snapshots')
-      .select('ean,description,dept_name,soh,sell_price,last_sales_date_iso,store_name,store_code')
+      .select('ean,description,dept_name,soh,sell_price,last_sales_date_iso,store_name,store_code,snapshot_date')
       .in('store_code', storeCodes)
-      .eq('snapshot_date', latestDate)
+      .in('snapshot_date', dates)
       .lt('soh', 0)
       .gte('last_sales_date_iso', cutoff)
       .eq('is_placeholder', false)
       .order('soh', { ascending: true })
-      .limit(100)
+      .limit(200)
       .then(({ data, error }) => {
         if (cancelled) return
         if (error) { console.error('[lostSales]', error.message); return }
-        setLostSalesItems(data ?? [])
+        const rows = data ?? []
+        let items
+        if (prevDate) {
+          // Keep only EAN+store combos that are OOS on both dates
+          const oosCount = {}
+          for (const r of rows) {
+            const key = `${r.ean}|${r.store_code}`
+            oosCount[key] = (oosCount[key] ?? 0) + 1
+          }
+          const twoDayOos = new Set(Object.keys(oosCount).filter(k => oosCount[k] >= 2))
+          items = rows.filter(r => r.snapshot_date === latestDate && twoDayOos.has(`${r.ean}|${r.store_code}`))
+        } else {
+          items = rows
+        }
+        setLostSalesItems(items)
       })
 
     return () => { cancelled = true }
@@ -1628,13 +1645,31 @@ export default function Home() {
   }, [deptSummary])
 
   // ── Phase 3.2 derived values ─────────────────────────────────────────────────
+  //
+  // LY METRIC RULES — mirrors the current-period split:
+  //   PERIOD metrics  (Sales, GP%, Qty)  → reduce over ALL lyKpiData rows (same N dates as selection)
+  //   POINT-IN-TIME   (NegSOH, SlowMove, CapTied) → latest LY snapshot per store only
+  //     (current uses latestKpiByStore; LY uses lyLatestKpiByStore)
+  //
+  // lyLatestKpiByStore: for each store, take the row with the highest snapshot_date
+  // within lyKpiData. This is the LY equivalent of "today" even if the exact -364 date
+  // was a non-trading day.
+  const lyLatestKpiByStore = (() => {
+    const m = {}
+    for (const r of lyKpiData) {
+      if (!m[r.store_code] || r.snapshot_date > m[r.store_code].snapshot_date) m[r.store_code] = r
+    }
+    return Object.values(m)
+  })()
+
   const lyKpiSales    = lyKpiData.reduce((s, r) => s + (r.total_sales ?? 0), 0)
   const lyKpiCost     = lyKpiData.reduce((s, r) => s + (r.total_cost  ?? 0), 0)
   const lyKpiQty      = lyKpiData.reduce((s, r) => s + (r.total_qty   ?? 0), 0)
   const lyKpiGP       = lyKpiSales > 0 ? gpPct(lyKpiSales, lyKpiCost) : null
-  const lyKpiNegSOH   = lyKpiData.reduce((s, r) => s + (r.neg_soh_count   ?? 0), 0)
-  const lyKpiSlowMove = lyKpiData.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
-  const lyKpiCapTied  = lyKpiData.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
+  // Point-in-time: use latest LY date per store (not sum over period)
+  const lyKpiNegSOH   = lyLatestKpiByStore.reduce((s, r) => s + (r.neg_soh_count   ?? 0), 0)
+  const lyKpiSlowMove = lyLatestKpiByStore.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
+  const lyKpiCapTied  = lyLatestKpiByStore.reduce((s, r) => s + (r.capital_tied     ?? 0), 0)
   const hasLY         = lyKpiData.length > 0
 
   const wowKpiSales = wowKpiData.reduce((s, r) => s + (r.total_sales ?? 0), 0)
@@ -2464,10 +2499,10 @@ export default function Home() {
                                       <span style={{ fontSize: 9, color: 'rgba(245,245,244,0.4)', minWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sr.store_name}</span>
                                       <div style={{ display: 'flex', gap: 2 }}>
                                         {sr.days.map(day => {
-                                          const bg = day.sold_bool
-                                            ? '#4ade80'
-                                            : day.oos_bool
-                                              ? 'rgba(239,68,68,0.75)'
+                                          const bg = day.oos_bool
+                                            ? 'rgba(239,68,68,0.75)'
+                                            : day.sold_bool
+                                              ? '#4ade80'
                                               : 'rgba(255,255,255,0.06)'
                                           return (
                                             <div
