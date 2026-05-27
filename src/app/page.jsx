@@ -2205,6 +2205,7 @@ export default function Home() {
                       bench:         null,
                       sub:           `Cost ${zarShort(kpiCost)}`,
                       warn:          kpiGP < 15,
+                      basisNote:     'VAT-incl. basis',
                     },
                     {
                       key:           'reorder',
@@ -2337,6 +2338,16 @@ export default function Home() {
                         {!k.lyDelta && !k.lyRef && !k.wowDelta && !k.bench && (
                           <p style={{ fontSize: 11, color: k.onClick ? 'rgba(34,211,238,0.7)' : 'rgba(245,245,244,0.35)', marginTop: 8, fontFamily: "'Geist Mono', monospace", textDecoration: k.onClick ? 'underline' : 'none' }}>
                             {k.sub}
+                          </p>
+                        )}
+                        {/* Subtle basis note — informational only, no warning intent */}
+                        {k.basisNote && (
+                          <p style={{
+                            fontSize: 9, color: 'rgba(245,245,244,0.15)',
+                            fontFamily: "'Geist Mono', monospace",
+                            marginTop: 5, letterSpacing: '0.02em',
+                          }}>
+                            {k.basisNote}
                           </p>
                         )}
                         {/* DATA-1 (SB-AUD-002): data quality flag on Capital Tied card only */}
