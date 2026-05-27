@@ -114,7 +114,7 @@ function getRhythmWindows(weeklyPoints, profiles) {
     return windows
 }
 
-export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProfiles = [] }) {
+export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProfiles = [], contextLabel = null }) {
     const aggregate = rows => {
         const byDate = {}
         for (const r of rows) {
@@ -162,7 +162,9 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
     return (
         <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
-                <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>Sales Trend</span>
+                <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>
+                  {contextLabel ?? 'Sales Trend'}
+                </span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 10, color: 'rgba(245,245,244,0.4)', display: 'flex', alignItems: 'center', gap: 5 }}>
                         <span style={{ width: 18, height: 2, background: '#4ade80', display: 'inline-block', borderRadius: 1 }} />

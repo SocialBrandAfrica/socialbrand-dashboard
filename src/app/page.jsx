@@ -900,6 +900,8 @@ export default function Home() {
   const [lyDeptSummary,  setLyDeptSummary]  = useState([])   // rpc_dept_summary for LY dates
   const [trendData,      setTrendData]      = useState([])   // v_kpi_by_date for trend chart (90 days)
   const [lyTrendData,    setLyTrendData]    = useState([])   // v_kpi_by_date for LY trend window
+  const [productTrendData,   setProductTrendData]   = useState([])  // FEAT-1: trend filtered to active EANs
+  const [productLyTrendData, setProductLyTrendData] = useState([])  // FEAT-1: LY trend filtered to active EANs
 
   // ── dept/sub-dept chips ─────────────────────────────────────────────────────
   const [depts,       setDepts]       = useState([])
@@ -928,6 +930,11 @@ export default function Home() {
   //   "Clear all" resets back to isDefaultBasket = true and re-fetches the top 5.
   const [focusBasket,      setFocusBasket]      = useState([])
   const [isDefaultBasket,  setIsDefaultBasket]  = useState(true)
+
+  // ── FEAT-1: trend date windows — promoted from loadViews so the product-trend
+  //    useEffect can depend on them without re-deriving on every render.
+  const trendDates   = useMemo(() => availableDates.slice(0, 90), [availableDates])
+  const lyTrendDates = useMemo(() => trendDates.map(d => shiftDate(d, -364)), [trendDates])
 
   // ── auth: load user + profile on mount ───────────────────────────────────────
   // PHASE 1 (current): all authenticated users are treated as owner (super-admin).
@@ -1224,11 +1231,8 @@ export default function Home() {
       // Same rationale — don't gate on availableDates; query and get real results or empty.
       const wowDates = selectedDates.map(d => shiftDate(d, -7))
 
-      // Trend window: last 90 available dates (time-series for trend chart)
-      const trendDates = availableDates.slice(0, 90)
-
-      // LY trend window: map trendDates back 364 days (no availableDates filter — same rationale)
-      const lyTrendDates = trendDates.map(d => shiftDate(d, -364))
+      // trendDates / lyTrendDates are computed at component level as useMemo
+      // (see FEAT-1 note) — they are available in this closure via the outer scope.
 
       // Rule (PM decision 2026-05-25):
       //   single date  → v_kpi_by_date  (live view — catches today's push immediately)
@@ -1796,6 +1800,62 @@ export default function Home() {
       : []
   const isSelectionActive = activeProducts.length > 0
 
+  // ── FEAT-1: stable EAN list for product trend fetch ──────────────────────────
+  // Derive from the underlying state values, NOT from activeProducts (which is a new
+  // array reference every render, which would cause useMemo to recompute every render
+  // and trigger the useEffect on every re-render — an infinite loop when idle).
+  const activeEans = useMemo(() => {
+    const prods = selectedProduct
+      ? [selectedProduct]
+      : (focusBasket.length > 0 && !isDefaultBasket) ? focusBasket : []
+    return prods.map(p => String(p['EAN'] ?? p.ean ?? '')).filter(Boolean)
+  }, [selectedProduct, focusBasket, isDefaultBasket])
+
+  // ── FEAT-1: fetch rpc_focus_chart for the 90-day window when a product is selected ──
+  // Rows are normalised to { store_code, snapshot_date, total_sales } so SalesTrendPanel
+  // can consume them without modification.
+  useEffect(() => {
+    if (!activeEans.length || !storeCodes.length || !trendDates.length) {
+      setProductTrendData([])
+      setProductLyTrendData([])
+      return
+    }
+    let cancelled = false
+    const lyDates = trendDates.map(d => shiftDate(d, -364))
+    Promise.all([
+      supabase.rpc('rpc_focus_chart', {
+        p_eans:        activeEans,
+        p_store_codes: storeCodes,
+        p_dates:       trendDates,
+      }),
+      lyDates.length > 0
+        ? supabase.rpc('rpc_focus_chart', {
+            p_eans:        activeEans,
+            p_store_codes: storeCodes,
+            p_dates:       lyDates,
+          })
+        : Promise.resolve({ data: [] }),
+    ]).then(([tRes, lyRes]) => {
+      if (cancelled) return
+      // rpc_focus_chart returns today_sales; SalesTrendPanel expects total_sales
+      const norm = rows => (rows ?? []).map(r => ({
+        store_code:    r.store_code,
+        snapshot_date: r.snapshot_date,
+        total_sales:   r.today_sales ?? 0,
+      }))
+      setProductTrendData(norm(tRes.data))
+      setProductLyTrendData(norm(lyRes.data ?? []))
+    })
+    return () => { cancelled = true }
+  }, [activeEans, storeCodes, trendDates])
+
+  // Effective trend data — store totals when idle, product-filtered when a selection is active
+  const effectiveTrendData   = isSelectionActive ? productTrendData   : trendData
+  const effectiveLyTrendData = isSelectionActive ? productLyTrendData : lyTrendData
+  const trendContextLabel    = isSelectionActive
+    ? `${activeProducts.length} product${activeProducts.length === 1 ? '' : 's'} selected`
+    : null
+
   // ─────────────────────────────────────────────────────────────────────────────
   // DISPLAY VALUES
   // ─────────────────────────────────────────────────────────────────────────────
@@ -2298,10 +2358,11 @@ export default function Home() {
 
           {/* ── SALES TREND ──────────────────────────────────────────────────── */}
           <SalesTrendPanel
-            trendData={trendData}
-            lyTrendData={lyTrendData}
+            trendData={effectiveTrendData}
+            lyTrendData={effectiveLyTrendData}
             storeCodes={storeCodes}
             rhythmProfiles={rhythmProfiles}
+            contextLabel={trendContextLabel}
           />
 
           {/* ── TOP 20 + DEPT CHART — hidden while a product selection is active ─── */}
@@ -2459,8 +2520,13 @@ export default function Home() {
             </div>
           )}
 
+          {/* ── PRODUCT DETAIL + LOST SALES — CSS order flips when selection active ── */}
+          {/* Product detail jumps above lost sales when isSelectionActive = true.       */}
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+
           {/* ── LOST SALES TRACKER ──────────────────────────────────────────────── */}
           {/* Negative SOH items that sold in the last 3 days — estimated lost revenue */}
+          <div style={{ order: isSelectionActive ? 1 : 0 }}>
           {lostSalesItems.length > 0 && (
             <div className="sb-glass" style={{ padding: '20px 22px', marginBottom: 16 }}>
               {(() => {
@@ -2584,10 +2650,11 @@ export default function Home() {
             </div>
           )}
 
+          </div>{/* end lost-sales order div */}
+
           {/* ── PRODUCT DETAIL PANELS ─────────────────────────────────────────── */}
-          {/* One card per active product, stacked vertically.                     */}
-          {/* isSelectionActive hides Top 20 + Sales by Dept above.                */}
-          <div ref={panelRef}>
+          {/* Jumps above Lost Sales when a product selection is active.            */}
+          <div style={{ order: isSelectionActive ? 0 : 1 }} ref={panelRef}>
             {activeProducts.map(p => {
               const pEan = String(p['EAN'] ?? p.ean ?? '')
               const pKey = `${pEan}|${p.description ?? p['Description'] ?? ''}`
@@ -2606,7 +2673,8 @@ export default function Home() {
                 />
               )
             })}
-          </div>
+          </div>{/* end product-detail order div */}
+          </div>{/* end reorder flex wrapper */}
 
           {/* ── FOCUS AREA PANEL ──────────────────────────────────────────────── */}
           {/* Always visible at the bottom whenever dates are loaded.              */}
