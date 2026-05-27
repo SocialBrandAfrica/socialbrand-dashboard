@@ -15,6 +15,15 @@ Do not skip this step — these tools appear as deferred and will fail with Inpu
 
 After the ToolSearch, proceed normally (read handover, run session tasks, etc.).
 
+Mid-session shortcut: `/autopilot` reloads all browser tool schemas if the session lost them.
+
+---
+
+## Standing references (read before every code session)
+
+- `C:\Users\User\Desktop\DIWAAIS\RULE-BOOK.md` — domain vocabulary, time conventions, KPI formulas, GP% rules, mandatory SQL patterns, naming conventions. Authoritative: if a brief contradicts this, update here first, then update the brief.
+- `C:\Users\User\Desktop\DIWAAIS\DB-SCHEMA.md` — live schema, RPC function signatures, pending SQL tracker.
+
 ---
 
 ## Project context
