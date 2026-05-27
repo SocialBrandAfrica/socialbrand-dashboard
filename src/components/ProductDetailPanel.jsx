@@ -88,12 +88,23 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
   // Summary table rows — SOH falls back to most-recent detailRow when mv_rate_of_sale
   // doesn't carry the product (e.g. sold-out before EOD scan, negative SOH excluded
   // by the view definition, or bakery item absent from latest snapshot).
+  // BUG-2 (SB-AUD-002): sell_price, unit_cost, vat_pct sourced from the latest
+  // detailRow per store — requires rpc_product_detail to return these fields
+  // (see fix_rpc_product_detail_pricing.sql).
   const summary = storeList.map(s => {
     const r = rosData.find(d => d.store_code === s.code)
     const latestDetail = [...detailRows]
       .filter(d => d.store_code === s.code)
       .sort((a, b) => b.snapshot_date.localeCompare(a.snapshot_date))[0]
-    return { ...s, soh: r?.soh ?? latestDetail?.soh ?? null, daily_ros: r?.daily_ros, days_cover: r?.days_cover }
+    const sellPrice = latestDetail?.sell_price ?? null
+    const unitCost  = latestDetail?.unit_cost  ?? null
+    const vatPct    = latestDetail?.vat_pct    ?? 15
+    // GP% on ex-VAT basis (SocialBrand SPAR scorecard methodology)
+    const exVatSell = sellPrice != null && sellPrice > 0 ? sellPrice / (1 + vatPct / 100) : null
+    const gpPct     = exVatSell != null && unitCost != null && exVatSell > 0
+      ? ((exVatSell - unitCost) / exVatSell) * 100
+      : null
+    return { ...s, soh: r?.soh ?? latestDetail?.soh ?? null, daily_ros: r?.daily_ros, days_cover: r?.days_cover, sellPrice, unitCost, gpPct }
   })
 
   const ean  = product['EAN']  ?? product.ean  ?? '—'
@@ -119,10 +130,14 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
 
         {/* ── Summary strip ─────────────────────────────────────────────────── */}
         <div style={{ padding: '12px 22px', borderBottom: '1px solid rgba(255,255,255,0.07)', overflowX: 'auto' }}>
+          {/* BUG-2 (SB-AUD-002): sell_price, unit_cost, GP% added.
+               Requires rpc_product_detail to return unit_cost + vat_pct
+               (fix_rpc_product_detail_pricing.sql). Columns show — until that
+               SQL is deployed and the schema cache reloads. */}
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>
             <thead>
               <tr>
-                {['Store', 'Current SOH', 'Daily ROS', 'Days Cover'].map(h => (
+                {['Store', 'SOH', 'Daily ROS', 'Cover', 'Sell Price', 'Unit Cost', 'GP%'].map(h => (
                   <th key={h} style={{ padding: '4px 14px', fontSize: 10, color: 'rgba(245,245,244,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em', textAlign: h === 'Store' ? 'left' : 'right', fontWeight: 500, whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
@@ -131,6 +146,10 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
               {summary.map(s => {
                 const dc = s.days_cover
                 const dcColor = dc == null ? 'rgba(245,245,244,0.4)' : dc < 3 ? '#fca5a5' : dc < 7 ? '#f59e0b' : '#4ade80'
+                const gpColor = s.gpPct == null ? 'rgba(245,245,244,0.4)'
+                              : s.gpPct >= 20    ? '#4ade80'
+                              : s.gpPct >= 10    ? '#f59e0b'
+                              :                    '#fca5a5'
                 return (
                   <tr key={s.code}>
                     <td style={{ padding: '6px 14px', color: s.color, fontWeight: 600 }}>{s.name}</td>
@@ -142,6 +161,15 @@ export function ProductDetailPanel({ product, detailRows, rosData, storeCodes, s
                     </td>
                     <td style={{ padding: '6px 14px', fontFamily: "'Geist Mono', monospace", textAlign: 'right', color: dcColor, fontWeight: dc != null && dc < 3 ? 600 : 400 }}>
                       {dc != null ? Number(dc).toFixed(1) + ' d' : 'N/A'}
+                    </td>
+                    <td style={{ padding: '6px 14px', fontFamily: "'Geist Mono', monospace", textAlign: 'right', color: 'rgba(245,245,244,0.8)' }}>
+                      {s.sellPrice != null ? 'R ' + Number(s.sellPrice).toFixed(2) : '—'}
+                    </td>
+                    <td style={{ padding: '6px 14px', fontFamily: "'Geist Mono', monospace", textAlign: 'right', color: 'rgba(245,245,244,0.6)' }}>
+                      {s.unitCost != null ? 'R ' + Number(s.unitCost).toFixed(2) : '—'}
+                    </td>
+                    <td style={{ padding: '6px 14px', fontFamily: "'Geist Mono', monospace", textAlign: 'right', color: gpColor, fontWeight: 600 }}>
+                      {s.gpPct != null ? Number(s.gpPct).toFixed(1) + '%' : '—'}
                     </td>
                   </tr>
                 )

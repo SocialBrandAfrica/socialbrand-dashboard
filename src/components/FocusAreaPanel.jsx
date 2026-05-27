@@ -115,7 +115,9 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
           return obj
         })
 
-        // Per-item totals — same aggregation logic as the chart
+        // Per-item totals — same aggregation logic as the chart.
+        // BUG-2 (SB-AUD-002): sell_price + unit_cost now returned by rpc_focus_chart
+        // (fix_rpc_product_detail_pricing.sql). GP% uses ex-VAT basis per SPAR scorecard.
         const tots = basket.map(item => {
           const itemRows    = item.store_code
             ? rows.filter(r => String(r.ean) === String(item.ean) && r.store_code === item.store_code)
@@ -128,7 +130,15 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
           const ros         = totalDays   > 0 ? periodQty  / totalDays   : 0
           const latest      = [...itemRows].sort((a, b) => b.snapshot_date.localeCompare(a.snapshot_date))[0]
           const sizeLabel   = [latest?.size, latest?.unit].filter(Boolean).join(' ').trim()
-          return { ...item, periodSales, periodQty, sellingDays, avgDaily, ros, latestSoh: latest?.soh ?? null, sizeLabel }
+          // Pricing from latest snapshot (sell_price incl. VAT; unit_cost excl. VAT)
+          const sellPrice   = latest?.sell_price ?? null
+          const unitCost    = latest?.unit_cost  ?? null
+          // GP% on ex-VAT basis: ((sell_price/1.15) - unit_cost) / (sell_price/1.15) * 100
+          const exVatSell   = sellPrice != null && sellPrice > 0 ? sellPrice / 1.15 : null
+          const gpPct       = exVatSell != null && unitCost != null && exVatSell > 0
+            ? ((exVatSell - unitCost) / exVatSell) * 100
+            : null
+          return { ...item, periodSales, periodQty, sellingDays, avgDaily, ros, latestSoh: latest?.soh ?? null, sizeLabel, sellPrice, unitCost, gpPct }
         })
 
         setChartData(series)
@@ -266,7 +276,8 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: 'Geist, sans-serif' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                  {['Product', 'Store', 'Dept', 'Period Sales', 'Units Sold', 'Selling Days', 'Avg / Day', 'ROS (u/day)', 'Latest SOH'].map((h, i) => (
+                  {/* BUG-2 (SB-AUD-002): Sell Price, Unit Cost, GP% columns added */}
+                  {['Product', 'Store', 'Dept', 'Period Sales', 'Units Sold', 'Selling Days', 'Avg / Day', 'ROS (u/day)', 'SOH', 'Sell Price', 'Unit Cost', 'GP%'].map((h, i) => (
                     <th key={h} style={{
                       textAlign: i > 2 ? 'right' : 'left',
                       padding: '6px 10px',
@@ -278,7 +289,12 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
                 </tr>
               </thead>
               <tbody>
-                {totals.map((item, i) => (
+                {totals.map((item, i) => {
+                  const gpColor = item.gpPct == null ? 'rgba(245,245,244,0.4)'
+                                : item.gpPct >= 20   ? '#4ade80'
+                                : item.gpPct >= 10   ? '#f59e0b'
+                                :                      '#fca5a5'
+                  return (
                   <tr key={`${item.ean}-${item.store_code}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                     <td style={{ padding: '9px 10px', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -319,8 +335,18 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
                     }}>
                       {item.latestSoh != null ? Number(item.latestSoh).toFixed(0) : '—'}
                     </td>
+                    <td style={{ padding: '9px 10px', textAlign: 'right', fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.8)' }}>
+                      {item.sellPrice != null ? 'R ' + Number(item.sellPrice).toFixed(2) : '—'}
+                    </td>
+                    <td style={{ padding: '9px 10px', textAlign: 'right', fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.6)' }}>
+                      {item.unitCost != null ? 'R ' + Number(item.unitCost).toFixed(2) : '—'}
+                    </td>
+                    <td style={{ padding: '9px 10px', textAlign: 'right', fontFamily: "'Geist Mono', monospace", color: gpColor, fontWeight: 600 }}>
+                      {item.gpPct != null ? Number(item.gpPct).toFixed(1) + '%' : '—'}
+                    </td>
                   </tr>
-                ))}
+                  )
+                })}
                 {/* Combined total row */}
                 <tr style={{ borderTop: '2px solid rgba(255,255,255,0.1)', background: 'rgba(74,222,128,0.03)' }}>
                   <td colSpan={3} style={{ padding: '9px 10px', color: 'rgba(245,245,244,0.4)', fontSize: 10, fontStyle: 'italic' }}>
@@ -332,7 +358,7 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
                   <td style={{ padding: '9px 10px', textAlign: 'right', color: 'rgba(245,245,244,0.7)', fontFamily: "'Geist Mono', monospace", fontWeight: 700, fontSize: 13 }}>
                     {Number(combinedQty).toFixed(0)}
                   </td>
-                  <td colSpan={4} />
+                  <td colSpan={7} />
                 </tr>
               </tbody>
             </table>

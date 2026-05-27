@@ -15,6 +15,12 @@ import './dashboard.css'
 // ─────────────────────────────────────────────────────────────────────────────
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
+// BUG-1 (SB-AUD-002): rpc_top20 times out on MTD windows (26 dates x 5 stores).
+// Option A hotfix: cap the date range passed to the RPC. The CTE rewrite
+// (fix_rpc_top20_cte.sql, Option B) should be the permanent fix once deployed;
+// this cap is a safety net and shows a UI notice when triggered.
+const MAX_TOP20_DATES = 14
+
 const STORES = [
   { code: '10116', name: 'SPAR Delareyville' },
   { code: '21355', name: 'TOPS Delareyville' },
@@ -881,6 +887,7 @@ export default function Home() {
   const [deptSummary,    setDeptSummary]    = useState([])   // rpc_dept_summary — one aggregated row per dept
   const [deptSohCounts,  setDeptSohCounts]  = useState([])   // rpc_kpi_dept_counts — neg/slow per dept (Bug 3)
   const [top20Data,      setTop20Data]      = useState([])   // rpc_top20 — up to 40 pre-aggregated rows
+  const [top20Capped,    setTop20Capped]    = useState(false) // true when selectedDates > MAX_TOP20_DATES (BUG-1)
   const [deptNormMap,    setDeptNormMap]    = useState(new Map())
   const [viewsLoading,   setViewsLoading]   = useState(false)
   const [top20Loading,   setTop20Loading]   = useState(false)
@@ -1367,7 +1374,16 @@ export default function Home() {
     let cancelled = false
 
     async function loadTop20() {
-      const t20Key = [...storeCodes].sort().join(',') + '|' + [...selectedDates].sort().join(',') + '|' +
+      // BUG-1 (SB-AUD-002) Option A hotfix: cap date range to avoid statement timeout.
+      // Use the most recent MAX_TOP20_DATES dates (sorted newest-first then sliced).
+      // The CTE rewrite (fix_rpc_top20_cte.sql) is the permanent Option B fix.
+      const datesForTop20 = selectedDates.length > MAX_TOP20_DATES
+        ? [...selectedDates].sort().reverse().slice(0, MAX_TOP20_DATES)
+        : selectedDates
+      const isCapped = datesForTop20.length < selectedDates.length
+      setTop20Capped(isCapped)
+
+      const t20Key = [...storeCodes].sort().join(',') + '|' + [...datesForTop20].sort().join(',') + '|' +
                      (deptFilter !== 'all' ? deptFilter : '') + '|' +
                      (subDeptFilter !== 'all' ? subDeptFilter : '') + '|' +
                      top20Activity + '|' + String(includeParents) + '|' +
@@ -1382,7 +1398,7 @@ export default function Home() {
       setTop20Loading(true)
       const { data, error } = await supabase.rpc('rpc_top20', {
         p_store_codes: storeCodes,
-        p_dates:       selectedDates,
+        p_dates:       datesForTop20,
         p_dept:        deptFilter    !== 'all' ? deptFilter    : null,
         p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
         p_activity:    top20Activity,
@@ -2176,13 +2192,19 @@ export default function Home() {
                       label:         'Capital Tied',
                       value:         zarShort(kpiCapTied),
                       sparkline:     sparklineArrays.capitalTied,
-                      lyRef:         hasLY ? zarShort(lyKpiCapTied) : null,
-                      lyDelta:       hasLY ? deltaInfo(kpiCapTied, lyKpiCapTied) : null,
+                      // DATA-1 (SB-AUD-002): LY comparison suppressed — prior-year data came
+                      // from the DBAUms pipeline which covered only ~21% of product lines.
+                      // A +537% badge with no context causes confusion in store reviews.
+                      // Full LY comparison will be available once 12 months of PRSSALE data
+                      // accumulate (mid-2027). See handover_dbaums_wrong_table.md.
+                      lyRef:         null,
+                      lyDelta:       null,
                       lyDeltaInvert: true,
                       wowDelta:      null,
                       bench:         null,
                       sub:           'Slow-mover stock value',
                       warn:          true,
+                      dataQualityNote: 'LY comparison unavailable — prior-year data (DBAUms period) covers only ~21% of product lines. Full LY comparison available from June 2027.',
                     },
                   ]
                   return kpiCards.map(k => {
@@ -2257,6 +2279,16 @@ export default function Home() {
                             {k.sub}
                           </p>
                         )}
+                        {/* DATA-1 (SB-AUD-002): data quality flag on Capital Tied card only */}
+                        {k.dataQualityNote && (
+                          <p title={k.dataQualityNote} style={{
+                            fontSize: 9, color: 'rgba(245,245,244,0.22)',
+                            fontFamily: "'Geist Mono', monospace",
+                            marginTop: 6, cursor: 'help', fontStyle: 'italic',
+                          }}>
+                            ⚠ LY unavailable — hover for detail
+                          </p>
+                        )}
                       </div>
                     )
                   })
@@ -2300,6 +2332,18 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
+                {/* BUG-1 cap notice — shown when MTD window exceeds MAX_TOP20_DATES */}
+                {top20Capped && !top20Loading && (
+                  <p style={{
+                    fontSize: 10, fontFamily: "'Geist Mono', monospace",
+                    color: 'rgba(245,158,11,0.8)',
+                    background: 'rgba(245,158,11,0.07)',
+                    border: '1px solid rgba(245,158,11,0.2)',
+                    borderRadius: 6, padding: '5px 10px', marginBottom: 10,
+                  }}>
+                    Showing last {MAX_TOP20_DATES} days — Top 20 is limited to {MAX_TOP20_DATES}-day windows for multi-date selections
+                  </p>
+                )}
                 {(viewsLoading || top20Loading)
                   ? <div>{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} h={40} r={8} mb={6} />)}</div>
                   : (
