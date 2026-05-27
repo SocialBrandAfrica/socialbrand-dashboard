@@ -21,6 +21,16 @@ const MONTH_NAMES = ['January','February','March','April','May','June','July','A
 // this cap is a safety net and shows a UI notice when triggered.
 const MAX_TOP20_DATES = 14
 
+// Business rule constants — will move to DB client_config once portability phase begins
+const SLOW_MOVER_DAYS          = 14    // fixed slow-mover window, independent of date picker
+const ACTIVE_LINE_LOOKBACK     = 364   // active-line filter — must have sold in last 364 days
+const LY_SHIFT_DAYS            = 364   // LY date shift — 52 weeks preserves day-of-week
+const SIGNAL_C_THRESHOLD       = 1.0   // phantom stock: flag when days_since_sale x daily_ros >= this
+const TOP_TIER_RANK_CUTOFF     = 100   // ranging tier: top tier value + volume rank cutoff
+const MID_TIER_RANK_CUTOFF     = 1000  // ranging tier: mid tier rank cutoff
+const TARGET_DAYS_COVER_TOP    = 15    // days cover target for Top 100 / Top 1000 lines
+const TARGET_DAYS_COVER_STANDARD = 30  // days cover target: 12 turns/year standard
+
 const STORES = [
   { code: '10116', name: 'SPAR Delareyville' },
   { code: '21355', name: 'TOPS Delareyville' },
@@ -41,15 +51,16 @@ const ACTIVITY_OPTIONS = [
 ]
 
 const REPORTS = [
-  { key: 'diwaais',     title: 'DIWAAIS',        desc: 'Sigma-style ordering report' },
-  { key: 'sales',       title: "Today's Sales",   desc: 'Items that sold today' },
-  { key: 'topmovers',   title: 'Top 20 Movers',   desc: 'Ranked by qty or value' },
-  { key: 'lostsales',   title: 'Lost Sales',      desc: 'Out of stock, sold in last 3 days' },
-  { key: 'deptsummary', title: 'Dept Summary',    desc: 'Sales totals per department' },
-  { key: 'reorder',     title: 'Reorder List',    desc: 'SOH ≤ 0, has ROS — includes Days Cover' },
-  { key: 'slowmovers',  title: 'Slow Movers',     desc: 'In stock, no period sales' },
-  { key: 'negative',    title: 'Negative SOH',    desc: 'Stock errors and shrinkage' },
-  { key: 'full',        title: 'Full Export',     desc: 'Every field, no extra filter' },
+  { key: 'diwaais',         title: 'DIWAAIS',           desc: 'Sigma-style ordering report' },
+  { key: 'period_sales',    title: 'Period Sales',       desc: 'Items sold in selected period — GP% and ROS included' },
+  { key: 'velocity',        title: 'Velocity Report',    desc: 'ROS vs 13-week baseline — accelerators and decelerators' },
+  { key: 'lostsales',       title: 'Lost Sales',         desc: 'Signals A/B/C — OOS, zero stock selling, phantom stock' },
+  { key: 'deptsummary',     title: 'Dept Summary',       desc: 'Sales, cost and GP% per department' },
+  { key: 'dept_margin',     title: 'Dept Margin Trend',  desc: 'GP% by dept vs same period LY' },
+  { key: 'slowmovers',      title: 'Slow Movers',        desc: 'In stock, no sales in last 14 days — capital tied' },
+  { key: 'stock_integrity', title: 'Stock Integrity',    desc: 'Negative SOH — Type A (production) / Type B (receiving)' },
+  { key: 'focus_export',    title: 'Focus Area Export',  desc: 'Download current basket with all columns' },
+  { key: 'full',            title: 'Data Export',        desc: 'All fields — for analysts and system integrations' },
 ]
 
 const PAGE_SIZE = 200
@@ -224,7 +235,11 @@ function applyFilters(rows, { activityFilter, deptFilter, subDeptFilter, include
 // ─────────────────────────────────────────────────────────────────────────────
 // BUILD REPORT
 // ─────────────────────────────────────────────────────────────────────────────
-function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), supplierMap = new Map()) {
+function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), supplierMap = new Map(), nDates = 1, focusEans = null) {
+  // Helper: active line check — must have sold in last ACTIVE_LINE_LOOKBACK days
+  const activeLineCutoff = refDate ? shiftDate(refDate, -ACTIVE_LINE_LOOKBACK) : null
+  const isActiveLine = r => !activeLineCutoff || ((r.last_sales_date_iso ?? '') >= activeLineCutoff)
+
   switch (report) {
     case 'diwaais':
       return rows
@@ -242,53 +257,123 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
           'Status':      r.status ?? '',
         }))
 
-    case 'sales':
+    case 'period_sales': {
       return rows
-        .filter(r => (r.today_qty ?? 0) !== 0)
-        .sort((a, b) => (b.today_sales ?? 0) - (a.today_sales ?? 0))
-        .map(r => ({
-          'EAN':         r.ean,
-          'Description': r.description,
-          'Dept':        r.dept_name,
-          'Qty Sold':    r.today_qty ?? 0,
-          'Cost Value':  Math.round((r.today_cost  ?? 0) * 100) / 100,
-          'Sales (VAT)': Math.round((r.today_sales ?? 0) * 100) / 100,
-          'SOH After':   r.soh ?? 0,
-        }))
+        .filter(r => (r.period_qty ?? 0) !== 0 && isActiveLine(r))
+        .sort((a, b) => (b.period_sales ?? 0) - (a.period_sales ?? 0))
+        .map(r => {
+          const vat = (r.vat_pct ?? 15) / 100
+          const exVatSell = (r.period_sales ?? 0) / (1 + vat)
+          const gp = exVatSell > 0
+            ? Math.round(((exVatSell - (r.period_cost ?? 0)) / exVatSell) * 1000) / 10
+            : null
+          const ros = rosMap.get(`${r.ean}__${r.store_code}`) ?? {}
+          return {
+            'EAN':         r.ean,
+            'Description': r.description,
+            'Dept':        r.dept_name,
+            'Sub-Dept':    r.sub_dept_name ?? '',
+            'Qty Sold':    r.period_qty ?? 0,
+            'Sales Value': Math.round((r.period_sales ?? 0) * 100) / 100,
+            'GP%':         gp != null ? gp + '%' : '—',
+            'SOH':         r.soh ?? 0,
+            'Daily ROS':   ros.daily_ros != null ? Number(ros.daily_ros).toFixed(2) : '—',
+            'Last Sale':   r.last_sales_date_iso ?? '',
+          }
+        })
+    }
 
-    case 'topmovers': {
-      const byQty = [...rows]
-        .filter(r => (r.today_qty ?? 0) > 0)
-        .sort((a, b) => (b.today_qty ?? 0) - (a.today_qty ?? 0))
-        .slice(0, 20)
-        .map((r, i) => ({ '#': i + 1, EAN: r.ean, Description: r.description, Dept: r.dept_name, 'Qty': r.today_qty ?? 0, 'Sales': Math.round((r.today_sales ?? 0) * 100) / 100 }))
-      const byVal = [...rows]
-        .filter(r => (r.today_sales ?? 0) > 0)
-        .sort((a, b) => (b.today_sales ?? 0) - (a.today_sales ?? 0))
-        .slice(0, 20)
-        .map((r, i) => ({ '#': i + 1, EAN: r.ean, Description: r.description, Dept: r.dept_name, 'Qty': r.today_qty ?? 0, 'Sales': Math.round((r.today_sales ?? 0) * 100) / 100 }))
-      return moverMode === 'qty' ? byQty : byVal
+    case 'velocity': {
+      const n = nDates > 0 ? nDates : 1
+      return rows
+        .filter(r => {
+          const ros = rosMap.get(`${r.ean}__${r.store_code}`) ?? {}
+          return (ros.daily_ros ?? 0) > 0 && isActiveLine(r)
+        })
+        .map(r => {
+          const ros = rosMap.get(`${r.ean}__${r.store_code}`) ?? {}
+          const baselineRos  = ros.daily_ros  ?? 0
+          const currentRos   = (r.period_qty ?? 0) / n
+          const rosVsBase    = baselineRos > 0 ? currentRos / baselineRos : null
+          const vat          = (r.vat_pct ?? 15) / 100
+          const exVatSell    = (r.period_sales ?? 0) / (1 + vat)
+          const gp           = exVatSell > 0
+            ? Math.round(((exVatSell - (r.period_cost ?? 0)) / exVatSell) * 1000) / 10
+            : null
+          return {
+            'EAN':              r.ean,
+            'Description':      r.description,
+            'Dept':             r.dept_name,
+            'Sub-Dept':         r.sub_dept_name ?? '',
+            'Sigma Code':       r.internal_ref ?? '',
+            'Supplier':         supplierMap.get(r.ean) ?? '',
+            'Qty Sold':         r.period_qty ?? 0,
+            'Sales Value':      Math.round((r.period_sales ?? 0) * 100) / 100,
+            'GP%':              gp != null ? gp + '%' : '—',
+            'SOH':              r.soh ?? 0,
+            'Days Cover':       ros.days_cover != null ? Number(ros.days_cover).toFixed(1) : '—',
+            'Daily ROS (13w)':  baselineRos.toFixed(3),
+            'Current ROS':      currentRos.toFixed(3),
+            'ROS vs Baseline':  rosVsBase != null ? rosVsBase.toFixed(2) + 'x' : '—',
+            'Ranging Tier':     '—',
+            'Last Sale':        r.last_sales_date_iso ?? '',
+          }
+        })
+        .sort((a, b) => {
+          const aX = parseFloat(String(a['ROS vs Baseline'])) || 0
+          const bX = parseFloat(String(b['ROS vs Baseline'])) || 0
+          return bX - aX
+        })
     }
 
     case 'lostsales': {
-      const ref = refDate ? new Date(refDate) : new Date()
-      return rows
-        .filter(r => {
-          if ((r.soh ?? 0) > 0 || !r.last_sales_date_iso) return false
-          const diffDays = (ref - new Date(r.last_sales_date_iso)) / 86400000
-          return diffDays >= 0 && diffDays <= 3
+      const today = refDate ?? new Date().toISOString().slice(0, 10)
+      const result = []
+      for (const r of rows) {
+        if (!isActiveLine(r)) continue
+        const soh       = r.soh ?? 0
+        const ros       = rosMap.get(`${r.ean}__${r.store_code}`) ?? {}
+        const dailyRos  = ros.daily_ros ?? 0
+        const lastSale  = r.last_sales_date_iso ?? ''
+        const daysSince = lastSale
+          ? Math.max(0, Math.floor((new Date(today) - new Date(lastSale)) / 86400000))
+          : null
+
+        let signal = null, estLostValue = null
+
+        if (soh === 0 && (r.period_qty ?? 0) > 0) {
+          signal = 'B'  // selling with zero system stock — cash-buy / no-GRV
+        } else if (soh <= 0) {
+          signal = 'A'  // classic OOS
+          if (dailyRos > 0 && daysSince != null)
+            estLostValue = Math.round(dailyRos * (r.sell_price ?? 0) * Math.max(1, daysSince) * 100) / 100
+        } else if (soh > 0 && dailyRos > 0 && daysSince != null) {
+          if (daysSince * dailyRos >= SIGNAL_C_THRESHOLD) {
+            signal = 'C'  // phantom stock — expected unit missed
+            estLostValue = Math.round(daysSince * dailyRos * (r.sell_price ?? 0) * 100) / 100
+          }
+        }
+
+        if (!signal) continue
+        result.push({
+          'EAN':              r.ean,
+          'Description':      r.description,
+          'Dept':             r.dept_name,
+          'SOH':              soh,
+          'Signal':           signal,
+          'Daily ROS':        dailyRos > 0 ? dailyRos.toFixed(3) : '—',
+          'Days OOS/Stalled': daysSince ?? '—',
+          'Est. Lost Value':  estLostValue != null ? estLostValue : '—',
+          'Sell Price':       r.sell_price ?? 0,
+          'Last Sale':        lastSale,
+          'Store':            r.store_name ?? r.store_code ?? '',
         })
-        .sort((a, b) => new Date(a.last_sales_date_iso) - new Date(b.last_sales_date_iso))
-        .map(r => ({
-          'EAN':         r.ean,
-          'Description': r.description,
-          'Dept':        r.dept_name,
-          'SOH':         r.soh ?? 0,
-          'Last Sale':   r.last_sales_date_iso,
-          'Days':        Math.floor((ref - new Date(r.last_sales_date_iso)) / 86400000),
-          'Per Qty':     r.period_qty ?? 0,
-          'Price':       r.sell_price ?? 0,
-        }))
+      }
+      return result.sort((a, b) => {
+        const aV = typeof a['Est. Lost Value'] === 'number' ? a['Est. Lost Value'] : -1
+        const bV = typeof b['Est. Lost Value'] === 'number' ? b['Est. Lost Value'] : -1
+        return bV - aV
+      })
     }
 
     case 'deptsummary': {
@@ -297,88 +382,125 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
         const k = r.dept_name ?? 'Unknown'
         if (!dmap.has(k)) dmap.set(k, { dept: k, items: 0, qty: 0, cost: 0, sales: 0 })
         const d = dmap.get(k)
-        if ((r.today_qty ?? 0) !== 0) d.items++
-        d.qty   += r.today_qty   ?? 0
-        d.cost  += r.today_cost  ?? 0
-        d.sales += r.today_sales ?? 0
+        if ((r.period_qty ?? 0) !== 0) d.items++
+        d.qty   += r.period_qty   ?? 0
+        d.cost  += r.period_cost  ?? 0
+        d.sales += r.period_sales ?? 0
       }
       const result = [...dmap.values()]
         .sort((a, b) => b.sales - a.sales)
-        .map(d => ({
-          'Department':  d.dept,
-          'Items Sold':  d.items,
-          'Qty Sold':    Math.round(d.qty  * 1000) / 1000,
-          'Cost Value':  Math.round(d.cost * 100)  / 100,
-          'Sales (VAT)': Math.round(d.sales * 100) / 100,
-          'GP%':         d.sales > 0 ? Math.round(gpPct(d.sales, d.cost) * 10) / 10 + '%' : '—',
-        }))
+        .map(d => {
+          const exVatSales = d.sales / 1.15
+          const gp = exVatSales > 0 ? Math.round(((exVatSales - d.cost) / exVatSales) * 1000) / 10 : null
+          return {
+            'Department':   d.dept,
+            'Items Sold':   d.items,
+            'Qty Sold':     Math.round(d.qty  * 1000) / 1000,
+            'Cost Value':   Math.round(d.cost * 100)  / 100,
+            'Sales (VAT)':  Math.round(d.sales * 100) / 100,
+            'GP%':          gp != null ? gp + '%' : '—',
+          }
+        })
       const tot = result.reduce(
         (a, d) => ({ ...a, 'Items Sold': a['Items Sold'] + d['Items Sold'], 'Qty Sold': a['Qty Sold'] + d['Qty Sold'], 'Cost Value': a['Cost Value'] + d['Cost Value'], 'Sales (VAT)': a['Sales (VAT)'] + d['Sales (VAT)'] }),
         { Department: 'TOTAL', 'Items Sold': 0, 'Qty Sold': 0, 'Cost Value': 0, 'Sales (VAT)': 0, 'GP%': '' }
       )
-      tot['GP%'] = tot['Sales (VAT)'] > 0 ? Math.round(gpPct(tot['Sales (VAT)'], tot['Cost Value']) * 10) / 10 + '%' : '—'
+      const totExVat = tot['Sales (VAT)'] / 1.15
+      tot['GP%'] = totExVat > 0 ? Math.round(((totExVat - tot['Cost Value']) / totExVat) * 1000) / 10 + '%' : '—'
       return [...result, tot]
     }
 
-    case 'reorder':
+    case 'slowmovers': {
+      const slowCutoff = refDate ? shiftDate(refDate, -SLOW_MOVER_DAYS) : null
       return rows
-        .filter(r => (r.soh ?? 0) <= 0 && (r.period_qty ?? 0) > 0)
-        .sort((a, b) => (a.soh ?? 0) - (b.soh ?? 0))
-        .map(r => {
-          const ros = rosMap.get(`${r.ean}__${r.store_code}`) ?? {}
-          return {
-            'EAN':         r.ean,
-            'Description': r.description,
-            'Dept':        r.dept_name,
-            'Supplier':    supplierMap.get(r.ean) ?? '',
-            'SOH':         r.soh ?? 0,
-            'ROS':         ros.daily_ros  != null ? Number(ros.daily_ros)  : null,
-            'Days':        ros.days_cover != null ? Number(ros.days_cover) : null,
-            'Per Qty':     r.period_qty ?? 0,
-            'Price':       r.sell_price ?? 0,
-            'Cost':        Math.round(unitCost(r) * 100) / 100,
-            'Last Sale':   r.last_sales_date_iso ?? '',
-            'Status':      r.status ?? '',
-          }
-        })
-
-    case 'slowmovers':
-      return rows
-        .filter(r => (r.soh ?? 0) > 0 && (r.period_qty ?? 0) === 0)
-        .sort((a, b) => {
-          const capA = (a.soh ?? 0) * unitCost(a)
-          const capB = (b.soh ?? 0) * unitCost(b)
-          return capB - capA
+        .filter(r => {
+          const soh = r.soh ?? 0
+          const lastSale = r.last_sales_date_iso ?? ''
+          return soh > 0
+            && isActiveLine(r)
+            && (slowCutoff == null || lastSale < slowCutoff)
         })
         .map(r => {
           const uc = unitCost(r)
+          const capTied = Math.round((r.soh ?? 0) * uc * 100) / 100
+          const daysSince = r.last_sales_date_iso && refDate
+            ? Math.max(0, Math.floor((new Date(refDate) - new Date(r.last_sales_date_iso)) / 86400000))
+            : null
           return {
-            'EAN':         r.ean,
-            'Description': r.description,
-            'Dept':        r.dept_name,
-            'Supplier':    supplierMap.get(r.ean) ?? '',
-            'SOH':         r.soh ?? 0,
-            'Price':       r.sell_price ?? 0,
-            'Cost':        Math.round(uc * 100) / 100,
-            'Cap Tied':    Math.round((r.soh ?? 0) * uc * 100) / 100,
-            'Last Sale':   r.last_sales_date_iso ?? '',
-            'Status':      r.status ?? '',
+            'EAN':             r.ean,
+            'Description':     r.description,
+            'Dept':            r.dept_name,
+            'Sub-Dept':        r.sub_dept_name ?? '',
+            'SOH':             r.soh ?? 0,
+            'Unit Cost':       Math.round(uc * 100) / 100,
+            'Capital Tied':    capTied,
+            'Days Since Sale': daysSince ?? '—',
+            'Sell Price':      r.sell_price ?? 0,
+            'Supplier':        supplierMap.get(r.ean) ?? '',
+            'Last Sale':       r.last_sales_date_iso ?? '',
+            'Status':          r.status ?? '',
           }
         })
+        .sort((a, b) => {
+          const capA = typeof a['Capital Tied'] === 'number' ? a['Capital Tied'] : 0
+          const capB = typeof b['Capital Tied'] === 'number' ? b['Capital Tied'] : 0
+          return capB - capA
+        })
+    }
 
-    case 'negative':
+    case 'stock_integrity': {
+      const PROD_DEPTS = ['BUTCHERY', 'BAKERY', 'DELI', 'HMR']
       return rows
         .filter(r => (r.soh ?? 0) < 0)
         .sort((a, b) => (a.soh ?? 0) - (b.soh ?? 0))
-        .map(r => ({
-          'EAN':         r.ean,
-          'Description': r.description,
-          'Dept':        r.dept_name,
-          'SOH':         r.soh ?? 0,
-          'Per Qty':     r.period_qty ?? 0,
-          'Price':       r.sell_price ?? 0,
-          'Status':      r.status ?? '',
-        }))
+        .map(r => {
+          const deptUp  = (r.dept_name ?? '').toUpperCase()
+          const isProd  = PROD_DEPTS.some(d => deptUp.includes(d))
+          const mag     = Math.abs(r.soh ?? 0)
+          const type    = isProd && mag > 50 ? 'A' : 'B'
+          return {
+            'EAN':             r.ean,
+            'Description':     r.description,
+            'Dept':            r.dept_name,
+            'SOH':             r.soh ?? 0,
+            'Probable Type':   type,
+            'Sell Price':      r.sell_price ?? 0,
+            'Status':          r.status ?? '',
+            'Store':           r.store_name ?? r.store_code ?? '',
+          }
+        })
+    }
+
+    case 'focus_export': {
+      const eanFilter = focusEans ? new Set(focusEans) : null
+      return rows
+        .filter(r => !eanFilter || eanFilter.has(r.ean))
+        .map(r => {
+          const ros = rosMap.get(`${r.ean}__${r.store_code}`) ?? {}
+          const uc  = unitCost(r)
+          return {
+            'EAN':           r.ean,
+            'Description':   r.description,
+            'Dept':          r.dept_name,
+            'Sub-Dept':      r.sub_dept_name ?? '',
+            'Sell Price':    r.sell_price ?? 0,
+            'Unit Cost':     Math.round(uc * 100) / 100,
+            'VAT%':          r.vat_pct ?? 0,
+            'Period Qty':    r.period_qty ?? 0,
+            'Period Sales':  Math.round((r.period_sales ?? 0) * 100) / 100,
+            'Period Cost':   Math.round((r.period_cost  ?? 0) * 100) / 100,
+            'SOH':           r.soh ?? 0,
+            'Daily ROS':     ros.daily_ros  != null ? Number(ros.daily_ros).toFixed(3)  : '—',
+            'Days Cover':    ros.days_cover != null ? Number(ros.days_cover).toFixed(1) : '—',
+            'Supplier':      supplierMap.get(r.ean) ?? '',
+            'Internal Ref':  r.internal_ref ?? '',
+            'Status':        r.status ?? '',
+            'Last Sale':     r.last_sales_date_iso ?? '',
+            'Store':         r.store_name ?? '',
+            'Date':          r.snapshot_date ?? '',
+          }
+        })
+    }
 
     case 'full':
       return rows.map(r => ({
@@ -409,6 +531,38 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
     default:
       return rows
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DEPT MARGIN TREND REPORT
+// ─────────────────────────────────────────────────────────────────────────────
+function buildDeptMarginReport(deptSummary, lyDeptSummary) {
+  const lyMap = new Map()
+  for (const r of (lyDeptSummary ?? [])) lyMap.set(r.dept_name, r)
+
+  return (deptSummary ?? []).map(r => {
+    const exVat   = r.total_sales > 0 ? r.total_sales / 1.15 : 0
+    const gp      = exVat > 0 ? Math.round(((exVat - (r.total_cost ?? 0)) / exVat) * 1000) / 10 : null
+
+    const ly      = lyMap.get(r.dept_name)
+    const lyExVat = ly && ly.total_sales > 0 ? ly.total_sales / 1.15 : 0
+    const lyGp    = lyExVat > 0 ? Math.round(((lyExVat - (ly.total_cost ?? 0)) / lyExVat) * 1000) / 10 : null
+
+    const gpChange     = gp != null && lyGp != null ? Math.round((gp - lyGp) * 10) / 10 : null
+    const salesChangePct = ly && ly.total_sales > 0
+      ? Math.round(((r.total_sales - ly.total_sales) / ly.total_sales) * 1000) / 10
+      : null
+
+    return {
+      'Department':      r.dept_name ?? 'Unknown',
+      'GP% This Period': gp   != null ? gp   + '%' : '—',
+      'GP% LY':          lyGp != null ? lyGp + '%' : '—',
+      'Change (pp)':     gpChange != null ? (gpChange >= 0 ? '+' : '') + gpChange + 'pp' : '—',
+      'Sales Value':     Math.round((r.total_sales ?? 0) * 100) / 100,
+      'Sales LY':        Math.round((ly?.total_sales ?? 0) * 100) / 100,
+      'Sales Change %':  salesChangePct != null ? (salesChangePct >= 0 ? '+' : '') + salesChangePct + '%' : '—',
+    }
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1109,16 +1263,17 @@ export default function Home() {
     const prevDate   = availableDates[1] ?? null
     const dates      = prevDate ? [latestDate, prevDate] : [latestDate]
 
-    const threeDaysAgo = new Date()
-    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3)
-    const cutoff = threeDaysAgo.toISOString().slice(0, 10)
+    // Active-line filter: must have sold in last 364 days (replaces the old 3-day hard cutoff)
+    const activeLineCutoff = new Date()
+    activeLineCutoff.setDate(activeLineCutoff.getDate() - ACTIVE_LINE_LOOKBACK)
+    const cutoff = activeLineCutoff.toISOString().slice(0, 10)
 
     supabase
       .from('daily_snapshots')
       .select('ean,description,dept_name,soh,sell_price,last_sales_date_iso,store_name,store_code,snapshot_date')
       .in('store_code', storeCodes)
       .in('snapshot_date', dates)
-      .lt('soh', 0)
+      .lte('soh', 0)
       .gte('last_sales_date_iso', cutoff)
       .eq('is_placeholder', false)
       .order('soh', { ascending: true })
@@ -1588,8 +1743,9 @@ export default function Home() {
   const reportData = useMemo(() => {
     if (!reportLoaded) return []
     const refDate = selectedDates.length ? [...selectedDates].sort().reverse()[0] : null
-    return buildReport(currentReport, filteredReportRows, moverMode, refDate, rosMap, supplierMap)
-  }, [currentReport, filteredReportRows, moverMode, selectedDates, reportLoaded, rosMap, supplierMap])
+    if (currentReport === 'dept_margin') return buildDeptMarginReport(deptSummary, lyDeptSummary)
+    return buildReport(currentReport, filteredReportRows, moverMode, refDate, rosMap, supplierMap, selectedDates.length, focusEans)
+  }, [currentReport, filteredReportRows, moverMode, selectedDates, reportLoaded, rosMap, supplierMap, deptSummary, lyDeptSummary, focusEans])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DERIVED — KPIs
@@ -2217,7 +2373,7 @@ export default function Home() {
                       wowDelta:      null,
                       bench:         null,
                       sub:           kpiReorder != null ? 'SOH <= 0 with period sales' : 'Open report drawer',
-                      onClick:       () => { setCurrentReport('reorder'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
+                      onClick:       () => { setCurrentReport('lostsales'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
                       danger:        kpiReorder != null && kpiReorder > 100,
                     },
                     {
@@ -2230,7 +2386,7 @@ export default function Home() {
                       lyDeltaInvert: true,
                       wowDelta:      null,
                       bench:         null,
-                      sub:           'In stock, no period sales',
+                      sub:           'In stock, no sales in last 14 days',
                       warn:          true,
                       onClick:       () => { setCurrentReport('slowmovers'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
                     },
@@ -2246,7 +2402,7 @@ export default function Home() {
                       bench:         null,
                       sub:           'Stock errors / shrinkage',
                       danger:        kpiNegSOH > 0,
-                      onClick:       () => { setCurrentReport('negative'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
+                      onClick:       () => { setCurrentReport('stock_integrity'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
                     },
                     {
                       key:           'captied',
