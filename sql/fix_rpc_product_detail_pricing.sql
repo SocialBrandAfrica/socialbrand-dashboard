@@ -20,6 +20,10 @@
 -- ---------------------------------------------------------------------------
 -- 1. rpc_product_detail — add unit_cost + vat_pct to RETURNS + SELECT
 -- ---------------------------------------------------------------------------
+-- PostgreSQL does not allow CREATE OR REPLACE to change a function's return
+-- type. DROP first, then recreate. GRANT is re-applied immediately after.
+DROP FUNCTION IF EXISTS rpc_product_detail(text, text[], text[]);
+
 CREATE OR REPLACE FUNCTION rpc_product_detail(
     p_ean         text,
     p_store_codes text[],
@@ -63,6 +67,9 @@ GRANT EXECUTE ON FUNCTION rpc_product_detail(text, text[], text[])
 -- ---------------------------------------------------------------------------
 -- 2. rpc_focus_chart — add sell_price + unit_cost to RETURNS + SELECT
 -- ---------------------------------------------------------------------------
+-- Same reason — return type changes require DROP first.
+DROP FUNCTION IF EXISTS rpc_focus_chart(text[], text[], text[]);
+
 CREATE OR REPLACE FUNCTION rpc_focus_chart(
     p_eans        text[],
     p_store_codes text[],
