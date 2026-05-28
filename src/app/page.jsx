@@ -2706,13 +2706,22 @@ export default function Home() {
           )}
 
           {/* ── SALES TREND ──────────────────────────────────────────────────── */}
-          <SalesTrendPanel
-            trendData={effectiveTrendData}
-            lyTrendData={effectiveLyTrendData}
-            storeCodes={storeCodes}
-            rhythmProfiles={rhythmProfiles}
-            contextLabel={trendContextLabel}
-          />
+          {/* Guard: show skeleton during pre-init (no stores yet) and during data load */}
+          {(viewsLoading || !storeCodes.length)
+            ? <div className="sb-glass" style={{ padding: '20px 22px', minHeight: 160, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: '100%' }}>
+                  <Skeleton h={10} w={120} r={4} mb={16} />
+                  <Skeleton h={110} w="100%" r={6} />
+                </div>
+              </div>
+            : <SalesTrendPanel
+                trendData={effectiveTrendData}
+                lyTrendData={effectiveLyTrendData}
+                storeCodes={storeCodes}
+                rhythmProfiles={rhythmProfiles}
+                contextLabel={trendContextLabel}
+              />
+          }
 
           {/* ── TOP 20 + DEPT CHART — hidden while a product selection is active ─── */}
           {!isSelectionActive && (
@@ -2742,7 +2751,7 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-                {(viewsLoading || top20Loading)
+                {(viewsLoading || top20Loading || !storeCodes.length)
                   ? <div>{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} h={40} r={8} mb={6} />)}</div>
                   : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
@@ -2761,7 +2770,10 @@ export default function Home() {
                       )}
                       {top20.length === 0 && (
                         <p style={{ color: 'rgba(245,245,244,0.3)', fontSize: 13, padding: '20px 0', textAlign: 'center', fontStyle: 'italic' }}>
-                          {top20Activity === 'non_movers' ? 'No non-moving stock for current filter' : 'No sales data for current filter'}
+                          {top20Activity === 'non_movers'
+                            ? `No non-moving stock · ${selectedDates.length} date${selectedDates.length !== 1 ? 's' : ''} · ${deptFilter !== 'all' ? deptFilter : 'all depts'}`
+                            : `No movers found · ${selectedDates.length} date${selectedDates.length !== 1 ? 's' : ''} · ${deptFilter !== 'all' ? deptFilter : 'all depts'}`
+                          }
                         </p>
                       )}
                       {top20.map((r, i) => {
