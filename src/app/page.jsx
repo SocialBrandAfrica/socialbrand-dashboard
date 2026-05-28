@@ -285,6 +285,17 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
 
     case 'velocity': {
       const n = nDates > 0 ? nDates : 1
+      // Derive ranging tier from 13-week daily_ros ranking across all EANs in rosMap
+      // Top 100 by ROS → Top tier | next 900 → Mid | rest → BOR
+      const byRos = [...rosMap.values()]
+        .filter(r => (r.daily_ros ?? 0) > 0)
+        .sort((a, b) => (b.daily_ros ?? 0) - (a.daily_ros ?? 0))
+      const tierMap = new Map()
+      byRos.forEach((r, i) => {
+        const key = `${r.ean}__${r.store_code}`
+        if (!tierMap.has(key))
+          tierMap.set(key, i < TOP_TIER_RANK_CUTOFF ? 'Top' : i < MID_TIER_RANK_CUTOFF ? 'Mid' : 'BOR')
+      })
       return rows
         .filter(r => {
           const ros = rosMap.get(`${r.ean}__${r.store_code}`) ?? {}
@@ -315,7 +326,7 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
             'Daily ROS (13w)':  baselineRos.toFixed(3),
             'Current ROS':      currentRos.toFixed(3),
             'ROS vs Baseline':  rosVsBase != null ? rosVsBase.toFixed(2) + 'x' : '—',
-            'Ranging Tier':     '—',
+            'Ranging Tier':     tierMap.get(`${r.ean}__${r.store_code}`) ?? 'BOR',
             'Last Sale':        r.last_sales_date_iso ?? '',
           }
         })
@@ -1068,9 +1079,10 @@ export default function Home() {
   const [reportLoading, setReportLoading] = useState(false)
   const [storeRosData,  setStoreRosData]  = useState([])
   const [supplierMap,   setSupplierMap]   = useState(new Map())  // ean → supplier_name from product_catalog
-  const [lostSalesItems,    setLostSalesItems]    = useState([])  // negative SOH lines sold in last 3 days
+  const [lostSalesItems,    setLostSalesItems]    = useState([])  // Signal A (SOH<=0) + Signal B (SOH=0, selling) lines
   const [lostSalesTimeline, setLostSalesTimeline] = useState(new Map()) // ean → [{store_code, store_name, days:[{snap_date,sold_bool,oos_bool,soh}]}]
   const [timelineLoading,   setTimelineLoading]   = useState(false)
+  const [capTiedModalOpen,  setCapTiedModalOpen]  = useState(false) // Capital Tied drill-down modal
 
   // ── product detail panel ────────────────────────────────────────────────────
   const [selectedProduct, setSelectedProduct] = useState(null)
@@ -1270,7 +1282,7 @@ export default function Home() {
 
     supabase
       .from('daily_snapshots')
-      .select('ean,description,dept_name,soh,sell_price,last_sales_date_iso,store_name,store_code,snapshot_date')
+      .select('ean,description,dept_name,soh,sell_price,last_sales_date_iso,store_name,store_code,snapshot_date,period_qty,unit_cost')
       .in('store_code', storeCodes)
       .in('snapshot_date', dates)
       .lte('soh', 0)
@@ -1734,6 +1746,65 @@ export default function Home() {
     }
     return m
   }, [storeRosData])
+
+  // Signal C — phantom stock: SOH > 0, active line, days_since_sale x daily_ros >= threshold
+  const signalCCount = useMemo(() => {
+    if (!reportLoaded || !rosMap.size || !availableDates.length) return 0
+    const today  = availableDates[0]
+    const cutoff = shiftDate(today, -ACTIVE_LINE_LOOKBACK)
+    const seen   = new Set()
+    let count    = 0
+    for (const r of reportRows) {
+      if ((r.soh ?? 0) <= 0 || r.is_placeholder) continue
+      if (!r.last_sales_date_iso || r.last_sales_date_iso < cutoff) continue
+      const ros      = rosMap.get(`${r.ean}__${r.store_code}`) ?? {}
+      const dailyRos = ros.daily_ros ?? 0
+      if (dailyRos <= 0) continue
+      const daysSince = Math.floor((new Date(today) - new Date(r.last_sales_date_iso)) / 86400000)
+      if (daysSince * dailyRos >= SIGNAL_C_THRESHOLD) {
+        const key = `${r.ean}__${r.store_code}`
+        if (!seen.has(key)) { seen.add(key); count++ }
+      }
+    }
+    return count
+  }, [reportRows, rosMap, reportLoaded, availableDates])
+
+  // Stalled lines — active (has 13w ROS), in stock, no sale in >= 14 days — sorted by days stalled desc
+  const stalledLines = useMemo(() => {
+    if (!reportLoaded || !rosMap.size || !availableDates.length) return []
+    const today  = availableDates[0]
+    const cutoff = shiftDate(today, -ACTIVE_LINE_LOOKBACK)
+    const seen   = new Set()
+    const result = []
+    for (const r of reportRows) {
+      if ((r.soh ?? 0) <= 0 || r.is_placeholder) continue
+      if (!r.last_sales_date_iso || r.last_sales_date_iso < cutoff) continue
+      const daysSince = Math.floor((new Date(today) - new Date(r.last_sales_date_iso)) / 86400000)
+      if (daysSince < SLOW_MOVER_DAYS) continue
+      const ros = rosMap.get(`${r.ean}__${r.store_code}`) ?? {}
+      if ((ros.daily_ros ?? 0) <= 0) continue
+      const key = `${r.ean}__${r.store_code}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const cost = unitCost(r)
+      result.push({ ...r, daysSince, dailyRos: ros.daily_ros, capitalTied: (r.soh ?? 0) * cost })
+    }
+    return result.sort((a, b) => b.daysSince - a.daysSince)
+  }, [reportRows, rosMap, reportLoaded, availableDates])
+
+  // Capital Tied breakdown by dept — for drill-down modal (all SOH > 0 lines)
+  const capTiedByDept = useMemo(() => {
+    const m = new Map()
+    for (const r of mergedReportRows) {
+      if ((r.soh ?? 0) <= 0) continue
+      const cost = unitCost(r)
+      const tied = (r.soh ?? 0) * cost
+      if (tied <= 0) continue
+      const d = r.dept_name ?? 'Unknown'
+      m.set(d, (m.get(d) ?? 0) + tied)
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)
+  }, [mergedReportRows])
 
   const reportData = useMemo(() => {
     if (!reportLoaded) return []
@@ -2417,6 +2488,7 @@ export default function Home() {
                       sub:           'Slow-mover stock value',
                       warn:          true,
                       dataQualityNote: 'LY comparison unavailable — prior-year data (DBAUms period) covers only ~21% of product lines. Full LY comparison available from June 2027.',
+                      onClick:       kpiCapTied > 0 ? () => setCapTiedModalOpen(true) : undefined,
                     },
                   ]
                   return kpiCards.map(k => {
@@ -2699,11 +2771,16 @@ export default function Home() {
                 return (
                   <>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                         <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>Lost Sales</span>
                         <span style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.4)', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 6, padding: '2px 8px' }}>
-                          SOH ≤ 0 · active lines
+                          Signals A · B
                         </span>
+                        {signalCCount > 0 && (
+                          <span title="Signal C: in-stock items where days since last sale x daily ROS >= 1 (phantom stock)" style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(251,191,36,0.7)', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: 6, padding: '2px 8px', cursor: 'help' }}>
+                            C: {signalCCount} phantom
+                          </span>
+                        )}
                       </div>
                       <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 16, fontWeight: 700, color: '#ef4444' }}>
                         {zarShort(totalLost)}
@@ -2727,13 +2804,16 @@ export default function Home() {
                         .sort((a, b) => (Math.abs(b.soh ?? 0) * (b.sell_price ?? 0)) - (Math.abs(a.soh ?? 0) * (a.sell_price ?? 0)))
                         .slice(0, 10)
                         .map(r => {
+                          const signal   = (r.soh ?? 0) === 0 && (r.period_qty ?? 0) > 0 ? 'B' : 'A'
                           const lostVal  = Math.abs(r.soh ?? 0) * (r.sell_price ?? 0)
                           const storeRows = lostSalesTimeline.get(r.ean) ?? []
+                          const borderColor = signal === 'B' ? 'rgba(251,191,36,0.4)' : 'rgba(239,68,68,0.3)'
+                          const bgColor     = signal === 'B' ? 'rgba(251,191,36,0.05)' : 'rgba(239,68,68,0.05)'
                           return (
-                            <div key={r.ean} style={{ padding: '8px 10px', background: 'rgba(239,68,68,0.05)', borderRadius: 8, borderLeft: '2px solid rgba(239,68,68,0.3)' }}>
+                            <div key={r.ean} style={{ padding: '8px 10px', background: bgColor, borderRadius: 8, borderLeft: `2px solid ${borderColor}` }}>
 
                               {/* Top row: name + numbers */}
-                              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 10, alignItems: 'center', marginBottom: storeRows.length ? 8 : 0 }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto auto', gap: 10, alignItems: 'center', marginBottom: storeRows.length ? 8 : 0 }}>
                                 <div style={{ overflow: 'hidden' }}>
                                   <p style={{ fontSize: 12, color: '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
                                   <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace", marginTop: 1 }}>
@@ -2741,6 +2821,13 @@ export default function Home() {
                                     <span style={{ marginLeft: 8, color: 'rgba(245,245,244,0.18)' }}>{r.ean}</span>
                                   </p>
                                 </div>
+                                <span style={{ fontSize: 9, fontFamily: "'Geist Mono', monospace", fontWeight: 700,
+                                  color: signal === 'B' ? 'rgba(251,191,36,0.9)' : 'rgba(239,68,68,0.7)',
+                                  background: signal === 'B' ? 'rgba(251,191,36,0.1)' : 'rgba(239,68,68,0.1)',
+                                  border: `1px solid ${signal === 'B' ? 'rgba(251,191,36,0.25)' : 'rgba(239,68,68,0.2)'}`,
+                                  borderRadius: 4, padding: '1px 5px', whiteSpace: 'nowrap' }}>
+                                  {signal}
+                                </span>
                                 <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#ef4444', whiteSpace: 'nowrap' }}>
                                   {r.soh}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(239,68,68,0.5)' }}>SOH</span>
                                 </span>
@@ -2808,6 +2895,65 @@ export default function Home() {
 
           </div>{/* end lost-sales order div */}
 
+          {/* ── STALLED LINES ────────────────────────────────────────────────── */}
+          {/* Active lines (have 13w ROS) that have stock but no sale in >= 14 days */}
+          {reportLoaded && stalledLines.length > 0 && (
+            <div className="sb-glass" style={{ padding: '20px 22px', marginBottom: 16 }}>
+              {(() => {
+                const totalCapTied = stalledLines.reduce((s, r) => s + (r.capitalTied ?? 0), 0)
+                const top5 = stalledLines.slice(0, 5)
+                return (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>Stalled Lines</span>
+                        <span style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.4)', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 6, padding: '2px 8px' }}>
+                          {stalledLines.length} lines · {num(stalledLines.filter(r => (r.daysSince ?? 0) * (r.dailyRos ?? 0) >= SIGNAL_C_THRESHOLD).length)} phantom (C)
+                        </span>
+                      </div>
+                      <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 16, fontWeight: 700, color: '#f59e0b' }}>
+                        {zarShort(totalCapTied)}
+                        <span style={{ fontSize: 10, marginLeft: 6, color: 'rgba(245,158,11,0.6)', fontWeight: 400 }}>tied</span>
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      {top5.map(r => {
+                        const isPhantom = (r.daysSince ?? 0) * (r.dailyRos ?? 0) >= SIGNAL_C_THRESHOLD
+                        return (
+                          <div key={`${r.ean}__${r.store_code}`} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 10, alignItems: 'center', padding: '7px 10px', background: isPhantom ? 'rgba(251,191,36,0.05)' : 'rgba(245,158,11,0.04)', borderRadius: 7, borderLeft: `2px solid ${isPhantom ? 'rgba(251,191,36,0.35)' : 'rgba(245,158,11,0.25)'}` }}>
+                            <div style={{ overflow: 'hidden' }}>
+                              <p style={{ fontSize: 12, color: '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
+                              <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace", marginTop: 1 }}>{r.dept_name}</p>
+                            </div>
+                            <span style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: isPhantom ? 'rgba(251,191,36,0.8)' : 'rgba(245,158,11,0.7)', whiteSpace: 'nowrap' }}>
+                              {r.daysSince}d
+                            </span>
+                            <span style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.4)', whiteSpace: 'nowrap' }}>
+                              {num(r.soh ?? 0)} SOH
+                            </span>
+                            <span style={{ fontSize: 11, fontFamily: "'Geist Mono', monospace", color: '#f59e0b', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                              {zarShort(r.capitalTied)}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    {stalledLines.length > 5 && (
+                      <button
+                        onClick={() => { setCurrentReport('slowmovers'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() }}
+                        style={{ marginTop: 10, width: '100%', background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.4)', textAlign: 'center', padding: '4px 0', textDecoration: 'underline', textDecorationColor: 'rgba(245,245,244,0.15)', textUnderlineOffset: 3 }}
+                      >
+                        + {stalledLines.length - 5} more lines · open Slow Movers report for full list
+                      </button>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
+          )}
+
           {/* ── PRODUCT DETAIL PANELS ─────────────────────────────────────────── */}
           {/* Jumps above Lost Sales when a product selection is active.            */}
           <div style={{ order: isSelectionActive ? 0 : 1 }} ref={panelRef}>
@@ -2860,6 +3006,48 @@ export default function Home() {
 
         </div>
       </div>
+
+      {/* ── CAPITAL TIED DRILL-DOWN MODAL ───────────────────────────────────── */}
+      {capTiedModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 600, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)' }} onClick={() => setCapTiedModalOpen(false)} />
+          <div className="sb-glass" style={{ position: 'relative', zIndex: 1, width: '90%', maxWidth: 480, maxHeight: '80vh', overflow: 'auto', padding: '24px 28px', borderRadius: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <div>
+                <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 20, fontWeight: 600 }}>Capital Tied</p>
+                <p style={{ fontSize: 11, color: 'rgba(245,245,244,0.4)', fontFamily: "'Geist Mono', monospace", marginTop: 2 }}>by department · {zarShort(kpiCapTied)} total</p>
+              </div>
+              <button onClick={() => setCapTiedModalOpen(false)} style={{ background: 'none', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, color: 'rgba(245,245,244,0.5)', cursor: 'pointer', padding: '4px 10px', fontSize: 12 }}>✕</button>
+            </div>
+
+            {capTiedByDept.length === 0 ? (
+              <p style={{ color: 'rgba(245,245,244,0.4)', fontSize: 12, textAlign: 'center', padding: '20px 0' }}>Load report data to see breakdown</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {capTiedByDept.map(([dept, val]) => {
+                  const total = capTiedByDept.reduce((s, [, v]) => s + v, 0)
+                  const share = total > 0 ? (val / total) * 100 : 0
+                  return (
+                    <div key={dept}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                        <span style={{ fontSize: 12, color: '#f5f5f4' }}>{dept}</span>
+                        <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: '#f59e0b', fontWeight: 600 }}>{zarShort(val)} <span style={{ fontSize: 10, color: 'rgba(245,158,11,0.5)', fontWeight: 400 }}>{share.toFixed(1)}%</span></span>
+                      </div>
+                      <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)' }}>
+                        <div style={{ height: '100%', borderRadius: 2, background: 'rgba(245,158,11,0.5)', width: `${share}%`, transition: 'width 0.3s' }} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            <p style={{ marginTop: 16, fontSize: 10, color: 'rgba(245,245,244,0.25)', fontFamily: "'Geist Mono', monospace", fontStyle: 'italic' }}>
+              SOH × unit cost · in-stock lines only · per-tier breakdown available once rpc_capital_tied_by_tier is deployed
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── REPORTS DRAWER ───────────────────────────────────────────────────── */}
       {drawerOpen && (
