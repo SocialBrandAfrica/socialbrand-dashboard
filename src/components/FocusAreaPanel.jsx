@@ -32,24 +32,16 @@ function shortDay(iso) {
   return iso ? iso.slice(8) : ''
 }
 
-// When only one date is selected, expand to the full week-to-date range
-// (Monday → selected date) so the chart has a meaningful trend line.
-// When multiple dates are already selected, use them as-is.
-function resolveChartDates(selectedDates) {
-  if (selectedDates.length !== 1) return selectedDates
-  const latest = selectedDates[0]
-  const latestDate = new Date(latest + 'T00:00:00')
-  const dow = latestDate.getDay() // 0=Sun … 6=Sat
-  const daysBack = dow === 0 ? 6 : dow - 1  // steps back to Monday
-  const monday = new Date(latestDate)
-  monday.setDate(latestDate.getDate() - daysBack)
-  const dates = []
-  const cur = new Date(monday)
-  while (cur <= latestDate) {
-    dates.push(cur.toISOString().slice(0, 10))
-    cur.setDate(cur.getDate() + 1)
-  }
-  return dates
+// Ensure the chart always shows at least 7 days.
+// If the user has selected >= 7 dates, use them as-is.
+// If fewer than 7, extend back using availableDates (newest-first) up to 7 days.
+function resolveChartDates(selectedDates, availableDates) {
+  if (selectedDates.length >= 7) return selectedDates
+  // Pull the most recent 7 available dates (availableDates is newest-first)
+  const pool = (availableDates ?? []).slice(0, 7)
+  if (pool.length >= 7) return [...pool].sort()
+  // Fallback: fewer than 7 available dates — use what we have
+  return [...new Set([...selectedDates, ...pool])].sort()
 }
 
 // Each basket item label on the chart.
@@ -61,7 +53,7 @@ function itemLabel(item) {
   return item.store_code ? `${desc} [${item.store_code}]` : desc
 }
 
-export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allStoreCodes, isDefault }) {
+export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, availableDates, allStoreCodes, isDefault }) {
   const [chartData,  setChartData]  = useState([])
   const [totals,     setTotals]     = useState([])
   const [loading,    setLoading]    = useState(false)
@@ -85,9 +77,8 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, allSt
     const basketStoreCodes = [...new Set(basket.map(b => b.store_code).filter(Boolean))]
     const queryStoreCodes = basketStoreCodes.length > 0 ? basketStoreCodes : (allStoreCodes ?? [])
 
-    // Expand a single selected date to the full week-to-date range so the chart
-    // always has a meaningful trend line rather than a single data point.
-    const chartDates = resolveChartDates(selectedDates)
+    // Ensure at least 7 days are shown — extends back using availableDates if needed.
+    const chartDates = resolveChartDates(selectedDates, availableDates)
 
     // rpc_focus_chart is a SECURITY DEFINER function — direct daily_snapshots
     // reads are blocked by RLS for the anon key.

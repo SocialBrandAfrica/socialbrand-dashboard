@@ -1430,8 +1430,8 @@ export default function Home() {
           ? supabase.rpc('rpc_dept_summary', { p_store_codes: storeCodes, p_dates: lyDates })
           : Promise.resolve({ data: [], error: null }),
 
-        // Trend data (90-day window) — always historical, use MV
-        supabase.from('mv_kpi_by_date')
+        // Trend data (90-day window) — use live view so today's push shows immediately
+        supabase.from('v_kpi_by_date')
           .select('store_code,snapshot_date,total_sales,total_cost,total_qty')
           .in('store_code', storeCodes)
           .in('snapshot_date', trendDates)
@@ -1533,14 +1533,9 @@ export default function Home() {
     let cancelled = false
 
     async function loadTop20() {
-      // BUG-1 (SB-AUD-002) Option A hotfix: cap date range to avoid statement timeout.
-      // Use the most recent MAX_TOP20_DATES dates (sorted newest-first then sliced).
-      // The CTE rewrite (fix_rpc_top20_cte.sql) is the permanent Option B fix.
-      const datesForTop20 = selectedDates.length > MAX_TOP20_DATES
-        ? [...selectedDates].sort().reverse().slice(0, MAX_TOP20_DATES)
-        : selectedDates
-      const isCapped = datesForTop20.length < selectedDates.length
-      setTop20Capped(isCapped)
+      // Option B CTE rewrite (fix_rpc_top20_cte.sql) is deployed — no date cap needed.
+      const datesForTop20 = selectedDates
+      setTop20Capped(false)
 
       const t20Key = [...storeCodes].sort().join(',') + '|' + [...datesForTop20].sort().join(',') + '|' +
                      (deptFilter !== 'all' ? deptFilter : '') + '|' +
@@ -2560,18 +2555,6 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-                {/* BUG-1 cap notice — shown when MTD window exceeds MAX_TOP20_DATES */}
-                {top20Capped && !top20Loading && (
-                  <p style={{
-                    fontSize: 10, fontFamily: "'Geist Mono', monospace",
-                    color: 'rgba(245,158,11,0.8)',
-                    background: 'rgba(245,158,11,0.07)',
-                    border: '1px solid rgba(245,158,11,0.2)',
-                    borderRadius: 6, padding: '5px 10px', marginBottom: 10,
-                  }}>
-                    Showing last {MAX_TOP20_DATES} days — Top 20 is limited to {MAX_TOP20_DATES}-day windows for multi-date selections
-                  </p>
-                )}
                 {(viewsLoading || top20Loading)
                   ? <div>{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} h={40} r={8} mb={6} />)}</div>
                   : (
@@ -2719,7 +2702,7 @@ export default function Home() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>Lost Sales</span>
                         <span style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.4)', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 6, padding: '2px 8px' }}>
-                          Negative SOH · sold last 3 days
+                          SOH ≤ 0 · active lines
                         </span>
                       </div>
                       <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 16, fontWeight: 700, color: '#ef4444' }}>
@@ -2753,7 +2736,10 @@ export default function Home() {
                               <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 10, alignItems: 'center', marginBottom: storeRows.length ? 8 : 0 }}>
                                 <div style={{ overflow: 'hidden' }}>
                                   <p style={{ fontSize: 12, color: '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
-                                  <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace", marginTop: 1 }}>{r.dept_name}</p>
+                                  <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace", marginTop: 1 }}>
+                                    {r.dept_name}
+                                    <span style={{ marginLeft: 8, color: 'rgba(245,245,244,0.18)' }}>{r.ean}</span>
+                                  </p>
                                 </div>
                                 <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#ef4444', whiteSpace: 'nowrap' }}>
                                   {r.soh}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(239,68,68,0.5)' }}>SOH</span>
@@ -2807,9 +2793,12 @@ export default function Home() {
                     </div>
 
                     {lostSalesItems.length > 10 && (
-                      <p style={{ marginTop: 10, fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.3)', textAlign: 'center' }}>
+                      <button
+                        onClick={() => { setCurrentReport('lostsales'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() }}
+                        style={{ marginTop: 10, width: '100%', background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.4)', textAlign: 'center', padding: '4px 0', textDecoration: 'underline', textDecorationColor: 'rgba(245,245,244,0.15)', textUnderlineOffset: 3 }}
+                      >
                         + {lostSalesItems.length - 10} more lines · open Lost Sales report for full list
-                      </p>
+                      </button>
                     )}
                   </>
                 )
@@ -2851,6 +2840,7 @@ export default function Home() {
               onRemove={removeFromFocus}
               onClear={clearFocus}
               selectedDates={selectedDates}
+              availableDates={availableDates}
               allStoreCodes={storeCodes}
               isDefault={isDefaultBasket}
             />
