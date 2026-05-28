@@ -15,12 +15,6 @@ import './dashboard.css'
 // ─────────────────────────────────────────────────────────────────────────────
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
-// BUG-1 (SB-AUD-002): rpc_top20 times out on MTD windows (26 dates x 5 stores).
-// Option A hotfix: cap the date range passed to the RPC. The CTE rewrite
-// (fix_rpc_top20_cte.sql, Option B) should be the permanent fix once deployed;
-// this cap is a safety net and shows a UI notice when triggered.
-const MAX_TOP20_DATES = 14
-
 // Business rule constants — will move to DB client_config once portability phase begins
 const SLOW_MOVER_DAYS          = 14    // fixed slow-mover window, independent of date picker
 const ACTIVE_LINE_LOOKBACK     = 364   // active-line filter — must have sold in last 364 days
@@ -54,7 +48,8 @@ const REPORTS = [
   { key: 'diwaais',         title: 'DIWAAIS',           desc: 'Sigma-style ordering report' },
   { key: 'period_sales',    title: 'Period Sales',       desc: 'Items sold in selected period — GP% and ROS included' },
   { key: 'velocity',        title: 'Velocity Report',    desc: 'ROS vs 13-week baseline — accelerators and decelerators' },
-  { key: 'lostsales',       title: 'Lost Sales',         desc: 'Signals A/B/C — OOS, zero stock selling, phantom stock' },
+  { key: 'lostsales',       title: 'Lost Sales',         desc: 'True OOS — SOH <= 0, no period sales, active line' },
+  { key: 'ledger_discrepancy', title: 'Stock Ledger Discrepancy', desc: 'Selling despite SOH <= 0 — receiving errors or unrecorded waste' },
   { key: 'deptsummary',     title: 'Dept Summary',       desc: 'Sales, cost and GP% per department' },
   { key: 'dept_margin',     title: 'Dept Margin Trend',  desc: 'GP% by dept vs same period LY' },
   { key: 'slowmovers',      title: 'Slow Movers',        desc: 'In stock, no sales in last 14 days — capital tied' },
@@ -322,6 +317,9 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
             'Sales Value':      Math.round((r.period_sales ?? 0) * 100) / 100,
             'GP%':              gp != null ? gp + '%' : '—',
             'SOH':              r.soh ?? 0,
+            'Stock Turn':       (r.soh ?? 0) > 0
+              ? ((r.period_qty ?? 0) / (r.soh ?? 0) * (365 / n)).toFixed(1)
+              : '—',
             'Days Cover':       ros.days_cover != null ? Number(ros.days_cover).toFixed(1) : '—',
             'Daily ROS (13w)':  baselineRos.toFixed(3),
             'Current ROS':      currentRos.toFixed(3),
@@ -338,6 +336,7 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
     }
 
     case 'lostsales': {
+      // True OOS (Signal A) + Phantom Stock (Signal C). Signal B moved to ledger_discrepancy report.
       const today = refDate ?? new Date().toISOString().slice(0, 10)
       const result = []
       for (const r of rows) {
@@ -352,10 +351,8 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
 
         let signal = null, estLostValue = null
 
-        if (soh === 0 && (r.period_qty ?? 0) > 0) {
-          signal = 'B'  // selling with zero system stock — cash-buy / no-GRV
-        } else if (soh <= 0) {
-          signal = 'A'  // classic OOS
+        if (soh <= 0 && (r.period_qty ?? 0) === 0) {
+          signal = 'A'  // True OOS — no sales despite SOH<=0
           if (dailyRos > 0 && daysSince != null)
             estLostValue = Math.round(dailyRos * (r.sell_price ?? 0) * Math.max(1, daysSince) * 100) / 100
         } else if (soh > 0 && dailyRos > 0 && daysSince != null) {
@@ -385,6 +382,23 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
         const bV = typeof b['Est. Lost Value'] === 'number' ? b['Est. Lost Value'] : -1
         return bV - aV
       })
+    }
+
+    case 'ledger_discrepancy': {
+      // SOH <= 0 AND period_qty > 0 — selling despite negative/zero stock (SB-CC-003 item 11)
+      return rows
+        .filter(r => (r.soh ?? 0) <= 0 && (r.period_qty ?? 0) > 0)
+        .sort((a, b) => (a.soh ?? 0) - (b.soh ?? 0))  // most negative SOH first
+        .map(r => ({
+          'EAN':                  r.ean,
+          'Description':          r.description,
+          'Store':                r.store_name ?? r.store_code ?? '',
+          'SOH':                  r.soh ?? 0,
+          'Period Sales (qty)':   r.period_qty ?? 0,
+          'Period Sales (R)':     r.period_sales ?? 0,
+          'Last Sales Date':      r.last_sales_date_iso ?? '',
+          'Supplier':             supplierMap?.get(r.ean) ?? '',
+        }))
     }
 
     case 'deptsummary': {
@@ -1052,7 +1066,6 @@ export default function Home() {
   const [deptSummary,    setDeptSummary]    = useState([])   // rpc_dept_summary — one aggregated row per dept
   const [deptSohCounts,  setDeptSohCounts]  = useState([])   // rpc_kpi_dept_counts — neg/slow per dept (Bug 3)
   const [top20Data,      setTop20Data]      = useState([])   // rpc_top20 — up to 40 pre-aggregated rows
-  const [top20Capped,    setTop20Capped]    = useState(false) // true when selectedDates > MAX_TOP20_DATES (BUG-1)
   const [deptNormMap,    setDeptNormMap]    = useState(new Map())
   const [viewsLoading,   setViewsLoading]   = useState(false)
   const [top20Loading,   setTop20Loading]   = useState(false)
@@ -1079,10 +1092,11 @@ export default function Home() {
   const [reportLoading, setReportLoading] = useState(false)
   const [storeRosData,  setStoreRosData]  = useState([])
   const [supplierMap,   setSupplierMap]   = useState(new Map())  // ean → supplier_name from product_catalog
-  const [lostSalesItems,    setLostSalesItems]    = useState([])  // Signal A (SOH<=0) + Signal B (SOH=0, selling) lines
+  const [lostSalesItems,    setLostSalesItems]    = useState([])  // True OOS items: SOH<=0, period_qty=0, active line
   const [lostSalesTimeline, setLostSalesTimeline] = useState(new Map()) // ean → [{store_code, store_name, days:[{snap_date,sold_bool,oos_bool,soh}]}]
   const [timelineLoading,   setTimelineLoading]   = useState(false)
   const [capTiedModalOpen,  setCapTiedModalOpen]  = useState(false) // Capital Tied drill-down modal
+  const [tooltipCard,       setTooltipCard]       = useState(null)  // key of KPI card showing tooltip
 
   // ── product detail panel ────────────────────────────────────────────────────
   const [selectedProduct, setSelectedProduct] = useState(null)
@@ -1280,12 +1294,14 @@ export default function Home() {
     activeLineCutoff.setDate(activeLineCutoff.getDate() - ACTIVE_LINE_LOOKBACK)
     const cutoff = activeLineCutoff.toISOString().slice(0, 10)
 
+    // True OOS only: period_qty = 0 excludes Signal B (SOH<=0 but still selling = Ledger Discrepancy)
     supabase
       .from('daily_snapshots')
       .select('ean,description,dept_name,soh,sell_price,last_sales_date_iso,store_name,store_code,snapshot_date,period_qty,unit_cost')
       .in('store_code', storeCodes)
       .in('snapshot_date', dates)
       .lte('soh', 0)
+      .or('period_qty.is.null,period_qty.eq.0')
       .gte('last_sales_date_iso', cutoff)
       .eq('is_placeholder', false)
       .order('soh', { ascending: true })
@@ -1545,9 +1561,7 @@ export default function Home() {
     let cancelled = false
 
     async function loadTop20() {
-      // Option B CTE rewrite (fix_rpc_top20_cte.sql) is deployed — no date cap needed.
       const datesForTop20 = selectedDates
-      setTop20Capped(false)
 
       const t20Key = [...storeCodes].sort().join(',') + '|' + [...datesForTop20].sort().join(',') + '|' +
                      (deptFilter !== 'all' ? deptFilter : '') + '|' +
@@ -1850,7 +1864,10 @@ export default function Home() {
     return kpiData.reduce((s, r) => s + (r.total_qty ?? 0), 0)
   }, [kpiData, deptSummary, deptFilter, subDeptFilter])
 
-  const kpiGP = kpiSales > 0 ? gpPct(kpiSales, kpiCost) : 0
+  // GP on ex-VAT basis (SB-CC-003 item 6): divide by 1.15 before computing margin
+  const kpiSalesExVat = kpiSales / 1.15
+  const kpiGPRand     = kpiSalesExVat - kpiCost
+  const kpiGP         = kpiSalesExVat > 0 ? (kpiGPRand / kpiSalesExVat) * 100 : 0
 
   // BUG-3: normalize dept_name before comparing — dots stripped in deptFilter but
   // rpc_kpi_dept_counts may return the raw name (e.g. "GROCERIES.FOODS").
@@ -1870,9 +1887,50 @@ export default function Home() {
       return deptSohCounts.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
     return latestKpiByStore.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
   }, [deptFilter, subDeptFilter, deptSohCounts, latestKpiByStore])
-  const kpiReorder  = reportLoaded
-    ? mergedReportRows.filter(r => !r.is_placeholder && (r.soh ?? 0) <= 0 && (r.period_qty ?? 0) > 0).length
-    : null
+  // Lost Sales Value: OOS days × daily ROS × sell price per confirmed-OOS item (SB-CC-003 item 3)
+  // Uses selectedDates.length as OOS days (item confirmed OOS on latest 2 snapshots).
+  // Falls back to |SOH| × sell_price when ROS not available.
+  const lostSalesValue = useMemo(() => {
+    if (!lostSalesItems.length) return 0
+    return lostSalesItems.reduce((sum, r) => {
+      const key     = `${r.ean}__${r.store_code}`
+      const ros     = rosMap.get(key)
+      const dailyRos = ros?.daily_ros ?? 0
+      const price    = r.sell_price ?? 0
+      if (dailyRos > 0 && price > 0) {
+        return sum + (selectedDates.length * dailyRos * price)
+      }
+      return sum + Math.abs(r.soh ?? 0) * price
+    }, 0)
+  }, [lostSalesItems, rosMap, selectedDates])
+
+  // Sell-Through Rate: % of ranged lines that sold >= 1 unit in period, by tier (SB-CC-003 item 5)
+  const sellThroughRate = useMemo(() => {
+    if (!reportLoaded || !mergedReportRows.length) return null
+    // Build tier map by daily_ros rank (same logic as velocity report)
+    const byRos = [...rosMap.values()]
+      .filter(r => (r.daily_ros ?? 0) > 0)
+      .sort((a, b) => (b.daily_ros ?? 0) - (a.daily_ros ?? 0))
+    const tierMap = new Map()
+    byRos.forEach((r, i) => {
+      const key = `${r.ean}__${r.store_code}`
+      if (!tierMap.has(key))
+        tierMap.set(key, i < TOP_TIER_RANK_CUTOFF ? 'top100' : i < MID_TIER_RANK_CUTOFF ? 'top1000' : 'bor')
+    })
+    const counts = { top100: { total: 0, sold: 0 }, top1000: { total: 0, sold: 0 }, bor: { total: 0, sold: 0 } }
+    for (const r of mergedReportRows) {
+      if (!isActiveLine(r)) continue
+      const tier = tierMap.get(`${r.ean}__${r.store_code}`) ?? 'bor'
+      counts[tier].total++
+      if ((r.period_qty ?? 0) > 0) counts[tier].sold++
+    }
+    return ['top100', 'top1000', 'bor'].map(tier => ({
+      label:   tier === 'top100' ? 'Top 100' : tier === 'top1000' ? 'Top 1000' : 'BOR',
+      pct:     counts[tier].total > 0 ? Math.round(counts[tier].sold / counts[tier].total * 100) : 0,
+      sold:    counts[tier].sold,
+      total:   counts[tier].total,
+    }))
+  }, [reportLoaded, mergedReportRows, rosMap])
 
   // ── dept chart (top 10) — deptSummary is already one row per dept, sorted by sales ──
   const deptChart = useMemo(() => {
@@ -1907,7 +1965,9 @@ export default function Home() {
   const lyKpiSales    = lyKpiData.reduce((s, r) => s + (r.total_sales ?? 0), 0)
   const lyKpiCost     = lyKpiData.reduce((s, r) => s + (r.total_cost  ?? 0), 0)
   const lyKpiQty      = lyKpiData.reduce((s, r) => s + (r.total_qty   ?? 0), 0)
-  const lyKpiGP       = lyKpiSales > 0 ? gpPct(lyKpiSales, lyKpiCost) : null
+  const lyKpiSalesExVat = lyKpiSales / 1.15
+  const lyKpiGPRand     = lyKpiSalesExVat - lyKpiCost
+  const lyKpiGP         = lyKpiSalesExVat > 0 ? (lyKpiGPRand / lyKpiSalesExVat) * 100 : null
   // Point-in-time: use latest LY date per store (not sum over period)
   const lyKpiNegSOH   = lyLatestKpiByStore.reduce((s, r) => s + (r.neg_soh_count   ?? 0), 0)
   const lyKpiSlowMove = lyLatestKpiByStore.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
@@ -1918,6 +1978,15 @@ export default function Home() {
   const hasWoW      = wowKpiData.length > 0
 
   const kpiCapTied  = latestKpiByStore.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
+
+  // Stock Turn (annualised): (Period COGS / Period Days * 365) / Capital Tied. Target = 12/yr.
+  const kpiStockTurn = (kpiCapTied > 0 && selectedDates.length > 0)
+    ? (kpiCost / selectedDates.length * 365) / kpiCapTied
+    : null
+  const kpiDaysCover = kpiStockTurn > 0 ? Math.round(365 / kpiStockTurn) : null
+  const lyKpiStockTurn = (lyKpiCapTied > 0 && selectedDates.length > 0)
+    ? (lyKpiCost / selectedDates.length * 365) / lyKpiCapTied
+    : null
 
   const sameWeekdayBenchmark = useMemo(() => {
     if (selectedDates.length !== 1) return null
@@ -1948,7 +2017,7 @@ export default function Home() {
     const sorted = Object.entries(byDate).sort(([a], [b]) => a.localeCompare(b))
     return {
       sales:       sorted.map(([, v]) => v.sales),
-      gpPct:       sorted.map(([, v]) => v.sales > 0 ? gpPct(v.sales, v.cost) : 0),
+      gpPct:       sorted.map(([, v]) => v.sales > 0 ? gpPct(v.sales / 1.15, v.cost) : 0),
       negSoh:      sorted.map(([, v]) => v.neg_soh),
       slowMovers:  sorted.map(([, v]) => v.slow_movers),
       capitalTied: sorted.map(([, v]) => v.capital_tied),
@@ -2415,46 +2484,50 @@ export default function Home() {
                       benchN:        sameWeekdayBenchmark?.n,
                       sub:           `${num(kpiQty, 0)} units`,
                       accent:        true,
+                      tooltip:       `TOTAL SALES\nSum of all sales including VAT\nfor selected stores and dates.\n\nSource: Sum daily_snapshots.today_value\nLY: Same stores · dates -364 days\nDelta: (This period - LY) / LY x 100`,
                     },
                     {
                       key:           'gp',
                       label:         'Gross Profit',
-                      value:         pct(kpiGP),
+                      value:         `${zarShort(kpiGPRand)} · ${pct(kpiGP)}`,
                       sparkline:     sparklineArrays.gpPct,
-                      lyRef:         hasLY && lyKpiGP != null ? pct(lyKpiGP) : null,
+                      lyRef:         hasLY && lyKpiGP != null ? `${zarShort(lyKpiGPRand)} · ${pct(lyKpiGP)}` : null,
                       lyDelta:       hasLY && lyKpiGP != null ? ppDeltaInfo(kpiGP, lyKpiGP) : null,
                       wowDelta:      null,
                       bench:         null,
                       sub:           `Cost ${zarShort(kpiCost)}`,
                       warn:          kpiGP < 15,
-                      basisNote:     'VAT-incl. basis',
+                      basisNote:     'ex-VAT basis',
+                      tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\nConsistent with SPAR scorecard method.\n\nGP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nSales: today_value / 1.15 (VAT removed)\nCost: Sum today_qty x unit_cost\nLY: Same stores · dates -364 days`,
                     },
                     {
-                      key:           'reorder',
-                      label:         'Reorder Items',
-                      value:         kpiReorder != null ? num(kpiReorder) : '—',
+                      key:           'lostsalesvalue',
+                      label:         'Lost Sales Value',
+                      value:         lostSalesItems.length > 0 ? zarShort(lostSalesValue) : '—',
                       sparkline:     null,
                       lyRef:         null,
                       lyDelta:       null,
                       wowDelta:      null,
                       bench:         null,
-                      sub:           kpiReorder != null ? 'SOH <= 0 with period sales' : 'Open report drawer',
+                      sub:           lostSalesItems.length > 0 ? `${lostSalesItems.length} confirmed OOS lines` : 'SOH ≤ 0, no period sales',
                       onClick:       () => { setCurrentReport('lostsales'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
-                      danger:        kpiReorder != null && kpiReorder > 100,
+                      danger:        lostSalesValue > 50000,
+                      tooltip:       `LOST SALES VALUE\nRand value of sales lost to confirmed stockouts.\n\nQualifies: SOH ≤ 0, no sales in period, active line (sold in 364 days)\nFormula: OOS days × Daily ROS × Sell Price\nDaily ROS: 13-week baseline from mv_rate_of_sale\nExcludes: Items still selling despite SOH ≤ 0 (see Stock Ledger Discrepancy report), Production lines`,
                     },
                     {
-                      key:           'slowmovers',
-                      label:         'Slow Movers',
-                      value:         num(kpiSlowMove),
-                      sparkline:     sparklineArrays.slowMovers,
-                      lyRef:         hasLY ? num(lyKpiSlowMove) : null,
-                      lyDelta:       hasLY ? deltaInfo(kpiSlowMove, lyKpiSlowMove) : null,
-                      lyDeltaInvert: true,
+                      key:           'stockturn',
+                      label:         'Stock Turn',
+                      value:         kpiStockTurn != null
+                        ? `${kpiStockTurn.toFixed(1)} turns · ${kpiDaysCover}d cover`
+                        : '—',
+                      sparkline:     null,
+                      lyRef:         hasLY && lyKpiStockTurn != null ? `${lyKpiStockTurn.toFixed(1)} turns` : null,
+                      lyDelta:       hasLY && lyKpiStockTurn != null ? deltaInfo(kpiStockTurn, lyKpiStockTurn) : null,
                       wowDelta:      null,
-                      bench:         null,
-                      sub:           'In stock, no sales in last 14 days',
-                      warn:          true,
-                      onClick:       () => { setCurrentReport('slowmovers'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
+                      bench:         kpiStockTurn != null ? `target: 12 turns · ${kpiStockTurn < 12 ? `↓ ${(12 - kpiStockTurn).toFixed(1)} vs target` : `↑ ${(kpiStockTurn - 12).toFixed(1)} above target`}` : null,
+                      sub:           kpiCapTied > 0 ? `Capital tied ${zarShort(kpiCapTied)}` : 'Insufficient data',
+                      warn:          kpiStockTurn != null && kpiStockTurn < 8,
+                      tooltip:       `STOCK TURN\nHow many times stock investment turns over annually.\n\nFormula: (Period COGS / Days * 365) / Capital Tied\nCOGS: Sum today_qty x unit_cost (selected period)\nCapital: Sum SOH x unit_cost (latest snapshot)\nTarget: 12 turns per year\nDays Cover: 365 / Stock Turn`,
                     },
                     {
                       key:           'negsoh',
@@ -2469,25 +2542,21 @@ export default function Home() {
                       sub:           'Stock errors / shrinkage',
                       danger:        kpiNegSOH > 0,
                       onClick:       () => { setCurrentReport('stock_integrity'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
+                      tooltip:       `NEGATIVE SOH\nCount of products where stock\non hand is below zero.\n\nSource: Latest snapshot per store\nFilter: Active lines (sold in 364 days)\nExcludes: Production lines (SOH locked to 0)\n\nIndicates: Receiving errors\n           Unrecorded wastage\n           Stocktake discrepancies`,
                     },
                     {
                       key:           'captied',
                       label:         'Capital Tied',
                       value:         zarShort(kpiCapTied),
                       sparkline:     sparklineArrays.capitalTied,
-                      // DATA-1 (SB-AUD-002): LY comparison suppressed — prior-year data came
-                      // from the DBAUms pipeline which covered only ~21% of product lines.
-                      // A +537% badge with no context causes confusion in store reviews.
-                      // Full LY comparison will be available once 12 months of PRSSALE data
-                      // accumulate (mid-2027). See handover_dbaums_wrong_table.md.
-                      lyRef:         null,
-                      lyDelta:       null,
+                      lyRef:         hasLY ? zarShort(lyKpiCapTied) : null,
+                      lyDelta:       hasLY ? deltaInfo(kpiCapTied, lyKpiCapTied) : null,
                       lyDeltaInvert: true,
                       wowDelta:      null,
                       bench:         null,
-                      sub:           'Slow-mover stock value',
+                      sub:           'SOH x unit cost (latest snapshot)',
                       warn:          true,
-                      dataQualityNote: 'LY comparison unavailable — prior-year data (DBAUms period) covers only ~21% of product lines. Full LY comparison available from June 2027.',
+                      tooltip:       `CAPITAL TIED\nTotal value of stock on shelf at cost price.\n\nFormula: Sum (SOH x unit_cost)\nSnapshot: Latest date in selected range\nLY: Last day of LY period (-364 days)\nTarget: <= 30 days cover (standard lines), <= 15 days cover (top-tier lines)`,
                       onClick:       kpiCapTied > 0 ? () => setCapTiedModalOpen(true) : undefined,
                     },
                   ]
@@ -2496,9 +2565,14 @@ export default function Home() {
                     const lyGood = k.lyDeltaInvert ? !lyUp : lyUp
                     const wowUp  = k.wowDelta?.positive
                     return (
-                      <div key={k.key} className="sb-glass" onClick={k.onClick} style={{
+                      <div key={k.key} className="sb-glass"
+                        onClick={k.onClick}
+                        onMouseEnter={k.tooltip ? () => setTooltipCard(k.key) : undefined}
+                        onMouseLeave={k.tooltip ? () => setTooltipCard(null)  : undefined}
+                        style={{
                         padding: '18px 20px',
                         cursor: k.onClick ? 'pointer' : 'default',
+                        position: 'relative',
                         background: k.accent
                           ? 'linear-gradient(135deg,rgba(74,222,128,0.1),rgba(74,222,128,0.03))'
                           : k.danger && k.value !== '0'
@@ -2554,7 +2628,7 @@ export default function Home() {
 
                         {k.bench && (
                           <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.2)', fontFamily: "'Geist Mono', monospace", marginTop: 4 }}>
-                            {k.bench} ({k.benchN}w avg)
+                            {k.bench}{k.benchN != null ? ` (${k.benchN}w avg)` : ''}
                           </p>
                         )}
 
@@ -2573,15 +2647,28 @@ export default function Home() {
                             {k.basisNote}
                           </p>
                         )}
-                        {/* DATA-1 (SB-AUD-002): data quality flag on Capital Tied card only */}
-                        {k.dataQualityNote && (
-                          <p title={k.dataQualityNote} style={{
-                            fontSize: 9, color: 'rgba(245,245,244,0.22)',
-                            fontFamily: "'Geist Mono', monospace",
-                            marginTop: 6, cursor: 'help', fontStyle: 'italic',
+                        {/* KPI tooltip — shows on hover, no layout shift (absolute) */}
+                        {k.tooltip && tooltipCard === k.key && (
+                          <div style={{
+                            position: 'absolute', bottom: 'calc(100% + 8px)', left: 0,
+                            width: 280, zIndex: 100,
+                            background: 'rgba(15,20,35,0.97)', border: '1px solid rgba(255,255,255,0.12)',
+                            borderRadius: 10, padding: '12px 14px',
+                            boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+                            pointerEvents: 'none',
                           }}>
-                            ⚠ LY unavailable — hover for detail
-                          </p>
+                            {k.tooltip.split('\n').map((line, i) => (
+                              <p key={i} style={{
+                                fontSize: i === 0 ? 10 : 10,
+                                fontFamily: "'Geist Mono', monospace",
+                                color: i === 0 ? '#f5f5f4' : line.trim() === '' ? 'transparent' : 'rgba(245,245,244,0.5)',
+                                fontWeight: i === 0 ? 700 : 400,
+                                letterSpacing: i === 0 ? '0.1em' : 'normal',
+                                marginBottom: line.trim() === '' ? 4 : 2,
+                                lineHeight: 1.5,
+                              }}>{line || ' '}</p>
+                            ))}
+                          </div>
                         )}
                       </div>
                     )
@@ -2589,6 +2676,34 @@ export default function Home() {
                 })()
             }
           </div>
+
+          {/* ── SELL-THROUGH RATE PANEL ──────────────────────────────────────── */}
+          {sellThroughRate && (
+            <div className="sb-glass" style={{ padding: '16px 20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 14, fontWeight: 600 }}>Sell-Through Rate</span>
+                <span style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.35)', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 5, padding: '1px 7px' }}>
+                  % of ranged lines that sold in period
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {sellThroughRate.map(({ label, pct, sold, total }) => {
+                  const barColor = pct >= 80 ? '#4ade80' : pct >= 60 ? '#fbbf24' : '#ef4444'
+                  const trackColor = pct >= 80 ? 'rgba(74,222,128,0.12)' : pct >= 60 ? 'rgba(251,191,36,0.12)' : 'rgba(239,68,68,0.12)'
+                  return (
+                    <div key={label} style={{ display: 'grid', gridTemplateColumns: '72px 1fr 44px 80px', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.5)' }}>{label}</span>
+                      <div style={{ height: 7, borderRadius: 4, background: trackColor, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${pct}%`, borderRadius: 4, background: barColor }} />
+                      </div>
+                      <span style={{ fontSize: 11, fontFamily: "'Geist Mono', monospace", fontWeight: 700, color: barColor, textAlign: 'right' }}>{pct}%</span>
+                      <span style={{ fontSize: 9, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.3)', textAlign: 'right' }}>{sold} / {total}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           {/* ── SALES TREND ──────────────────────────────────────────────────── */}
           <SalesTrendPanel
@@ -2747,17 +2862,15 @@ export default function Home() {
           <div style={{ display: 'flex', flexDirection: 'column' }}>
 
           {/* ── LOST SALES TRACKER ──────────────────────────────────────────────── */}
-          {/* Negative SOH items that sold in the last 3 days — estimated lost revenue */}
+          {/* True OOS: SOH<=0, period_qty=0, active line (sold in 364 days). Ledger Discrepancies excluded. */}
           <div style={{ order: isSelectionActive ? 1 : 0 }}>
           {lostSalesItems.length > 0 && (
             <div className="sb-glass" style={{ padding: '20px 22px', marginBottom: 16 }}>
               {(() => {
-                // Aggregate by dept for summary row
+                // Aggregate by dept for summary row (uses |SOH|×sell_price for proportional breakdown)
                 const deptMap = new Map()
-                let totalLost = 0
                 for (const r of lostSalesItems) {
                   const lostVal = Math.abs(r.soh ?? 0) * (r.sell_price ?? 0)
-                  totalLost += lostVal
                   const d = r.dept_name ?? 'Unknown'
                   if (!deptMap.has(d)) deptMap.set(d, { count: 0, lostVal: 0 })
                   const entry = deptMap.get(d)
@@ -2774,7 +2887,7 @@ export default function Home() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                         <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>Lost Sales</span>
                         <span style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.4)', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 6, padding: '2px 8px' }}>
-                          Signals A · B
+                          Signal A · True OOS
                         </span>
                         {signalCCount > 0 && (
                           <span title="Signal C: in-stock items where days since last sale x daily ROS >= 1 (phantom stock)" style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(251,191,36,0.7)', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: 6, padding: '2px 8px', cursor: 'help' }}>
@@ -2783,8 +2896,8 @@ export default function Home() {
                         )}
                       </div>
                       <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 16, fontWeight: 700, color: '#ef4444' }}>
-                        {zarShort(totalLost)}
-                        <span style={{ fontSize: 10, marginLeft: 6, color: 'rgba(239,68,68,0.6)', fontWeight: 400 }}>estimated</span>
+                        {zarShort(lostSalesValue)}
+                        <span style={{ fontSize: 10, marginLeft: 6, color: 'rgba(239,68,68,0.6)', fontWeight: 400 }}>est. lost</span>
                       </span>
                     </div>
 
@@ -2804,13 +2917,10 @@ export default function Home() {
                         .sort((a, b) => (Math.abs(b.soh ?? 0) * (b.sell_price ?? 0)) - (Math.abs(a.soh ?? 0) * (a.sell_price ?? 0)))
                         .slice(0, 10)
                         .map(r => {
-                          const signal   = (r.soh ?? 0) === 0 && (r.period_qty ?? 0) > 0 ? 'B' : 'A'
                           const lostVal  = Math.abs(r.soh ?? 0) * (r.sell_price ?? 0)
                           const storeRows = lostSalesTimeline.get(r.ean) ?? []
-                          const borderColor = signal === 'B' ? 'rgba(251,191,36,0.4)' : 'rgba(239,68,68,0.3)'
-                          const bgColor     = signal === 'B' ? 'rgba(251,191,36,0.05)' : 'rgba(239,68,68,0.05)'
                           return (
-                            <div key={r.ean} style={{ padding: '8px 10px', background: bgColor, borderRadius: 8, borderLeft: `2px solid ${borderColor}` }}>
+                            <div key={r.ean} style={{ padding: '8px 10px', background: 'rgba(239,68,68,0.05)', borderRadius: 8, borderLeft: '2px solid rgba(239,68,68,0.3)' }}>
 
                               {/* Top row: name + numbers */}
                               <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto auto', gap: 10, alignItems: 'center', marginBottom: storeRows.length ? 8 : 0 }}>
@@ -2818,15 +2928,17 @@ export default function Home() {
                                   <p style={{ fontSize: 12, color: '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
                                   <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace", marginTop: 1 }}>
                                     {r.dept_name}
-                                    <span style={{ marginLeft: 8, color: 'rgba(245,245,244,0.18)' }}>{r.ean}</span>
+                                    <span style={{ margin: '0 5px', opacity: 0.3 }}>·</span>
+                                    <span style={{ color: 'rgba(245,245,244,0.45)' }}>{r.ean}</span>
+                                    <span style={{ margin: '0 5px', opacity: 0.3 }}>·</span>
+                                    <span style={{ color: 'rgba(245,245,244,0.35)' }}>{r.store_name}</span>
                                   </p>
                                 </div>
                                 <span style={{ fontSize: 9, fontFamily: "'Geist Mono', monospace", fontWeight: 700,
-                                  color: signal === 'B' ? 'rgba(251,191,36,0.9)' : 'rgba(239,68,68,0.7)',
-                                  background: signal === 'B' ? 'rgba(251,191,36,0.1)' : 'rgba(239,68,68,0.1)',
-                                  border: `1px solid ${signal === 'B' ? 'rgba(251,191,36,0.25)' : 'rgba(239,68,68,0.2)'}`,
+                                  color: 'rgba(239,68,68,0.7)', background: 'rgba(239,68,68,0.1)',
+                                  border: '1px solid rgba(239,68,68,0.2)',
                                   borderRadius: 4, padding: '1px 5px', whiteSpace: 'nowrap' }}>
-                                  {signal}
+                                  OOS
                                 </span>
                                 <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#ef4444', whiteSpace: 'nowrap' }}>
                                   {r.soh}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(239,68,68,0.5)' }}>SOH</span>
