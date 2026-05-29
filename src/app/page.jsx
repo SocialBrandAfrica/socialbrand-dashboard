@@ -1556,8 +1556,13 @@ export default function Home() {
   useEffect(() => {
     if (!storeCodes.length || !selectedDates.length) {
       setTop20Data([])
+      setTop20Loading(false)
       return
     }
+    // Set loading=true SYNCHRONOUSLY before the async function runs.
+    // Without this, there is a window between effect trigger and loadTop20()
+    // executing where top20Loading=false and top20Data=[] → empty state flashes.
+    setTop20Loading(true)
     let cancelled = false
 
     async function loadTop20() {
@@ -1570,12 +1575,10 @@ export default function Home() {
                      (focusEans ? focusEans.slice().sort().join(',') : '')
       const t20Hit = top20Cache.current.get(t20Key)
       if (t20Hit) {
-        setTop20Data(t20Hit)
-        setTop20Loading(false)
+        if (!cancelled) { setTop20Data(t20Hit); setTop20Loading(false) }
         return
       }
 
-      setTop20Loading(true)
       const { data, error } = await supabase.rpc('rpc_top20', {
         p_store_codes: storeCodes,
         p_dates:       datesForTop20,
