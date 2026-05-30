@@ -1823,12 +1823,21 @@ export default function Home() {
     return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)
   }, [mergedReportRows])
 
+  // daysInPeriod: calendar days from earliest to latest selected date (min 1).
+  // Replaces selectedDates.length wherever a real period length is needed — a click count
+  // is not a count of trading days. For a single selected date the value is 1.
+  const daysInPeriod = (() => {
+    if (selectedDates.length <= 1) return 1
+    const sorted = [...selectedDates].sort()
+    return Math.round((new Date(sorted[sorted.length - 1]) - new Date(sorted[0])) / 86400000) + 1
+  })()
+
   const reportData = useMemo(() => {
     if (!reportLoaded) return []
     const refDate = selectedDates.length ? [...selectedDates].sort().reverse()[0] : null
     if (currentReport === 'dept_margin') return buildDeptMarginReport(deptSummary, lyDeptSummary)
-    return buildReport(currentReport, filteredReportRows, moverMode, refDate, rosMap, supplierMap, selectedDates.length, focusEans)
-  }, [currentReport, filteredReportRows, moverMode, selectedDates, reportLoaded, rosMap, supplierMap, deptSummary, lyDeptSummary, focusEans])
+    return buildReport(currentReport, filteredReportRows, moverMode, refDate, rosMap, supplierMap, daysInPeriod, focusEans)
+  }, [currentReport, filteredReportRows, moverMode, selectedDates, reportLoaded, rosMap, supplierMap, deptSummary, lyDeptSummary, focusEans, daysInPeriod])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DERIVED — KPIs
@@ -1890,22 +1899,29 @@ export default function Home() {
       return deptSohCounts.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
     return latestKpiByStore.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
   }, [deptFilter, subDeptFilter, deptSohCounts, latestKpiByStore])
-  // Lost Sales Value: OOS days × daily ROS × sell price per confirmed-OOS item (SB-CC-003 item 3)
-  // Uses selectedDates.length as OOS days (item confirmed OOS on latest 2 snapshots).
+  // Lost Sales Value: OOS days × daily ROS × sell price per confirmed-OOS item.
+  // OOS days = days since last_sales_date_iso to the most recent available date.
+  // Matches the formula used in the Lost Sales download report (Signal A, line ~357)
+  // so the KPI card and the download report agree on the same product.
   // Falls back to |SOH| × sell_price when ROS not available.
   const lostSalesValue = useMemo(() => {
     if (!lostSalesItems.length) return 0
+    const refDate = availableDates[0] ?? new Date().toISOString().slice(0, 10)
     return lostSalesItems.reduce((sum, r) => {
-      const key     = `${r.ean}__${r.store_code}`
-      const ros     = rosMap.get(key)
+      const key      = `${r.ean}__${r.store_code}`
+      const ros      = rosMap.get(key)
       const dailyRos = ros?.daily_ros ?? 0
       const price    = r.sell_price ?? 0
+      const lastSale = r.last_sales_date_iso ?? ''
+      const daysSince = lastSale
+        ? Math.max(1, Math.floor((new Date(refDate) - new Date(lastSale)) / 86400000))
+        : 1
       if (dailyRos > 0 && price > 0) {
-        return sum + (selectedDates.length * dailyRos * price)
+        return sum + (daysSince * dailyRos * price)
       }
       return sum + Math.abs(r.soh ?? 0) * price
     }, 0)
-  }, [lostSalesItems, rosMap, selectedDates])
+  }, [lostSalesItems, rosMap, availableDates])
 
   // Sell-Through Rate: % of ranged lines that sold >= 1 unit in period, by tier (SB-CC-003 item 5)
   const sellThroughRate = useMemo(() => {
@@ -1982,13 +1998,14 @@ export default function Home() {
 
   const kpiCapTied  = latestKpiByStore.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
 
-  // Stock Turn (annualised): (Period COGS / Period Days * 365) / Capital Tied. Target = 12/yr.
-  const kpiStockTurn = (kpiCapTied > 0 && selectedDates.length > 0)
-    ? (kpiCost / selectedDates.length * 365) / kpiCapTied
+  // Stock Turn (annualised): (Period COGS / daysInPeriod * 365) / Capital Tied. Target = 12/yr.
+  // daysInPeriod = calendar days between earliest and latest selected date (not a click count).
+  const kpiStockTurn = (kpiCapTied > 0 && daysInPeriod > 0)
+    ? (kpiCost / daysInPeriod * 365) / kpiCapTied
     : null
   const kpiDaysCover = kpiStockTurn > 0 ? Math.round(365 / kpiStockTurn) : null
-  const lyKpiStockTurn = (lyKpiCapTied > 0 && selectedDates.length > 0)
-    ? (lyKpiCost / selectedDates.length * 365) / lyKpiCapTied
+  const lyKpiStockTurn = (lyKpiCapTied > 0 && daysInPeriod > 0)
+    ? (lyKpiCost / daysInPeriod * 365) / lyKpiCapTied
     : null
 
   const sameWeekdayBenchmark = useMemo(() => {
