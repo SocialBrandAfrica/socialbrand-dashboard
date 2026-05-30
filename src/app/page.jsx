@@ -1987,19 +1987,6 @@ export default function Home() {
   const kpiGPRand     = kpiSalesExVat - kpiCost
   const kpiGP         = kpiSalesExVat > 0 ? (kpiGPRand / kpiSalesExVat) * 100 : 0
 
-  // Whole-store reference values — used ONLY for card warn/danger color thresholds.
-  // Card colors must not change when a dept/subdept drill-down is active.
-  // kpiData and latestKpiByStore are always whole-store (no dept filter applied).
-  const globalSales     = kpiData.reduce((s, r) => s + (r.total_sales ?? 0), 0)
-  const globalCost      = kpiData.reduce((s, r) => s + (r.total_cost  ?? 0), 0)
-  const globalGPExVat   = globalSales / 1.15
-  const globalGP        = globalGPExVat > 0 ? ((globalGPExVat - globalCost) / globalGPExVat) * 100 : 0
-  const globalCapTied   = latestKpiByStore.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
-  const globalStockTurn = (globalCapTied > 0 && daysInPeriod > 0)
-    ? (globalCost / daysInPeriod * 365) / globalCapTied
-    : null
-  const globalNegSOH    = latestKpiByStore.reduce((s, r) => s + (r.neg_soh_count ?? 0), 0)
-
   // BUG-3: normalize dept_name before comparing — dots stripped in deptFilter but
   // rpc_kpi_dept_counts may return the raw name (e.g. "GROCERIES.FOODS").
   // BUG-4: also respond to subDeptFilter (deptSohCounts already pre-filtered by RPC).
@@ -2671,9 +2658,9 @@ export default function Home() {
                       wowDelta:      null,
                       bench:         null,
                       sub:           `Cost ${zarShort(kpiCost)}`,
-                      warn:          globalGP < 15,
+                      warn:          kpiGP < 15,
                       basisNote:     `${zarShort(kpiGPRand)} · ex-VAT`,
-                      tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\nConsistent with SPAR scorecard method.\n\nGP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nSales: today_sales / 1.15 (VAT removed)\nCost: Sum today_qty x unit_cost\nLY: Same filter · dates -364 days`,
+                      tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\nConsistent with SPAR scorecard method.\n\nGP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nSales ex-VAT: today_sales / 1.15 (flat rate pending per-item fix)\nCost: SUM(today_cost) from daily_snapshots\nLY: Same filter · dates -364 days`,
                     },
                     {
                       key:           'lostsalesvalue',
@@ -2701,8 +2688,8 @@ export default function Home() {
                       wowDelta:      null,
                       bench:         kpiStockTurn != null ? `target: 12 turns · ${kpiStockTurn < 12 ? `↓ ${(12 - kpiStockTurn).toFixed(1)} vs target` : `↑ ${(kpiStockTurn - 12).toFixed(1)} above target`}` : null,
                       sub:           kpiCapTied > 0 ? `Capital tied ${zarShort(kpiCapTied)}` : 'Insufficient data',
-                      warn:          globalStockTurn != null && globalStockTurn < 8,
-                      tooltip:       `STOCK TURN\nHow many times stock investment turns over annually.\n\nFormula: (Period COGS / Days * 365) / Capital Tied\nCOGS: Sum today_qty x unit_cost (selected period)\nCapital: Sum SOH x unit_cost (latest snapshot)\nTarget: 12 turns per year\nDays Cover: 365 / Stock Turn`,
+                      warn:          kpiStockTurn != null && kpiStockTurn < 8,
+                      tooltip:       `STOCK TURN\nHow many times stock investment turns over annually.\n\nFormula: (Period COGS / Days * 365) / Capital Tied\nCOGS: SUM(today_cost) from daily_snapshots\nDays: Calendar days first to last selected date\nCapital: SUM(SOH x unit_cost) latest snapshot per store\nTarget: 12 turns per year\nDays Cover: 365 / Stock Turn`,
                     },
                     {
                       key:           'negsoh',
@@ -2715,9 +2702,9 @@ export default function Home() {
                       wowDelta:      null,
                       bench:         null,
                       sub:           'Stock errors / shrinkage',
-                      danger:        globalNegSOH > 0,
+                      danger:        kpiNegSOH > 0,
                       onClick:       () => { setCurrentReport('stock_integrity'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
-                      tooltip:       `NEGATIVE SOH\nCount of products where stock\non hand is below zero.\n\nSource: Latest snapshot per store\nFilter: Active lines (sold in 364 days)\nExcludes: Production lines (SOH locked to 0)\n\nIndicates: Receiving errors\n           Unrecorded wastage\n           Stocktake discrepancies`,
+                      tooltip:       `NEGATIVE SOH\nCount of all products where SOH < 0\nat the latest snapshot per store.\n\nSource: daily_snapshots.soh\nIncludes: All lines — retail and production\nType A: Production dept deep negatives\nType B: Retail lines that sold through without GRV\n\nIndicates: Receiving errors · Wastage · Stocktake gaps`,
                     },
                     {
                       key:           'captied',
@@ -2896,6 +2883,7 @@ export default function Home() {
                 storeCodes={storeCodes}
                 rhythmProfiles={rhythmProfiles}
                 contextLabel={trendContextLabel}
+                selectionEndDate={selectedDates.length ? [...selectedDates].sort().reverse()[0] : null}
               />
           }
 

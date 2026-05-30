@@ -2,7 +2,7 @@
 
 import {
     AreaChart, Area, XAxis, YAxis,
-    CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea,
+    CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine,
 } from 'recharts'
 
 const zarShort = v => {
@@ -114,7 +114,7 @@ function getRhythmWindows(weeklyPoints, profiles) {
     return windows
 }
 
-export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProfiles = [], contextLabel = null }) {
+export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProfiles = [], contextLabel = null, selectionEndDate = null }) {
     const aggregate = rows => {
         const byDate = {}
         for (const r of rows) {
@@ -154,6 +154,14 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
     }
 
     const rhythmWindows = getRhythmWindows(points, rhythmProfiles)
+
+    // Reference line: show the KPI selection's last date on the trend.
+    // The trend always ends at the latest push date; a vertical line marks
+    // where the user's selected period ends within that 13-week context.
+    // Only show when the selection end is strictly before the last trend point.
+    const selectionWeek = selectionEndDate ? toWeekStart(selectionEndDate) : null
+    const lastWeek = points.length > 0 ? points[points.length - 1].date : null
+    const showSelectionLine = selectionWeek && lastWeek && selectionWeek < lastWeek && points.some(p => p.date === selectionWeek)
 
     const activeInRange = rhythmProfiles.filter(p =>
         rhythmWindows.some(w => w.profile.id === p.id)
@@ -229,6 +237,23 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
                             />
                         )
                     })}
+
+                    {showSelectionLine && (
+                        <ReferenceLine
+                            x={selectionWeek}
+                            stroke="rgba(245,245,244,0.35)"
+                            strokeDasharray="4 3"
+                            strokeWidth={1.5}
+                            label={{
+                                value: labelDate(selectionEndDate),
+                                position: 'insideTopRight',
+                                fontSize: 8,
+                                fill: 'rgba(245,245,244,0.45)',
+                                fontFamily: 'Geist Mono, sans-serif',
+                                dy: 4,
+                            }}
+                        />
+                    )}
 
                     <Area
                         type="monotone" dataKey="sales" name="sales"
