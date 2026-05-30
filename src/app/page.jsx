@@ -19,6 +19,7 @@ const MONTH_NAMES = ['January','February','March','April','May','June','July','A
 const SLOW_MOVER_DAYS          = 14    // fixed slow-mover window, independent of date picker
 const ACTIVE_LINE_LOOKBACK     = 364   // active-line filter — must have sold in last 364 days
 const LY_SHIFT_DAYS            = 364   // LY date shift — 52 weeks preserves day-of-week
+const TREND_WINDOW_DAYS        = 91    // Sales Trend span — 13 weeks back from the selection's last day
 const SIGNAL_C_THRESHOLD       = 1.0   // phantom stock: flag when days_since_sale x daily_ros >= this
 const TOP_TIER_RANK_CUTOFF     = 100   // ranging tier: top tier value + volume rank cutoff
 const MID_TIER_RANK_CUTOFF     = 1000  // ranging tier: mid tier rank cutoff
@@ -1138,8 +1139,20 @@ export default function Home() {
 
   // ── FEAT-1: trend date windows — promoted from loadViews so the product-trend
   //    useEffect can depend on them without re-deriving on every render.
-  const trendDates   = useMemo(() => availableDates.slice(0, 90), [availableDates])
-  const lyTrendDates = useMemo(() => trendDates.map(d => shiftDate(d, -364)), [trendDates])
+  // Trend window anchors to the END of the current selection and spans 13 weeks back:
+  //   single date  -> window ends at (and includes) that day
+  //   multi date   -> window ends at the latest selected date (MTD / up to 13 weeks)
+  // Falls back to the most recent available date before any selection is made.
+  // availableDates is sorted newest-first, so filter+slice takes the anchor day
+  // and the 90 days before it.
+  const trendDates = useMemo(() => {
+    if (!availableDates.length) return []
+    const anchor = selectedDates.length
+      ? selectedDates.reduce((a, b) => (a > b ? a : b))
+      : availableDates[0]
+    return availableDates.filter(d => d <= anchor).slice(0, TREND_WINDOW_DAYS)
+  }, [availableDates, selectedDates])
+  const lyTrendDates = useMemo(() => trendDates.map(d => shiftDate(d, -LY_SHIFT_DAYS)), [trendDates])
 
   // ── auth: load user + profile on mount ───────────────────────────────────────
   // PHASE 1 (current): all authenticated users are treated as owner (super-admin).
@@ -2584,7 +2597,7 @@ export default function Home() {
                       benchN:        sameWeekdayBenchmark?.n,
                       sub:           `${num(kpiQty, 0)} units`,
                       accent:        true,
-                      tooltip:       `TOTAL SALES\nSum of all sales including VAT\nfor selected stores and dates.\n\nSource: Sum daily_snapshots.today_value\nLY: Same stores · dates -364 days\nDelta: (This period - LY) / LY x 100`,
+                      tooltip:       `TOTAL SALES\nSum of all sales including VAT\nfor the active store/dept/sub-dept filter.\n\nSource: Sum daily_snapshots.today_sales\nLY: Same filter · dates -364 days\nDelta: (This period - LY) / LY x 100`,
                     },
                     {
                       key:           'gp',
@@ -2598,7 +2611,7 @@ export default function Home() {
                       sub:           `Cost ${zarShort(kpiCost)}`,
                       warn:          kpiGP < 15,
                       basisNote:     'ex-VAT basis',
-                      tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\nConsistent with SPAR scorecard method.\n\nGP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nSales: today_value / 1.15 (VAT removed)\nCost: Sum today_qty x unit_cost\nLY: Same stores · dates -364 days`,
+                      tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\nConsistent with SPAR scorecard method.\n\nGP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nSales: today_sales / 1.15 (VAT removed)\nCost: Sum today_qty x unit_cost\nLY: Same filter · dates -364 days`,
                     },
                     {
                       key:           'lostsalesvalue',
@@ -2750,7 +2763,7 @@ export default function Home() {
                         {/* KPI tooltip — shows on hover, no layout shift (absolute) */}
                         {k.tooltip && tooltipCard === k.key && (
                           <div style={{
-                            position: 'absolute', bottom: 'calc(100% + 8px)', left: 0,
+                            position: 'absolute', top: 'calc(100% + 8px)', left: 0,
                             width: 280, zIndex: 100,
                             background: 'rgba(15,20,35,0.97)', border: '1px solid rgba(255,255,255,0.12)',
                             borderRadius: 10, padding: '12px 14px',
