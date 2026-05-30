@@ -2919,7 +2919,7 @@ export default function Home() {
                   : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
                       {top20.length > 0 && (
-                        <div style={{ display: 'grid', gridTemplateColumns: '22px 1fr auto auto auto', gap: 8, padding: '0 10px 4px', borderBottom: '1px solid rgba(255,255,255,0.06)', marginBottom: 2 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '20px 1fr 58px 40px 68px', gap: 6, padding: '0 10px 4px', borderBottom: '1px solid rgba(255,255,255,0.06)', marginBottom: 2 }}>
                           <span />
                           <span style={{ fontSize: 9, color: 'rgba(245,245,244,0.25)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: "'Geist Mono', monospace" }}>Product</span>
                           <span style={{ fontSize: 9, color: 'rgba(245,245,244,0.25)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: "'Geist Mono', monospace", textAlign: 'right' }}>
@@ -2948,7 +2948,7 @@ export default function Home() {
                                        : dc <= 5     ? '#f97316'   // amber — reorder soon
                                        :               'rgba(245,245,244,0.4)'  // normal
                         return (
-                          <div key={r.ean} onClick={() => handleProductClick(r)} style={{ display: 'grid', gridTemplateColumns: '22px 1fr auto auto auto', gap: 8, alignItems: 'center', padding: '8px 10px', background: 'rgba(255,255,255,0.025)', borderRadius: 8, cursor: 'pointer' }}>
+                          <div key={r.ean} onClick={() => handleProductClick(r)} style={{ display: 'grid', gridTemplateColumns: '20px 1fr 58px 40px 68px', gap: 6, alignItems: 'center', padding: '8px 10px', background: 'rgba(255,255,255,0.025)', borderRadius: 8, cursor: 'pointer' }}>
                             <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 12, fontWeight: 600, color: i < 3 ? '#4ade80' : 'rgba(245,245,244,0.3)', textAlign: 'center' }}>{i + 1}</span>
                             <div style={{ overflow: 'hidden' }}>
                               <p style={{ fontSize: 12, color: '#f5f5f4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
