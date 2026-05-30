@@ -1102,6 +1102,7 @@ export default function Home() {
   // comparison values respect the active selection (SB-CC-DEPT-KPI-001).
   const [lyKpiDeptSummary,  setLyKpiDeptSummary]  = useState([])
   const [wowKpiDeptSummary, setWowKpiDeptSummary] = useState([])
+  const [lyDeptSohCounts,   setLyDeptSohCounts]   = useState([])   // rpc_kpi_dept_counts for LY latest date — dept-aware NegSOH/SlowMove (SEL-001 P2)
   const [trendData,      setTrendData]      = useState([])   // v_kpi_by_date for trend chart (90 days)
   const [lyTrendData,    setLyTrendData]    = useState([])   // v_kpi_by_date for LY trend window
   const [productTrendData,   setProductTrendData]   = useState([])  // FEAT-1: trend filtered to active EANs
@@ -1557,6 +1558,7 @@ export default function Home() {
       setDeptSohCounts(dHit.deptSohCounts)
       setLyKpiDeptSummary(dHit.lyKpiDeptSummary)
       setWowKpiDeptSummary(dHit.wowKpiDeptSummary)
+      setLyDeptSohCounts(dHit.lyDeptSohCounts)
       return
     }
 
@@ -1590,19 +1592,31 @@ export default function Home() {
         p_subdept:     subdeptParam,
         p_eans:        focusEans,
       }),
-    ]).then(([deptRes, deptSohRes, lyDeptRes, wowDeptRes]) => {
+      // LY NegSOH / SlowMove — point-in-time: single latest LY date only, matching
+      // lyLatestKpiByStore semantics. Must NOT sum across all LY dates or a product
+      // negative on every day of a multi-day selection would be counted N times.
+      supabase.rpc('rpc_kpi_dept_counts', {
+        p_store_codes: storeCodes,
+        p_dates:       [[...lyDeptDates].sort().reverse()[0]],
+        p_subdept:     subdeptParam,
+        p_eans:        focusEans,
+      }),
+    ]).then(([deptRes, deptSohRes, lyDeptRes, wowDeptRes, lyDeptSohRes]) => {
       if (cancelled) return
-      if (deptRes.error)    console.error('[rpc_dept_summary]',    deptRes.error.message)
-      if (deptSohRes.error) console.error('[rpc_kpi_dept_counts]', deptSohRes.error.message)
-      const ds   = deptRes.data    ?? []
-      const dsc  = deptSohRes.data ?? []
-      const lyds = lyDeptRes.data  ?? []
-      const wds  = wowDeptRes.data ?? []
-      deptCache.current.set(dKey, { deptSummary: ds, deptSohCounts: dsc, lyKpiDeptSummary: lyds, wowKpiDeptSummary: wds })
+      if (deptRes.error)      console.error('[rpc_dept_summary]',    deptRes.error.message)
+      if (deptSohRes.error)   console.error('[rpc_kpi_dept_counts]', deptSohRes.error.message)
+      if (lyDeptSohRes.error) console.error('[rpc_kpi_dept_counts LY]', lyDeptSohRes.error.message)
+      const ds   = deptRes.data       ?? []
+      const dsc  = deptSohRes.data    ?? []
+      const lyds = lyDeptRes.data     ?? []
+      const wds  = wowDeptRes.data    ?? []
+      const lysc = lyDeptSohRes.data  ?? []
+      deptCache.current.set(dKey, { deptSummary: ds, deptSohCounts: dsc, lyKpiDeptSummary: lyds, wowKpiDeptSummary: wds, lyDeptSohCounts: lysc })
       setDeptSummary(ds)
       setDeptSohCounts(dsc)
       setLyKpiDeptSummary(lyds)
       setWowKpiDeptSummary(wds)
+      setLyDeptSohCounts(lysc)
     }).catch(err => {
       if (cancelled) return
       console.error('[dept effect]', err)
@@ -1610,6 +1624,7 @@ export default function Home() {
       setDeptSohCounts([])
       setLyKpiDeptSummary([])
       setWowKpiDeptSummary([])
+      setLyDeptSohCounts([])
     })
 
     return () => { cancelled = true }
@@ -2069,11 +2084,18 @@ export default function Home() {
   const lyKpiSalesExVat = lyKpiSales / 1.15
   const lyKpiGPRand     = lyKpiSalesExVat - lyKpiCost
   const lyKpiGP         = lyKpiSalesExVat > 0 ? (lyKpiGPRand / lyKpiSalesExVat) * 100 : null
-  // Point-in-time: Neg SOH / Slow Move have no dept-level LY source, so they stay
-  // whole-store; Cap Tied uses the dept summary's capital_tied once the RPC
-  // provides it (SB-CC-DEPT-KPI-001 SQL), else falls back to whole-store.
-  const lyKpiNegSOH   = lyLatestKpiByStore.reduce((s, r) => s + (r.neg_soh_count   ?? 0), 0)
-  const lyKpiSlowMove = lyLatestKpiByStore.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
+  // Point-in-time: Neg SOH / Slow Move use lyDeptSohCounts (single latest LY date,
+  // dept/subdept-scoped) when a filter is active; fall back to whole-store mv rows.
+  // lyDeptSohCounts is pre-filtered by subdept at the RPC; dept filter applied here.
+  const lyDeptSohRows = deptFilter !== 'all'
+    ? lyDeptSohCounts.filter(r => normalizeDept(r.dept_name) === deptFilter)
+    : lyDeptSohCounts
+  const lyKpiNegSOH   = filterActive && lyDeptSohCounts.length > 0
+    ? lyDeptSohRows.reduce((s, r) => s + (r.neg_soh_count   ?? 0), 0)
+    : lyLatestKpiByStore.reduce((s, r) => s + (r.neg_soh_count   ?? 0), 0)
+  const lyKpiSlowMove = filterActive && lyDeptSohCounts.length > 0
+    ? lyDeptSohRows.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
+    : lyLatestKpiByStore.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
   const lyDeptCapPresent = lyKpiDeptSummary.some(r => r.capital_tied != null)
   const lyKpiCapTied  = (filterActive && lyDeptCapPresent)
     ? sumField(lyDeptRows, 'capital_tied')
