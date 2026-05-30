@@ -170,13 +170,16 @@ function mergeByEan(rows) {
       map.set(key, { ...r })
     } else {
       const m = map.get(key)
+      // today_* fields are additive across dates (each row is that day's sales only)
       m.today_qty    = (m.today_qty    ?? 0) + (r.today_qty    ?? 0)
       m.today_cost   = (m.today_cost   ?? 0) + (r.today_cost   ?? 0)
       m.today_sales  = (m.today_sales  ?? 0) + (r.today_sales  ?? 0)
-      m.period_qty   = (m.period_qty   ?? 0) + (r.period_qty   ?? 0)
-      m.period_cost  = (m.period_cost  ?? 0) + (r.period_cost  ?? 0)
-      m.period_sales = (m.period_sales ?? 0) + (r.period_sales ?? 0)
       if (r.snapshot_date >= m.snapshot_date) {
+        // period_* are Sigma cumulative MTD counters — summing them across dates
+        // double-counts. Take the latest snapshot date's value only.
+        m.period_qty   = r.period_qty   ?? 0
+        m.period_cost  = r.period_cost  ?? 0
+        m.period_sales = r.period_sales ?? 0
         m.soh = r.soh; m.sell_price = r.sell_price; m.snapshot_date = r.snapshot_date
         if (r.last_sales_date_iso && r.last_sales_date_iso > (m.last_sales_date_iso ?? ''))
           m.last_sales_date_iso = r.last_sales_date_iso
@@ -196,13 +199,27 @@ function mergeGroupRows(rows) {
       map.set(key, { ...r })
     } else {
       const m = map.get(key)
+      // today_* fields are additive across both dates and stores
       m.today_qty    = (m.today_qty    ?? 0) + (r.today_qty    ?? 0)
       m.today_cost   = (m.today_cost   ?? 0) + (r.today_cost   ?? 0)
       m.today_sales  = (m.today_sales  ?? 0) + (r.today_sales  ?? 0)
-      m.period_qty   = (m.period_qty   ?? 0) + (r.period_qty   ?? 0)
-      m.period_cost  = (m.period_cost  ?? 0) + (r.period_cost  ?? 0)
-      m.period_sales = (m.period_sales ?? 0) + (r.period_sales ?? 0)
+      // soh is always summed across stores (each store holds independent stock)
       m.soh          = (m.soh          ?? 0) + (r.soh          ?? 0)
+      // period_* are Sigma cumulative MTD counters — they must NOT be summed across dates.
+      // Same date + different store: sum (each store's MTD is independent and additive).
+      // Newer date: replace (the new date's value supersedes the old date's accumulated total).
+      if (r.snapshot_date > m.snapshot_date) {
+        // Newer date: reset period accumulators to this row's value only
+        m.period_qty   = r.period_qty   ?? 0
+        m.period_cost  = r.period_cost  ?? 0
+        m.period_sales = r.period_sales ?? 0
+        m.snapshot_date = r.snapshot_date
+      } else {
+        // Same date (different store) or older date: sum period_* across stores
+        m.period_qty   = (m.period_qty   ?? 0) + (r.period_qty   ?? 0)
+        m.period_cost  = (m.period_cost  ?? 0) + (r.period_cost  ?? 0)
+        m.period_sales = (m.period_sales ?? 0) + (r.period_sales ?? 0)
+      }
       if (r.last_sales_date_iso && r.last_sales_date_iso > (m.last_sales_date_iso ?? ''))
         m.last_sales_date_iso = r.last_sales_date_iso
     }
@@ -402,15 +419,18 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
     }
 
     case 'deptsummary': {
+      // Use today_* fields: these are the day's sales only, additive across both dates and stores.
+      // period_* are Sigma MTD accumulators and double-count across multi-date selections.
+      // today_* also aligns with what rpc_dept_summary returns for the KPI cards.
       const dmap = new Map()
       for (const r of rows) {
         const k = r.dept_name ?? 'Unknown'
         if (!dmap.has(k)) dmap.set(k, { dept: k, items: 0, qty: 0, cost: 0, sales: 0 })
         const d = dmap.get(k)
-        if ((r.period_qty ?? 0) !== 0) d.items++
-        d.qty   += r.period_qty   ?? 0
-        d.cost  += r.period_cost  ?? 0
-        d.sales += r.period_sales ?? 0
+        if ((r.today_qty ?? 0) !== 0) d.items++
+        d.qty   += r.today_qty   ?? 0
+        d.cost  += r.today_cost  ?? 0
+        d.sales += r.today_sales ?? 0
       }
       const result = [...dmap.values()]
         .sort((a, b) => b.sales - a.sales)
