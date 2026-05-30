@@ -19,7 +19,7 @@ const MONTH_NAMES = ['January','February','March','April','May','June','July','A
 const SLOW_MOVER_DAYS          = 14    // fixed slow-mover window, independent of date picker
 const ACTIVE_LINE_LOOKBACK     = 364   // active-line filter — must have sold in last 364 days
 const LY_SHIFT_DAYS            = 364   // LY date shift — 52 weeks preserves day-of-week
-const TREND_WINDOW_DAYS        = 91    // Sales Trend span — 13 weeks back from the selection's last day
+const TREND_WINDOW_DAYS        = 91    // Sales Trend span — 13 weeks back from the most recent push date
 const SIGNAL_C_THRESHOLD       = 1.0   // phantom stock: flag when days_since_sale x daily_ros >= this
 const TOP_TIER_RANK_CUTOFF     = 100   // ranging tier: top tier value + volume rank cutoff
 const MID_TIER_RANK_CUTOFF     = 1000  // ranging tier: mid tier rank cutoff
@@ -1103,6 +1103,8 @@ export default function Home() {
   const [lyKpiDeptSummary,  setLyKpiDeptSummary]  = useState([])
   const [wowKpiDeptSummary, setWowKpiDeptSummary] = useState([])
   const [lyDeptSohCounts,   setLyDeptSohCounts]   = useState([])   // rpc_kpi_dept_counts for LY latest date — dept-aware NegSOH/SlowMove (SEL-001 P2)
+  const [deptTrendData,     setDeptTrendData]     = useState([])   // v_dept_by_date for trend when dept filter active
+  const [lyDeptTrendData,   setLyDeptTrendData]   = useState([])   // v_dept_by_date LY for trend
   const [trendData,      setTrendData]      = useState([])   // v_kpi_by_date for trend chart (90 days)
   const [lyTrendData,    setLyTrendData]    = useState([])   // v_kpi_by_date for LY trend window
   const [productTrendData,   setProductTrendData]   = useState([])  // FEAT-1: trend filtered to active EANs
@@ -1140,19 +1142,12 @@ export default function Home() {
 
   // ── FEAT-1: trend date windows — promoted from loadViews so the product-trend
   //    useEffect can depend on them without re-deriving on every render.
-  // Trend window anchors to the END of the current selection and spans 13 weeks back:
-  //   single date  -> window ends at (and includes) that day
-  //   multi date   -> window ends at the latest selected date (MTD / up to 13 weeks)
-  // Falls back to the most recent available date before any selection is made.
-  // availableDates is sorted newest-first, so filter+slice takes the anchor day
-  // and the 90 days before it.
+  // Trend always shows the 13-week window ending at the most recent push date
+  // (availableDates[0]), independent of which KPI date range is selected.
   const trendDates = useMemo(() => {
     if (!availableDates.length) return []
-    const anchor = selectedDates.length
-      ? selectedDates.reduce((a, b) => (a > b ? a : b))
-      : availableDates[0]
-    return availableDates.filter(d => d <= anchor).slice(0, TREND_WINDOW_DAYS)
-  }, [availableDates, selectedDates])
+    return availableDates.slice(0, TREND_WINDOW_DAYS)
+  }, [availableDates])
   const lyTrendDates = useMemo(() => trendDates.map(d => shiftDate(d, -LY_SHIFT_DAYS)), [trendDates])
 
   // ── auth: load user + profile on mount ───────────────────────────────────────
@@ -1629,6 +1624,37 @@ export default function Home() {
 
     return () => { cancelled = true }
   }, [storeCodes, selectedDates, subDeptFilter, focusEans])
+
+  // ── dept-level Sales Trend — re-runs when dept filter or trend window changes ─
+  useEffect(() => {
+    if (!storeCodes.length || !trendDates.length || deptFilter === 'all') {
+      setDeptTrendData([])
+      setLyDeptTrendData([])
+      return
+    }
+    let cancelled = false
+    const rawNames = [...(deptNormMap.get(deptFilter) ?? new Set([deptFilter]))]
+    const toTrend = r => ({ store_code: r.store_code, snapshot_date: r.snapshot_date, total_sales: r.dept_sales })
+    Promise.all([
+      supabase.from('v_dept_by_date')
+        .select('store_code,snapshot_date,dept_sales')
+        .in('store_code', storeCodes)
+        .in('snapshot_date', trendDates)
+        .in('dept_name', rawNames),
+      lyTrendDates.length > 0
+        ? supabase.from('v_dept_by_date')
+            .select('store_code,snapshot_date,dept_sales')
+            .in('store_code', storeCodes)
+            .in('snapshot_date', lyTrendDates)
+            .in('dept_name', rawNames)
+        : Promise.resolve({ data: [] }),
+    ]).then(([cur, ly]) => {
+      if (cancelled) return
+      setDeptTrendData((cur.data ?? []).map(toTrend))
+      setLyDeptTrendData((ly.data ?? []).map(toTrend))
+    })
+    return () => { cancelled = true }
+  }, [storeCodes, deptFilter, deptNormMap, trendDates, lyTrendDates])
 
   // ── fetch Top 20 via RPC — re-runs when dept or sub-dept filter changes ──────
   // rpc_top20 accepts p_dept / p_subdept and returns at most 40 pre-aggregated rows
@@ -2275,9 +2301,9 @@ export default function Home() {
     return () => { cancelled = true }
   }, [activeEans, storeCodes, trendDates])
 
-  // Effective trend data — store totals when idle, product-filtered when a selection is active
-  const effectiveTrendData   = isSelectionActive ? productTrendData   : trendData
-  const effectiveLyTrendData = isSelectionActive ? productLyTrendData : lyTrendData
+  // Effective trend data — priority: product selection > dept filter > whole-store
+  const effectiveTrendData   = isSelectionActive ? productTrendData   : deptFilter !== 'all' ? deptTrendData   : trendData
+  const effectiveLyTrendData = isSelectionActive ? productLyTrendData : deptFilter !== 'all' ? lyDeptTrendData : lyTrendData
   const trendContextLabel    = isSelectionActive
     ? `${activeProducts.length} product${activeProducts.length === 1 ? '' : 's'} selected`
     : null
@@ -2610,29 +2636,30 @@ export default function Home() {
                     {
                       key:           'sales',
                       label:         selectedDates.length > 1 ? `Total Sales · ${selectedDates.length} dates` : `Sales · ${selectedDates[0] ?? ''}`,
-                      value:         zarShort(kpiSales),
+                      value:         zarShort(kpiSalesExVat),
                       sparkline:     sparklineArrays.sales,
-                      lyRef:         hasLY ? zarShort(lyKpiSales) : null,
-                      lyDelta:       hasLY ? deltaInfo(kpiSales, lyKpiSales) : null,
-                      wowDelta:      hasWoW ? deltaInfo(kpiSales, wowKpiSales) : null,
-                      bench:         sameWeekdayBenchmark ? `avg ${sameWeekdayBenchmark.dow}: ${zarShort(sameWeekdayBenchmark.avgSales)}` : null,
+                      lyRef:         hasLY ? zarShort(lyKpiSales / 1.15) : null,
+                      lyDelta:       hasLY ? deltaInfo(kpiSalesExVat, lyKpiSales / 1.15) : null,
+                      wowDelta:      hasWoW ? deltaInfo(kpiSalesExVat, wowKpiSales / 1.15) : null,
+                      bench:         sameWeekdayBenchmark ? `avg ${sameWeekdayBenchmark.dow}: ${zarShort(sameWeekdayBenchmark.avgSales / 1.15)}` : null,
                       benchN:        sameWeekdayBenchmark?.n,
                       sub:           `${num(kpiQty, 0)} units`,
                       accent:        true,
-                      tooltip:       `TOTAL SALES\nSum of all sales including VAT\nfor the active store/dept/sub-dept filter.\n\nSource: Sum daily_snapshots.today_sales\nLY: Same filter · dates -364 days\nDelta: (This period - LY) / LY x 100`,
+                      basisNote:     'ex-VAT basis',
+                      tooltip:       `TOTAL SALES\nExcluding VAT (÷ 1.15)\nfor the active store/dept/sub-dept filter.\n\nSource: Sum daily_snapshots.today_sales / 1.15\nLY: Same filter · dates -364 days\nDelta: (This period - LY) / LY x 100`,
                     },
                     {
                       key:           'gp',
                       label:         'Gross Profit',
-                      value:         `${zarShort(kpiGPRand)} · ${pct(kpiGP)}`,
+                      value:         pct(kpiGP),
                       sparkline:     sparklineArrays.gpPct,
-                      lyRef:         hasLY && lyKpiGP != null ? `${zarShort(lyKpiGPRand)} · ${pct(lyKpiGP)}` : null,
+                      lyRef:         hasLY && lyKpiGP != null ? pct(lyKpiGP) : null,
                       lyDelta:       hasLY && lyKpiGP != null ? ppDeltaInfo(kpiGP, lyKpiGP) : null,
                       wowDelta:      null,
                       bench:         null,
                       sub:           `Cost ${zarShort(kpiCost)}`,
                       warn:          kpiGP < 15,
-                      basisNote:     'ex-VAT basis',
+                      basisNote:     `${zarShort(kpiGPRand)} · ex-VAT`,
                       tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\nConsistent with SPAR scorecard method.\n\nGP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nSales: today_sales / 1.15 (VAT removed)\nCost: Sum today_qty x unit_cost\nLY: Same filter · dates -364 days`,
                     },
                     {

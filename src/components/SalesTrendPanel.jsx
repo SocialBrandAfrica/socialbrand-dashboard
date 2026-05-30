@@ -226,14 +226,6 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
                                 stroke={col.stroke}
                                 strokeWidth={0}
                                 fillOpacity={1}
-                                label={{
-                                    value: w.profile.event_name.replace(/ \(.*\)/, ''),
-                                    position: 'insideTopLeft',
-                                    fontSize: 8,
-                                    fill: col.label,
-                                    fontFamily: 'Geist, sans-serif',
-                                    dy: 4,
-                                }}
                             />
                         )
                     })}
