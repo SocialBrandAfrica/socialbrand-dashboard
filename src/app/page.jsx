@@ -1095,7 +1095,12 @@ export default function Home() {
   const [rhythmProfiles,   setRhythmProfiles]   = useState([])   // community_rhythm — active profiles, fetched once
   const [lyKpiData,      setLyKpiData]      = useState([])   // v_kpi_by_date for LY equivalent dates
   const [wowKpiData,     setWowKpiData]     = useState([])   // v_kpi_by_date for WoW equivalent dates
-  const [lyDeptSummary,  setLyDeptSummary]  = useState([])   // rpc_dept_summary for LY dates
+  const [lyDeptSummary,  setLyDeptSummary]  = useState([])   // rpc_dept_summary for LY dates (all depts — dept margin report)
+  // Dept/sub-dept/EAN-aware LY + WoW summaries for the KPI cards. Fetched in the
+  // dept effect with the same p_subdept/p_eans as deptSummary so the LY and WoW
+  // comparison values respect the active selection (SB-CC-DEPT-KPI-001).
+  const [lyKpiDeptSummary,  setLyKpiDeptSummary]  = useState([])
+  const [wowKpiDeptSummary, setWowKpiDeptSummary] = useState([])
   const [trendData,      setTrendData]      = useState([])   // v_kpi_by_date for trend chart (90 days)
   const [lyTrendData,    setLyTrendData]    = useState([])   // v_kpi_by_date for LY trend window
   const [productTrendData,   setProductTrendData]   = useState([])  // FEAT-1: trend filtered to active EANs
@@ -1317,7 +1322,7 @@ export default function Home() {
     // True OOS only: period_qty = 0 excludes Signal B (SOH<=0 but still selling = Ledger Discrepancy)
     supabase
       .from('daily_snapshots')
-      .select('ean,description,dept_name,soh,sell_price,last_sales_date_iso,store_name,store_code,snapshot_date,period_qty,unit_cost')
+      .select('ean,description,dept_name,sub_dept_name,soh,sell_price,last_sales_date_iso,store_name,store_code,snapshot_date,period_qty,unit_cost')
       .in('store_code', storeCodes)
       .in('snapshot_date', dates)
       .lte('soh', 0)
@@ -1537,8 +1542,15 @@ export default function Home() {
     if (dHit) {
       setDeptSummary(dHit.deptSummary)
       setDeptSohCounts(dHit.deptSohCounts)
+      setLyKpiDeptSummary(dHit.lyKpiDeptSummary)
+      setWowKpiDeptSummary(dHit.wowKpiDeptSummary)
       return
     }
+
+    // LY / WoW equivalents of the selected dates, fetched with the same
+    // dept/sub-dept/EAN scope so the KPI cards' comparisons match the headline.
+    const lyDeptDates  = selectedDates.map(d => shiftDate(d, -LY_SHIFT_DAYS))
+    const wowDeptDates = selectedDates.map(d => shiftDate(d, -7))
 
     Promise.all([
       supabase.rpc('rpc_dept_summary', {
@@ -1553,20 +1565,38 @@ export default function Home() {
         p_subdept:     subdeptParam,
         p_eans:        focusEans,
       }),
-    ]).then(([deptRes, deptSohRes]) => {
+      supabase.rpc('rpc_dept_summary', {
+        p_store_codes: storeCodes,
+        p_dates:       lyDeptDates,
+        p_subdept:     subdeptParam,
+        p_eans:        focusEans,
+      }),
+      supabase.rpc('rpc_dept_summary', {
+        p_store_codes: storeCodes,
+        p_dates:       wowDeptDates,
+        p_subdept:     subdeptParam,
+        p_eans:        focusEans,
+      }),
+    ]).then(([deptRes, deptSohRes, lyDeptRes, wowDeptRes]) => {
       if (cancelled) return
       if (deptRes.error)    console.error('[rpc_dept_summary]',    deptRes.error.message)
       if (deptSohRes.error) console.error('[rpc_kpi_dept_counts]', deptSohRes.error.message)
-      const ds  = deptRes.data    ?? []
-      const dsc = deptSohRes.data ?? []
-      deptCache.current.set(dKey, { deptSummary: ds, deptSohCounts: dsc })
+      const ds   = deptRes.data    ?? []
+      const dsc  = deptSohRes.data ?? []
+      const lyds = lyDeptRes.data  ?? []
+      const wds  = wowDeptRes.data ?? []
+      deptCache.current.set(dKey, { deptSummary: ds, deptSohCounts: dsc, lyKpiDeptSummary: lyds, wowKpiDeptSummary: wds })
       setDeptSummary(ds)
       setDeptSohCounts(dsc)
+      setLyKpiDeptSummary(lyds)
+      setWowKpiDeptSummary(wds)
     }).catch(err => {
       if (cancelled) return
       console.error('[dept effect]', err)
       setDeptSummary([])
       setDeptSohCounts([])
+      setLyKpiDeptSummary([])
+      setWowKpiDeptSummary([])
     })
 
     return () => { cancelled = true }
@@ -1926,10 +1956,18 @@ export default function Home() {
   // Matches the formula used in the Lost Sales download report (Signal A, line ~357)
   // so the KPI card and the download report agree on the same product.
   // Falls back to |SOH| × sell_price when ROS not available.
+  // Respect the active dept/sub-dept selection so the KPI card matches the
+  // headline (SB-CC-DEPT-KPI-001). dept_name + sub_dept_name are on each OOS row.
+  const lostSalesItemsFiltered = useMemo(() => lostSalesItems.filter(r => {
+    if (deptFilter    !== 'all' && normalizeDept(r.dept_name) !== deptFilter) return false
+    if (subDeptFilter !== 'all' && r.sub_dept_name !== subDeptFilter)         return false
+    return true
+  }), [lostSalesItems, deptFilter, subDeptFilter])
+
   const lostSalesValue = useMemo(() => {
-    if (!lostSalesItems.length) return 0
+    if (!lostSalesItemsFiltered.length) return 0
     const refDate = availableDates[0] ?? new Date().toISOString().slice(0, 10)
-    return lostSalesItems.reduce((sum, r) => {
+    return lostSalesItemsFiltered.reduce((sum, r) => {
       const key      = `${r.ean}__${r.store_code}`
       const ros      = rosMap.get(key)
       const dailyRos = ros?.daily_ros ?? 0
@@ -1943,7 +1981,7 @@ export default function Home() {
       }
       return sum + Math.abs(r.soh ?? 0) * price
     }, 0)
-  }, [lostSalesItems, rosMap, availableDates])
+  }, [lostSalesItemsFiltered, rosMap, availableDates])
 
   // Sell-Through Rate: % of ranged lines that sold >= 1 unit in period, by tier (SB-CC-003 item 5)
   const sellThroughRate = useMemo(() => {
@@ -2003,22 +2041,42 @@ export default function Home() {
     return Object.values(m)
   })()
 
-  const lyKpiSales    = lyKpiData.reduce((s, r) => s + (r.total_sales ?? 0), 0)
-  const lyKpiCost     = lyKpiData.reduce((s, r) => s + (r.total_cost  ?? 0), 0)
-  const lyKpiQty      = lyKpiData.reduce((s, r) => s + (r.total_qty   ?? 0), 0)
+  // Dept/sub-dept/EAN-aware comparison values (SB-CC-DEPT-KPI-001). When a filter
+  // is active, sum the dept summaries (subdept/ean-filtered server-side, dept
+  // filtered here) so LY/WoW match the dept-aware headline; otherwise use the
+  // whole-store mv rows exactly as before.
+  const filterActive = deptFilter !== 'all' || subDeptFilter !== 'all'
+  const byDept   = (rows) => deptFilter !== 'all' ? rows.filter(r => normalizeDept(r.dept_name) === deptFilter) : rows
+  const sumField = (rows, f) => rows.reduce((s, r) => s + (r[f] ?? 0), 0)
+
+  const lyDeptRows = byDept(lyKpiDeptSummary)
+  const lyKpiSales = filterActive ? sumField(lyDeptRows, 'total_sales') : sumField(lyKpiData, 'total_sales')
+  const lyKpiCost  = filterActive ? sumField(lyDeptRows, 'total_cost')  : sumField(lyKpiData, 'total_cost')
+  const lyKpiQty   = filterActive ? sumField(lyDeptRows, 'total_qty')   : sumField(lyKpiData, 'total_qty')
   const lyKpiSalesExVat = lyKpiSales / 1.15
   const lyKpiGPRand     = lyKpiSalesExVat - lyKpiCost
   const lyKpiGP         = lyKpiSalesExVat > 0 ? (lyKpiGPRand / lyKpiSalesExVat) * 100 : null
-  // Point-in-time: use latest LY date per store (not sum over period)
+  // Point-in-time: Neg SOH / Slow Move have no dept-level LY source, so they stay
+  // whole-store; Cap Tied uses the dept summary's capital_tied once the RPC
+  // provides it (SB-CC-DEPT-KPI-001 SQL), else falls back to whole-store.
   const lyKpiNegSOH   = lyLatestKpiByStore.reduce((s, r) => s + (r.neg_soh_count   ?? 0), 0)
   const lyKpiSlowMove = lyLatestKpiByStore.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
-  const lyKpiCapTied  = lyLatestKpiByStore.reduce((s, r) => s + (r.capital_tied     ?? 0), 0)
-  const hasLY         = lyKpiData.length > 0
+  const lyDeptCapPresent = lyKpiDeptSummary.some(r => r.capital_tied != null)
+  const lyKpiCapTied  = (filterActive && lyDeptCapPresent)
+    ? sumField(lyDeptRows, 'capital_tied')
+    : lyLatestKpiByStore.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
+  const hasLY         = filterActive ? lyDeptRows.length > 0 : lyKpiData.length > 0
 
-  const wowKpiSales = wowKpiData.reduce((s, r) => s + (r.total_sales ?? 0), 0)
-  const hasWoW      = wowKpiData.length > 0
+  const wowDeptRows = byDept(wowKpiDeptSummary)
+  const wowKpiSales = filterActive ? sumField(wowDeptRows, 'total_sales') : sumField(wowKpiData, 'total_sales')
+  const hasWoW      = filterActive ? wowDeptRows.length > 0 : wowKpiData.length > 0
 
-  const kpiCapTied  = latestKpiByStore.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
+  // Capital Tied: prefer dept-level capital_tied from rpc_dept_summary when a
+  // filter is active and the RPC supplies it; else whole-store latest position.
+  const deptCapPresent = deptSummary.some(r => r.capital_tied != null)
+  const kpiCapTied  = (filterActive && deptCapPresent)
+    ? sumField(byDept(deptSummary), 'capital_tied')
+    : latestKpiByStore.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
 
   // Stock Turn (annualised): (Period COGS / daysInPeriod * 365) / Capital Tied. Target = 12/yr.
   // daysInPeriod = calendar days between earliest and latest selected date (not a click count).
@@ -2545,13 +2603,13 @@ export default function Home() {
                     {
                       key:           'lostsalesvalue',
                       label:         'Lost Sales Value',
-                      value:         lostSalesItems.length > 0 ? zarShort(lostSalesValue) : '—',
+                      value:         lostSalesItemsFiltered.length > 0 ? zarShort(lostSalesValue) : '—',
                       sparkline:     null,
                       lyRef:         null,
                       lyDelta:       null,
                       wowDelta:      null,
                       bench:         null,
-                      sub:           lostSalesItems.length > 0 ? `${lostSalesItems.length} confirmed OOS lines` : 'SOH ≤ 0, no period sales',
+                      sub:           lostSalesItemsFiltered.length > 0 ? `${lostSalesItemsFiltered.length} confirmed OOS lines` : 'SOH ≤ 0, no period sales',
                       onClick:       () => { setCurrentReport('lostsales'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
                       danger:        lostSalesValue > 50000,
                       tooltip:       `LOST SALES VALUE\nRand value of sales lost to confirmed stockouts.\n\nQualifies: SOH ≤ 0, no sales in period, active line (sold in 364 days)\nFormula: OOS days × Daily ROS × Sell Price\nDaily ROS: 13-week baseline from mv_rate_of_sale\nExcludes: Items still selling despite SOH ≤ 0 (see Stock Ledger Discrepancy report), Production lines`,
