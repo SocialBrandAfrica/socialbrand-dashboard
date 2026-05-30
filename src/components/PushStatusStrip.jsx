@@ -20,22 +20,45 @@ function timeAgo(isoString) {
   return `${Math.floor(diffHr / 24)}d ago`
 }
 
+// Days between the data's effective date (snapshot_date, 'YYYY-MM-DD') and today,
+// compared date-only in local (SAST) time. A nightly run for business day D writes
+// snapshot_date = D, so the morning after, the freshest expected date is yesterday.
+function daysBehind(snapDate) {
+  const [y, m, d] = snapDate.split('-').map(Number)
+  const snap  = new Date(y, m - 1, d)
+  const now   = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  return Math.round((today - snap) / 86400000)
+}
+
+function formatEffDate(snapDate) {
+  const [y, m, d] = snapDate.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
+}
+
 export default function PushStatusStrip() {
   const { data, loading } = useQuery(async () => {
     // One query per store to avoid the default 1000-row limit cutting off stores
     // that haven't pushed recently when other stores have many push_log entries.
     const results = await Promise.all(
       STORES.map(async s => {
+        // Freshness is judged by snapshot_date (the effective business date of the
+        // data), NOT completed_at (when the script ran). A stale TAC zip re-pushed
+        // on a night with no end-of-day has a recent completed_at but an old
+        // snapshot_date -- keying off completed_at showed a false green (SB-CC-PUSH-001).
+        // rows_pushed > 0 excludes skip/retention rows that loaded nothing.
         const { data: row, error } = await supabase
           .from('push_log')
-          .select('completed_at')
+          .select('snapshot_date,completed_at')
           .eq('status', 'SUCCESS')
+          .gt('rows_pushed', 0)
           .eq('store_code', s.code)
-          .order('completed_at', { ascending: false })
+          .not('snapshot_date', 'is', null)
+          .order('snapshot_date', { ascending: false })
           .limit(1)
           .maybeSingle()
         if (error) throw new Error(error.message)
-        return [s.code, row?.completed_at ?? null]
+        return [s.code, row ?? null]
       })
     )
     return Object.fromEntries(results)
@@ -54,19 +77,27 @@ export default function PushStatusStrip() {
     <div className="sb-push-strip-inner">
       <span style={{ fontSize: 9, color: 'rgba(245,245,244,0.3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginRight: 2, flexShrink: 0 }}>Last push</span>
       {STORES.map(s => {
-        const ts       = data?.[s.code]
-        const diffHr   = ts ? (Date.now() - new Date(ts).getTime()) / 3600000 : null
-        const fresh    = diffHr !== null && diffHr < 24
-        const stale    = diffHr !== null && diffHr >= 24
-        const never    = diffHr === null
+        const row      = data?.[s.code]
+        const snap     = row?.snapshot_date ?? null
+        const behind   = snap ? daysBehind(snap) : null
+        // One-day grace: <=1 day behind is current; >=2 days behind means an
+        // end-of-day was likely missed, so warn instead of showing green.
+        const fresh    = behind !== null && behind <= 1
+        const stale    = behind !== null && behind >= 2
+        const never    = behind === null
 
         const bg      = fresh ? 'rgba(74,222,128,0.10)'  : stale ? 'rgba(251,191,36,0.10)'  : 'rgba(255,255,255,0.04)'
         const border  = fresh ? 'rgba(74,222,128,0.30)'  : stale ? 'rgba(251,191,36,0.30)'  : 'rgba(255,255,255,0.10)'
         const dot     = fresh ? '#4ade80'                : stale ? '#fbbf24'                 : 'rgba(255,255,255,0.2)'
-        const label   = ts ? timeAgo(ts) : 'no data'
+        const label   = snap ? formatEffDate(snap) : 'no data'
+        const tip     = never
+          ? 'No successful push with data recorded'
+          : `Data as of ${snap}`
+            + (row?.completed_at ? ` (pushed ${timeAgo(row.completed_at)})` : '')
+            + (stale ? ` -- ${behind} days behind, end-of-day may have been missed` : '')
 
         return (
-          <div key={s.code} title={ts ? new Date(ts).toLocaleString('en-ZA') : 'No successful push recorded'} style={{
+          <div key={s.code} title={tip} style={{
             display: 'flex', alignItems: 'center', gap: 5,
             padding: '3px 10px',
             background: bg, border: `1px solid ${border}`,

@@ -20,6 +20,15 @@
            included Prefer: resolution=merge-duplicates (an INSERT hint) on PATCH calls.
            Added Get-PatchHeaders for PATCH-only calls (omits resolution=merge-duplicates).
            Complete-PushLog and Clear-StuckRuns now use Get-PatchHeaders.
+    v3.17: Push must not report a false success when no new end-of-day ran.
+           Two guards added to the nightly path: (a) if no TAC*.zip is present at
+           all, log NO_DATA instead of throwing a generic FAILED; (b) if the newest
+           TAC zip's snapshot_date is not beyond the last successful push (a stale
+           zip re-read because end-of-day was skipped), log NO_NEW_DATA and do not
+           push -- the effective date does not advance, so the dashboard shows a
+           warning instead of a false green. Retention-skip zero-row runs now log
+           SKIPPED, not SUCCESS. The PushStatusStrip judges freshness by
+           snapshot_date (effective date), not completed_at. Ref: SB-CC-PUSH-001.
     v3.16: EAN classification now consults product_catalog at startup. Short codes
            (<=8 digits) that are confirmed cross-store real barcodes (EAN_REAL_SHORT
            in product_catalog) are kept as-is instead of being expanded to synthetic
@@ -68,7 +77,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.16'
+$ScriptVersion = 'v3.17'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -142,7 +151,7 @@ $script:RealShortEanSet = @{}
 
 function Get-ClientId {
     $url  = "$SupabaseUrl/rest/v1/clients?select=*&limit=1"
-    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.16 PowerShell' }
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.17 PowerShell' }
     $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
     if (-not $rows -or $rows.Count -eq 0) {
         throw "Client not found in Supabase clients table."
@@ -167,7 +176,7 @@ function Initialize-RealShortEanSet {
     $hdrs = @{
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
-        'User-Agent'    = 'SocialBrand-PushScript/3.16 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.17 PowerShell'
     }
     try {
         $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 20
@@ -189,7 +198,7 @@ function Get-Headers {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'resolution=merge-duplicates,return=minimal'
-        'User-Agent'    = 'SocialBrand-PushScript/3.16 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.17 PowerShell'
     }
 }
 
@@ -202,7 +211,7 @@ function Get-PatchHeaders {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'return=minimal'
-        'User-Agent'    = 'SocialBrand-PushScript/3.16 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.17 PowerShell'
     }
 }
 
@@ -212,7 +221,7 @@ function Get-ReturnHeaders {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
         'Prefer'        = 'return=representation'
-        'User-Agent'    = 'SocialBrand-PushScript/3.16 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.17 PowerShell'
     }
 }
 
@@ -250,7 +259,7 @@ function Get-Watermark {
            "&status=eq.SUCCESS" +
            "&order=completed_at.desc" +
            "&limit=1"
-    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.16 PowerShell' }
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.17 PowerShell' }
     try {
         $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
         if ($rows -and $rows.Count -gt 0 -and $rows[0].completed_at) {
@@ -261,6 +270,33 @@ function Get-Watermark {
         Write-Warning "Watermark read failed for $TableName - defaulting to last $DefaultDays days. ($_)"
     }
     return (Get-Date).AddDays(-$DefaultDays)
+}
+
+function Get-LastSuccessSnapDate {
+    # Returns the most recent snapshot_date for this store where a real push
+    # completed (status SUCCESS and rows_pushed > 0). Used by the nightly path to
+    # detect a stale TAC zip: if the newest zip's date is not beyond this value,
+    # no new end-of-day has run and the push must NOT report a fresh success.
+    # Returns $null if there is no prior successful push or the read fails.
+    $url = "$SupabaseUrl/rest/v1/push_log" +
+           "?select=snapshot_date" +
+           "&store_code=eq.$StoreCode" +
+           "&status=eq.SUCCESS" +
+           "&rows_pushed=gt.0" +
+           "&snapshot_date=not.is.null" +
+           "&order=snapshot_date.desc" +
+           "&limit=1"
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.17 PowerShell' }
+    try {
+        $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
+        if ($rows -and $rows.Count -gt 0 -and $rows[0].snapshot_date) {
+            return [datetime]::ParseExact([string]$rows[0].snapshot_date, 'yyyy-MM-dd', $null)
+        }
+    }
+    catch {
+        Write-Warning "Could not read last successful snapshot_date - stale-zip guard skipped. ($_)"
+    }
+    return $null
 }
 
 function Invoke-SelfUpdate {
@@ -305,7 +341,7 @@ function Clear-StuckRuns {
               "?store_code=eq.$StoreCode" +
               "&status=eq.RUNNING" +
               "&started_at=lt.$cutoff"
-    $hdrs   = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.16 PowerShell' }
+    $hdrs   = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.17 PowerShell' }
     try {
         $stuck = Invoke-RestMethod -Uri ($url + '&select=push_id,table_name') -Method GET -Headers $hdrs -TimeoutSec 30
         if ($stuck -and $stuck.Count -gt 0) {
@@ -629,7 +665,7 @@ function Test-DateExists {
             "&store_code=eq.$StoreCode" +
             "&snapshot_date=eq.$SnapDate" +
             "&limit=1"
-    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.16 PowerShell' }
+    $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey"; 'User-Agent' = 'SocialBrand-PushScript/3.17 PowerShell' }
     try {
         $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
         return ($rows -and $rows.Count -gt 0)
@@ -864,7 +900,15 @@ function Push-DailySnapshotsNightly {
 
         $zips = @(Get-ChildItem -Path $TacZipDir -Filter 'TAC*.zip' -ErrorAction Stop |
                   Sort-Object LastWriteTime -Descending)
-        if ($zips.Count -eq 0) { throw "No TAC*.zip files found in $TacZipDir" }
+        if ($zips.Count -eq 0) {
+            # SB-CC-PUSH-001: no zip at all means end-of-day was not run. Record a
+            # distinct NO_DATA status (not a thrown FAILED, and never SUCCESS) so the
+            # dashboard surfaces the miss instead of silently holding a green.
+            $msg = "No TAC*.zip present in $TacZipDir - end-of-day was not run. Logged NO_DATA."
+            Write-Warning $msg
+            Complete-PushLog -LogId $logId -Status 'NO_DATA' -RowsPushed 0 -Msg $msg
+            return
+        }
 
         $latest = $zips[0]
         Write-Host "  ZIP: $($latest.Name)  (modified $($latest.LastWriteTime))"
@@ -884,7 +928,19 @@ function Push-DailySnapshotsNightly {
         if ([datetime]::ParseExact($snapDate, 'yyyy-MM-dd', $null) -lt $RetentionCutoff) {
             $msg = "Skipped: snapshot_date $snapDate is before retention cutoff $($RetentionCutoff.ToString('yyyy-MM-dd'))."
             Write-Warning $msg
-            Complete-PushLog -LogId $logId -Status 'SUCCESS' -RowsPushed 0 -SnapDate $snapDate -TacFilename $latest.Name -Msg $msg
+            Complete-PushLog -LogId $logId -Status 'SKIPPED' -RowsPushed 0 -SnapDate $snapDate -TacFilename $latest.Name -Msg $msg
+            return
+        }
+
+        # SB-CC-PUSH-001: stale-zip guard. If the newest TAC zip is not for a date
+        # beyond our last successful push, no new end-of-day ran. Re-pushing it would
+        # write a fresh SUCCESS with a recent completed_at and make the dashboard show
+        # a false green. Log NO_NEW_DATA instead and leave the effective date untouched.
+        $lastSnap = Get-LastSuccessSnapDate
+        if ($lastSnap -and ([datetime]::ParseExact($snapDate, 'yyyy-MM-dd', $null) -le $lastSnap)) {
+            $msg = "No new end-of-day: newest TAC zip is for $snapDate but the last successful push is already at $($lastSnap.ToString('yyyy-MM-dd')). The store's end-of-day for a newer date has not run. Logged NO_NEW_DATA (not success); effective date unchanged."
+            Write-Warning $msg
+            Complete-PushLog -LogId $logId -Status 'NO_NEW_DATA' -RowsPushed 0 -SnapDate $snapDate -TacFilename $latest.Name -Msg $msg
             return
         }
 
@@ -1065,7 +1121,7 @@ function Invoke-RefreshKpiView {
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
-        'User-Agent'    = 'SocialBrand-PushScript/3.16 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.17 PowerShell'
     }
     try {
         $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body '{}' -TimeoutSec 120
@@ -1092,7 +1148,7 @@ function Invoke-UpsertSearchIndex {
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json'
-        'User-Agent'    = 'SocialBrand-PushScript/3.16 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.17 PowerShell'
     }
     $bodyHt = [ordered]@{ p_store_code = $StoreCode }
     if ($SnapDate) { $bodyHt['p_snapshot_date'] = $SnapDate }
