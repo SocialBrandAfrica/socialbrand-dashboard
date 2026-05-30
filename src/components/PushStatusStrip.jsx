@@ -89,7 +89,7 @@ export default function PushStatusStrip() {
         const bg      = fresh ? 'rgba(74,222,128,0.10)'  : stale ? 'rgba(251,191,36,0.10)'  : 'rgba(255,255,255,0.04)'
         const border  = fresh ? 'rgba(74,222,128,0.30)'  : stale ? 'rgba(251,191,36,0.30)'  : 'rgba(255,255,255,0.10)'
         const dot     = fresh ? '#4ade80'                : stale ? '#fbbf24'                 : 'rgba(255,255,255,0.2)'
-        const label   = snap ? formatEffDate(snap) : 'no data'
+        const label   = row?.completed_at ? timeAgo(row.completed_at) : snap ? formatEffDate(snap) : 'no data'
         const tip     = never
           ? 'No successful push with data recorded'
           : `Data as of ${snap}`

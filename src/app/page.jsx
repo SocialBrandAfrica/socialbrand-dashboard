@@ -2708,6 +2708,7 @@ export default function Home() {
                         padding: '18px 20px',
                         cursor: k.onClick ? 'pointer' : 'default',
                         position: 'relative',
+                        zIndex: tooltipCard === k.key ? 200 : undefined,
                         background: k.accent
                           ? 'linear-gradient(135deg,rgba(74,222,128,0.1),rgba(74,222,128,0.03))'
                           : k.danger && k.value !== '0'
@@ -2786,7 +2787,7 @@ export default function Home() {
                         {k.tooltip && tooltipCard === k.key && (
                           <div style={{
                             position: 'absolute', top: 'calc(100% + 8px)', left: 0,
-                            width: 280, zIndex: 100,
+                            width: '100%', zIndex: 9999,
                             background: 'rgba(15,20,35,0.97)', border: '1px solid rgba(255,255,255,0.12)',
                             borderRadius: 10, padding: '12px 14px',
                             boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
