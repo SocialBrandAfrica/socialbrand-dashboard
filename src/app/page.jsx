@@ -1478,8 +1478,10 @@ export default function Home() {
           ? supabase.rpc('rpc_dept_summary', { p_store_codes: storeCodes, p_dates: lyDates })
           : Promise.resolve({ data: [], error: null }),
 
-        // Trend data (90-day window) — use live view so today's push shows immediately
-        supabase.from('v_kpi_by_date')
+        // Trend data (90-day window) — use MV (pre-aggregated, 2s for 90 dates).
+        // v_kpi_by_date times out at >25 dates (live 18M-row aggregation). MV is
+        // refreshed at the end of every store's nightly push so it stays current.
+        supabase.from('mv_kpi_by_date')
           .select('store_code,snapshot_date,total_sales,total_cost,total_qty')
           .in('store_code', storeCodes)
           .in('snapshot_date', trendDates)
