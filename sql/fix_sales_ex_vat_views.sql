@@ -30,15 +30,15 @@
 -- ---------------------------------------------------------------------------
 -- STEP 1 — v_kpi_by_date (live view, used for single-date KPI queries)
 -- ---------------------------------------------------------------------------
+-- NOTE: total_sales_ex_vat is appended at the END.
+-- CREATE OR REPLACE VIEW only allows adding columns at the end — inserting in the
+-- middle causes "cannot change name of view column" because Postgres matches by position.
 CREATE OR REPLACE VIEW v_kpi_by_date AS
 SELECT
     store_code,
     store_name,
     snapshot_date,
     SUM(today_sales)                                                                    AS total_sales,
-    ROUND(SUM(
-        today_sales / (1.0 + COALESCE(vat_pct, 15) / 100.0)
-    )::numeric, 2)                                                                      AS total_sales_ex_vat,
     SUM(today_cost)                                                                     AS total_cost,
     SUM(today_qty)                                                                      AS total_qty,
     COUNT(*) FILTER (WHERE soh < 0)                                                    AS neg_soh_count,
@@ -48,7 +48,10 @@ SELECT
              THEN soh * COALESCE(unit_cost, 0)
              ELSE 0
         END
-    )::numeric, 2)                                                                      AS capital_tied
+    )::numeric, 2)                                                                      AS capital_tied,
+    ROUND(SUM(
+        today_sales / (1.0 + COALESCE(vat_pct, 15) / 100.0)
+    )::numeric, 2)                                                                      AS total_sales_ex_vat
 FROM daily_snapshots
 GROUP BY store_code, store_name, snapshot_date;
 
