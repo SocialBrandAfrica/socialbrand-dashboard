@@ -423,21 +423,23 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
       // Use today_* fields: these are the day's sales only, additive across both dates and stores.
       // period_* are Sigma MTD accumulators and double-count across multi-date selections.
       // today_* also aligns with what rpc_dept_summary returns for the KPI cards.
+      // Accumulate salesExVat per item using each row's own vat_pct — no flat assumption.
       const dmap = new Map()
       for (const r of rows) {
         const k = r.dept_name ?? 'Unknown'
-        if (!dmap.has(k)) dmap.set(k, { dept: k, items: 0, qty: 0, cost: 0, sales: 0 })
-        const d = dmap.get(k)
+        if (!dmap.has(k)) dmap.set(k, { dept: k, items: 0, qty: 0, cost: 0, sales: 0, salesExVat: 0 })
+        const d   = dmap.get(k)
+        const vat = (r.vat_pct ?? 15) / 100
         if ((r.today_qty ?? 0) !== 0) d.items++
-        d.qty   += r.today_qty   ?? 0
-        d.cost  += r.today_cost  ?? 0
-        d.sales += r.today_sales ?? 0
+        d.qty        += r.today_qty   ?? 0
+        d.cost       += r.today_cost  ?? 0
+        d.sales      += r.today_sales ?? 0
+        d.salesExVat += (r.today_sales ?? 0) / (1 + vat)
       }
       const result = [...dmap.values()]
         .sort((a, b) => b.sales - a.sales)
         .map(d => {
-          const exVatSales = d.sales / 1.15
-          const gp = exVatSales > 0 ? Math.round(((exVatSales - d.cost) / exVatSales) * 1000) / 10 : null
+          const gp = d.salesExVat > 0 ? Math.round(((d.salesExVat - d.cost) / d.salesExVat) * 1000) / 10 : null
           return {
             'Department':   d.dept,
             'Items Sold':   d.items,
@@ -445,15 +447,15 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
             'Cost Value':   Math.round(d.cost * 100)  / 100,
             'Sales (VAT)':  Math.round(d.sales * 100) / 100,
             'GP%':          gp != null ? gp + '%' : '—',
+            '_exv':         d.salesExVat,
           }
         })
       const tot = result.reduce(
-        (a, d) => ({ ...a, 'Items Sold': a['Items Sold'] + d['Items Sold'], 'Qty Sold': a['Qty Sold'] + d['Qty Sold'], 'Cost Value': a['Cost Value'] + d['Cost Value'], 'Sales (VAT)': a['Sales (VAT)'] + d['Sales (VAT)'] }),
-        { Department: 'TOTAL', 'Items Sold': 0, 'Qty Sold': 0, 'Cost Value': 0, 'Sales (VAT)': 0, 'GP%': '' }
+        (a, d) => ({ ...a, 'Items Sold': a['Items Sold'] + d['Items Sold'], 'Qty Sold': a['Qty Sold'] + d['Qty Sold'], 'Cost Value': a['Cost Value'] + d['Cost Value'], 'Sales (VAT)': a['Sales (VAT)'] + d['Sales (VAT)'], '_exv': a['_exv'] + d['_exv'] }),
+        { Department: 'TOTAL', 'Items Sold': 0, 'Qty Sold': 0, 'Cost Value': 0, 'Sales (VAT)': 0, 'GP%': '', '_exv': 0 }
       )
-      const totExVat = tot['Sales (VAT)'] / 1.15
-      tot['GP%'] = totExVat > 0 ? Math.round(((totExVat - tot['Cost Value']) / totExVat) * 1000) / 10 + '%' : '—'
-      return [...result, tot]
+      tot['GP%'] = tot['_exv'] > 0 ? Math.round(((tot['_exv'] - tot['Cost Value']) / tot['_exv']) * 1000) / 10 + '%' : '—'
+      return [...result, tot].map(({ _exv, ...rest }) => rest)
     }
 
     case 'slowmovers': {
@@ -1293,7 +1295,7 @@ export default function Home() {
   useEffect(() => {
     supabase
       .from('mv_sparkline_14d')
-      .select('store_code,snapshot_date,total_sales,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
+      .select('store_code,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
       .order('snapshot_date', { ascending: true })
       .then(({ data, error }) => {
         if (error) { console.error('mv_sparkline_14d:', error.message); return }
@@ -2180,17 +2182,18 @@ export default function Home() {
     const byDate = {}
     for (const r of sparklineData) {
       if (!storeCodes.includes(r.store_code)) continue
-      if (!byDate[r.snapshot_date]) byDate[r.snapshot_date] = { sales: 0, cost: 0, neg_soh: 0, slow_movers: 0, capital_tied: 0 }
-      byDate[r.snapshot_date].sales        += r.total_sales      ?? 0
-      byDate[r.snapshot_date].cost         += r.total_cost       ?? 0
-      byDate[r.snapshot_date].neg_soh      += r.neg_soh_count    ?? 0
-      byDate[r.snapshot_date].slow_movers  += r.slow_mover_count ?? 0
-      byDate[r.snapshot_date].capital_tied += r.capital_tied     ?? 0
+      if (!byDate[r.snapshot_date]) byDate[r.snapshot_date] = { sales: 0, salesExVat: 0, cost: 0, neg_soh: 0, slow_movers: 0, capital_tied: 0 }
+      byDate[r.snapshot_date].sales        += r.total_sales        ?? 0
+      byDate[r.snapshot_date].salesExVat   += r.total_sales_ex_vat ?? 0
+      byDate[r.snapshot_date].cost         += r.total_cost         ?? 0
+      byDate[r.snapshot_date].neg_soh      += r.neg_soh_count      ?? 0
+      byDate[r.snapshot_date].slow_movers  += r.slow_mover_count   ?? 0
+      byDate[r.snapshot_date].capital_tied += r.capital_tied       ?? 0
     }
     const sorted = Object.entries(byDate).sort(([a], [b]) => a.localeCompare(b))
     return {
       sales:       sorted.map(([, v]) => v.sales),
-      gpPct:       sorted.map(([, v]) => v.sales > 0 ? gpPct(v.sales / 1.15, v.cost) : 0),
+      gpPct:       sorted.map(([, v]) => v.salesExVat > 0 ? gpPct(v.salesExVat, v.cost) : 0),
       negSoh:      sorted.map(([, v]) => v.neg_soh),
       slowMovers:  sorted.map(([, v]) => v.slow_movers),
       capitalTied: sorted.map(([, v]) => v.capital_tied),
