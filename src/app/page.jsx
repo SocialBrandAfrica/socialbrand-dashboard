@@ -79,12 +79,12 @@ const pct = (v, dp = 1) => v == null || isNaN(v) ? '—' : Number(v).toFixed(dp)
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 function unitCost(row) {
+  // Tier 1: raw unit_cost from daily_snapshots (Sigma PRSSALE source)
   if (row.unit_cost != null && row.unit_cost > 0) return row.unit_cost
+  // Tier 2: derive from period_cost / period_qty — backed by actual data for this item
   if (row.period_qty && row.period_qty !== 0) return (row.period_cost ?? 0) / Math.abs(row.period_qty)
-  if (row.sell_price > 0) {
-    const vat = (row.vat_pct ?? 15) / 100
-    return (row.sell_price / (1 + vat)) * 0.8
-  }
+  // No data available — return 0. Do NOT assume a margin percentage (Rule Book: no assumed rates).
+  // Capital tied for these rows will be 0 (understated but not invented).
   return 0
 }
 
