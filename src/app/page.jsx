@@ -2658,7 +2658,8 @@ export default function Home() {
                       wowDelta:      null,
                       bench:         null,
                       sub:           `Cost ${zarShort(kpiCost)}`,
-                      warn:          kpiGP < 15,
+                      warn:          kpiGP < 20,
+                      danger:        kpiGP < 10,
                       basisNote:     `${zarShort(kpiGPRand)} · ex-VAT`,
                       tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\nConsistent with SPAR scorecard method.\n\nGP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nSales ex-VAT: today_sales / 1.15 (flat rate pending per-item fix)\nCost: SUM(today_cost) from daily_snapshots\nLY: Same filter · dates -364 days`,
                     },
@@ -2688,7 +2689,7 @@ export default function Home() {
                       wowDelta:      null,
                       bench:         kpiStockTurn != null ? `target: 12 turns · ${kpiStockTurn < 12 ? `↓ ${(12 - kpiStockTurn).toFixed(1)} vs target` : `↑ ${(kpiStockTurn - 12).toFixed(1)} above target`}` : null,
                       sub:           kpiCapTied > 0 ? `Capital tied ${zarShort(kpiCapTied)}` : 'Insufficient data',
-                      warn:          kpiStockTurn != null && kpiStockTurn < 8,
+                      warn:          kpiStockTurn != null && kpiStockTurn < 12,
                       tooltip:       `STOCK TURN\nHow many times stock investment turns over annually.\n\nFormula: (Period COGS / Days * 365) / Capital Tied\nCOGS: SUM(today_cost) from daily_snapshots\nDays: Calendar days first to last selected date\nCapital: SUM(SOH x unit_cost) latest snapshot per store\nTarget: 12 turns per year\nDays Cover: 365 / Stock Turn`,
                     },
                     {

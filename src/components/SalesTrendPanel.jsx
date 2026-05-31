@@ -159,8 +159,11 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
     // The trend always ends at the latest push date; a vertical line marks
     // where the user's selected period ends within that 13-week context.
     // Only show when the selection end is strictly before the last trend point.
-    const selectionWeek = selectionEndDate ? toWeekStart(selectionEndDate) : null
-    const lastWeek = points.length > 0 ? points[points.length - 1].date : null
+    const selectionWeek  = selectionEndDate ? toWeekStart(selectionEndDate) : null
+    const lastWeek       = points.length > 0 ? points[points.length - 1].date : null
+    const firstWeek      = points.length > 0 ? points[0].date : null
+    const lastDataDate   = dailyPoints.length > 0 ? dailyPoints[dailyPoints.length - 1].date : null
+    const firstDataDate  = dailyPoints.length > 0 ? dailyPoints[0].date : null
     const showSelectionLine = selectionWeek && lastWeek && selectionWeek < lastWeek && points.some(p => p.date === selectionWeek)
 
     const activeInRange = rhythmProfiles.filter(p =>
@@ -170,9 +173,16 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
     return (
         <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
-                <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>
-                  {contextLabel ?? 'Sales Trend'}
-                </span>
+                <div>
+                  <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>
+                    {contextLabel ?? 'Sales Trend'}
+                  </span>
+                  {firstDataDate && lastDataDate && (
+                    <div style={{ fontSize: 9, color: 'rgba(245,245,244,0.3)', fontFamily: "'Geist Mono', monospace", marginTop: 2, letterSpacing: '0.04em' }}>
+                      {labelDate(firstDataDate)} – {labelDate(lastDataDate)}
+                    </div>
+                  )}
+                </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 10, color: 'rgba(245,245,244,0.4)', display: 'flex', alignItems: 'center', gap: 5 }}>
                         <span style={{ width: 18, height: 2, background: '#4ade80', display: 'inline-block', borderRadius: 1 }} />
@@ -238,6 +248,25 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
                         )
                     })}
 
+                    {/* Last push date marker — always shown at the right edge of the trend */}
+                    {lastWeek && lastDataDate && (
+                        <ReferenceLine
+                            x={lastWeek}
+                            stroke="rgba(74,222,128,0.25)"
+                            strokeDasharray="3 3"
+                            strokeWidth={1}
+                            label={{
+                                value: labelDate(lastDataDate),
+                                position: 'insideTopRight',
+                                fontSize: 8,
+                                fill: 'rgba(74,222,128,0.55)',
+                                fontFamily: 'Geist Mono, sans-serif',
+                                dy: 4,
+                            }}
+                        />
+                    )}
+
+                    {/* Selection period end — dashed white marker when KPI period ends before trend */}
                     {showSelectionLine && (
                         <ReferenceLine
                             x={selectionWeek}
@@ -246,7 +275,7 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
                             strokeWidth={1.5}
                             label={{
                                 value: labelDate(selectionEndDate),
-                                position: 'insideTopRight',
+                                position: 'insideTopLeft',
                                 fontSize: 8,
                                 fill: 'rgba(245,245,244,0.45)',
                                 fontFamily: 'Geist Mono, sans-serif',
