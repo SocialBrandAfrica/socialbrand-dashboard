@@ -587,11 +587,12 @@ function buildDeptMarginReport(deptSummary, lyDeptSummary) {
   for (const r of (lyDeptSummary ?? [])) lyMap.set(r.dept_name, r)
 
   return (deptSummary ?? []).map(r => {
-    const exVat   = r.total_sales > 0 ? r.total_sales / 1.15 : 0
-    const gp      = exVat > 0 ? Math.round(((exVat - (r.total_cost ?? 0)) / exVat) * 1000) / 10 : null
+    // Use total_sales_ex_vat from rpc_dept_summary (per-item vat_pct, no flat assumption)
+    const exVat = r.total_sales_ex_vat ?? 0
+    const gp    = exVat > 0 ? Math.round(((exVat - (r.total_cost ?? 0)) / exVat) * 1000) / 10 : null
 
     const ly      = lyMap.get(r.dept_name)
-    const lyExVat = ly && ly.total_sales > 0 ? ly.total_sales / 1.15 : 0
+    const lyExVat = ly?.total_sales_ex_vat ?? 0
     const lyGp    = lyExVat > 0 ? Math.round(((lyExVat - (ly.total_cost ?? 0)) / lyExVat) * 1000) / 10 : null
 
     const gpChange     = gp != null && lyGp != null ? Math.round((gp - lyGp) * 10) / 10 : null
@@ -1458,9 +1459,9 @@ export default function Home() {
       const kpiTable = selectedDates.length === 1 ? 'v_kpi_by_date' : 'mv_kpi_by_date'
 
       const [kpiRes, subDeptRes, lyKpiRes, wowKpiRes, lyDeptRes, trendRes, lyTrendRes] = await Promise.all([
-        // Current KPI
+        // Current KPI — includes total_sales_ex_vat (per-item vat_pct, no flat assumption)
         supabase.from(kpiTable)
-          .select('store_code,store_name,snapshot_date,total_sales,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
+          .select('store_code,store_name,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
           .in('store_code', storeCodes)
           .in('snapshot_date', selectedDates),
 
@@ -1474,7 +1475,7 @@ export default function Home() {
         // LY KPI — always historical, use MV
         lyDates.length > 0
           ? supabase.from('mv_kpi_by_date')
-              .select('store_code,snapshot_date,total_sales,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
+              .select('store_code,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
               .in('store_code', storeCodes)
               .in('snapshot_date', lyDates)
           : Promise.resolve({ data: [], error: null }),
@@ -1482,7 +1483,7 @@ export default function Home() {
         // WoW KPI — always historical, use MV
         wowDates.length > 0
           ? supabase.from('mv_kpi_by_date')
-              .select('store_code,snapshot_date,total_sales,total_cost,total_qty')
+              .select('store_code,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty')
               .in('store_code', storeCodes)
               .in('snapshot_date', wowDates)
           : Promise.resolve({ data: [], error: null }),
@@ -1982,10 +1983,18 @@ export default function Home() {
     return kpiData.reduce((s, r) => s + (r.total_qty ?? 0), 0)
   }, [kpiData, deptSummary, deptFilter, subDeptFilter])
 
-  // GP on ex-VAT basis (SB-CC-003 item 6): divide by 1.15 before computing margin
-  const kpiSalesExVat = kpiSales / 1.15
-  const kpiGPRand     = kpiSalesExVat - kpiCost
-  const kpiGP         = kpiSalesExVat > 0 ? (kpiGPRand / kpiSalesExVat) * 100 : 0
+  // GP on ex-VAT basis — reads total_sales_ex_vat from the DB (per-item vat_pct, no flat assumption).
+  // Dept/subdept path reads from rpc_dept_summary which also returns total_sales_ex_vat.
+  const kpiSalesExVat = useMemo(() => {
+    if (deptFilter !== 'all')
+      return deptSummary.filter(r => normalizeDept(r.dept_name) === deptFilter).reduce((s, r) => s + (r.total_sales_ex_vat ?? 0), 0)
+    if (subDeptFilter !== 'all')
+      return deptSummary.reduce((s, r) => s + (r.total_sales_ex_vat ?? 0), 0)
+    return kpiData.reduce((s, r) => s + (r.total_sales_ex_vat ?? 0), 0)
+  }, [kpiData, deptSummary, deptFilter, subDeptFilter])
+
+  const kpiGPRand = kpiSalesExVat - kpiCost
+  const kpiGP     = kpiSalesExVat > 0 ? (kpiGPRand / kpiSalesExVat) * 100 : 0
 
   // BUG-3: normalize dept_name before comparing — dots stripped in deptFilter but
   // rpc_kpi_dept_counts may return the raw name (e.g. "GROCERIES.FOODS").
@@ -2107,9 +2116,12 @@ export default function Home() {
   const lyKpiSales = filterActive ? sumField(lyDeptRows, 'total_sales') : sumField(lyKpiData, 'total_sales')
   const lyKpiCost  = filterActive ? sumField(lyDeptRows, 'total_cost')  : sumField(lyKpiData, 'total_cost')
   const lyKpiQty   = filterActive ? sumField(lyDeptRows, 'total_qty')   : sumField(lyKpiData, 'total_qty')
-  const lyKpiSalesExVat = lyKpiSales / 1.15
-  const lyKpiGPRand     = lyKpiSalesExVat - lyKpiCost
-  const lyKpiGP         = lyKpiSalesExVat > 0 ? (lyKpiGPRand / lyKpiSalesExVat) * 100 : null
+  // LY ex-VAT: reads total_sales_ex_vat from DB — same source logic as kpiSalesExVat
+  const lyKpiSalesExVat = filterActive
+    ? sumField(lyDeptRows, 'total_sales_ex_vat')
+    : lyKpiData.reduce((s, r) => s + (r.total_sales_ex_vat ?? 0), 0)
+  const lyKpiGPRand = lyKpiSalesExVat - lyKpiCost
+  const lyKpiGP     = lyKpiSalesExVat > 0 ? (lyKpiGPRand / lyKpiSalesExVat) * 100 : null
   // Point-in-time: Neg SOH / Slow Move use lyDeptSohCounts (single latest LY date,
   // dept/subdept-scoped) when a filter is active; fall back to whole-store mv rows.
   // lyDeptSohCounts is pre-filtered by subdept at the RPC; dept filter applied here.
@@ -2646,7 +2658,7 @@ export default function Home() {
                       sub:           `${num(kpiQty, 0)} units`,
                       accent:        true,
                       basisNote:     'VAT-inclusive',
-                      tooltip:       `TOTAL SALES\nVAT-inclusive (raw today_sales).\nTrue ex-VAT requires per-item vat_pct -- see sql/fix_sales_ex_vat_views.sql\n\nSource: Sum daily_snapshots.today_sales\nLY: Same filter · dates -364 days\nDelta: (This period - LY) / LY x 100`,
+                      tooltip:       `TOTAL SALES\nVAT-inclusive (raw today_sales).\n\nSource: Sum daily_snapshots.today_sales\nLY: Same filter · dates -364 days\nDelta: (This period - LY) / LY x 100`,
                     },
                     {
                       key:           'gp',
@@ -2661,7 +2673,7 @@ export default function Home() {
                       warn:          kpiGP < 20,
                       danger:        kpiGP < 10,
                       basisNote:     `${zarShort(kpiGPRand)} · ex-VAT`,
-                      tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\nConsistent with SPAR scorecard method.\n\nGP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nSales ex-VAT: today_sales / 1.15 (flat rate pending per-item fix)\nCost: SUM(today_cost) from daily_snapshots\nLY: Same filter · dates -364 days`,
+                      tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\nConsistent with SPAR scorecard method.\n\nGP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nSales ex-VAT: SUM(today_sales / (1 + vat_pct/100)) per item\nCost: SUM(today_cost) from daily_snapshots\nLY: Same filter · dates -364 days`,
                     },
                     {
                       key:           'lostsalesvalue',
