@@ -56,6 +56,7 @@ const REPORTS = [
   { key: 'slowmovers',      title: 'Slow Movers',        desc: 'In stock, no sales in last 14 days — capital tied' },
   { key: 'stock_integrity', title: 'Stock Integrity',    desc: 'Negative SOH — Type A (production) / Type B (receiving)' },
   { key: 'focus_export',    title: 'Focus Area Export',  desc: 'Download current basket with all columns' },
+  { key: 'ghost_stock',     title: 'Ghost Stock',         desc: 'Production items removed from Capital Tied — fix at source in Sigma' },
   { key: 'full',            title: 'Data Export',        desc: 'All fields — for analysts and system integrations' },
 ]
 
@@ -1122,6 +1123,7 @@ export default function Home() {
   const [reportRows,    setReportRows]    = useState([])
   const [reportLoaded,  setReportLoaded]  = useState(false)
   const [reportLoading, setReportLoading] = useState(false)
+  const [ghostStockRows, setGhostStockRows] = useState([])   // SB-AP-003 A6
   const [storeRosData,  setStoreRosData]  = useState([])
   const [supplierMap,   setSupplierMap]   = useState(new Map())  // ean → supplier_name from product_catalog
   const [lostSalesItems,    setLostSalesItems]    = useState([])  // True OOS items: SOH<=0, period_qty=0, active line
@@ -1463,7 +1465,7 @@ export default function Home() {
       const [kpiRes, subDeptRes, lyKpiRes, wowKpiRes, lyDeptRes, trendRes, lyTrendRes] = await Promise.all([
         // Current KPI — includes total_sales_ex_vat (per-item vat_pct, no flat assumption)
         supabase.from(kpiTable)
-          .select('store_code,store_name,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
+          .select('store_code,store_name,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied,ghost_stock_value')
           .in('store_code', storeCodes)
           .in('snapshot_date', selectedDates),
 
@@ -1945,8 +1947,9 @@ export default function Home() {
     if (!reportLoaded) return []
     const refDate = selectedDates.length ? [...selectedDates].sort().reverse()[0] : null
     if (currentReport === 'dept_margin') return buildDeptMarginReport(deptSummary, lyDeptSummary)
+    if (currentReport === 'ghost_stock') return ghostStockRows   // SB-AP-003 A6 — pre-formatted by handleReportCardClick
     return buildReport(currentReport, filteredReportRows, moverMode, refDate, rosMap, supplierMap, daysInPeriod, focusEans)
-  }, [currentReport, filteredReportRows, moverMode, selectedDates, reportLoaded, rosMap, supplierMap, deptSummary, lyDeptSummary, focusEans, daysInPeriod])
+  }, [currentReport, filteredReportRows, moverMode, selectedDates, reportLoaded, rosMap, supplierMap, deptSummary, lyDeptSummary, focusEans, daysInPeriod, ghostStockRows])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DERIVED — KPIs
@@ -2153,6 +2156,10 @@ export default function Home() {
     ? sumField(byDept(deptSummary), 'capital_tied')
     : latestKpiByStore.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
 
+  // Ghost stock: rand value removed from Capital Tied (SB-AP-003). Point-in-time from latest snapshot per store.
+  // ghost_stock_value is 0 / null for stores without product_classification rows yet.
+  const kpiGhostStock = latestKpiByStore.reduce((s, r) => s + (r.ghost_stock_value ?? 0), 0)
+
   // Stock Turn (annualised): (Period COGS / daysInPeriod * 365) / Capital Tied. Target = 12/yr.
   // daysInPeriod = calendar days between earliest and latest selected date (not a click count).
   const kpiStockTurn = (kpiCapTied > 0 && daysInPeriod > 0)
@@ -2253,6 +2260,33 @@ export default function Home() {
 
   function handleReportCardClick(key) {
     setCurrentReport(key)
+    if (key === 'ghost_stock') {
+      // Ghost stock report is fetched from its own RPC — does not use reportRows.
+      setReportLoading(true)
+      const date = selectedDates.length ? [...selectedDates].sort().reverse()[0] : null
+      if (date) {
+        supabase.rpc('rpc_ghost_stock_report', { p_store_codes: storeCodes, p_date: date })
+          .then(({ data, error }) => {
+            if (error) { console.error('[ghost_stock_report]', error.message) }
+            setGhostStockRows((data ?? []).map(r => ({
+              'Store':        r.store_name ?? r.store_code,
+              'EAN':          r.ean,
+              'Description':  r.description,
+              'Dept':         r.dept_name,
+              'Sub-Dept':     r.sub_dept_name,
+              'SOH':          r.soh,
+              'Unit Cost':    r.unit_cost,
+              'Ghost Value':  r.ghost_value,
+              'Score':        r.score,
+              'Why Flagged':  r.why_flagged,
+              'Confirmed By': r.confirmed_by ?? 'auto',
+            })))
+            setReportLoaded(true)
+            setReportLoading(false)
+          })
+      }
+      return
+    }
     if (!reportLoaded && !reportLoading) loadReport()
   }
 
@@ -3347,7 +3381,12 @@ export default function Home() {
             )}
 
             <p style={{ marginTop: 16, fontSize: 10, color: 'rgba(245,245,244,0.25)', fontFamily: "'Geist Mono', monospace", fontStyle: 'italic' }}>
-              SOH × unit cost · in-stock lines only · per-tier breakdown available once rpc_capital_tied_by_tier is deployed
+              SOH × unit cost · slow-mover lines · ghost stock excluded
+              {kpiGhostStock > 0 && (
+                <span style={{ color: 'rgba(251,191,36,0.6)', marginLeft: 6 }}>
+                  ({zarShort(kpiGhostStock)} production stock removed — fix at source in Sigma)
+                </span>
+              )}
             </p>
           </div>
         </div>
