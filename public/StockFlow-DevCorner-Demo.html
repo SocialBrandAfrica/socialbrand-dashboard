@@ -234,7 +234,7 @@ async function boot(){
   try{
     const r=await fetch("/api/dev-corner/lines",{headers:{Accept:"application/json"}});
     if(r.ok){const j=await r.json();
-      if(j&&Array.isArray(j.lines)&&j.lines.length){LINES=j.lines;live=true;asAt=j.asAt||asAt;next=j.nextRefresh||next;src="Live from StockFlow database";}}
+      if(j&&Array.isArray(j.lines)&&j.lines.length){LINES=j.lines;live=true;asAt=j.asAt||asAt;next=j.nextRefresh||next;src="Live from Pulse";}}
   }catch(e){}
   if(!LINES.length)LINES=SNAPSHOT_LINES;
   const b=document.getElementById("srcBadge");
