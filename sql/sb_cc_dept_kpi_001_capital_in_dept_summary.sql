@@ -1,5 +1,11 @@
 -- =============================================================================
--- SB-CC-DEPT-KPI-001 -- Add dept-level capital_tied to rpc_dept_summary
+-- HOLD LIFTED (2026-06-02, SB-AP-004 Option C).
+-- Capital Tied definition is now stable: exclude PRODUCTION, NON_STOCK, and
+-- fresh impossible-stock via classify_snapshot_item() and is_fresh_perishable()
+-- (deployed in sb_ap_004_c_interim_exclusion.sql).
+-- Run sb_ap_004_c_interim_exclusion.sql FIRST, then run this file.
+-- =============================================================================
+-- SB-CC-DEPT-KPI-001 / SB-CC-SEL-001 Part 3 -- Add dept-level capital_tied to rpc_dept_summary
 --
 -- Why: the KPI cards make Sales / GP / Qty respect the dept (and sub-dept / EAN)
 -- selection via rpc_dept_summary, but Capital Tied and Stock Turn had no
@@ -50,10 +56,20 @@ LANGUAGE sql STABLE SECURITY DEFINER AS $$
         ROUND(SUM(ds.today_sales)::numeric, 2)  AS total_sales,
         ROUND(SUM(ds.today_cost)::numeric,  2)  AS total_cost,
         SUM(ds.today_qty)::numeric              AS total_qty,
-        -- Point-in-time: only the latest snapshot per store contributes to capital.
+        -- Point-in-time capital_tied: matches Option C definition in v_kpi_by_date.
+        -- Excludes PRODUCTION, NON_STOCK, and fresh impossible-stock.
+        -- Requires classify_snapshot_item() and is_fresh_perishable() (deployed in
+        -- sb_ap_004_c_interim_exclusion.sql).
         ROUND(SUM(
             CASE WHEN ds.snapshot_date = l.d
                   AND ds.period_qty = 0 AND ds.soh > 0 AND ds.is_placeholder = FALSE
+                  AND classify_snapshot_item(ds.dept_name, ds.sub_dept_name, ds.soh)
+                      IS NULL
+                  AND NOT (
+                      is_fresh_perishable(ds.dept_name, ds.sub_dept_name)
+                      AND (ds.last_sales_date_iso IS NULL
+                           OR ds.last_sales_date_iso < CURRENT_DATE - INTERVAL '30 days')
+                  )
                  THEN ds.soh * COALESCE(ds.unit_cost, 0)
                  ELSE 0
             END

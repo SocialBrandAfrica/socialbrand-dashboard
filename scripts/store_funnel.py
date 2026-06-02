@@ -335,13 +335,29 @@ def classify(row: dict, today: datetime.date):
                 f"pack_n={m.group(1)}|desc_fragment={desc[-20:]}", alert)
 
     # ------------------------------------------------------------------
-    # Bucket 3: PRODUCTION
+    # Bucket 3: PRODUCTION  (two sub-rules, order matters)
     # ------------------------------------------------------------------
+
+    # 3a. Sells but was never formally received (classic production signal).
+    #     Transformed in-store; never goes through a GRV.
     if in_prod_dept and (has_any_sales or current_s > 0) and never_received:
-        # Higher confidence when the sub-dept name also signals production
         conf = 0.95 if prod_subdept_ok else 0.80
         return ("PRODUCTION", conf,
                 f"dept={dept}|subdept={subdept}|total_sales={total_s:.0f}|no_recv",
+                alert)
+
+    # 3b. Received but NEVER sold (engine gap fix -- K PORKER case).
+    #     Items in production depts that have been received and have stock
+    #     but have zero lifetime sales (last_sold is None) are production
+    #     inputs (whole carcasses, bulk baking ingredients, etc.) disguised
+    #     as DEAD_SLOW by the older rule. The distinguisher: retail dead stock
+    #     was selling at some point; production ghost inputs were NEVER sold.
+    #     Confidence is lower without a sub-dept production signal because
+    #     a newly-listed retail item could briefly match this pattern.
+    if in_prod_dept and has_receipt and has_stock and last_sold is None:
+        conf = 0.90 if prod_subdept_ok else 0.75
+        return ("PRODUCTION", conf,
+                f"dept={dept}|subdept={subdept}|soh={soh:.0f}|recv={last_recv}|never_sold",
                 alert)
 
     # ------------------------------------------------------------------

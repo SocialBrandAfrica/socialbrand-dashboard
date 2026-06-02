@@ -1123,7 +1123,8 @@ export default function Home() {
   const [reportRows,    setReportRows]    = useState([])
   const [reportLoaded,  setReportLoaded]  = useState(false)
   const [reportLoading, setReportLoading] = useState(false)
-  const [ghostStockRows, setGhostStockRows] = useState([])   // SB-AP-003 A6
+  const [ghostStockRows,     setGhostStockRows]     = useState([])   // SB-AP-004 C -- ghost_stock report
+  const [stockIntegrityRows, setStockIntegrityRows] = useState([])   // SB-AP-004 C -- stock_integrity report
   const [storeRosData,  setStoreRosData]  = useState([])
   const [supplierMap,   setSupplierMap]   = useState(new Map())  // ean → supplier_name from product_catalog
   const [lostSalesItems,    setLostSalesItems]    = useState([])  // True OOS items: SOH<=0, period_qty=0, active line
@@ -1947,7 +1948,8 @@ export default function Home() {
     if (!reportLoaded) return []
     const refDate = selectedDates.length ? [...selectedDates].sort().reverse()[0] : null
     if (currentReport === 'dept_margin') return buildDeptMarginReport(deptSummary, lyDeptSummary)
-    if (currentReport === 'ghost_stock') return ghostStockRows   // SB-AP-003 A6 — pre-formatted by handleReportCardClick
+    if (currentReport === 'ghost_stock')     return ghostStockRows       // SB-AP-004 C
+    if (currentReport === 'stock_integrity') return stockIntegrityRows  // SB-AP-004 C
     return buildReport(currentReport, filteredReportRows, moverMode, refDate, rosMap, supplierMap, daysInPeriod, focusEans)
   }, [currentReport, filteredReportRows, moverMode, selectedDates, reportLoaded, rosMap, supplierMap, deptSummary, lyDeptSummary, focusEans, daysInPeriod, ghostStockRows])
 
@@ -2260,26 +2262,46 @@ export default function Home() {
 
   function handleReportCardClick(key) {
     setCurrentReport(key)
-    if (key === 'ghost_stock') {
-      // Ghost stock report is fetched from its own RPC — does not use reportRows.
+    // Ghost stock and Stock Integrity reports are fetched from their own RPCs.
+    if (key === 'ghost_stock' || key === 'stock_integrity') {
       setReportLoading(true)
       const date = selectedDates.length ? [...selectedDates].sort().reverse()[0] : null
-      if (date) {
+      if (!date) { setReportLoading(false); return }
+
+      if (key === 'ghost_stock') {
         supabase.rpc('rpc_ghost_stock_report', { p_store_codes: storeCodes, p_date: date })
           .then(({ data, error }) => {
-            if (error) { console.error('[ghost_stock_report]', error.message) }
+            if (error) console.error('[ghost_stock_report]', error.message)
             setGhostStockRows((data ?? []).map(r => ({
+              'Store':       r.store_name ?? r.store_code,
+              'EAN':         r.ean,
+              'Description': r.description,
+              'Dept':        r.dept_name,
+              'Sub-Dept':    r.sub_dept_name,
+              'SOH':         r.soh,
+              'Unit Cost':   r.unit_cost,
+              'Ghost Value': r.ghost_value,
+              'Class':       r.exclusion_class,
+              'Reason':      r.why_flagged,
+            })))
+            setReportLoaded(true)
+            setReportLoading(false)
+          })
+      } else {
+        supabase.rpc('rpc_stock_integrity_report', { p_store_codes: storeCodes, p_date: date })
+          .then(({ data, error }) => {
+            if (error) console.error('[stock_integrity_report]', error.message)
+            setStockIntegrityRows((data ?? []).map(r => ({
               'Store':        r.store_name ?? r.store_code,
               'EAN':          r.ean,
               'Description':  r.description,
               'Dept':         r.dept_name,
               'Sub-Dept':     r.sub_dept_name,
               'SOH':          r.soh,
-              'Unit Cost':    r.unit_cost,
-              'Ghost Value':  r.ghost_value,
-              'Score':        r.score,
-              'Why Flagged':  r.why_flagged,
-              'Confirmed By': r.confirmed_by ?? 'auto',
+              'Sell Price':   r.sell_price,
+              'Issue Type':   r.integrity_type,
+              'Days No Sale': r.days_no_sale ?? '—',
+              'Value At Risk':r.value_at_risk,
             })))
             setReportLoaded(true)
             setReportLoading(false)
@@ -2753,7 +2775,7 @@ export default function Home() {
                       bench:         null,
                       sub:           'Stock errors / shrinkage',
                       danger:        kpiNegSOH > 0,
-                      onClick:       () => { setCurrentReport('stock_integrity'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
+                      onClick:       () => { setDrawerOpen(true); handleReportCardClick('stock_integrity') },
                       tooltip:       `NEGATIVE SOH\nCount of all products where SOH < 0\nat the latest snapshot per store.\n\nSource: daily_snapshots.soh\nIncludes: All lines — retail and production\nType A: Production dept deep negatives\nType B: Retail lines that sold through without GRV\n\nIndicates: Receiving errors · Wastage · Stocktake gaps`,
                     },
                     {
@@ -2768,7 +2790,7 @@ export default function Home() {
                       bench:         null,
                       sub:           'SOH x unit cost (latest snapshot)',
                       warn:          true,
-                      tooltip:       `CAPITAL TIED\nTotal value of stock on shelf at cost price.\n\nFormula: Sum (SOH x unit_cost)\nSnapshot: Latest date in selected range\nLY: Last day of LY period (-364 days)\nTarget: <= 30 days cover (standard lines), <= 15 days cover (top-tier lines)`,
+                      tooltip:       `CAPITAL TIED\nTotal value of stock on shelf at cost price.\n\nFormula: Sum (SOH x unit_cost)\nSnapshot: Latest date in selected range\nLY: Last day of LY period (-364 days)\nTarget: <= 30 days cover (standard lines), <= 15 days cover (top-tier lines)\n\nExclusions (INTERIM — dept/sub-dept rule):\n  • Production inputs: BAKERY/BUTCHERY/HMR/DELI INGREDIENTS, CATERING, SCALE sub-depts\n  • Non-stock: EXPENSES, FRONTEND PACK, PACKAGING, CRATE, ADVERTISING sub-depts\n  • Fresh impossible-stock: perishable dept + SOH > 0 + no sale 30+ days\nGhost Stock report shows every excluded line. Totals reconcile.\nReplaced by full classifier verdict join when SQL pipeline ships (Option B).`,
                       onClick:       kpiCapTied > 0 ? () => setCapTiedModalOpen(true) : undefined,
                     },
                   ]
