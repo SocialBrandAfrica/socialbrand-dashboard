@@ -69,16 +69,27 @@ export async function GET(request) {
 
   try {
     // ---- 1. Latest push timestamp (asAt) -----------------------------------
+    // Order by completed_at (always populated) not snapshot_date (NULL on pre-v3.10 rows).
     const { data: pushRow } = await supabase
       .from('push_log')
       .select('snapshot_date, completed_at')
       .eq('store_code', STORE)
       .eq('status', 'SUCCESS')
+      .order('completed_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    // Get true latest date from daily_snapshots rather than push_log.snapshot_date,
+    // which can be NULL on older rows and return stale results.
+    const { data: latestSnap } = await supabase
+      .from('daily_snapshots')
+      .select('snapshot_date')
+      .eq('store_code', STORE)
       .order('snapshot_date', { ascending: false })
       .limit(1)
       .maybeSingle()
 
-    const latestDate = pushRow?.snapshot_date ?? isoDate(new Date())
+    const latestDate = latestSnap?.snapshot_date ?? isoDate(new Date())
     const asAt = pushRow?.completed_at
       ? new Date(pushRow.completed_at).toLocaleString('en-ZA', {
           timeZone: 'Africa/Johannesburg',
