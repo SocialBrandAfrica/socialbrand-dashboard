@@ -322,7 +322,9 @@ function renderDetail(){
   const el=document.getElementById("detail");
   if(selected===null){el.innerHTML='<div class="empty">Select a line on the left.</div>';return;}
   const l=LINES[selected], fc=forecast(l), wk=weeklyAvg(l), c=deptColor(l.dept);
-  const rate=mode==="weekly"?{v:num(wk),u:"units / week"}:{v:(wk/7).toFixed(1),u:"units / day · 6-wk avg"};
+  const rate=mode==="weekly"
+    ?{v:num(wk),u:"units / week · 6-wk avg"}
+    :{v:fc?(fc.total/28).toFixed(1):(wk/7).toFixed(1),u:fc?"units / day · projected":"units / day · 6-wk avg"};
   let html='';
   html+='<div class="selhead"><div><div class="nm"><span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:'+c+';margin-right:7px"></span>'+l.desc+
         '<span class="chip" style="background:'+rgba(c,.16)+';color:'+c+'">'+deptLabel(l.dept)+'</span></div>'+
