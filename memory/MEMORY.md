@@ -1,6 +1,7 @@
 # Memory Index
 
 - [SB-AP-004 Option C decision](project_sb_ap_004_option_c_decision.md) — Bridge investigation closed; Option C (dept/sub-dept exclusion) deployed; Option B (SQL pipeline) planned; dashboard never depends on manual pulls; Replit = teardown specimen
+- [SB-AP-005 non-stock flip](project_sb_ap_005_nonstock_flip.md) — Flip Record Stock Qty=No on 1,581 Dela PRODUCTION/NON_STOCK lines via Overview Maintenance. Owners: Sparrie + Mari. 1,220 ready | 70 TLX | 291 manual. Due date carry-over -- reset with Sparrie/Mari. TLX_Converter.html is barcode-keyed (not Product Code).
 
 - [Project overview](project_overview.md) — SocialBrand dashboard: Next.js + Supabase, architecture decisions, key data model facts
 - [2026-06-01 handover](handover_2026-06-01.md) — SB-AP-003 partial deploy; EAN mismatch (DIWAAIS2 PLU ≠ PRSSALE PLU for scale items); ghost stock R7.9M confirmed; PM decision pending on classifier fix path
