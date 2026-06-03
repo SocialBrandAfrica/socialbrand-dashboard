@@ -253,7 +253,9 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kpi_by_date;
 -- ---------------------------------------------------------------------------
 -- STEP 3 -- rpc_kpi_dept_counts
 -- ---------------------------------------------------------------------------
-DROP FUNCTION IF EXISTS public.rpc_kpi_dept_counts CASCADE;
+DROP FUNCTION IF EXISTS public.rpc_kpi_dept_counts(text[], text[]) CASCADE;
+DROP FUNCTION IF EXISTS public.rpc_kpi_dept_counts(text[], text[], text) CASCADE;
+DROP FUNCTION IF EXISTS public.rpc_kpi_dept_counts(text[], text[], text, text[]) CASCADE;
 
 CREATE FUNCTION public.rpc_kpi_dept_counts(
     p_store_codes  text[],
@@ -298,7 +300,9 @@ GRANT EXECUTE ON FUNCTION public.rpc_kpi_dept_counts(text[], text[], text, text[
 -- ---------------------------------------------------------------------------
 -- STEP 4 -- rpc_top20
 -- ---------------------------------------------------------------------------
-DROP FUNCTION IF EXISTS public.rpc_top20 CASCADE;
+DROP FUNCTION IF EXISTS public.rpc_top20(text[], text[], text, text) CASCADE;
+DROP FUNCTION IF EXISTS public.rpc_top20(text[], text[], text, text, text[]) CASCADE;
+DROP FUNCTION IF EXISTS public.rpc_top20(text[], text[], text, text, text[], text, boolean) CASCADE;
 
 CREATE FUNCTION public.rpc_top20(
     p_store_codes  text[],
@@ -395,7 +399,7 @@ GRANT EXECUTE ON FUNCTION public.rpc_top20(text[], text[], text, text, text[], t
 -- ---------------------------------------------------------------------------
 -- STEP 5 -- rpc_ghost_stock_report (pass last_sales_date_iso)
 -- ---------------------------------------------------------------------------
-DROP FUNCTION IF EXISTS public.rpc_ghost_stock_report CASCADE;
+DROP FUNCTION IF EXISTS public.rpc_ghost_stock_report(text[], text) CASCADE;
 
 CREATE FUNCTION public.rpc_ghost_stock_report(
     p_store_codes  text[],
