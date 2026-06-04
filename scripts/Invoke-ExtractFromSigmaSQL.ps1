@@ -70,7 +70,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.2'
+$ScriptVersion  = 'v1.3'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -156,7 +156,7 @@ function Get-Headers {
     return @{
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
-        'Content-Type'  = 'application/json'
+        'Content-Type'  = 'application/json; charset=utf-8'
         'Prefer'        = 'resolution=merge-duplicates,return=minimal'
         'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
     }
@@ -190,8 +190,13 @@ function Send-Batch {
     $attempt = 0
     while ($attempt -lt $RetryMax) {
         try {
-            $json = ConvertTo-Json -InputObject @($Rows) -Depth 5 -Compress
-            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json -TimeoutSec 90
+            $json  = ConvertTo-Json -InputObject @($Rows) -Depth 5 -Compress
+            # Send as explicit UTF-8 bytes. PS 5.1 leaves chars like U+00A0 (NBSP)
+            # raw in the JSON, and a string -Body is sent non-UTF-8, so the lone
+            # 0xA0 byte is invalid UTF-8 -> PostgREST PGRST102. Bytes fix it for all
+            # non-ASCII (accents, NBSP, degree, currency) with no data loss.
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+            $null  = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $bytes -TimeoutSec 90
             return $Rows.Count
         }
         catch {
@@ -213,7 +218,8 @@ function Send-Batch {
                 foreach ($row in $Rows) {
                     try {
                         $rj   = ConvertTo-Json -InputObject @($row) -Depth 5 -Compress
-                        $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $rj -TimeoutSec 60
+                        $rb   = [System.Text.Encoding]::UTF8.GetBytes($rj)
+                        $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $rb -TimeoutSec 60
                         $pushed++
                     }
                     catch {
