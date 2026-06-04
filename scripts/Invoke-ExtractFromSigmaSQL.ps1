@@ -70,7 +70,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.1'
+$ScriptVersion  = 'v1.2'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -218,6 +218,21 @@ function Send-Batch {
                     }
                     catch {
                         Write-Warning "    Row error in $Table`: $_"
+                        # DIAGNOSTIC (v1.2): dump the offending row so we can see the
+                        # exact bad value -- JSON sent plus per-field character codes.
+                        try {
+                            $log = "C:\socialbrand\" + $Table + "_badrows.log"
+                            Add-Content -Path $log -Value "=== bad row ==="
+                            Add-Content -Path $log -Value $rj
+                            foreach ($k in $row.Keys) {
+                                $cv = $row[$k]
+                                if ($cv -is [string]) {
+                                    $codes = (($cv.ToCharArray()) | ForEach-Object { [int]$_ }) -join ' '
+                                    Add-Content -Path $log -Value ("  " + $k + " codes: " + $codes)
+                                }
+                            }
+                        }
+                        catch {}
                     }
                 }
                 return $pushed
@@ -308,7 +323,7 @@ function Safe-Text {
     # carry NUL padding / control bytes; ConvertTo-Json emits them as  etc.,
     # which PostgREST rejects (PGRST102 "Empty or invalid json"). One bad row poisons
     # the whole batch body, so the row-by-row fallback then drops the good rows too.
-    $s = [regex]::Replace($s, '[\x00-\x1F\x7F]', ' ').Trim()
+    $s = [regex]::Replace($s, '[\x00-\x1F\x7F-\x9F\uD800-\uDFFF]', ' ').Trim()
     if ($s -eq '') { return $null }
     return $s
 }
