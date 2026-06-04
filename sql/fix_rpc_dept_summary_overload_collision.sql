@@ -22,8 +22,15 @@
 --   - Canonical param order (p_store_codes, p_dates, p_subdept, p_eans) matches
 --     the frontend named call in src/app/page.jsx (rpc_dept_summary block).
 --
--- Depends on classify_snapshot_item() and is_fresh_perishable()
--- (deployed in sb_ap_004_c_interim_exclusion.sql).
+-- Calls the 4-arg classify_snapshot_item(dept, subdept, soh, last_sold) -- the
+-- patch1 (never-sold) overload that v_kpi_by_date already uses. This is required
+-- on two counts: (1) a 3-arg call is now ambiguous against the 4-arg DEFAULT NULL
+-- overload (42725 not unique), and (2) dept-level capital_tied must use the SAME
+-- exclusion expression as v_kpi_by_date so dept capital reconciles to the
+-- headline. The CASE below is a line-for-line mirror of v_kpi_by_date.capital_tied.
+--
+-- Depends on classify_snapshot_item(text,text,numeric,date) and
+-- is_fresh_perishable() -- both already live (v_kpi_by_date uses them).
 --
 -- Run in Supabase SQL Editor. Then hard-refresh the dashboard.
 -- =============================================================================
@@ -68,7 +75,7 @@ LANGUAGE sql STABLE SECURITY DEFINER AS $$
         ROUND(SUM(
             CASE WHEN ds.snapshot_date = l.d
                   AND ds.period_qty = 0 AND ds.soh > 0 AND ds.is_placeholder = FALSE
-                  AND classify_snapshot_item(ds.dept_name, ds.sub_dept_name, ds.soh)
+                  AND classify_snapshot_item(ds.dept_name, ds.sub_dept_name, ds.soh, ds.last_sales_date_iso)
                       IS NULL
                   AND NOT (
                       is_fresh_perishable(ds.dept_name, ds.sub_dept_name)
