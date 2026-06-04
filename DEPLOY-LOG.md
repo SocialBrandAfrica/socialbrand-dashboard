@@ -4,6 +4,30 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-04 — O1 fix: rpc_dept_summary overload collision (commit ce69e60)
+
+**Bug (O1 / SB-VAL-001):** "Sales by Department" panel showed "No sales data".
+Root cause: TWO `rpc_dept_summary` overloads coexisted (PGRST203) — the index-safe
+version from `fix_index_rule_dept_rpcs.sql` `(…,p_eans,p_subdept)` and a second one
+created by `sb_cc_dept_kpi_001` whose `DROP` named the wrong signature, so the drop
+missed. The new overload also re-introduced the Rule-4 `snapshot_date::text` cast.
+Separately, a 3-arg `classify_snapshot_item` call hit 42725 (ambiguous against
+patch1's 4-arg DEFAULT NULL overload).
+**Fix:** `sql/fix_rpc_dept_summary_overload_collision.sql` — dropped both explicit
+signatures, recreated ONE canonical `rpc_dept_summary(p_store_codes, p_dates,
+p_subdept, p_eans)` returning `…, capital_tied`, using index-safe
+`snapshot_date = ANY(p_dates::date[])` and the 4-arg
+`classify_snapshot_item(...,last_sales_date_iso)` so dept capital mirrors
+`v_kpi_by_date` exactly.
+**Verify:** pg_proc shows 1 `rpc_dept_summary` row; live dashboard "Sales by
+Department" renders depts + LY deltas (GROCERIES FOODS R367.2k, BUTCHERY R137.2k…).
+**Confirmed working:** YES (live, 2026-06-04).
+**Note:** surfaced that `mv_kpi_by_date` is stale (multi-date headline still R9.83M);
+`v_kpi_by_date` is already patch1-applied (~R1M). MV recreate+refresh + orphan 3-arg
+`classify_snapshot_item` drop pending — diagnostics in `sql/diag_classify_mv_state.sql`.
+
+---
+
 ## 2026-05-24 — Session 18, push v3.11 parse fix (commit 07e7108)
 
 **Bug:** `$finalStatus:` in backfill Write-Host line was parsed by PowerShell as a
