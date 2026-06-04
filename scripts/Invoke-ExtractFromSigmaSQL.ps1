@@ -70,7 +70,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.0'
+$ScriptVersion  = 'v1.1'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -303,7 +303,12 @@ function Push-Reader {
 function Safe-Text {
     param($v)
     if ($null -eq $v -or $v -is [System.DBNull]) { return $null }
-    $s = $v.ToString().Trim()
+    $s = $v.ToString()
+    # Strip NUL and other control chars (0x00-0x1F, 0x7F). Sigma char() columns can
+    # carry NUL padding / control bytes; ConvertTo-Json emits them as  etc.,
+    # which PostgREST rejects (PGRST102 "Empty or invalid json"). One bad row poisons
+    # the whole batch body, so the row-by-row fallback then drops the good rows too.
+    $s = [regex]::Replace($s, '[\x00-\x1F\x7F]', ' ').Trim()
     if ($s -eq '') { return $null }
     return $s
 }
