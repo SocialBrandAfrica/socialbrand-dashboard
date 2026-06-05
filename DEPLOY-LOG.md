@@ -4,6 +4,43 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-05 — DIWAAIS governance repo live (SocialBrandAfrica/diwaais-governance)
+
+**What:** The DIWAAIS governance layer (Bible, handovers, briefs, archive — 215 files) is
+now under version control at `https://github.com/SocialBrandAfrica/diwaais-governance`
+(private repo). Broken `.git` cleared, fresh init, branch `main`, 233 objects pushed.
+`.gitignore` excludes `socialbrand-dashboard/` (separate repo), store data dirs
+(`SPAR_*/`, `TOPS_*/`), CSVs, binaries, and secrets.
+
+---
+
+## 2026-06-05 — Push-SigmaToSupabase v3.18: UTF-8 body fix + empty-key guard (commit 040895f)
+
+**What (SB-CC-PUSH-003):** All data POST bodies in `Push-SigmaToSupabase.ps1` now sent
+as UTF-8 bytes (`[System.Text.Encoding]::UTF8.GetBytes($json)`) with
+`Content-Type: application/json; charset=utf-8`. Callsites fixed: `Send-Batch` batch
++ row-by-row fallback, `Write-PushError`, `Push-RefTables` dept + subdept.
+Added empty-key guard: clear diagnostic if `C:\socialbrand\sb-key.txt` is blank.
+**Root cause:** same PGRST102 bug as extractor v1.3 (CLAUDE-CODE-RULES R15) — NBSP and
+non-ASCII in product descriptions sent invalid UTF-8, causing silent row drops in
+`daily_snapshots` on every store every night.
+**Deploy path:** self-updater carries v3.18 to all 5 servers on tonight's 20:00 push.
+**Verify:** after tonight's run, confirm an accented product (e.g. NBSP in description)
+lands correctly in `daily_snapshots`. Check push_log for SUCCESS + expected row count.
+
+---
+
+## 2026-06-05 — Search-from-source fix: cache optimistic-only (commit 5ecdf6b)
+
+**What:** `page.jsx` scoped search path (dept/store filter active) no longer uses
+localStorage as authoritative. Cache is shown immediately (optimistic UX) then always
+replaced by a live `product_search_index` fetch. Key bumped `v1→v2` to flush stale
+caches on first load. New products from overnight pushes are now visible in search
+immediately after load.
+**Deploy path:** pushed to GitHub main, Vercel picks up automatically.
+
+---
+
 ## 2026-06-04 — O1 fix: rpc_dept_summary overload collision (commit ce69e60)
 
 **Bug (O1 / SB-VAL-001):** "Sales by Department" panel showed "No sales data".
