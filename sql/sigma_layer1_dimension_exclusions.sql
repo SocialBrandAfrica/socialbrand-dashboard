@@ -53,6 +53,16 @@
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
+-- Step 0: fix column type if table was created with UUID (from aborted first run)
+-- sigma_articles.client_id is TEXT; sigma_dimension_exclusions must match.
+-- IF NOT EXISTS means CREATE TABLE below is skipped on re-runs, so we ALTER instead.
+-- Safe on fresh installs (IF EXISTS is a no-op) and idempotent (TEXT->TEXT is a no-op).
+-- -----------------------------------------------------------------------------
+
+ALTER TABLE IF EXISTS sigma_dimension_exclusions
+    ALTER COLUMN client_id TYPE TEXT USING client_id::text;
+
+-- -----------------------------------------------------------------------------
 -- Step 1: create the rule-config table
 -- -----------------------------------------------------------------------------
 
