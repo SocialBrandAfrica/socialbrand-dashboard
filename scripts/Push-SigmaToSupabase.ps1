@@ -20,6 +20,16 @@
            included Prefer: resolution=merge-duplicates (an INSERT hint) on PATCH calls.
            Added Get-PatchHeaders for PATCH-only calls (omits resolution=merge-duplicates).
            Complete-PushLog and Clear-StuckRuns now use Get-PatchHeaders.
+    v3.18: UTF-8 body fix (SB-CC-PUSH-003). All data POST bodies now sent as
+           UTF-8 bytes ([System.Text.Encoding]::UTF8.GetBytes) with explicit
+           charset=utf-8 in Content-Type. Same root cause as extractor PGRST102
+           (CLAUDE-CODE-RULES R15 / NORTH_STAR R16 / RULE-BOOK S8): product
+           descriptions with NBSP (U+00A0) or other non-ASCII chars caused
+           invalid-UTF-8 bytes in the POST body, triggering PGRST102 on the
+           batch, then silent row drops in the row-by-row fallback. Also adds an
+           explicit empty-key guard after reading sb-key.txt so an empty or
+           whitespace-only file gives a clear error instead of a cryptic null
+           method call or 401 cascade.
     v3.17: Push must not report a false success when no new end-of-day ran.
            Two guards added to the nightly path: (a) if no TAC*.zip is present at
            all, log NO_DATA instead of throwing a generic FAILED; (b) if the newest
@@ -77,7 +87,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.17'
+$ScriptVersion = 'v3.18'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -119,7 +129,11 @@ $KeyFile = 'C:\socialbrand\sb-key.txt'
 if (-not (Test-Path $KeyFile)) {
     throw "Supabase key file not found: $KeyFile. Create the file with the service_role key on the first line."
 }
-$SupabaseKey = (Get-Content $KeyFile -Raw).Trim()
+$_rawKey     = Get-Content $KeyFile -Raw
+$SupabaseKey = if ($_rawKey) { $_rawKey.Trim() } else { '' }
+if ([string]::IsNullOrWhiteSpace($SupabaseKey)) {
+    throw "Supabase key file is empty or whitespace: $KeyFile. Write the service_role key to the first line (no quotes, no brackets)."
+}
 
 # Push tuning
 $BatchSize     = 500
@@ -196,9 +210,9 @@ function Get-Headers {
     return @{
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
-        'Content-Type'  = 'application/json'
+        'Content-Type'  = 'application/json; charset=utf-8'
         'Prefer'        = 'resolution=merge-duplicates,return=minimal'
-        'User-Agent'    = 'SocialBrand-PushScript/3.17 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.18 PowerShell'
     }
 }
 
@@ -209,9 +223,9 @@ function Get-PatchHeaders {
     return @{
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
-        'Content-Type'  = 'application/json'
+        'Content-Type'  = 'application/json; charset=utf-8'
         'Prefer'        = 'return=minimal'
-        'User-Agent'    = 'SocialBrand-PushScript/3.17 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.18 PowerShell'
     }
 }
 
@@ -219,9 +233,9 @@ function Get-ReturnHeaders {
     return @{
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
-        'Content-Type'  = 'application/json'
+        'Content-Type'  = 'application/json; charset=utf-8'
         'Prefer'        = 'return=representation'
-        'User-Agent'    = 'SocialBrand-PushScript/3.17 PowerShell'
+        'User-Agent'    = 'SocialBrand-PushScript/3.18 PowerShell'
     }
 }
 
@@ -411,7 +425,7 @@ function Write-PushError {
         row_data      = $Payload.Substring(0, [Math]::Min(2000, $Payload.Length))
     } | ConvertTo-Json
     try {
-        $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_errors" -Method POST -Headers (Get-Headers) -Body $body -TimeoutSec 30
+        $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_errors" -Method POST -Headers (Get-Headers) -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 30
     }
     catch {
         Write-Warning "push_errors write failed: $_"
@@ -434,7 +448,7 @@ function Send-Batch {
     while ($attempt -lt $RetryMax) {
         try {
             $json = ConvertTo-Json -InputObject @($Rows) -Depth 5 -Compress
-            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json -TimeoutSec 60
+            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body ([System.Text.Encoding]::UTF8.GetBytes($json)) -TimeoutSec 60
             return $Rows.Count
         }
         catch {
@@ -459,7 +473,7 @@ function Send-Batch {
     foreach ($row in $Rows) {
         try {
             $rowJson = ConvertTo-Json -InputObject @($row) -Depth 5 -Compress
-            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $rowJson -TimeoutSec 60
+            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body ([System.Text.Encoding]::UTF8.GetBytes($rowJson)) -TimeoutSec 60
             $pushed++
         }
         catch {
@@ -843,7 +857,7 @@ WHERE ABTLBEZ IS NOT NULL
         if ($deptBatch.Count -gt 0) {
             $url  = "$SupabaseUrl/rest/v1/departments?on_conflict=client_id,store_code,dept_code"
             $json = ConvertTo-Json -InputObject @($deptBatch) -Depth 3 -Compress
-            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json -TimeoutSec 60
+            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body ([System.Text.Encoding]::UTF8.GetBytes($json)) -TimeoutSec 60
             Write-Host "  departments upserted: $($deptBatch.Count)" -ForegroundColor Green
         }
 
@@ -871,7 +885,7 @@ WHERE WGRBEZ IS NOT NULL
         if ($subBatch.Count -gt 0) {
             $url  = "$SupabaseUrl/rest/v1/sub_departments?on_conflict=client_id,store_code,sub_dept_code"
             $json = ConvertTo-Json -InputObject @($subBatch) -Depth 3 -Compress
-            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body $json -TimeoutSec 60
+            $null = Invoke-RestMethod -Uri $url -Method POST -Headers (Get-Headers) -Body ([System.Text.Encoding]::UTF8.GetBytes($json)) -TimeoutSec 60
             Write-Host "  sub_departments upserted: $($subBatch.Count)" -ForegroundColor Green
         }
 
