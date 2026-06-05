@@ -28,15 +28,17 @@ CREATE TABLE sigma_dimension_exclusions (
 
 GRANT SELECT ON sigma_dimension_exclusions TO anon, authenticated;
 
+-- Source client_id from sigma_articles (TEXT slug e.g. 'socialbrand'),
+-- NOT from clients table (which holds UUID PKs -- a different id space).
 INSERT INTO sigma_dimension_exclusions (client_id, rule_name, rule_type, department_nr, reason)
-SELECT client_id::text, 'DEPT_ZERO_PLACEHOLDER', 'DEPT_CODE', 0,
+SELECT client_id, 'DEPT_ZERO_PLACEHOLDER', 'DEPT_CODE', 0,
     'Dept-0 placeholder articles absent from sigma_departments. Zero stock/sales.'
-FROM clients LIMIT 1;
+FROM sigma_articles LIMIT 1;
 
 INSERT INTO sigma_dimension_exclusions (client_id, rule_name, rule_type, reason)
-SELECT client_id::text, 'SUBDEPT_ORPHAN', 'SUBDEPT_ORPHAN',
+SELECT client_id, 'SUBDEPT_ORPHAN', 'SUBDEPT_ORPHAN',
     'Sub-dept codes absent from sigma_subdepts (GL/accounting expense accounts borrowing merch number range). Self-maintaining per store.'
-FROM clients LIMIT 1;
+FROM sigma_articles LIMIT 1;
 
 SELECT rule_name, rule_type, department_nr FROM sigma_dimension_exclusions;
 -- Expected: 2 rows
