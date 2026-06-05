@@ -1030,8 +1030,8 @@ function useIsMobile() {
 // Persists between sessions. Key is scoped to dept+stores so different
 // filter combos don't overwrite each other.
 // ─────────────────────────────────────────────────────────────────────────────
-const SEARCH_IDX_KEY = 'sb_pulse_search_index_v1'
-const SEARCH_IDX_TTL = 24 * 60 * 60 * 1000
+const SEARCH_IDX_KEY = 'sb_pulse_search_index_v2'
+const SEARCH_IDX_TTL = 6 * 60 * 60 * 1000  // 6h — optimistic cache only, always revalidated
 
 function loadCachedSearchIndex(scopeKey) {
   try {
@@ -1729,11 +1729,13 @@ export default function Home() {
     }
 
     const scopeKey = (deptFilter === 'all' ? 'ALL' : deptFilter) + '|' + [...storeCodes].sort().join(',')
-    const cached   = loadCachedSearchIndex(scopeKey)
-    if (cached) {
-      setSearchIndex(cached)
-      return
-    }
+
+    // Show cached data immediately (optimistic UX) while the fresh fetch runs.
+    // The cache is never authoritative — a live fetch always follows to pick up
+    // new lines added by overnight pushes. product_search_index is the source of
+    // truth; rpc_search_products is the per-keystroke fallback.
+    const cached = loadCachedSearchIndex(scopeKey)
+    if (cached) setSearchIndex(cached)
 
     let cancelled = false
     let query = supabase
