@@ -58,7 +58,7 @@
 
 CREATE TABLE IF NOT EXISTS sigma_dimension_exclusions (
     rule_id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    client_id           UUID        NOT NULL,
+    client_id           TEXT        NOT NULL,   -- TEXT to match sigma_articles.client_id
     rule_name           TEXT        NOT NULL,
     -- DEPT_CODE    : exclude articles where department_nr = this value (exact)
     -- SUBDEPT_ORPHAN: exclude articles whose merch_group_nr has no row in
