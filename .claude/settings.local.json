@@ -54,13 +54,11 @@
       "Bash(wc -l \"/mnt/c/Users/User/Desktop/DIWAAIS/socialbrand-dashboard/src/app/page.jsx\")",
       "PowerShell(\\(Get-Content \"C:\\\\Users\\\\User\\\\Desktop\\\\DIWAAIS\\\\socialbrand-dashboard\\\\src\\\\app\\\\page.jsx\"\\).Count)",
       "PowerShell(python \"C:\\\\Users\\\\User\\\\Desktop\\\\DIWAAIS\\\\diagnose_data.py\" --days 30 2>&1)",
-
       "Read(C:\\Users\\User\\Desktop\\DIWAAIS\\*)",
       "Write(C:\\Users\\User\\Desktop\\DIWAAIS\\*)",
       "Edit(C:\\Users\\User\\Desktop\\DIWAAIS\\*)",
       "PowerShell(python \"C:\\\\Users\\\\User\\\\Desktop\\\\DIWAAIS\\\\*\")",
       "PowerShell(python C:\\\\Users\\\\User\\\\Desktop\\\\DIWAAIS\\\\*)",
-
       "mcp__Claude_in_Chrome__file_upload",
       "mcp__Claude_in_Chrome__form_input",
       "mcp__Claude_in_Chrome__get_page_text",
@@ -71,7 +69,30 @@
       "mcp__Claude_in_Chrome__shortcuts_list",
       "mcp__Claude_in_Chrome__switch_browser",
       "mcp__Claude_in_Chrome__tabs_close_mcp",
-      "mcp__Claude_in_Chrome__upload_image"
+      "mcp__Claude_in_Chrome__upload_image",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\User\\\\Desktop\\\\DIWAAIS\\\\\" | Where-Object { $_.Name -match \"schema|Schema|SCHEMA\" } | Select-Object Name, LastWriteTime)",
+      "Bash(echo \"=== products ===\")",
+      "Bash(curl -s 'https://crklvhfwyxlisfcvqenc.supabase.co/rest/v1/products?limit=1&select=*' -H 'apikey: sb_publishable__5cXLbkpdth-iLFkeqTTNA_kRUvfYgr' -H 'Authorization: Bearer sb_publishable__5cXLbkpdth-iLFkeqTTNA_kRUvfYgr')",
+      "Bash(echo \"=== sub_departments \\(detailed\\) ===\")",
+      "Bash(curl -s 'https://crklvhfwyxlisfcvqenc.supabase.co/rest/v1/sub_departments?limit=1&select=*' -H 'apikey: sb_publishable__5cXLbkpdth-iLFkeqTTNA_kRUvfYgr' -H 'Authorization: Bearer sb_publishable__5cXLbkpdth-iLFkeqTTNA_kRUvfYgr' -D -)",
+      "Bash(echo \"=== products \\(full response\\) ===\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(git restore *)",
+      "Bash(find /mnt/c/Users/User/Desktop/DIWAAIS -maxdepth 3 -name \"*.md\" | head -30)",
+      "Bash(ls \"/mnt/c/Users/User/Desktop/\" 2>/dev/null || ls /Users/User/Desktop/ 2>/dev/null || echo \"path not found\")",
+      "Bash(git fetch *)",
+      "Bash(git -C \"C:/Users/User/Desktop/DIWAAIS/socialbrand-dashboard\" status)",
+      "Bash(git -C \"C:/Users/User/Desktop/DIWAAIS/socialbrand-dashboard\" ls-files DB-SCHEMA.md)",
+      "Bash(git -C \"C:/Users/User/Desktop/DIWAAIS/socialbrand-dashboard\" status DB-SCHEMA.md)",
+      "Bash(ls ~/.claude/projects/ | head -20)",
+      "mcp__mcp-registry__search_mcp_registry",
+      "mcp__mcp-registry__list_connectors",
+      "Bash(npx next *)",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "WebFetch(domain:github.com)",
+      "mcp__supabase__execute_sql",
+      "mcp__supabase__get_publishable_keys"
     ]
   }
 }
