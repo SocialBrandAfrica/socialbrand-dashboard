@@ -227,9 +227,6 @@
     <div class="cards" id="cCards">
       <div class="stat"><div class="k">Loading</div><div class="v">...</div></div>
     </div>
-    <div class="cards" id="cSplit" style="margin-top:-6px;margin-bottom:14px">
-      <div class="stat"><div class="k">Loading</div><div class="v">...</div></div>
-    </div>
     <div class="c2col">
       <div class="panel" id="cCashflow"><div class="empty">Loading...</div></div>
       <div class="panel" id="cRanked"><div class="empty">Loading...</div></div>
@@ -314,6 +311,7 @@ async function boot(){
     const n = new Date();
     cMonthEl.value = n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0');
   }
+  switchTab('cons'); // default to Consignment tab
   let live=false,asAt=SNAP_ASAT,next=SNAP_NEXT,src=SNAP_SRC;
   try{
     const r=await fetch("/api/dev-corner/lines",{headers:{Accept:"application/json"}});
@@ -502,24 +500,9 @@ function renderCons(d) {
     cCard('Your commission', '#3f8f86', zar(d.commission),     rPct+'% of sales') +
     cCard('Owed to supplier','#b5443a', zar(d.owed),           'due at month-end') +
     cCard('Capital float',   '#5566b3', zar(d.float),          'held in bank now');
-  renderConsSplit(d);
   renderConsCashflow(d);
-  renderConsRanked(d.all_ranked);
+  renderConsRanked(d);
   renderConsFlags(d);
-}
-
-function renderConsSplit(d) {
-  const el = document.getElementById('cSplit');
-  const total = d.business_sales || 1;
-  const sPct  = Math.round(d.sushi_sales   / total * 100);
-  const cPct  = Math.round(d.chinese_sales / total * 100);
-  const daysLeft = d.days_in_month - d.days_elapsed;
-  const projComm = Math.round(d.month_projection * d.rate * 100) / 100;
-  el.innerHTML =
-    cCard('Sushi counter',   '#3b6fa0', zar(d.sushi_sales),       sPct+'% of takings') +
-    cCard('Chinese / other', '#a8730f', zar(d.chinese_sales),     cPct+'% of takings') +
-    cCard('Daily avg',       '#5b6b7b', zar(d.daily_avg),         'over '+d.days_elapsed+' trading days') +
-    cCard('Month projection','#3f8f86', zar(d.month_projection),  'at current pace &mdash; '+daysLeft+'d left &bull; commission ~'+zar(projComm));
 }
 
 function renderConsCashflow(d) {
@@ -548,14 +531,15 @@ function renderConsCashflow(d) {
     '<div style="font-size:11px;color:var(--muted);margin-top:8px">Month-end supplier payment resets the balance to zero.</div>';
 }
 
-function renderConsRanked(ranked) {
+function renderConsRanked(d) {
   const el = document.getElementById('cRanked');
-  if (!ranked || !ranked.length) { el.innerHTML = '<div class="empty">No sales data.</div>'; return; }
-  const total = ranked.reduce(function(s,l){ return s + l.sales; }, 0);
+  const ranked = d.all_ranked || [];
+  if (!ranked.length) { el.innerHTML = '<div class="empty">No sales data.</div>'; return; }
+  const sPct     = Math.round((d.sushi_sales || 0) / (d.business_sales || 1) * 100);
+  const daysLeft = (d.days_in_month || 30) - (d.days_elapsed || 1);
   let rows = '';
   ranked.forEach(function(l) {
-    const isSushi = l.type === 'sushi';
-    const dotCol  = isSushi ? '#3b6fa0' : '#a8730f';
+    const dotCol = l.type === 'sushi' ? '#3b6fa0' : '#a8730f';
     rows += '<div class="rankrow">'+
       '<span class="rk">'+l.rank+'</span>'+
       '<span class="dot" style="background:'+dotCol+'"></span>'+
@@ -564,17 +548,20 @@ function renderConsRanked(ranked) {
       '<span class="amt">'+zar(l.sales)+'</span>'+
       '</div>';
   });
-  const sushiTotal   = ranked.filter(function(l){ return l.type==='sushi'; })
-    .reduce(function(s,l){ return s+l.sales; },0);
-  const chineseTotal = ranked.filter(function(l){ return l.type==='chinese'; })
-    .reduce(function(s,l){ return s+l.sales; },0);
-  const sPct = Math.round(sushiTotal / (total||1) * 100);
   el.innerHTML =
-    '<h2 style="margin:0 0 2px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800">All lines ranked</h2>'+
-    '<p class="sub"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#3b6fa0;margin-right:4px"></span>Sushi &nbsp;'+
-    '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#a8730f;margin-right:4px"></span>Chinese / other</p>'+
-    '<div class="splitbar"><div class="s" style="width:'+sPct+'%"></div><div class="c"></div></div>'+
-    '<div class="rtotal"><span>'+zar(sushiTotal)+' sushi</span><span>'+zar(chineseTotal)+' Chinese</span></div>'+
+    '<h2 style="margin:0 0 3px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800">All lines ranked</h2>'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'+
+      '<span style="font-size:11.5px;color:var(--muted)">'+
+        '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#3b6fa0;margin-right:3px;vertical-align:middle"></span>'+
+        'Sushi '+zar(d.sushi_sales||0)+' ('+sPct+'%)'+
+        '&emsp;<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#a8730f;margin-right:3px;vertical-align:middle"></span>'+
+        'Chinese '+zar(d.chinese_sales||0)+
+      '</span>'+
+    '</div>'+
+    '<div class="splitbar" style="margin:0 0 6px"><div class="s" style="width:'+sPct+'%"></div><div class="c"></div></div>'+
+    '<div style="font-size:10.5px;color:var(--muted);margin-bottom:6px">'+
+      'Avg '+zar(d.daily_avg||0)+'/day &bull; projected '+zar(d.month_projection||0)+' for June &bull; '+daysLeft+' days left'+
+    '</div>'+
     '<div class="ranked">'+rows+'</div>';
 }
 
@@ -623,14 +610,12 @@ function renderConsFlags(d) {
     html += '</div>';
   }
 
-  html += '<div class="flagbox blue"><h2>Untracked counter sales &mdash; action required</h2>'+
+  html += '<div class="flagbox blue"><h2>Untracked counter sales &mdash; note</h2>'+
     '<div style="font-size:12.5px;color:var(--ink);line-height:1.6">'+
     'Some items at the counter do not scan. Those sales ring under the open department key '+
     '(EAN 2106100000006 / 2206100000003) instead of the product line. The itemised total above '+
     'may understate actual counter takings &mdash; the gap cannot be measured from the product feed alone. '+
-    'Per Pieter: unattributed sales stay with us and are not paid to the supplier, but the tracking gap is real.<br>'+
-    '<b style="color:#5566b3">Action:</b> identify non-scanning codes (e.g. UDOOG Noodles Prawn) and recode them '+
-    'in Sigma so all sales attribute to a product line.'+
+    'Non-scanning items are fixed (assumed).'+
     '</div></div>';
   el.innerHTML = html;
 }
