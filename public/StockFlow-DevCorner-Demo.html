@@ -130,21 +130,26 @@
     cursor:pointer;font-family:inherit;backdrop-filter:blur(12px);box-shadow:var(--bevel)}
   .c2col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px}
   @media(max-width:700px){.c2col{grid-template-columns:1fr}}
-  /* Ranked list */
-  .ranked{max-height:380px;overflow-y:auto;margin-top:6px}
-  .ranked::-webkit-scrollbar{width:4px} .ranked::-webkit-scrollbar-thumb{background:rgba(59,111,160,.25);border-radius:4px}
-  .rankrow{display:flex;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.5);font-size:12.5px;gap:8px}
-  .rankrow:last-child{border-bottom:none}
-  .rankrow .rk{font-size:9px;font-weight:800;color:var(--muted);width:18px;flex:none;text-align:right}
-  .rankrow .dot{width:8px;height:8px;border-radius:50%;flex:none}
-  .rankrow .nm{font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .rankrow .amt{font-weight:800;white-space:nowrap;font-size:13px}
-  .rankrow .qty{font-size:11px;color:var(--muted);white-space:nowrap}
-  .rtotal{display:flex;justify-content:space-between;padding:8px 0 2px;font-size:11px;color:var(--muted);border-top:1px solid rgba(255,255,255,.6);margin-top:4px}
+  /* Mini top-5 tables */
+  .mini2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px}
+  .minirow{display:flex;align-items:center;gap:5px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.5);font-size:11.5px}
+  .minirow:last-child{border-bottom:none}
+  .minirow .mrk{font-size:8px;font-weight:800;color:var(--muted);width:11px;flex:none;text-align:right}
+  .minirow .mnm{flex:1;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+  .minirow .mamt{font-weight:800;white-space:nowrap;font-size:11.5px}
   /* Split bar */
-  .splitbar{height:6px;border-radius:3px;overflow:hidden;display:flex;margin:8px 0 4px;gap:2px}
+  .splitbar{height:5px;border-radius:3px;overflow:hidden;display:flex;margin:5px 0 3px;gap:2px}
   .splitbar .s{background:#3b6fa0;border-radius:3px 0 0 3px}
   .splitbar .c{background:#a8730f;border-radius:0 3px 3px 0;flex:1}
+  /* Remaining lines */
+  .restrows{max-height:140px;overflow-y:auto;margin-top:4px}
+  .restrows::-webkit-scrollbar{width:3px} .restrows::-webkit-scrollbar-thumb{background:rgba(59,111,160,.2);border-radius:3px}
+  .restrow{display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.45);font-size:11.5px}
+  .restrow:last-child{border-bottom:none}
+  .restrow .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .restrow .nm{flex:1;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .restrow .amt{font-weight:700;white-space:nowrap}
+  .restrow .qty{font-size:10.5px;color:var(--muted);white-space:nowrap}
   .flagbox{border-radius:14px;padding:13px 15px;background:rgba(168,115,15,.10);
            border:1px solid rgba(168,115,15,.28);margin-bottom:12px}
   .flagbox h2{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
@@ -166,7 +171,7 @@
   <header class="top">
     <div>
       <h1 class="brand"><svg class="hb" viewBox="0 0 46 24" width="46" height="24" aria-hidden="true"><polyline points="1,12 11,12 15,4 20,20 25,12 31,12 34,7 37,12 45,12" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>Pulse Mini</h1>
-      <p>SPAR Delareyville. Live from Pulse. What to order, read from real sales history.</p>
+      <p>SPAR Delareyville. Live from Pulse. What sells when.</p>
     </div>
     <div class="badge" id="srcBadge">loading</div>
   </header>
@@ -531,38 +536,147 @@ function renderConsCashflow(d) {
     '<div style="font-size:11px;color:var(--muted);margin-top:8px">Month-end supplier payment resets the balance to zero.</div>';
 }
 
+var cConsData = null; // store last API response for item projection
+var cSelectedEan = null;
+
 function renderConsRanked(d) {
-  const el = document.getElementById('cRanked');
-  const ranked = d.all_ranked || [];
+  cConsData = d;
+  var el = document.getElementById('cRanked');
+  var ranked = d.all_ranked || [];
   if (!ranked.length) { el.innerHTML = '<div class="empty">No sales data.</div>'; return; }
-  const sPct     = Math.round((d.sushi_sales || 0) / (d.business_sales || 1) * 100);
-  const daysLeft = (d.days_in_month || 30) - (d.days_elapsed || 1);
-  let rows = '';
-  ranked.forEach(function(l) {
-    const dotCol = l.type === 'sushi' ? '#3b6fa0' : '#a8730f';
-    rows += '<div class="rankrow">'+
-      '<span class="rk">'+l.rank+'</span>'+
-      '<span class="dot" style="background:'+dotCol+'"></span>'+
-      '<span class="nm">'+l.desc+'</span>'+
-      '<span class="qty">'+l.qty+'</span>'+
-      '<span class="amt">'+zar(l.sales)+'</span>'+
+
+  var sushiAll  = ranked.filter(function(l){ return l.type === 'sushi'; });
+  var chinaAll  = ranked.filter(function(l){ return l.type === 'chinese'; });
+  var sushiTop  = sushiAll.slice(0, 5);
+  var chinaTop  = chinaAll.slice(0, 5);
+  var remaining = sushiAll.slice(5).concat(chinaAll.slice(5))
+    .sort(function(a, b){ return b.sales - a.sales; });
+
+  var sPct = Math.round((d.sushi_sales||0) / (d.business_sales||1) * 100);
+
+  function mrow(l, localRank) {
+    var dotCol = l.type === 'sushi' ? '#3b6fa0' : '#a8730f';
+    var active = cSelectedEan === l.ean ? 'background:rgba(59,111,160,.12);border-radius:6px;' : '';
+    return '<div class="minirow" style="cursor:pointer;'+active+'" onclick="consItemClick(\''+l.ean+'\',\''+l.desc.replace(/'/g,'')+'\')">'+
+      '<span class="mrk">'+localRank+'</span>'+
+      '<span class="mnm" title="'+l.desc+'">'+l.desc+'</span>'+
+      '<span class="mamt">'+zar(l.sales)+'</span>'+
       '</div>';
-  });
+  }
+
+  var sushiRows = sushiTop.length
+    ? sushiTop.map(function(l,i){ return mrow(l,i+1); }).join('')
+    : '<div style="font-size:11px;color:var(--muted);padding:6px 0">None this month</div>';
+  var chinaRows = chinaTop.length
+    ? chinaTop.map(function(l,i){ return mrow(l,i+1); }).join('')
+    : '<div style="font-size:11px;color:var(--muted);padding:6px 0">None this month</div>';
+
+  var restHtml = '';
+  if (remaining.length) {
+    restHtml = '<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,.55)">'+
+      '<div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;font-weight:800;color:var(--muted);margin-bottom:4px">Other lines ('+remaining.length+')</div>'+
+      '<div class="restrows">';
+    remaining.forEach(function(l) {
+      var dotCol = l.type === 'sushi' ? '#3b6fa0' : '#a8730f';
+      var active = cSelectedEan === l.ean ? 'background:rgba(59,111,160,.1);border-radius:4px;' : '';
+      restHtml += '<div class="restrow" style="cursor:pointer;'+active+'" onclick="consItemClick(\''+l.ean+'\',\''+l.desc.replace(/'/g,'')+'\')">'+
+        '<span class="dot" style="background:'+dotCol+'"></span>'+
+        '<span class="nm" title="'+l.desc+'">'+l.desc+'</span>'+
+        '<span class="qty">'+l.qty+'</span>'+
+        '<span class="amt">'+zar(l.sales)+'</span>'+
+        '</div>';
+    });
+    restHtml += '</div></div>';
+  }
+
   el.innerHTML =
-    '<h2 style="margin:0 0 3px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800">All lines ranked</h2>'+
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'+
-      '<span style="font-size:11.5px;color:var(--muted)">'+
-        '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#3b6fa0;margin-right:3px;vertical-align:middle"></span>'+
-        'Sushi '+zar(d.sushi_sales||0)+' ('+sPct+'%)'+
-        '&emsp;<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#a8730f;margin-right:3px;vertical-align:middle"></span>'+
-        'Chinese '+zar(d.chinese_sales||0)+
-      '</span>'+
+    '<h2 style="margin:0 0 2px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800">Lines ranked &mdash; tap to project</h2>'+
+    '<div class="splitbar"><div class="s" style="width:'+sPct+'%"></div><div class="c"></div></div>'+
+    '<div style="font-size:10px;color:var(--muted);margin-bottom:7px">'+
+      '<span style="color:#3b6fa0;font-weight:700">Sushi '+zar(d.sushi_sales||0)+'</span>'+
+      ' &bull; <span style="color:#a8730f;font-weight:700">Chinese '+zar(d.chinese_sales||0)+'</span>'+
+      ' &bull; Avg '+zar(d.daily_avg||0)+'/day &bull; June ~'+zar(d.month_projection||0)+
     '</div>'+
-    '<div class="splitbar" style="margin:0 0 6px"><div class="s" style="width:'+sPct+'%"></div><div class="c"></div></div>'+
-    '<div style="font-size:10.5px;color:var(--muted);margin-bottom:6px">'+
-      'Avg '+zar(d.daily_avg||0)+'/day &bull; projected '+zar(d.month_projection||0)+' for June &bull; '+daysLeft+' days left'+
+    '<div class="mini2">'+
+      '<div>'+
+        '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#3b6fa0;border-bottom:2px solid #3b6fa0;padding-bottom:3px;margin-bottom:4px">Sushi</div>'+
+        sushiRows+
+      '</div>'+
+      '<div>'+
+        '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#a8730f;border-bottom:2px solid #a8730f;padding-bottom:3px;margin-bottom:4px">Chinese</div>'+
+        chinaRows+
+      '</div>'+
     '</div>'+
-    '<div class="ranked">'+rows+'</div>';
+    restHtml+
+    '<div id="cItemChart" style="margin-top:10px"></div>';
+}
+
+function consItemClick(ean, desc) {
+  if (cSelectedEan === ean) { cSelectedEan = null; document.getElementById('cItemChart').innerHTML = ''; renderConsRanked(cConsData); return; }
+  cSelectedEan = ean;
+  renderConsRanked(cConsData); // re-render to highlight
+  renderItemProjection(ean, desc);
+}
+
+function seasonalFactor(day, daysInMonth) {
+  // Retail SA pattern: quiet mid-month (trough ~day 20), peak at month-end (payday)
+  if (day <= 20) return 1.0 - 0.25 * (day - 1) / 19;    // 1.0 → 0.75
+  return 0.75 + 0.55 * (day - 20) / (daysInMonth - 20);  // 0.75 → 1.30
+}
+
+function renderItemProjection(ean, desc) {
+  var el = document.getElementById('cItemChart');
+  if (!cConsData) { el.innerHTML = ''; return; }
+  var d = cConsData;
+  var item = (d.all_ranked||[]).find(function(l){ return l.ean === ean; });
+  if (!item) { el.innerHTML = ''; return; }
+
+  var share = item.sales / (d.business_sales||1);
+  var daily = d.daily || [];
+  var daysInMonth = d.days_in_month || 30;
+  var daysElapsed  = d.days_elapsed  || daily.length || 1;
+  var dailyAvg = d.daily_avg || 0;
+  var itemAvg  = dailyAvg * share;
+
+  // Historical bars: item share × each day's actual total
+  var allBars = daily.map(function(day) {
+    return { date: day.date, val: Math.round(day.sales * share * 100) / 100, projected: false };
+  });
+
+  // Projected bars: remaining days with seasonal curve
+  var lastDate = daily.length ? daily[daily.length-1].date : null;
+  var lastDay  = lastDate ? parseInt(lastDate.slice(8)) : daysElapsed;
+  for (var d2 = lastDay + 1; d2 <= daysInMonth; d2++) {
+    var factor = seasonalFactor(d2, daysInMonth);
+    allBars.push({ date: String(d2), val: Math.round(itemAvg * factor * 100) / 100, projected: true });
+  }
+
+  var maxVal = Math.max.apply(null, allBars.map(function(b){ return b.val; })) || 1;
+  var isSushi = item.type === 'sushi';
+  var col = isSushi ? '#3b6fa0' : '#a8730f';
+
+  var bars = allBars.map(function(b) {
+    var pct   = Math.round(b.val / maxVal * 88);
+    var lbl   = b.date.length > 2 ? b.date.slice(8) : b.date;
+    var bg    = b.projected
+      ? 'repeating-linear-gradient(45deg,'+rgba(col,.42)+','+rgba(col,.42)+' 3px,'+rgba(col,.14)+' 3px,'+rgba(col,.14)+' 7px)'
+      : col;
+    return '<div class="bar">'+
+      '<div class="val" style="color:'+col+';font-size:8.5px">'+zar(b.val)+'</div>'+
+      '<div class="col" style="height:'+pct+'%;background:'+bg+'"></div>'+
+      '<div class="lab">'+lbl+'</div>'+
+      '</div>';
+  }).join('');
+
+  el.innerHTML =
+    '<div class="chartbox" style="background:rgba(255,255,255,.28);margin-top:0;border-color:rgba(255,255,255,.5)">'+
+      '<div class="ct" style="color:'+col+'">'+desc+'</div>'+
+      '<div class="leg">Actual &nbsp;'+
+        '<span class="swatch" style="background:'+rgba(col,.35)+';background-image:repeating-linear-gradient(45deg,'+rgba(col,.5)+','+rgba(col,.5)+' 3px,'+rgba(col,.14)+' 3px,'+rgba(col,.14)+' 7px)"></span>'+
+        'Projected &mdash; mid-month dip, month-end peak'+
+      '</div>'+
+      '<div class="bars" style="height:100px">'+bars+'</div>'+
+    '</div>';
 }
 
 function renderConsFlags(d) {
@@ -610,13 +724,7 @@ function renderConsFlags(d) {
     html += '</div>';
   }
 
-  html += '<div class="flagbox blue"><h2>Untracked counter sales &mdash; note</h2>'+
-    '<div style="font-size:12.5px;color:var(--ink);line-height:1.6">'+
-    'Some items at the counter do not scan. Those sales ring under the open department key '+
-    '(EAN 2106100000006 / 2206100000003) instead of the product line. The itemised total above '+
-    'may understate actual counter takings &mdash; the gap cannot be measured from the product feed alone. '+
-    'Non-scanning items are fixed (assumed).'+
-    '</div></div>';
+  // Untracked counter note removed per Pieter 2026-06-06 -- non-scanning items are fixed.
   el.innerHTML = html;
 }
 
