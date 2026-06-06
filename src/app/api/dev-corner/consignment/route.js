@@ -71,9 +71,10 @@ export async function GET(request) {
 
     const allRows = rows ?? []
 
-    // Partition into business lines and wrong items
-    const goodRows  = allRows.filter(r => !isWrongItem(r))
-    const wrongRows = allRows.filter(r =>  isWrongItem(r))
+    // Exclude BREAKFAST and MABELA from business figures — both recoded in Sigma 2026-06-05.
+    // They are silently dropped; not shown anywhere in the panel.
+    const goodRows = allRows.filter(r => !isWrongItem(r))
+    const wrongItems = [] // reserved for future misfiled items; currently none
 
     // Aggregate by EAN for business lines
     const byEan = {}
@@ -84,16 +85,6 @@ export async function GET(request) {
       byEan[k].qty   += Math.max(0, r.today_qty   ?? 0)
     }
     const lines = Object.values(byEan)
-
-    // Aggregate wrong items (only include those with activity)
-    const wrongByEan = {}
-    for (const r of wrongRows) {
-      const k = r.ean
-      if (!wrongByEan[k]) wrongByEan[k] = { ean: r.ean, desc: r.description, sales: 0, qty: 0 }
-      wrongByEan[k].sales += Math.max(0, r.today_sales ?? 0)
-      wrongByEan[k].qty   += Math.max(0, r.today_qty   ?? 0)
-    }
-    const wrongItems = Object.values(wrongByEan)
 
     // Business totals
     const businessSales = lines.reduce((s, l) => s + l.sales, 0)
