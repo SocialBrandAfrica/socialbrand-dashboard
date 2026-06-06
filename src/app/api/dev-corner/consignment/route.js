@@ -13,11 +13,18 @@ import { NextResponse }  from 'next/server'
 const STORE  = '10116'
 const SUBDEPT = 'HMR SUSHI'
 
-// Items physically present in HMR SUSHI but not the supplier's product.
-// BREAKFAST: fixed EAN. MABELA: matched by description prefix (no fixed EAN).
-const WRONG_EANS = new Set(['1011600209210'])
-function isWrongItem(row) {
-  if (WRONG_EANS.has(String(row.ean))) return true
+// Items excluded from consignment business figures -- silently dropped, not shown.
+// BREAKFAST / MABELA: misfiled, recoded in Sigma 2026-06-05.
+// Generic dept-key EANs: HMR SUSHI 14% and 0% open keys -- unattributed sales
+// that cannot be itemised and are not paid to the supplier.
+const EXCLUDED_EANS = new Set([
+  '1011600209210',   // BREAKFAST -- recoded to HMR GRAB & GO
+  '1011600200923',   // MABELA PORRIDGE -- recoded to HMR HOT MEALS
+  '2106100000006',   // HMR SUSHI 14% generic dept key
+  '2206100000003',   // HMR SUSHI 0% generic dept key
+])
+function isExcluded(row) {
+  if (EXCLUDED_EANS.has(String(row.ean))) return true
   const d = (row.description ?? '').toUpperCase()
   return d.startsWith('MABELA')
 }
@@ -71,9 +78,8 @@ export async function GET(request) {
 
     const allRows = rows ?? []
 
-    // Exclude BREAKFAST and MABELA from business figures — both recoded in Sigma 2026-06-05.
-    // They are silently dropped; not shown anywhere in the panel.
-    const goodRows = allRows.filter(r => !isWrongItem(r))
+    // Silently drop all excluded items -- misfiled lines + generic dept keys.
+    const goodRows = allRows.filter(r => !isExcluded(r))
     const wrongItems = [] // reserved for future misfiled items; currently none
 
     // Aggregate by EAN for business lines
