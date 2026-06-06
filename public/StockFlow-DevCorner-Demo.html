@@ -1,734 +1,322 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pulse Mini</title>
+<title>Pulse Mini — Consignment (design reference)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --ink:#1f2a37;--muted:#5b6b7b;--line:rgba(255,255,255,.6);
-    --amber:#a8730f;--amber-soft:rgba(168,115,15,.15);--red:#b5443a;--red-soft:rgba(181,68,58,.14);
-    --glass:rgba(255,255,255,.58);--glass-2:rgba(255,255,255,.42);--glass-line:rgba(255,255,255,.72);
-    --shadow:0 10px 30px rgba(40,60,85,.16);
-    --bevel:inset 0 1px 0 rgba(255,255,255,.85),inset 0 -1px 0 rgba(40,60,85,.06);
+    --blue:#2F6196; --blue-d:#244E79; --gold:#C9882A; --gold-d:#A8701F;
+    --ink:#1E2A37; --slate:#46586B; --pos:#2E7D32;
+    --glass:rgba(255,255,255,.55); --glass-b:rgba(255,255,255,.7);
+    --hair:rgba(36,78,121,.15);
   }
   *{box-sizing:border-box}
-  html,body{min-height:100%}
-  body{margin:0;font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
-       color:var(--ink);line-height:1.5;font-size:14px;
-       background:
-         radial-gradient(40rem 40rem at 12% 12%, rgba(174,201,230,.7), transparent 60%),
-         radial-gradient(34rem 34rem at 90% 8%, rgba(199,210,228,.65), transparent 60%),
-         radial-gradient(40rem 40rem at 80% 95%, rgba(186,207,226,.6), transparent 60%),
-         linear-gradient(140deg,#eaeff5 0%,#dde6f0 55%,#e7ebf1 100%);
-       background-attachment:fixed;}
-  .wrap{max-width:1080px;margin:0 auto;padding:20px}
-  header.top{border-radius:20px;padding:18px 22px;display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;
-             background:linear-gradient(120deg,rgba(255,255,255,.62),rgba(255,255,255,.4));
-             backdrop-filter:blur(20px) saturate(150%);-webkit-backdrop-filter:blur(20px) saturate(150%);
-             border:1px solid var(--glass-line);box-shadow:var(--shadow),var(--bevel)}
-  header.top h1{margin:0;font-size:20px;font-weight:800;letter-spacing:-.01em}
-  header.top p{margin:4px 0 0;font-size:12.5px;color:var(--muted)}
-  .brand{display:flex;align-items:center;gap:11px}
-  .hb{color:#2f5781;flex:none;transform-origin:center;animation:beat 1.9s ease-in-out infinite}
-  @keyframes beat{0%,22%,100%{transform:scale(1)}9%{transform:scale(1.14)}15%{transform:scale(.98)}}
-  .badge{padding:6px 12px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;
-         border:1px solid rgba(255,255,255,.6);background:rgba(255,255,255,.45);color:#2f5781;box-shadow:var(--bevel)}
-  .badge.live{background:rgba(59,111,160,.92);color:#fff;border-color:transparent;box-shadow:0 0 0 4px rgba(59,111,160,.2)}
-  .freshness{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0 16px}
-  .fresh{border-radius:14px;padding:11px 15px;flex:1;min-width:170px;background:var(--glass);
-         backdrop-filter:blur(16px) saturate(150%);-webkit-backdrop-filter:blur(16px) saturate(150%);
-         border:1px solid var(--glass-line);box-shadow:var(--shadow),var(--bevel)}
-  .fresh .k{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:800}
-  .fresh .v{font-size:13px;font-weight:700;margin-top:2px}
-  .grid{display:grid;grid-template-columns:272px 1fr;gap:16px}
-  @media(max-width:780px){.grid{grid-template-columns:1fr}}
-  .panel{border-radius:18px;padding:16px;background:var(--glass);
-         backdrop-filter:blur(20px) saturate(150%);-webkit-backdrop-filter:blur(20px) saturate(150%);
-         border:1px solid var(--glass-line);box-shadow:var(--shadow),var(--bevel)}
-  .panel h2{margin:0 0 3px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800}
-  .panel .sub{font-size:11.5px;color:var(--muted);margin:0 0 11px}
-  .grouphdr{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;margin:12px 0 6px;display:flex;align-items:center;gap:6px}
-  .grouphdr .dot{width:9px;height:9px;border-radius:3px}
-  .grouphdr:first-of-type{margin-top:2px}
-  .prod{width:100%;text-align:left;border-radius:13px;padding:10px 12px;margin-bottom:8px;cursor:pointer;transition:.15s;
-        background:var(--glass-2);border:1px solid rgba(255,255,255,.5);box-shadow:var(--bevel)}
-  .prod:hover{background:rgba(255,255,255,.62);transform:translateY(-1px)}
-  .prod.active{background:rgba(255,255,255,.78)}
-  .prod .name{font-size:13px;font-weight:700}
-  .prod .meta{font-size:11px;color:var(--muted);margin-top:2px}
-  .chip{display:inline-block;font-size:9px;font-weight:800;padding:2px 7px;border-radius:6px;margin-left:6px;letter-spacing:.03em}
-  .selhead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:13px}
-  .selhead .nm{font-size:17px;font-weight:800;letter-spacing:-.01em}
-  .selhead .cd{font-size:11.5px;color:var(--muted);margin-top:1px}
-  /* tabs, beveled and shadowed */
-  .toggle{display:inline-flex;border-radius:11px;overflow:hidden;border:1px solid rgba(255,255,255,.7);
-          background:rgba(255,255,255,.5);box-shadow:0 3px 8px rgba(40,60,85,.16),var(--bevel)}
-  .toggle button{border:0;background:transparent;padding:8px 15px;font-size:12px;cursor:pointer;font-weight:700;color:var(--muted)}
-  .toggle button.on{color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 3px 8px rgba(47,87,129,.4)}
-  .order{border-radius:16px;padding:16px 18px;margin-bottom:14px;border:1px solid rgba(255,255,255,.55);
-         backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%);box-shadow:var(--shadow),var(--bevel)}
-  .order.go{background:linear-gradient(120deg,rgba(255,221,150,.55),rgba(255,255,255,.4))}
-  .order .ttl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:800;color:var(--muted)}
-  .order .big{font-size:34px;font-weight:800;letter-spacing:-.02em;margin:3px 0;color:#a05a00}
-  .order .rd{font-size:12.5px;color:var(--ink)}
-  .conf{display:inline-block;font-size:10px;font-weight:800;padding:2px 9px;border-radius:999px;margin-left:7px;vertical-align:middle;letter-spacing:.03em}
-  .conf.s{background:rgba(59,111,160,.16);color:#2f5781} .conf.m{background:var(--amber-soft);color:var(--amber)} .conf.v{background:var(--red-soft);color:var(--red)}
-  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin-bottom:14px}
-  @media(max-width:620px){.cards{grid-template-columns:repeat(2,1fr)}}
-  .stat{border-radius:14px;padding:12px;background:var(--glass-2);border:1px solid rgba(255,255,255,.5);box-shadow:var(--bevel)}
-  .stat .k{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800}
-  .stat .v{font-size:21px;font-weight:800;margin-top:4px;letter-spacing:-.01em}
-  .stat .u{font-size:11px;color:var(--muted);font-weight:600}
-  .chartbox{border-radius:16px;padding:14px;margin-bottom:14px;background:var(--glass-2);border:1px solid rgba(255,255,255,.5);box-shadow:var(--bevel)}
-  .chartbox .ct{font-size:11.5px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
-  .chartbox .leg{font-size:11px;color:var(--muted);margin-bottom:10px}
-  .swatch{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:middle;margin:0 4px 0 10px}
-  .bars{display:flex;align-items:flex-end;gap:6px;height:124px;padding-top:6px}
-  .bar{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
-  .bar .col{width:76%;border-radius:5px 5px 0 0;min-height:3px}
-  .bar .val{font-size:9.5px;font-weight:800;margin-bottom:4px}
-  .bar .lab{font-size:9px;color:var(--muted);margin-top:6px;text-align:center}
-  .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;border-radius:16px;padding:13px;margin-bottom:14px;
-       background:var(--glass-2);border:1px solid rgba(255,255,255,.5);box-shadow:var(--bevel)}
-  @media(max-width:620px){.kpi{grid-template-columns:repeat(2,1fr)}}
-  .kpi .k{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:800}
-  .kpi .v{font-size:17px;font-weight:800;margin-top:3px}
-  .qbtns{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px}
-  .qbtn{border-radius:10px;padding:8px 12px;font-size:12px;cursor:pointer;color:var(--ink);font-weight:600;transition:.13s;
-        background:rgba(255,255,255,.5);border:1px solid rgba(255,255,255,.7);
-        box-shadow:0 2px 6px rgba(40,60,85,.14),var(--bevel)}
-  .qbtn:hover{background:rgba(255,255,255,.72);transform:translateY(-1px)}
-  .qbtn.active{color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 4px 10px rgba(47,87,129,.35)}
-  .ans{margin-top:12px;border-top:1px solid rgba(255,255,255,.6);padding-top:11px;min-height:44px;font-size:13px}
-  .ans .big{font-size:18px;font-weight:800} .ans .rd{color:var(--muted);margin-top:3px} .ans .neg{color:var(--red)}
-  .foot{font-size:11px;color:var(--muted);margin-top:13px;border-top:1px solid rgba(255,255,255,.6);padding-top:10px}
-  .exec{border-radius:18px;padding:18px 20px;margin-top:16px;background:var(--glass);
-        backdrop-filter:blur(20px) saturate(150%);-webkit-backdrop-filter:blur(20px) saturate(150%);
-        border:1px solid var(--glass-line);box-shadow:var(--shadow),var(--bevel)}
-  .exec h3{margin:0 0 6px;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
-  .exec p{margin:0 0 10px;font-size:12.5px;color:var(--ink)}
-  .exec .feats{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:11px}
-  .exec .feat{font-size:10.5px;font-weight:700;color:#2f5781;background:rgba(59,111,160,.12);
-              border:1px solid rgba(59,111,160,.22);border-radius:999px;padding:3px 9px}
-  .exec .disc{font-size:11.5px;color:var(--muted);border-top:1px solid rgba(255,255,255,.6);padding-top:10px}
-  .exec .disc b{color:var(--ink)}
-  .empty{color:var(--muted);padding:24px 0;text-align:center}
-  footer{margin-top:16px;font-size:11px;color:var(--muted);text-align:center;line-height:1.7}
-  /* Tabs */
-  .tabs{display:flex;gap:8px;margin:14px 0;flex-wrap:wrap}
-  .tab{border:none;border-radius:11px;padding:9px 18px;font-size:12.5px;font-weight:700;cursor:pointer;
-       transition:.13s;color:var(--muted);
-       background:rgba(255,255,255,.5);border:1px solid rgba(255,255,255,.7);
-       box-shadow:0 2px 6px rgba(40,60,85,.14),var(--bevel)}
-  .tab:hover{background:rgba(255,255,255,.72);transform:translateY(-1px)}
-  .tab.on{color:#fff;background:#3b6fa0;border-color:transparent;box-shadow:0 4px 12px rgba(47,87,129,.35),var(--bevel)}
-  /* Consignment panel */
-  .cmon{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0 16px;align-items:center}
-  .cmon input[type=month]{border-radius:10px;padding:8px 12px;font-size:13px;font-weight:700;
-    color:var(--ink);background:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.7);
-    cursor:pointer;font-family:inherit;backdrop-filter:blur(12px);box-shadow:var(--bevel)}
-  .c2col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px}
-  @media(max-width:700px){.c2col{grid-template-columns:1fr}}
-  /* Mini top-5 tables */
-  .mini2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px}
-  .minirow{display:flex;align-items:center;gap:5px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.5);font-size:11.5px}
-  .minirow:last-child{border-bottom:none}
-  .minirow .mrk{font-size:8px;font-weight:800;color:var(--muted);width:11px;flex:none;text-align:right}
-  .minirow .mnm{flex:1;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
-  .minirow .mamt{font-weight:800;white-space:nowrap;font-size:11.5px}
-  /* Split bar */
-  .splitbar{height:5px;border-radius:3px;overflow:hidden;display:flex;margin:5px 0 3px;gap:2px}
-  .splitbar .s{background:#3b6fa0;border-radius:3px 0 0 3px}
-  .splitbar .c{background:#a8730f;border-radius:0 3px 3px 0;flex:1}
-  /* Remaining lines */
-  .restrows{max-height:140px;overflow-y:auto;margin-top:4px}
-  .restrows::-webkit-scrollbar{width:3px} .restrows::-webkit-scrollbar-thumb{background:rgba(59,111,160,.2);border-radius:3px}
-  .restrow{display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.45);font-size:11.5px}
-  .restrow:last-child{border-bottom:none}
-  .restrow .dot{width:7px;height:7px;border-radius:50%;flex:none}
-  .restrow .nm{flex:1;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .restrow .amt{font-weight:700;white-space:nowrap}
-  .restrow .qty{font-size:10.5px;color:var(--muted);white-space:nowrap}
-  .flagbox{border-radius:14px;padding:13px 15px;background:rgba(168,115,15,.10);
-           border:1px solid rgba(168,115,15,.28);margin-bottom:12px}
-  .flagbox h2{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
-              color:var(--amber);font-weight:800}
-  .flagbox.red{background:rgba(181,68,58,.10);border-color:rgba(181,68,58,.28)}
-  .flagbox.red h2{color:var(--red)}
-  .flagbox.blue{background:rgba(85,102,179,.10);border-color:rgba(85,102,179,.28)}
-  .flagbox.blue h2{color:#5566b3}
-  .flagrow{display:flex;align-items:baseline;padding:6px 0;
-           border-bottom:1px solid rgba(255,255,255,.5);font-size:12.5px;gap:8px}
-  .flagrow:last-child{border-bottom:none}
-  .flagrow .fn{font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .flagrow .fa{font-weight:800;white-space:nowrap}
-  .flagrow .fs{font-size:11px;color:var(--muted);white-space:nowrap}
+  body{margin:0;color:var(--ink);font-family:Roboto,system-ui,sans-serif;font-size:14px;line-height:1.4;
+       background:linear-gradient(135deg,#cfe0f2 0%,#e8eef6 55%,#dde9f4 100%);-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:16px 16px 28px}
+  h1,h2,h3,.lab{font-family:Inter,sans-serif}
+  .num{font-variant-numeric:tabular-nums}
+  .glass{background:linear-gradient(180deg,rgba(255,255,255,.74),rgba(255,255,255,.48));
+         backdrop-filter:blur(16px) saturate(135%);-webkit-backdrop-filter:blur(16px) saturate(135%);
+         border:1px solid rgba(255,255,255,.8);border-radius:14px;
+         box-shadow:inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 2px rgba(36,78,121,.06), 0 8px 24px rgba(30,60,100,.13), 0 2px 4px rgba(30,60,100,.07)}
+
+  .head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;color:#fff;border-radius:14px;
+        background:linear-gradient(180deg,rgba(54,108,164,.92),rgba(33,72,113,.86));border:1px solid rgba(255,255,255,.28);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.4), 0 8px 26px rgba(20,45,80,.28)}
+  .head h1{margin:0;font-size:19px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.18)}
+  .head .sub{margin:2px 0 0;font-size:12.5px;color:#d6e4f3}
+  .live{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.2);padding:6px 12px;border-radius:999px;font:700 11px Inter;letter-spacing:.6px}
+  .live .dot{width:8px;height:8px;border-radius:50%;background:#FFD24A;box-shadow:0 0 6px #FFD24A;animation:p 2s infinite}
+  @keyframes p{0%{box-shadow:0 0 0 0 rgba(255,210,74,.6)}70%{box-shadow:0 0 0 7px rgba(255,210,74,0)}100%{box-shadow:0 0 0 0 rgba(255,210,74,0)}}
+
+  .wxbar{display:flex;align-items:center;justify-content:space-between;margin:12px 2px 6px;color:var(--slate);font-size:11.5px}
+  .wxbar b{color:var(--blue-d);font:700 12px Inter}
+  .wxstrip{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:6px}
+  .wd{padding:9px 6px;text-align:center}
+  .wd.today{border:1.5px solid var(--blue)}
+  .wd .dn{font:700 11px Inter;color:var(--blue-d)} .wd .dd{font-size:10px;color:var(--slate);margin-bottom:4px}
+  .wd svg{width:22px;height:22px;margin:2px 0}
+  .wd .hi{font:700 14px Roboto} .wd .lo{font:12px Roboto;color:var(--slate)}
+  .wd .rn{font-size:10px;color:var(--blue);margin-top:3px}
+
+  .meta{display:flex;gap:18px;flex-wrap:wrap;margin:10px 2px;color:var(--slate);font-size:11.5px}
+  .meta b{color:var(--ink)}
+  .tabs{display:flex;gap:7px;margin:12px 0 12px}
+  .tab{font:700 12px Inter;color:var(--slate);padding:8px 16px;border-radius:999px;cursor:pointer;
+       background:linear-gradient(180deg,rgba(255,255,255,.7),rgba(255,255,255,.45));border:1px solid var(--glass-b);
+       box-shadow:inset 0 1px 0 rgba(255,255,255,.9), 0 2px 6px rgba(30,60,100,.08)}
+  .tab.on{background:linear-gradient(180deg,#3a72ad,#2c5b8c);color:#fff;border-color:#2c5b8c;box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 4px 12px rgba(30,60,100,.22)}
+  .controls{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:12px;font-size:12px;color:var(--slate)}
+  .controls label{font:700 12px Inter;margin-right:6px}
+  .controls input,.controls select{font:13px Roboto;padding:6px 9px;border:1px solid var(--glass-b);border-radius:8px;background:rgba(255,255,255,.6)}
+
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .kpi{padding:12px 14px;border-top:3px solid #cdd9e8}
+  .kpi .lab{font:700 10px Inter;letter-spacing:.5px;color:var(--slate);text-transform:uppercase}
+  .kpi .val{font:700 22px Roboto;margin:5px 0 1px}
+  .kpi .hint{font-size:11px;color:var(--slate)}
+  .k1{border-top-color:var(--blue)} .k2{border-top-color:var(--blue-d)}
+  .k3{border-top-color:var(--pos)} .k3 .val{color:var(--pos)}
+  .k4{border-top-color:var(--gold)} .k4 .val{color:var(--gold-d)}
+
+  .grid{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:12px;margin-top:12px}
+  .panel{padding:14px 16px;min-width:0}
+  .panel h2{margin:0 0 2px;font-size:12.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:var(--blue-d)}
+  .panel .cap{font-size:11px;color:var(--slate);margin:0 0 11px}
+
+  .cum{display:flex;align-items:flex-end;gap:7px;height:128px;padding-top:8px;border-bottom:1px solid var(--hair)}
+  .cum .col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+  .cum .bar{width:100%;max-width:36px;background:linear-gradient(180deg,#3a72ad,#2c5b8c);border-radius:5px 5px 0 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 2px 5px rgba(30,60,100,.18)}
+  .cum .bar.proj{background:repeating-linear-gradient(45deg,#b9cbe0,#b9cbe0 5px,#d8e3f0 5px,#d8e3f0 10px)}
+  .cum .v{font:700 9px Roboto;color:var(--slate);margin-bottom:3px;white-space:nowrap}
+  .cum .d{font:9.5px Roboto;color:var(--slate);margin-top:5px}
+  .closing{margin-top:11px;background:rgba(47,97,150,.08);border:1px solid rgba(47,97,150,.15);border-radius:8px;padding:10px 12px}
+  .closing .pl{font:700 10.5px Inter;letter-spacing:.3px;color:var(--slate);text-transform:uppercase}
+  .closing .pv{font:700 20px Roboto;color:var(--blue-d);margin-top:1px}
+  .closing .pn{font-size:11px;color:var(--slate);margin-top:2px}
+
+  .splitbar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:rgba(36,78,121,.12)}
+  .splitbar i{display:block;height:100%}
+  .splitleg{display:flex;gap:18px;margin-top:8px;font-size:11.5px;color:var(--slate)}
+  .splitleg b{color:var(--ink)} .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+  .tops{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:13px}
+  .toph{font:700 10.5px Inter;letter-spacing:.5px;text-transform:uppercase;padding-bottom:5px;border-bottom:2px solid;margin-bottom:2px}
+  .row,.mrow{cursor:pointer;border-radius:6px}
+  .row{display:grid;grid-template-columns:18px 1fr auto;gap:8px;align-items:center;padding:7px 6px}
+  .row:hover,.mrow:hover{background:rgba(47,97,150,.08)}
+  .row.sel,.mrow.sel{background:rgba(47,97,150,.14);box-shadow:inset 0 0 0 1px var(--blue)}
+  .row .rk{font:700 11px Roboto;color:var(--slate);text-align:right}
+  .row .nm{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .am{font:700 13px Roboto}
+  .divider{margin:16px 0 10px;border:0;border-top:1px solid rgba(36,78,121,.18)}
+  .mh{font:700 10.5px Inter;letter-spacing:.5px;text-transform:uppercase;color:var(--slate);display:flex;justify-content:space-between;margin-bottom:8px}
+  .moregrid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px 16px}
+  .mrow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:baseline;padding:5px 7px;border-bottom:1px solid rgba(36,78,121,.08)}
+  .mrow .nm{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mrow .nm .tag{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:1px}
+  .mrow .am{font:700 12px Roboto;color:var(--slate)}
+
+  .detail .dh{display:flex;justify-content:space-between;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:3px}
+  .detail h2 span{color:var(--slate);font-weight:400;font-size:12px;text-transform:none;letter-spacing:0}
+  .stats{display:flex;gap:18px;font-size:11.5px;color:var(--slate)}
+  .stats b{color:var(--ink);font:700 14px Roboto}
+  .daycap{font-size:11px;color:var(--slate);margin:2px 0 11px}
+  .days{display:flex;align-items:flex-end;gap:0;height:118px;border-bottom:1px solid var(--hair)}
+  .days .day{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;padding:0 1px}
+  .days .db{width:100%;background:linear-gradient(180deg,#3a72ad,#2c5b8c);border-radius:2px 2px 0 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.3)}
+  .days .db.empty{background:rgba(47,97,150,.06);border:1px dashed rgba(47,97,150,.22);border-bottom:none}
+  .dayx{display:flex;margin-top:5px}
+  .dayx .dl{flex:1 1 0;min-width:0;text-align:center;font:9px Roboto;color:#758799}
+
+  .flag{margin-top:12px;background:rgba(201,136,42,.12);border:1px solid rgba(201,136,42,.3);border-left:4px solid var(--gold);
+        border-radius:0 8px 8px 0;padding:11px 15px;display:flex;align-items:center;gap:10px}
+  .flag .ft{font:700 10px Inter;letter-spacing:.5px;text-transform:uppercase;color:#8a6420}
+  .flag .fn{font:700 14px Roboto;margin-top:1px}
+  footer{margin-top:16px;text-align:center;color:var(--slate);font-size:11px;line-height:1.6}
+
+  @media(max-width:880px){.kpis{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.moregrid{grid-template-columns:repeat(3,1fr)}.tops{grid-template-columns:1fr}}
+  @media(max-width:560px){.moregrid{grid-template-columns:repeat(2,1fr)}.wxstrip{grid-template-columns:repeat(4,1fr)}}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header class="top">
-    <div>
-      <h1 class="brand"><svg class="hb" viewBox="0 0 46 24" width="46" height="24" aria-hidden="true"><polyline points="1,12 11,12 15,4 20,20 25,12 31,12 34,7 37,12 45,12" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>Pulse Mini</h1>
-      <p>SPAR Delareyville. Live from Pulse. What sells when.</p>
-    </div>
-    <div class="badge" id="srcBadge">loading</div>
-  </header>
 
-  <div class="freshness">
-    <div class="fresh"><div class="k">Data as at</div><div class="v" id="asAt">loading</div></div>
-    <div class="fresh"><div class="k">Next update expected</div><div class="v" id="nextRef">loading</div></div>
-    <div class="fresh"><div class="k">Source</div><div class="v" id="srcNote">loading</div></div>
+  <div class="head">
+    <div><h1>Pulse Mini · Consignment</h1><div class="sub">SPAR Delareyville — HMR Sushi counter · What sells when</div></div>
+    <div class="live"><span class="dot"></span>LIVE</div>
   </div>
 
-  <div class="tabs">
-    <button class="tab on" id="tabOrder" onclick="switchTab('order')">Order Plan</button>
-    <button class="tab" id="tabCons" onclick="switchTab('cons')">Consignment</button>
+  <div class="wxbar"><b>7-day forecast</b><span id="wx-status">Delareyville · live</span></div>
+  <div class="wxstrip" id="wxstrip"></div>
+
+  <div class="meta"><span>Data as at <b id="meta-asat">loading</b></span><span>HMR Sushi counter · June</span><span>Source <b id="meta-src">Live from Pulse</b></span></div>
+
+  <div class="tabs"><div class="tab">Order Plan</div><div class="tab on">Consignment</div></div>
+  <div class="controls">
+    <span><label>Month</label><input type="month" value="2026-06"></span>
+    <span><label>Commission</label><select><option>10%</option><option>9%</option><option>12.5%</option></select></span>
   </div>
-  <div id="secOrder">
+
+  <div class="kpis">
+    <div class="kpi glass k1"><div class="lab">Cash taken</div><div class="val num" id="k-cash"></div><div class="hint">counter sales, June so far</div></div>
+    <div class="kpi glass k4"><div class="lab">Units sold</div><div class="val num" id="k-units"></div><div class="hint">items across all lines</div></div>
+    <div class="kpi glass k3"><div class="lab">Your commission</div><div class="val num" id="k-comm"></div><div class="hint">10% — what you keep</div></div>
+    <div class="kpi glass k2"><div class="lab">Owed to supplier</div><div class="val num" id="k-owe"></div><div class="hint">90% — supplier's share</div></div>
+  </div>
 
   <div class="grid">
-    <div class="panel">
-      <h2>Lines to explore</h2>
-      <p class="sub">Grouped by department</p>
-      <div id="prodList"></div>
+    <div class="panel glass">
+      <h2>Cumulative cash held</h2>
+      <p class="cap">Running total of counter cash, June 1 onward.</p>
+      <div class="cum" id="cum"></div>
+      <div class="closing"><div class="pl">Ballpark month pace</div><div class="pv num" id="proj"></div><div class="pn" id="projn"></div></div>
     </div>
-    <div class="panel">
-      <div id="detail"><div class="empty">Select a line on the left.</div></div>
+    <div class="panel glass">
+      <h2>Lines ranked — tap any line for its daily sales</h2>
+      <p class="cap">Sushi and Chinese share one counter.</p>
+      <div class="splitbar"><i id="sps" style="background:var(--blue)"></i><i id="spc" style="background:var(--gold)"></i></div>
+      <div class="splitleg"><span><span class="sw" style="background:var(--blue)"></span>Sushi <b class="num" id="lgs"></b></span><span><span class="sw" style="background:var(--gold)"></span>Chinese <b class="num" id="lgc"></b></span></div>
+      <div class="tops">
+        <div><div class="toph" style="color:var(--blue);border-color:var(--blue)">Top 5 sushi</div><div id="tops"></div></div>
+        <div><div class="toph" style="color:var(--gold);border-color:var(--gold)">Top 5 Chinese</div><div id="topc"></div></div>
+      </div>
+      <hr class="divider">
+      <div class="mh"><span id="moreh">Remaining lines</span><span>units · rand</span></div>
+      <div class="moregrid" id="more"></div>
     </div>
   </div>
 
-  <div class="exec">
-    <h3>About this view</h3>
-    <p>Pulse Mini reads real Delareyville sales history from Pulse and turns it into a four-week order plan for each line. It groups lines by department, projects demand by mirroring the recent four-week pattern, compensates for weeks that look like out of stock, and shows margin, supplier and ordering position with the working on screen so every figure can be checked. Stock on hand is shown but not trusted, ordering runs off sales.</p>
-    <div class="feats">
-      <span class="feat">6-week real sales</span>
-      <span class="feat">4-week order plan</span>
-      <span class="feat">Out-of-stock compensation</span>
-      <span class="feat">Department grouping</span>
-      <span class="feat">GP and capital, audited</span>
-      <span class="feat">Live data with freshness</span>
-    </div>
-    <div class="disc"><b>For sampling and demonstration only.</b> The sales, costs and prices are real data from the live database, which already updates daily and feeds a working dashboard. The four-week projections are purely for illustration, they show how the data could drive ordering and are not a commitment or a final order figure. This view shows a small sample of lines to show what the data can do.</div>
-  </div>
-  </div><!-- /secOrder -->
-
-  <div id="secCons" style="display:none">
-    <div class="cmon">
-      <label style="font-size:13px;font-weight:700;color:var(--ink)">Month&nbsp;
-        <input type="month" id="cMonth" onchange="cLoaded=false;loadCons()">
-      </label>
-      <label style="font-size:13px;font-weight:700;color:var(--ink)">Commission&nbsp;
-        <select id="cRate" onchange="cLoaded=false;loadCons()"
-          style="border-radius:10px;padding:8px 12px;font-size:13px;font-weight:700;color:var(--ink);background:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.7);cursor:pointer;font-family:inherit;box-shadow:var(--bevel)">
-          <option value="0.10" selected>10%</option>
-          <option value="0.08">8%</option>
-          <option value="0.12">12%</option>
-          <option value="0.15">15%</option>
-        </select>
-      </label>
-    </div>
-    <div class="cards" id="cCards">
-      <div class="stat"><div class="k">Loading</div><div class="v">...</div></div>
-    </div>
-    <div class="c2col">
-      <div class="panel" id="cCashflow"><div class="empty">Loading...</div></div>
-      <div class="panel" id="cRanked"><div class="empty">Loading...</div></div>
-    </div>
-    <div id="cFlags"></div>
+  <div class="panel glass detail" style="margin-top:12px">
+    <div class="dh"><h2 id="dtitle"></h2><div class="stats"><span>Month total <b class="num" id="dtot"></b></span><span>Units <b class="num" id="duni"></b></span><span>Best day <b id="dbest"></b></span></div></div>
+    <p class="daycap">Actual daily sales — hover a bar for rand and units. Loaded through 4 June; later days fill in nightly.</p>
+    <div class="days" id="days"></div>
+    <div class="dayx" id="dayx"></div>
   </div>
 
-  <footer>
-    Read only. Sales are six real recorded weeks. The next four weeks repeat the matching week four weeks back, a guide for ordering, not a guarantee.<br>
-    Ledger stock on hand is shown small on purpose. It is not reliable for these lines, so ordering here is driven by sales, not by stock.
-  </footer>
+  <div class="flag"><div><div class="ft">No sales this month — 1 line</div><div class="fn">ROSES SALMON</div></div></div>
+
+  <footer>Read only. Sales are real recorded counter takings. Ledger stock is not reliable on these lines, so ordering is driven by sales, not stock.</footer>
 </div>
 
 <script>
-const SNAPSHOT_LINES=[
- {code:"13034",desc:"SPAR CARRIER BAG VT1",dept:"FRONTEND PACK",sub:"FRONTEND PACK RE-USABLE",soh:158,wk:[5551,3915,3820,4458,3665,5129],lastSales:"2026-06-01",lastRecv:"2026-05-26",stockDays:0.2,cost:0.9037,sell:1.4,band:"REVIEW",supplier:"CHARTRADE 117 CC T/A ACE RETAI",onOrder:11,turn:12.0},
- {code:"99420",desc:"SPAR BAG 50LT",dept:"FRONTEND PACK",sub:"FRONTEND PACK RE-USABLE",soh:1595,wk:[291,111,150,456,329,138],lastSales:"2026-06-01",lastRecv:"2026-05-26",stockDays:45.4,cost:2.6044,sell:3.75,band:"STOCK",supplier:"CHARTRADE 117 CC T/A ACE RETAI",onOrder:3,turn:5.6},
- {code:"106961",desc:"SPAR C/BAG VT2 8CAL",dept:"FRONTEND PACK",sub:"FRONTEND PACK RE-USABLE",soh:2608,wk:[365,104,160,780,22,0],lastSales:"2026-06-01",lastRecv:"2026-05-26",stockDays:63.2,cost:0.7652,sell:1.1,band:"STOCK",supplier:"CHARTRADE 117 CC T/A ACE RETAI",onOrder:5,turn:0.9},
- {code:"93613",desc:"SPAR CARRIER BAG VT.2",dept:"FRONTEND PACK",sub:"FRONTEND PACK PLASTIC",soh:1252,wk:[19,18,47,95,179,16],lastSales:"2026-06-01",lastRecv:"2021-03-03",stockDays:141.4,cost:0.6264,sell:0.5,band:"REVIEW",supplier:"CHARTRADE 117 CC T/A ACE RETAI",onOrder:0,turn:0.2},
- {code:"1674",desc:"SPAR MILK L/L F/CREAM",dept:"GROCERIES FOODS",sub:"MILK - LONG LIFE",soh:1521,wk:[6010,1934,1932,5293,4206,3263],lastSales:"2026-06-01",lastRecv:"2026-05-30",stockDays:2.6,cost:9.4757,sell:13.49,band:"STOCK",supplier:"SPAR SOUTHRAND",onOrder:1291,turn:2.4},
- {code:"137585",desc:"KOO BAKED BEANS TOM SCE",dept:"GROCERIES FOODS",sub:"CANNED - VEGETABLES",soh:134,wk:[724,143,115,154,207,221],lastSales:"2026-06-01",lastRecv:"2026-05-28",stockDays:1.9,cost:13.5337,sell:16.99,band:"STOCK",supplier:"SPAR SOUTHRAND",onOrder:0,turn:18.1},
- {code:"1322",desc:"COCA COLA PET",dept:"COLD REFRESHMENTS",sub:"CORBONATED SOFTDRINK",soh:471,wk:[618,318,375,204,326,293],lastSales:"2026-06-01",lastRecv:"2026-05-29",stockDays:6.2,cost:16.2644,sell:21.99,band:"STOCK",supplier:"COCA-COLA BEVERAGES SA",onOrder:1330,turn:28.3},
- {code:"44069",desc:"B/RIBBON CLASSIC WHT SLC",dept:"BAKERY",sub:"BAKERY BUY OUT BREAD",soh:22,wk:[400,72,0,476,467,363],lastSales:"2026-06-01",lastRecv:"2026-06-01",stockDays:0.0,cost:14.2324,sell:19.99,band:"STOCK",supplier:"PREMIER FMCG (PTY) LTD BREAD",onOrder:4360,turn:-151.3},
- {code:"118064",desc:"SUNBAKE BREAD WHITE SLC",dept:"BAKERY",sub:"BAKERY BUY OUT BREAD",soh:23,wk:[297,209,266,263,259,174],lastSales:"2026-06-01",lastRecv:"2026-06-01",stockDays:0.0,cost:12.604,sell:18.99,band:"STOCK",supplier:"SUNBAKE BENONI",onOrder:584,turn:145.7},
- {code:"54983",desc:"SPAR WHITE BREAD 600G",dept:"BAKERY",sub:"BAKERY BUY OUT CONFECTIONARY",soh:-27699,wk:[1916,1523,1522,2402,1765,1597],lastSales:"2026-06-01",lastRecv:"1990-01-01",stockDays:-108.4,cost:6.54,sell:12.99,band:"AUTO",supplier:"Supplier for Recipes",onOrder:0,turn:-23.0},
- {code:"5847",desc:"LION MATCHES (10 X 200)",dept:"GROCERIES HOUSE HOLD",sub:"FLAMMABLES/CHARCOAL",soh:1623,wk:[173,142,215,141,212,133],lastSales:"2026-06-01",lastRecv:"2026-05-07",stockDays:64.6,cost:0.7927,sell:1.29,band:"STOCK",supplier:"SPAR SOUTHRAND",onOrder:0,turn:0.2}
+/* === Fallback: real sigma_sales, store 10116, merch group 610, Jun 1-4 2026 ===
+   BREAKFAST excluded (misfiled, not consignment). Used when API unavailable. */
+const L_FB=[
+{n:"AVALANCHE PRAWNS/SALMON",t:"s",s:[0,0,105,0],q:[0,0,1,0]},
+{n:"CHOW MEIN NOODLES CHICKEN",t:"c",s:[105,105,0,105],q:[1,1,0,1]},
+{n:"CHOW MEIN NOODLES MIXED",t:"c",s:[230,0,115,0],q:[2,0,1,0]},
+{n:"CHOW MEIN NOODLES PORK",t:"c",s:[630,105,0,0],q:[6,1,0,0]},
+{n:"CHOW MEIN NOODLES PRAWN",t:"c",s:[0,115,115,0],q:[0,1,1,0]},
+{n:"COMBO 1",t:"s",s:[480,240,420,300],q:[8,4,7,5]},
+{n:"COMBO 10",t:"s",s:[123,0,0,0],q:[1,0,0,0]},
+{n:"COMBO 11",t:"s",s:[246,0,0,0],q:[2,0,0,0]},
+{n:"COMBO 13",t:"s",s:[690,0,138,0],q:[5,0,1,0]},
+{n:"COMBO 14",t:"s",s:[690,138,0,0],q:[5,1,0,0]},
+{n:"COMBO 17",t:"s",s:[0,0,270,0],q:[0,0,2,0]},
+{n:"COMBO 18",t:"s",s:[0,552,552,414],q:[0,4,4,3]},
+{n:"COMBO 2",t:"s",s:[1050,280,350,140],q:[15,4,5,2]},
+{n:"COMBO 21",t:"s",s:[355,0,0,0],q:[1,0,0,0]},
+{n:"COMBO 22",t:"s",s:[0,0,385,0],q:[0,0,1,0]},
+{n:"COMBO 3",t:"s",s:[450,450,300,300],q:[6,6,4,4]},
+{n:"COMBO 5",t:"s",s:[360,180,360,0],q:[4,2,4,0]},
+{n:"COMBO 6",t:"s",s:[345,690,0,0],q:[3,6,0,0]},
+{n:"COMBO 7",t:"s",s:[500,125,500,250],q:[4,1,4,2]},
+{n:"COMBO 8",t:"s",s:[560,560,560,0],q:[4,4,4,0]},
+{n:"COMBO 9",t:"s",s:[325,325,260,260],q:[5,5,4,4]},
+{n:"DUMPLING CHICKEN",t:"c",s:[292,146,146,0],q:[4,2,2,0]},
+{n:"DUMPLING PORK",t:"c",s:[73,0,73,73],q:[1,0,1,1]},
+{n:"FASHION SANDWICHES VEG/CRAB",t:"s",s:[50,0,0,50],q:[1,0,0,1]},
+{n:"FRIED RICE CHICKECN",t:"c",s:[105,0,0,0],q:[1,0,0,0]},
+{n:"FRIED RICE MIXED",t:"c",s:[115,0,0,0],q:[1,0,0,0]},
+{n:"FRIED RICE SEAFOOD MIXED",t:"c",s:[0,0,0,118],q:[0,0,0,1]},
+{n:"MIKI ROLL PRAWN/SALMON",t:"s",s:[50,0,0,100],q:[1,0,0,2]},
+{n:"SASHIMI SALMON",t:"s",s:[0,0,300,0],q:[0,0,2,0]},
+{n:"SORING ROLLS BEEF",t:"c",s:[44,0,0,22],q:[2,0,0,1]},
+{n:"SORING ROLLS CHICKEN",t:"c",s:[0,0,44,22],q:[0,0,2,1]},
+{n:"SORING ROLLS PORK",t:"c",s:[22,0,0,0],q:[1,0,0,0]},
+{n:"SORING ROLLS PRAWN",t:"c",s:[0,0,100,25],q:[0,0,4,1]},
+{n:"SWEET & SOUR CHICKEN",t:"c",s:[0,108,0,0],q:[0,1,0,0]},
+{n:"SWEET & SOUR PORK",t:"c",s:[220,0,0,0],q:[2,0,0,0]}
 ];
-const SNAP_ASAT="8 May 2026 snapshot, sales to 1 Jun";
-function nextUpdate(){
-  const now=new Date(), t=new Date(now); t.setHours(20,10,0,0);
-  if(now>t) t.setDate(t.getDate()+1);
-  const mo=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const same=t.toDateString()===now.toDateString();
-  return (same?"Today":t.getDate()+" "+mo[t.getMonth()])+" at 20:10";
-}
-const SNAP_NEXT=nextUpdate();
-const SNAP_SRC="Delareyville pull, not live";
 
-const DEPT_COLORS={
- "FRONTEND PACK":"#3b6fa0","GROCERIES FOODS":"#3f8f86","COLD REFRESHMENTS":"#5566b3",
- "BAKERY":"#6f86a8","GROCERIES HOUSE HOLD":"#7a6fa0"
-};
-function deptColor(d){return DEPT_COLORS[d]||"#5b6b7b";}
-function deptLabel(d){return d==="FRONTEND PACK"?"PACKAGING":d.split(" ")[0];}
-function rgba(hex,a){const n=parseInt(hex.slice(1),16);return "rgba("+(n>>16&255)+","+(n>>8&255)+","+(n&255)+","+a+")";}
+/* === Helpers === */
+const R=n=>"R "+Math.round(n).toLocaleString('en-ZA');
+const $=id=>document.getElementById(id);
 
-let LINES=[], selected=null, mode="weekly", activeQ=null;
+/* === Render — called with live or fallback data === */
+let G_L=[], G_LOADED=0, G_DIM=30;
 
-function zar(n){return "R "+n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g," ");}
-function num(n){return Math.round(n).toLocaleString("en-ZA").replace(/,/g," ");}
-function hasWk(l){return l.wk && l.wk.length>=4;}
-function weeklyAvg(l){if(hasWk(l))return l.wk.reduce((a,b)=>a+b,0)/l.wk.length;if(l.ros)return l.ros*7;return 0;}
-function gpPct(l){if(!l.sell||!l.cost)return null;const ex=l.sell/1.15;return (ex-l.cost)/ex*100;}
-
-// 4-week-lag forecast with out-of-stock compensation.
-// Fast sellers should not show a real zero week from demand. A week far below the
-// line's median is treated as a likely stockout, lifted to the normal level before projecting.
-const OOS_FRAC=0.45;
-function median(a){const s=a.slice().sort((x,y)=>x-y),n=s.length;return n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2;}
-function forecast(l){
-  if(!hasWk(l))return null;
-  const actual=l.wk.slice().reverse();          // [-5,-4,-3,-2,-1,now]
-  const m=median(actual);
-  const flags=actual.map(v=> m>0 && v < OOS_FRAC*m);     // suspected out of stock
-  const actualC=actual.map((v,i)=> flags[i]? Math.round(m): v);  // compensated series
-  const oosWeeks=flags.filter(Boolean).length;
-  const lost=Math.round(actual.reduce((s,v,i)=> s+(flags[i]?(m-v):0),0));
-  const syf=(l.syf&&l.syf>0)?l.syf:1;                      // last-year seasonal factor, 1 = none
-  const base=[actualC[2],actualC[3],actualC[4],actualC[5]];// +1..+4 mirror weeks -3,-2,-1,now (compensated)
-  const per=base.map(v=>Math.round(v*syf));                // lifted or trimmed for last-year seasonality
-  const total=per.reduce((a,b)=>a+b,0);
-  const syfPct=Math.round((syf-1)*100);
-  const mean=actualC.reduce((a,b)=>a+b,0)/actualC.length;
-  const v=actualC.reduce((a,b)=>a+(b-mean)*(b-mean),0)/actualC.length, cv=mean?Math.sqrt(v)/mean:0;
-  let conf="s",confTxt="steady"; if(cv>0.6){conf="v";confTxt="volatile";}else if(cv>0.3){conf="m";confTxt="some swing";}
-  return {actual,actualC,flags,m,oosWeeks,lost,per,total,mean,cv,conf,confTxt,syf,syfPct};
+function render(L, LOADED, DIM) {
+  G_L=L; G_LOADED=LOADED; G_DIM=DIM;
+  L.forEach(l=>{l.sales=l.s.reduce((a,b)=>a+b,0);l.qty=l.q.reduce((a,b)=>a+b,0);});
+  L.sort((a,b)=>b.sales-a.sales); L.forEach((l,i)=>l.rank=i+1);
+  const cash=L.reduce((a,l)=>a+l.sales,0), units=L.reduce((a,l)=>a+l.qty,0);
+  const sushi=L.filter(l=>l.t==='s').reduce((a,l)=>a+l.sales,0), chin=cash-sushi;
+  $('k-cash').textContent=R(cash);$('k-units').textContent=units;
+  $('k-comm').textContent=R(cash*.1);$('k-owe').textContent=R(cash*.9);
+  // cumulative bars
+  const days=Array(LOADED).fill(0);
+  L.forEach(l=>l.s.forEach((v,i)=>{if(i<LOADED)days[i]+=v;}));
+  let cum=[],run=0; days.forEach(d=>{run+=d;cum.push(run);});
+  const avg=cash/Math.max(LOADED,1), pace=avg*DIM;
+  (function(){const mx=Math.max(...cum,1);let h='';
+    cum.forEach((c,i)=>{const lbl=String(i+1).padStart(2,'0');
+      h+=`<div class="col"><div class="v num">${R(c)}</div><div class="bar" style="height:${c/mx*100}%"></div><div class="d num">${lbl}</div></div>`;});
+    $('cum').innerHTML=h;
+  })();
+  $('proj').textContent="≈ "+R(pace);
+  $('projn').textContent="Rough guide only — "+R(avg)+"/day over "+LOADED+" day"+(LOADED!==1?"s":"")+" loaded, stretched to "+DIM+" days. Not a commitment.";
+  $('sps').style.width=sushi/Math.max(cash,1)*100+'%';$('spc').style.width=chin/Math.max(cash,1)*100+'%';
+  $('lgs').textContent=R(sushi);$('lgc').textContent=R(chin);
+  function rowM(l,c){return `<div class="${c}" data-r="${l.rank}">`+(c==='row'?`<span class="rk num">${l.rank}</span><span class="nm">${l.n}</span><span class="am num">${l.qty}&nbsp;&middot;&nbsp;${R(l.sales)}</span>`:`<span class="nm"><span class="tag" style="background:${l.t==='s'?'var(--blue)':'var(--gold)'}"></span>${l.n}</span><span class="am num">${l.qty}&nbsp;&middot;&nbsp;${R(l.sales)}</span>`)+`</div>`;}
+  const tS=L.filter(l=>l.t==='s').slice(0,5),tC=L.filter(l=>l.t==='c').slice(0,5);
+  $('tops').innerHTML=tS.map(l=>rowM(l,'row')).join('');
+  $('topc').innerHTML=tC.map(l=>rowM(l,'row')).join('');
+  const inTop=new Set([...tS,...tC].map(l=>l.rank));
+  const rest=L.filter(l=>!inTop.has(l.rank));
+  $('moreh').textContent=`Remaining lines (${rest.length})`;
+  $('more').innerHTML=rest.map(l=>rowM(l,'mrow')).join('');
+  sel(1);
 }
 
-async function boot(){
-  const cMonthEl = document.getElementById('cMonth');
-  if (cMonthEl) {
-    const n = new Date();
-    cMonthEl.value = n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0');
+function sel(r) {
+  const L=G_L, LOADED=G_LOADED, DIM=G_DIM;
+  const l=L.find(x=>x.rank===r); if(!l)return;
+  document.querySelectorAll('[data-r]').forEach(e=>e.classList.toggle('sel',+e.dataset.r===r));
+  $('dtitle').innerHTML=`${l.n} <span>· daily sales</span>`;
+  $('dtot').textContent=R(l.sales);$('duni').textContent=l.qty;
+  const mx=Math.max(...l.s,1),b=l.s.indexOf(Math.max(...l.s));
+  $('dbest').textContent=l.s[b]>0?'Jun '+(b+1):'—';
+  let bars='',labs='';
+  for(let i=0;i<DIM;i++){
+    const el=i<LOADED,v=el?l.s[i]:0,u=el?l.q[i]:0;
+    bars+=`<div class="day" title="Jun ${i+1}${el?(v>0?': '+R(v)+' · '+u+' units':': no sales'):' — to come'}"><div class="db ${el?'':'empty'}" style="height:${el?(v>0?Math.max(v/mx*100,3):0):100}%"></div></div>`;
+    labs+=`<div class="dl">${i+1}</div>`;
   }
-  switchTab('cons'); // default to Consignment tab
-  let live=false,asAt=SNAP_ASAT,next=SNAP_NEXT,src=SNAP_SRC;
-  try{
-    const r=await fetch("/api/dev-corner/lines",{headers:{Accept:"application/json"}});
-    if(r.ok){const j=await r.json();
-      if(j&&Array.isArray(j.lines)&&j.lines.length){LINES=j.lines;live=true;asAt=j.asAt||asAt;next=j.nextRefresh||next;src="Live from Pulse";}}
-  }catch(e){}
-  if(!LINES.length)LINES=SNAPSHOT_LINES;
-  const b=document.getElementById("srcBadge");
-  b.textContent=live?"LIVE":"Snapshot demo"; b.className="badge"+(live?" live":"");
-  document.getElementById("asAt").textContent=asAt;
-  document.getElementById("nextRef").textContent=next;
-  document.getElementById("srcNote").textContent=src;
-  renderList(); renderDetail();
+  $('days').innerHTML=bars;$('dayx').innerHTML=labs;
 }
 
-function renderList(){
-  const el=document.getElementById("prodList"); el.innerHTML="";
-  const order=[]; LINES.forEach(l=>{if(!order.includes(l.dept))order.push(l.dept);});
-  order.forEach(dep=>{
-    const c=deptColor(dep);
-    const h=document.createElement("div");
-    h.className="grouphdr"; h.style.color=c;
-    h.innerHTML='<span class="dot" style="background:'+c+'"></span>'+deptLabel(dep);
-    el.appendChild(h);
-    LINES.forEach((l,i)=>{
-      if(l.dept!==dep) return;
-      const fc=forecast(l), plan=fc?fc.total:weeklyAvg(l)*4;
-      const d=document.createElement("button");
-      d.className="prod"+(selected===i?" active":"");
-      d.style.borderLeft="4px solid "+c;
-      if(selected===i){d.style.boxShadow="inset 4px 0 0 "+c+",0 6px 18px rgba(40,60,85,.16)";}
-      d.innerHTML='<div class="name">'+l.desc+'<span class="chip" style="background:'+rgba(c,.16)+';color:'+c+'">'+deptLabel(l.dept)+'</span></div>'+
-                  '<div class="meta">'+num(weeklyAvg(l))+' / week · plan ~'+num(plan)+' / 4 wks</div>';
-      d.onclick=()=>{selected=i;activeQ=null;renderList();renderDetail();};
-      el.appendChild(d);
-    });
-  });
-}
+document.addEventListener('click',e=>{const r=e.target.closest('[data-r]');if(r)sel(+r.dataset.r);});
 
-function chart(l,fc,c){
-  if(!fc) return '<div class="chartbox"><div class="ct">Weekly sales and forecast</div>'+
-    '<div style="font-size:12.5px;color:var(--muted)">Weekly history is not stored in StockFlow yet, so the forecast cannot run live. '+
-    'The standalone snapshot shows the real last six weeks. Import weekly sales into StockFlow to make this live.</div></div>';
-  const disp=fc.actualC.concat(fc.per);
-  const labs=["-5w","-4w","-3w","-2w","-1w","now","+1w","+2w","+3w","+4w"];
-  const max=Math.max(...disp,1);
-  const solid="linear-gradient(180deg,"+rgba(c,.78)+","+c+")";
-  const hatch="repeating-linear-gradient(45deg,"+rgba(c,.5)+","+rgba(c,.5)+" 4px,"+rgba(c,.16)+" 4px,"+rgba(c,.16)+" 9px)";
-  let bars='';
-  // six actual weeks, flagged stockout weeks split into sold (solid) and inferred (faded)
-  fc.actualC.forEach((cv,i)=>{
-    const real=fc.actual[i], flagged=fc.flags[i], hh=Math.round(cv/max*92);
-    let bg=solid;
-    if(flagged){ const top=cv>0?Math.round((cv-real)/cv*100):0;
-      bg="linear-gradient(180deg,"+rgba(c,.26)+" 0%,"+rgba(c,.26)+" "+top+"%,"+c+" "+top+"%,"+c+" 100%)"; }
-    const valTxt=flagged?(num(real)+" → "+num(cv)):num(cv);
-    bars+='<div class="bar"><div class="val" style="color:'+c+'">'+valTxt+'</div>'+
-          '<div class="col" style="height:'+hh+'%;background:'+bg+';box-shadow:0 4px 10px '+rgba(c,.26)+'"></div>'+
-          '<div class="lab">'+labs[i]+(flagged?'<br><b style="color:'+c+'">OOS?</b>':'')+'</div></div>';
-  });
-  // four projected weeks
-  fc.per.forEach((vv,j)=>{ const i=6+j, hh=Math.round(vv/max*92);
-    bars+='<div class="bar"><div class="val" style="color:'+c+'">'+num(vv)+'</div>'+
-          '<div class="col" style="height:'+hh+'%;background:'+hatch+'"></div>'+
-          '<div class="lab">'+labs[i]+'</div></div>';
-  });
-  const oosLeg=fc.oosWeeks>0?'<span class="swatch" style="background:'+rgba(c,.26)+'"></span>inferred, out of stock':'';
-  return '<div class="chartbox"><div class="ct">Weekly units sold, six weeks actual and four weeks projected</div>'+
-         '<div class="leg"><span class="swatch" style="background:'+c+'"></span>actual sold'+oosLeg+
-         '<span class="swatch" style="background:'+rgba(c,.3)+'"></span>projected (+1w mirrors -3w)</div>'+
-         '<div class="bars">'+bars+'</div></div>';
-}
-
-const QS=[{id:"supp",t:"Supplier and cost?"},{id:"gp",t:"What is the margin?"},{id:"sold",t:"Last sold?"},{id:"recv",t:"Last received?"},{id:"band",t:"Classifier verdict?"}];
-function ansFor(l,q){
-  switch(q){
-    case "supp": return {big:l.supplier||"No data",rd:"List cost "+zar(l.cost)+" ex VAT. Sell "+zar(l.sell)+" incl VAT. On order now "+num(l.onOrder||0)+" units (31 May import)."};
-    case "gp":{const g=gpPct(l); if(g===null)return{big:"No data",rd:"Cost or price missing."};
-      const ex=l.sell/1.15, neg=g<0;
-      return {big:(neg?'<span class="neg">':'')+g.toFixed(1)+"%"+(neg?'</span>':''),
-      rd:"Working: sell "+zar(l.sell)+" incl VAT, ex VAT "+zar(ex)+", less cost "+zar(l.cost)+", over ex VAT price. "+
-         "Source: unit_cost and sell_price from the Delareyville extract. Confirm the cost basis, list versus last received, against Sigma."+(neg?" This line sells below cost.":"")};}
-    case "sold": return {big:l.lastSales||"No data",rd:"Most recent recorded sale date."};
-    case "recv": return {big:l.lastRecv||"No data",rd:"Most recent recorded receiving date."+(l.lastRecv&&l.lastRecv<"2024"?" Not received in a long time.":"")};
-    case "band": return {big:l.band||"No data",rd:"Classifier band. STOCK is a normal buy and sell line, REVIEW needs a look, AUTO is a service area line."};
-  }
-}
-
-function renderDetail(){
-  const el=document.getElementById("detail");
-  if(selected===null){el.innerHTML='<div class="empty">Select a line on the left.</div>';return;}
-  const l=LINES[selected], fc=forecast(l), wk=weeklyAvg(l), c=deptColor(l.dept);
-  const rate=mode==="weekly"
-    ?{v:num(wk),u:"units / week · 6-wk avg"}
-    :{v:fc?(fc.total/28).toFixed(1):(wk/7).toFixed(1),u:fc?"units / day · projected":"units / day · 6-wk avg"};
-  let html='';
-  html+='<div class="selhead"><div><div class="nm"><span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:'+c+';margin-right:7px"></span>'+l.desc+
-        '<span class="chip" style="background:'+rgba(c,.16)+';color:'+c+'">'+deptLabel(l.dept)+'</span></div>'+
-        '<div class="cd">Code '+l.code+' · '+(l.supplier||l.sub)+'</div></div>'+
-        '<div class="toggle"><button class="'+(mode==="weekly"?"on":"")+'" style="'+(mode==="weekly"?"background:"+c:"")+'" onclick="setMode(\'weekly\')">Weekly</button>'+
-        '<button class="'+(mode==="daily"?"on":"")+'" style="'+(mode==="daily"?"background:"+c:"")+'" onclick="setMode(\'daily\')">Daily</button></div></div>';
-
-  if(fc){
-    const oosNote = fc.oosWeeks>0
-      ? ' '+fc.oosWeeks+(fc.oosWeeks>1?' weeks':' week')+' looked like out of stock and were lifted to the normal '+num(fc.m)+' a week, about '+num(fc.lost)+' units of likely lost sales.'
-      : '';
-    const syfNote = fc.syf!==1
-      ? ' '+(fc.syfPct>0?'Lifted ':'Trimmed ')+Math.abs(fc.syfPct)+'% for last-year seasonality.'
-      : ' Last-year seasonal factor applies in the live version.';
-    html+='<div class="order go" style="border-left:5px solid '+c+'"><div class="ttl">Order plan, next 4 weeks · illustration</div>'+
-      '<div class="big">~'+num(fc.total)+' units</div>'+
-      '<div class="rd">Projected by mirroring the most recent four-week pattern, +1 week reflects three weeks back, kept in proportion'+
-      '<span class="conf '+fc.conf+'">'+fc.confTxt+'</span>.'+oosNote+syfNote+' '+
-      'Plan the order around this, then take off anything genuinely on order and any stock you trust.</div></div>';
-  }
-
-  html+='<div class="cards">'+
-    '<div class="stat"><div class="k">Rate of sale</div><div class="v">'+rate.v+'</div><div class="u">'+rate.u+'</div></div>'+
-    '<div class="stat"><div class="k">Next 4 weeks</div><div class="v">'+(fc?num(fc.total):"n/a")+'</div><div class="u">projected units</div></div>'+
-    '<div class="stat"><div class="k">Sold, 6 wks</div><div class="v">'+(hasWk(l)?num(l.wk.reduce((a,b)=>a+b,0)):"n/a")+'</div><div class="u">actual units</div></div>'+
-    '<div class="stat"><div class="k">Margin</div><div class="v">'+(gpPct(l)!==null?gpPct(l).toFixed(0)+"%":"n/a")+'</div><div class="u">GP ex VAT</div></div>'+
-  '</div>';
-
-  html+=chart(l,fc,c);
-
-  if(fc){
-    const sold6=l.wk.reduce((a,b)=>a+b,0);
-    html+='<div class="kpi">'+
-      '<div><div class="k">Sold, last 6 wks</div><div class="v">'+num(sold6)+'</div></div>'+
-      '<div><div class="k">Avg per week</div><div class="v">'+num(fc.mean)+'</div></div>'+
-      '<div><div class="k">On order (31 May import)</div><div class="v">'+num(l.onOrder||0)+'</div></div>'+
-      '<div><div class="k">Projected 4 wks</div><div class="v">'+num(fc.total)+'</div></div>'+
-    '</div>';
-  }
-
-  html+='<div class="qbtns">'+QS.map(q=>'<button class="qbtn'+(activeQ===q.id?" active":"")+'" style="'+(activeQ===q.id?"background:"+c:"")+'" onclick="ask(\''+q.id+'\')">'+q.t+'</button>').join('')+'</div>';
-  if(activeQ){const a=ansFor(l,activeQ);html+='<div class="ans"><div class="big">'+a.big+'</div><div class="rd">'+a.rd+'</div></div>';}
-  else{html+='<div class="ans"><div class="rd">Click a question for more on this line.</div></div>';}
-
-  html+='<div class="foot">Ledger stock on hand '+num(l.soh)+' units, stock turn '+l.turn+'. '+
-        'Stock on hand is shown for reference only and is not trusted for ordering on these lines. '+
-        'The on order figure comes from a 31 May reference import and its currency is not confirmed. The live version reads current on order straight from StockFlow.</div>';
-  el.innerHTML=html;
-}
-function setMode(m){mode=m;renderDetail();}
-function ask(q){activeQ=q;renderDetail();}
-// === Consignment panel (SB-CC-PMINI-001) ===
-const DEPT_KEY_EANS = new Set(['2106100000006','2206100000003']);
-let cLoaded = false;
-
-function switchTab(tab) {
-  document.getElementById('secOrder').style.display = tab === 'order' ? '' : 'none';
-  document.getElementById('secCons').style.display  = tab === 'cons'  ? '' : 'none';
-  document.getElementById('tabOrder').className = 'tab' + (tab === 'order' ? ' on' : '');
-  document.getElementById('tabCons').className  = 'tab' + (tab === 'cons'  ? ' on' : '');
-  if (tab === 'cons' && !cLoaded) loadCons();
-}
-
-function loadCons() {
-  const month = document.getElementById('cMonth').value || new Date().toISOString().slice(0,7);
-  const rate  = document.getElementById('cRate').value || '0.10';
-  document.getElementById('cCards').innerHTML =
-    '<div class="stat" style="grid-column:1/-1"><div class="k">Loading</div><div class="v">...</div></div>';
-  fetch('/api/dev-corner/consignment?month=' + encodeURIComponent(month) + '&rate=' + rate,
-    { headers: { Accept: 'application/json' } })
-    .then(function(r){ return r.ok ? r.json() : Promise.reject(r.status); })
-    .then(function(data){ cLoaded = true; renderCons(data); })
-    .catch(function(){
-      document.getElementById('cCards').innerHTML =
-        '<div class="stat" style="grid-column:1/-1"><div class="k" style="color:var(--red)">Could not load data</div>' +
-        '<div class="v" style="font-size:12px;color:var(--muted)">Check that the Next.js server is running.</div></div>';
-    });
-}
-
-function cCard(label, color, val, unit) {
-  return '<div class="stat" style="border-top:3px solid '+color+'">'+
-    '<div class="k">'+label+'</div>'+
-    '<div class="v" style="font-size:16px;color:'+color+'">'+val+'</div>'+
-    '<div class="u">'+unit+'</div></div>';
-}
-
-function renderCons(d) {
-  const rPct = Math.round(d.rate * 100);
-  document.getElementById('cCards').innerHTML =
-    cCard('Cash taken',      '#3b6fa0', zar(d.business_sales), 'total sales this month') +
-    cCard('Your commission', '#3f8f86', zar(d.commission),     rPct+'% of sales') +
-    cCard('Owed to supplier','#b5443a', zar(d.owed),           'due at month-end') +
-    cCard('Capital float',   '#5566b3', zar(d.float),          'held in bank now');
-  renderConsCashflow(d);
-  renderConsRanked(d);
-  renderConsFlags(d);
-}
-
-function renderConsCashflow(d) {
-  const el = document.getElementById('cCashflow');
-  const daily = d.daily || [];
-  if (!daily.length) { el.innerHTML = '<div class="empty">No daily data yet.</div>'; return; }
-  let max = 0;
-  daily.forEach(function(x){ if (x.cumulative > max) max = x.cumulative; });
-  if (!max) max = 1;
-  const commPct = Math.round(d.rate * 100);
-  let bars = '';
-  daily.forEach(function(day) {
-    const pct = Math.round(day.cumulative / max * 96);
-    const lbl = day.date.slice(8);
-    bars += '<div class="bar">'+
-      '<div class="val" style="color:#3b6fa0;font-size:9px">'+zar(day.cumulative)+'</div>'+
-      '<div class="col" style="height:'+pct+'%;background:linear-gradient(180deg,'+
-        'rgba(59,111,160,.32) 0%,rgba(59,111,160,.32) '+commPct+'%,'+
-        '#3b6fa0 '+commPct+'%,#3b6fa0 100%)"></div>'+
-      '<div class="lab">'+lbl+'</div></div>';
-  });
-  el.innerHTML =
-    '<h2 style="margin:0 0 3px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800">Cumulative cash held</h2>'+
-    '<p class="sub">Light top = commission &middot; Dark = owed to supplier</p>'+
-    '<div class="bars" style="height:118px">'+bars+'</div>'+
-    '<div style="font-size:11px;color:var(--muted);margin-top:8px">Month-end supplier payment resets the balance to zero.</div>';
-}
-
-var cConsData = null; // store last API response for item projection
-var cSelectedEan = null;
-
-function renderConsRanked(d) {
-  cConsData = d;
-  var el = document.getElementById('cRanked');
-  var ranked = d.all_ranked || [];
-  if (!ranked.length) { el.innerHTML = '<div class="empty">No sales data.</div>'; return; }
-
-  var sushiAll  = ranked.filter(function(l){ return l.type === 'sushi'; });
-  var chinaAll  = ranked.filter(function(l){ return l.type === 'chinese'; });
-  var sushiTop  = sushiAll.slice(0, 5);
-  var chinaTop  = chinaAll.slice(0, 5);
-  var remaining = sushiAll.slice(5).concat(chinaAll.slice(5))
-    .sort(function(a, b){ return b.sales - a.sales; });
-
-  var sPct = Math.round((d.sushi_sales||0) / (d.business_sales||1) * 100);
-
-  function mrow(l, localRank) {
-    var dotCol = l.type === 'sushi' ? '#3b6fa0' : '#a8730f';
-    var active = cSelectedEan === l.ean ? 'background:rgba(59,111,160,.12);border-radius:6px;' : '';
-    return '<div class="minirow" style="cursor:pointer;'+active+'" onclick="consItemClick(\''+l.ean+'\',\''+l.desc.replace(/'/g,'')+'\')">'+
-      '<span class="mrk">'+localRank+'</span>'+
-      '<span class="mnm" title="'+l.desc+'">'+l.desc+'</span>'+
-      '<span class="mamt">'+zar(l.sales)+'</span>'+
-      '</div>';
-  }
-
-  var sushiRows = sushiTop.length
-    ? sushiTop.map(function(l,i){ return mrow(l,i+1); }).join('')
-    : '<div style="font-size:11px;color:var(--muted);padding:6px 0">None this month</div>';
-  var chinaRows = chinaTop.length
-    ? chinaTop.map(function(l,i){ return mrow(l,i+1); }).join('')
-    : '<div style="font-size:11px;color:var(--muted);padding:6px 0">None this month</div>';
-
-  var restHtml = '';
-  if (remaining.length) {
-    restHtml = '<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,.55)">'+
-      '<div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;font-weight:800;color:var(--muted);margin-bottom:4px">Other lines ('+remaining.length+')</div>'+
-      '<div class="restrows">';
-    remaining.forEach(function(l) {
-      var dotCol = l.type === 'sushi' ? '#3b6fa0' : '#a8730f';
-      var active = cSelectedEan === l.ean ? 'background:rgba(59,111,160,.1);border-radius:4px;' : '';
-      restHtml += '<div class="restrow" style="cursor:pointer;'+active+'" onclick="consItemClick(\''+l.ean+'\',\''+l.desc.replace(/'/g,'')+'\')">'+
-        '<span class="dot" style="background:'+dotCol+'"></span>'+
-        '<span class="nm" title="'+l.desc+'">'+l.desc+'</span>'+
-        '<span class="qty">'+l.qty+'</span>'+
-        '<span class="amt">'+zar(l.sales)+'</span>'+
-        '</div>';
-    });
-    restHtml += '</div></div>';
-  }
-
-  el.innerHTML =
-    '<h2 style="margin:0 0 2px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800">Lines ranked &mdash; tap to project</h2>'+
-    '<div class="splitbar"><div class="s" style="width:'+sPct+'%"></div><div class="c"></div></div>'+
-    '<div style="font-size:10px;color:var(--muted);margin-bottom:7px">'+
-      '<span style="color:#3b6fa0;font-weight:700">Sushi '+zar(d.sushi_sales||0)+'</span>'+
-      ' &bull; <span style="color:#a8730f;font-weight:700">Chinese '+zar(d.chinese_sales||0)+'</span>'+
-      ' &bull; Avg '+zar(d.daily_avg||0)+'/day &bull; June ~'+zar(d.month_projection||0)+
-    '</div>'+
-    '<div class="mini2">'+
-      '<div>'+
-        '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#3b6fa0;border-bottom:2px solid #3b6fa0;padding-bottom:3px;margin-bottom:4px">Sushi</div>'+
-        sushiRows+
-      '</div>'+
-      '<div>'+
-        '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#a8730f;border-bottom:2px solid #a8730f;padding-bottom:3px;margin-bottom:4px">Chinese</div>'+
-        chinaRows+
-      '</div>'+
-    '</div>'+
-    restHtml+
-    '<div id="cItemChart" style="margin-top:10px"></div>';
-}
-
-function consItemClick(ean, desc) {
-  if (cSelectedEan === ean) { cSelectedEan = null; document.getElementById('cItemChart').innerHTML = ''; renderConsRanked(cConsData); return; }
-  cSelectedEan = ean;
-  renderConsRanked(cConsData); // re-render to highlight
-  renderItemProjection(ean, desc);
-}
-
-function seasonalFactor(day, daysInMonth) {
-  // Retail SA pattern: quiet mid-month (trough ~day 20), peak at month-end (payday)
-  if (day <= 20) return 1.0 - 0.25 * (day - 1) / 19;    // 1.0 → 0.75
-  return 0.75 + 0.55 * (day - 20) / (daysInMonth - 20);  // 0.75 → 1.30
-}
-
-function renderItemProjection(ean, desc) {
-  var el = document.getElementById('cItemChart');
-  if (!cConsData) { el.innerHTML = ''; return; }
-  var d = cConsData;
-  var item = (d.all_ranked||[]).find(function(l){ return l.ean === ean; });
-  if (!item) { el.innerHTML = ''; return; }
-
-  var share = item.sales / (d.business_sales||1);
-  var daily = d.daily || [];
-  var daysInMonth = d.days_in_month || 30;
-  var daysElapsed  = d.days_elapsed  || daily.length || 1;
-  var dailyAvg = d.daily_avg || 0;
-  var itemAvg  = dailyAvg * share;
-
-  // Historical bars: item share × each day's actual total
-  var allBars = daily.map(function(day) {
-    return { date: day.date, val: Math.round(day.sales * share * 100) / 100, projected: false };
-  });
-
-  // Projected bars: remaining days with seasonal curve
-  var lastDate = daily.length ? daily[daily.length-1].date : null;
-  var lastDay  = lastDate ? parseInt(lastDate.slice(8)) : daysElapsed;
-  for (var d2 = lastDay + 1; d2 <= daysInMonth; d2++) {
-    var factor = seasonalFactor(d2, daysInMonth);
-    allBars.push({ date: String(d2), val: Math.round(itemAvg * factor * 100) / 100, projected: true });
-  }
-
-  var maxVal = Math.max.apply(null, allBars.map(function(b){ return b.val; })) || 1;
-  var isSushi = item.type === 'sushi';
-  var col = isSushi ? '#3b6fa0' : '#a8730f';
-
-  var bars = allBars.map(function(b) {
-    var pct   = Math.round(b.val / maxVal * 88);
-    var lbl   = b.date.length > 2 ? b.date.slice(8) : b.date;
-    var bg    = b.projected
-      ? 'repeating-linear-gradient(45deg,'+rgba(col,.42)+','+rgba(col,.42)+' 3px,'+rgba(col,.14)+' 3px,'+rgba(col,.14)+' 7px)'
-      : col;
-    return '<div class="bar">'+
-      '<div class="val" style="color:'+col+';font-size:8.5px">'+zar(b.val)+'</div>'+
-      '<div class="col" style="height:'+pct+'%;background:'+bg+'"></div>'+
-      '<div class="lab">'+lbl+'</div>'+
-      '</div>';
-  }).join('');
-
-  el.innerHTML =
-    '<div class="chartbox" style="background:rgba(255,255,255,.28);margin-top:0;border-color:rgba(255,255,255,.5)">'+
-      '<div class="ct" style="color:'+col+'">'+desc+'</div>'+
-      '<div class="leg">Actual &nbsp;'+
-        '<span class="swatch" style="background:'+rgba(col,.35)+';background-image:repeating-linear-gradient(45deg,'+rgba(col,.5)+','+rgba(col,.5)+' 3px,'+rgba(col,.14)+' 3px,'+rgba(col,.14)+' 7px)"></span>'+
-        'Projected &mdash; mid-month dip, month-end peak'+
-      '</div>'+
-      '<div class="bars" style="height:100px">'+bars+'</div>'+
-    '</div>';
-}
-
-function renderConsFlags(d) {
-  const el = document.getElementById('cFlags');
-  let html = '';
-  // Wrong items (non-supplier product misfiled in sub-dept, with sales activity)
-  const wrong = (d.wrong_items || []).filter(function(w){ return w.sales > 0 || w.qty > 0; });
-  if (wrong.length) {
-    html += '<div class="flagbox red"><h2>Wrong items in HMR SUSHI (' + wrong.length + ')</h2>';
-    wrong.forEach(function(w) {
-      html += '<div class="flagrow">'+
-        '<span class="fn">'+w.desc+'</span>'+
-        '<span class="fa" style="color:var(--red)">'+zar(w.sales)+'</span>'+
-        '<span class="fs">'+w.qty+' sold &mdash; recode in Sigma</span></div>';
-    });
-    html += '</div>';
-  }
-  // No-sales lines (department-key EANs handled separately below)
-  const noSales = (d.no_sales || []).filter(function(n){ return !DEPT_KEY_EANS.has(String(n.ean)); });
-  if (noSales.length) {
-    html += '<div class="flagbox"><h2>No sales this month (' + noSales.length + ' lines)</h2>';
-    noSales.slice(0, 8).forEach(function(n) {
-      html += '<div class="flagrow">'+
-        '<span class="fn">'+n.desc+'</span>'+
-        '<span class="fs">EAN '+n.ean+'</span></div>';
-    });
-    if (noSales.length > 8) {
-      html += '<div style="font-size:11px;color:var(--muted);padding:4px 0">&hellip;and '+(noSales.length-8)+' more</div>';
+/* === Bootstrap: fetch live data, fall back to snapshot === */
+(async function boot(){
+  const monthEl=document.querySelector('input[type=month]');
+  const month=monthEl?monthEl.value:'2026-06';
+  let ok=false;
+  try {
+    const resp=await fetch('/api/dev-corner/sigma-lines?month='+encodeURIComponent(month),{headers:{Accept:'application/json'}});
+    if(resp.ok){
+      const d=await resp.json();
+      if(d.lines&&d.lines.length){
+        if($('meta-asat')&&d.as_at)$('meta-asat').textContent=d.as_at;
+        if($('meta-src'))$('meta-src').textContent='sigma_sales · Layer 1';
+        render(d.lines,d.loaded_days,d.days_in_month||30);
+        ok=true;
+      }
     }
-    html += '</div>';
+  } catch(e){}
+  if(!ok){
+    if($('meta-asat'))$('meta-asat').textContent='04 Jun 2026 (snapshot)';
+    render(L_FB.map(l=>({...l,s:[...l.s],q:[...l.q]})),4,30);
   }
-  // Untracked dept-key gap — always show
-  // Price flags -- sigma_price vs db_price. Subtle amber, disappears when push syncs the change.
-  if (d.price_flags && d.price_flags.length > 0) {
-    html += '<div class="flagbox" style="background:rgba(168,115,15,.07);border-color:rgba(168,115,15,.22);margin-bottom:12px">'+
-      '<h2 style="color:var(--amber)">' + d.price_flags.length +
-      ' price update' + (d.price_flags.length > 1 ? 's' : '') + ' pending &mdash; Sigma changed, DB follows on next push</h2>';
-    d.price_flags.forEach(function(f) {
-      html += '<div class="flagrow">'+
-        '<span class="fn">'+f.desc+'</span>'+
-        '<span class="fa" style="color:var(--amber)">DB '+zar(f.db_price)+' &rarr; Sigma '+zar(f.sigma_price)+'</span>'+
-        '<span class="fs">'+(f.diff > 0 ? '+' : '')+zar(f.diff)+'</span>'+
-        '</div>';
-    });
-    html += '</div>';
-  }
+})();
 
-  // Untracked counter note removed per Pieter 2026-06-06 -- non-scanning items are fixed.
-  el.innerHTML = html;
-}
-
-boot();
+/* Weather — LIVE Open-Meteo (no key). Falls back to the 04 Jun snapshot if the fetch fails. */
+const WX_FALLBACK={time:["2026-06-06","2026-06-07","2026-06-08","2026-06-09","2026-06-10","2026-06-11","2026-06-12"],weather_code:[3,1,3,2,0,3,3],temperature_2m_max:[15.4,18.2,20.3,19.9,19.9,19.7,20.9],temperature_2m_min:[0.6,1.3,4.0,4.3,3.8,8.5,9.2],precipitation_probability_max:[0,0,0,0,0,0,0]};
+const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function icon(c,r){if(r>=40)return '<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 16a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 16z"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="13" y1="20" x2="13" y2="22"/></svg>';
+  if(c<=1)return '<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><line x1="12" y1="3" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="21"/><line x1="3" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="21" y2="12"/><line x1="5.5" y1="5.5" x2="6.9" y2="6.9"/><line x1="17.1" y1="17.1" x2="18.5" y2="18.5"/><line x1="5.5" y1="18.5" x2="6.9" y2="17.1"/><line x1="17.1" y1="6.9" x2="18.5" y2="5.5"/></svg>';
+  if(c===2)return '<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="9" r="3"/><path d="M11 18a4 4 0 010-8 5 5 0 019.6 1A3.2 3.2 0 0119 18z" stroke="#5b7da3"/></svg>';
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 18a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 18z"/></svg>';}
+function renderWx(d,live){let h='';for(let i=0;i<d.time.length;i++){const dt=new Date(d.time[i]+'T00:00:00');h+=`<div class="wd glass${i===0?' today':''}"><div class="dn">${DOW[dt.getDay()]}</div><div class="dd">${dt.getDate()} Jun</div>${icon(d.weather_code[i],d.precipitation_probability_max[i])}<div class="hi">${Math.round(d.temperature_2m_max[i])}°</div><div class="lo">${Math.round(d.temperature_2m_min[i])}°</div><div class="rn">${d.precipitation_probability_max[i]}%</div></div>`;}
+  $('wxstrip').innerHTML=h;$('wx-status').textContent='Delareyville · '+(live?'live':'last snapshot');}
+fetch("https://api.open-meteo.com/v1/forecast?latitude=-26.68&longitude=25.45&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Africa/Johannesburg&forecast_days=7")
+ .then(r=>r.json()).then(j=>renderWx(j.daily,true)).catch(()=>renderWx(WX_FALLBACK,false));
 </script>
 </body>
 </html>
