@@ -115,6 +115,41 @@
   .exec .disc b{color:var(--ink)}
   .empty{color:var(--muted);padding:24px 0;text-align:center}
   footer{margin-top:16px;font-size:11px;color:var(--muted);text-align:center;line-height:1.7}
+  /* Tabs */
+  .tabs{display:flex;gap:8px;margin:14px 0;flex-wrap:wrap}
+  .tab{border:none;border-radius:11px;padding:9px 18px;font-size:12.5px;font-weight:700;cursor:pointer;
+       transition:.13s;color:var(--muted);
+       background:rgba(255,255,255,.5);border:1px solid rgba(255,255,255,.7);
+       box-shadow:0 2px 6px rgba(40,60,85,.14),var(--bevel)}
+  .tab:hover{background:rgba(255,255,255,.72);transform:translateY(-1px)}
+  .tab.on{color:#fff;background:#3b6fa0;border-color:transparent;box-shadow:0 4px 12px rgba(47,87,129,.35),var(--bevel)}
+  /* Consignment panel */
+  .cmon{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0 16px;align-items:center}
+  .cmon input[type=month]{border-radius:10px;padding:8px 12px;font-size:13px;font-weight:700;
+    color:var(--ink);background:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.7);
+    cursor:pointer;font-family:inherit;backdrop-filter:blur(12px);box-shadow:var(--bevel)}
+  .c2col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px}
+  @media(max-width:700px){.c2col{grid-template-columns:1fr}}
+  .top5row{display:flex;align-items:baseline;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.55);font-size:13px;gap:8px}
+  .top5row:last-child{border-bottom:none}
+  .top5row .rk{font-size:9.5px;font-weight:800;color:var(--muted);width:14px;flex:none;text-align:right}
+  .top5row .nm{font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .top5row .amt{font-weight:800;white-space:nowrap}
+  .top5row .qty{font-size:11px;color:var(--muted);white-space:nowrap;margin-left:6px}
+  .flagbox{border-radius:14px;padding:13px 15px;background:rgba(168,115,15,.10);
+           border:1px solid rgba(168,115,15,.28);margin-bottom:12px}
+  .flagbox h2{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+              color:var(--amber);font-weight:800}
+  .flagbox.red{background:rgba(181,68,58,.10);border-color:rgba(181,68,58,.28)}
+  .flagbox.red h2{color:var(--red)}
+  .flagbox.blue{background:rgba(85,102,179,.10);border-color:rgba(85,102,179,.28)}
+  .flagbox.blue h2{color:#5566b3}
+  .flagrow{display:flex;align-items:baseline;padding:6px 0;
+           border-bottom:1px solid rgba(255,255,255,.5);font-size:12.5px;gap:8px}
+  .flagrow:last-child{border-bottom:none}
+  .flagrow .fn{font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .flagrow .fa{font-weight:800;white-space:nowrap}
+  .flagrow .fs{font-size:11px;color:var(--muted);white-space:nowrap}
 </style>
 </head>
 <body>
@@ -132,6 +167,12 @@
     <div class="fresh"><div class="k">Next update expected</div><div class="v" id="nextRef">loading</div></div>
     <div class="fresh"><div class="k">Source</div><div class="v" id="srcNote">loading</div></div>
   </div>
+
+  <div class="tabs">
+    <button class="tab on" id="tabOrder" onclick="switchTab('order')">Order Plan</button>
+    <button class="tab" id="tabCons" onclick="switchTab('cons')">Consignment</button>
+  </div>
+  <div id="secOrder">
 
   <div class="grid">
     <div class="panel">
@@ -156,6 +197,32 @@
       <span class="feat">Live data with freshness</span>
     </div>
     <div class="disc"><b>For sampling and demonstration only.</b> The sales, costs and prices are real data from the live database, which already updates daily and feeds a working dashboard. The four-week projections are purely for illustration, they show how the data could drive ordering and are not a commitment or a final order figure. This view shows a small sample of lines to show what the data can do.</div>
+  </div>
+  </div><!-- /secOrder -->
+
+  <div id="secCons" style="display:none">
+    <div class="cmon">
+      <label style="font-size:13px;font-weight:700;color:var(--ink)">Month&nbsp;
+        <input type="month" id="cMonth" onchange="cLoaded=false;loadCons()">
+      </label>
+      <label style="font-size:13px;font-weight:700;color:var(--ink)">Commission&nbsp;
+        <select id="cRate" onchange="cLoaded=false;loadCons()"
+          style="border-radius:10px;padding:8px 12px;font-size:13px;font-weight:700;color:var(--ink);background:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.7);cursor:pointer;font-family:inherit;box-shadow:var(--bevel)">
+          <option value="0.10" selected>10%</option>
+          <option value="0.08">8%</option>
+          <option value="0.12">12%</option>
+          <option value="0.15">15%</option>
+        </select>
+      </label>
+    </div>
+    <div class="cards" id="cCards">
+      <div class="stat"><div class="k">Loading</div><div class="v">...</div></div>
+    </div>
+    <div class="c2col">
+      <div class="panel" id="cCashflow"><div class="empty">Loading...</div></div>
+      <div class="panel" id="cTop5"><div class="empty">Loading...</div></div>
+    </div>
+    <div id="cFlags"></div>
   </div>
 
   <footer>
@@ -230,6 +297,11 @@ function forecast(l){
 }
 
 async function boot(){
+  const cMonthEl = document.getElementById('cMonth');
+  if (cMonthEl) {
+    const n = new Date();
+    cMonthEl.value = n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0');
+  }
   let live=false,asAt=SNAP_ASAT,next=SNAP_NEXT,src=SNAP_SRC;
   try{
     const r=await fetch("/api/dev-corner/lines",{headers:{Accept:"application/json"}});
@@ -376,6 +448,137 @@ function renderDetail(){
 }
 function setMode(m){mode=m;renderDetail();}
 function ask(q){activeQ=q;renderDetail();}
+// === Consignment panel (SB-CC-PMINI-001) ===
+const DEPT_KEY_EANS = new Set(['2106100000006','2206100000003']);
+let cLoaded = false;
+
+function switchTab(tab) {
+  document.getElementById('secOrder').style.display = tab === 'order' ? '' : 'none';
+  document.getElementById('secCons').style.display  = tab === 'cons'  ? '' : 'none';
+  document.getElementById('tabOrder').className = 'tab' + (tab === 'order' ? ' on' : '');
+  document.getElementById('tabCons').className  = 'tab' + (tab === 'cons'  ? ' on' : '');
+  if (tab === 'cons' && !cLoaded) loadCons();
+}
+
+function loadCons() {
+  const month = document.getElementById('cMonth').value || new Date().toISOString().slice(0,7);
+  const rate  = document.getElementById('cRate').value || '0.10';
+  document.getElementById('cCards').innerHTML =
+    '<div class="stat" style="grid-column:1/-1"><div class="k">Loading</div><div class="v">...</div></div>';
+  fetch('/api/dev-corner/consignment?month=' + encodeURIComponent(month) + '&rate=' + rate,
+    { headers: { Accept: 'application/json' } })
+    .then(function(r){ return r.ok ? r.json() : Promise.reject(r.status); })
+    .then(function(data){ cLoaded = true; renderCons(data); })
+    .catch(function(){
+      document.getElementById('cCards').innerHTML =
+        '<div class="stat" style="grid-column:1/-1"><div class="k" style="color:var(--red)">Could not load data</div>' +
+        '<div class="v" style="font-size:12px;color:var(--muted)">Check that the Next.js server is running.</div></div>';
+    });
+}
+
+function cCard(label, color, val, unit) {
+  return '<div class="stat" style="border-top:3px solid '+color+'">'+
+    '<div class="k">'+label+'</div>'+
+    '<div class="v" style="font-size:16px;color:'+color+'">'+val+'</div>'+
+    '<div class="u">'+unit+'</div></div>';
+}
+
+function renderCons(d) {
+  const rPct = Math.round(d.rate * 100);
+  document.getElementById('cCards').innerHTML =
+    cCard('Cash taken',      '#3b6fa0', zar(d.business_sales), 'total sales this month') +
+    cCard('Your commission', '#3f8f86', zar(d.commission),     rPct+'% of sales') +
+    cCard('Owed to supplier','#b5443a', zar(d.owed),           'due at month-end') +
+    cCard('Capital float',   '#5566b3', zar(d.float),          'held in bank now');
+  renderConsCashflow(d);
+  renderConsTop5(d.top5);
+  renderConsFlags(d);
+}
+
+function renderConsCashflow(d) {
+  const el = document.getElementById('cCashflow');
+  const daily = d.daily || [];
+  if (!daily.length) { el.innerHTML = '<div class="empty">No daily data yet.</div>'; return; }
+  let max = 0;
+  daily.forEach(function(x){ if (x.cumulative > max) max = x.cumulative; });
+  if (!max) max = 1;
+  const commPct = Math.round(d.rate * 100);
+  let bars = '';
+  daily.forEach(function(day) {
+    const pct = Math.round(day.cumulative / max * 96);
+    const lbl = day.date.slice(8); // DD
+    bars += '<div class="bar">'+
+      '<div class="val" style="color:#3b6fa0;font-size:9px">'+zar(day.cumulative)+'</div>'+
+      '<div class="col" style="height:'+pct+'%;background:linear-gradient(180deg,'+
+        'rgba(59,111,160,.32) 0%,rgba(59,111,160,.32) '+commPct+'%,'+
+        '#3b6fa0 '+commPct+'%,#3b6fa0 100%)"></div>'+
+      '<div class="lab">'+lbl+'</div></div>';
+  });
+  el.innerHTML =
+    '<h2 style="margin:0 0 3px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800">Cumulative cash held</h2>'+
+    '<p class="sub">Light top = commission &middot; Dark = owed to supplier</p>'+
+    '<div class="bars" style="height:130px">'+bars+'</div>'+
+    '<div style="font-size:11px;color:var(--muted);margin-top:8px">Month-end supplier payment resets the balance to zero.</div>';
+}
+
+function renderConsTop5(top5) {
+  const el = document.getElementById('cTop5');
+  if (!top5 || !top5.length) { el.innerHTML = '<div class="empty">No sales data.</div>'; return; }
+  let rows = '';
+  top5.forEach(function(l, i) {
+    rows += '<div class="top5row">'+
+      '<span class="rk">'+(i+1)+'</span>'+
+      '<span class="nm">'+l.desc+'</span>'+
+      '<span class="amt">'+zar(l.sales)+'</span>'+
+      '<span class="qty">'+l.qty+' sold</span></div>';
+  });
+  el.innerHTML =
+    '<h2 style="margin:0 0 3px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800">Top 5 sellers</h2>'+
+    '<p class="sub">By sales value, this month</p>'+rows;
+}
+
+function renderConsFlags(d) {
+  const el = document.getElementById('cFlags');
+  let html = '';
+  // Wrong items (non-supplier product misfiled in sub-dept, with sales activity)
+  const wrong = (d.wrong_items || []).filter(function(w){ return w.sales > 0 || w.qty > 0; });
+  if (wrong.length) {
+    html += '<div class="flagbox red"><h2>Wrong items in HMR SUSHI (' + wrong.length + ')</h2>';
+    wrong.forEach(function(w) {
+      html += '<div class="flagrow">'+
+        '<span class="fn">'+w.desc+'</span>'+
+        '<span class="fa" style="color:var(--red)">'+zar(w.sales)+'</span>'+
+        '<span class="fs">'+w.qty+' sold &mdash; recode in Sigma</span></div>';
+    });
+    html += '</div>';
+  }
+  // No-sales lines (department-key EANs handled separately below)
+  const noSales = (d.no_sales || []).filter(function(n){ return !DEPT_KEY_EANS.has(String(n.ean)); });
+  if (noSales.length) {
+    html += '<div class="flagbox"><h2>No sales this month (' + noSales.length + ' lines)</h2>';
+    noSales.slice(0, 8).forEach(function(n) {
+      html += '<div class="flagrow">'+
+        '<span class="fn">'+n.desc+'</span>'+
+        '<span class="fs">EAN '+n.ean+'</span></div>';
+    });
+    if (noSales.length > 8) {
+      html += '<div style="font-size:11px;color:var(--muted);padding:4px 0">&hellip;and '+(noSales.length-8)+' more</div>';
+    }
+    html += '</div>';
+  }
+  // Untracked dept-key gap — always show
+  html += '<div class="flagbox blue"><h2>Untracked counter sales &mdash; action required</h2>'+
+    '<div style="font-size:12.5px;color:var(--ink);line-height:1.6">'+
+    'Some items at the counter do not scan. Those sales ring under the open department key '+
+    '(EAN 2106100000006 / 2206100000003) instead of the product line. The itemised total above '+
+    'may understate actual counter takings &mdash; the gap cannot be measured from the product feed alone. '+
+    'Per Pieter: unattributed sales stay with us and are not paid to the supplier, but the tracking gap is real.<br>'+
+    '<b style="color:#5566b3">Action:</b> identify non-scanning codes (e.g. UDOOG Noodles Prawn) and recode them '+
+    'in Sigma so all sales attribute to a product line.'+
+    '</div></div>';
+  el.innerHTML = html;
+}
+
 boot();
 </script>
 </body>
