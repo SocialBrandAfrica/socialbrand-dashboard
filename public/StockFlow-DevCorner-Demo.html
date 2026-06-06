@@ -567,6 +567,21 @@ function renderConsFlags(d) {
     html += '</div>';
   }
   // Untracked dept-key gap — always show
+  // Price flags -- sigma_price vs db_price. Subtle amber, disappears when push syncs the change.
+  if (d.price_flags && d.price_flags.length > 0) {
+    html += '<div class="flagbox" style="background:rgba(168,115,15,.07);border-color:rgba(168,115,15,.22);margin-bottom:12px">'+
+      '<h2 style="color:var(--amber)">' + d.price_flags.length +
+      ' price update' + (d.price_flags.length > 1 ? 's' : '') + ' pending &mdash; Sigma changed, DB follows on next push</h2>';
+    d.price_flags.forEach(function(f) {
+      html += '<div class="flagrow">'+
+        '<span class="fn">'+f.desc+'</span>'+
+        '<span class="fa" style="color:var(--amber)">DB '+zar(f.db_price)+' &rarr; Sigma '+zar(f.sigma_price)+'</span>'+
+        '<span class="fs">'+(f.diff > 0 ? '+' : '')+zar(f.diff)+'</span>'+
+        '</div>';
+    });
+    html += '</div>';
+  }
+
   html += '<div class="flagbox blue"><h2>Untracked counter sales &mdash; action required</h2>'+
     '<div style="font-size:12.5px;color:var(--ink);line-height:1.6">'+
     'Some items at the counter do not scan. Those sales ring under the open department key '+

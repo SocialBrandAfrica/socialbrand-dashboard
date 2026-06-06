@@ -10,8 +10,9 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse }  from 'next/server'
 
-const STORE  = '10116'
-const SUBDEPT = 'HMR SUSHI'
+const STORE     = '10116'
+const SUBDEPT   = 'HMR SUSHI'
+const CLIENT_ID = 'socialbrand'
 
 // Items excluded from consignment business figures -- silently dropped, not shown.
 // BREAKFAST / MABELA: misfiled, recoded in Sigma 2026-06-05.
@@ -92,6 +93,54 @@ export async function GET(request) {
     }
     const lines = Object.values(byEan)
 
+    // Sigma price check — detect any price changed in Sigma since last push.
+    // Join path (R20): ean → SUBSTRING(ean,6)::bigint = sigma_ean_master.barcode
+    //                        → product_code = sigma_articles.product_code
+    const barcodes = [...new Set(lines.map(l => parseInt(String(l.ean).slice(5))))]
+      .filter(b => b > 0 && isFinite(b))
+
+    const { data: eanRows } = await supabase
+      .from('sigma_ean_master')
+      .select('barcode, product_code')
+      .eq('store_code', STORE)
+      .eq('client_id', CLIENT_ID)
+      .in('barcode', barcodes)
+
+    const barcodeToPCode = {}
+    for (const r of (eanRows ?? [])) barcodeToPCode[r.barcode] = r.product_code
+    const productCodes = Object.values(barcodeToPCode)
+
+    let sigmaByPCode = {}
+    if (productCodes.length) {
+      const { data: sigmaRows } = await supabase
+        .from('sigma_articles')
+        .select('product_code, sell_price_incl_vat')
+        .eq('store_code', STORE)
+        .eq('client_id', CLIENT_ID)
+        .in('product_code', productCodes)
+      for (const r of (sigmaRows ?? [])) sigmaByPCode[r.product_code] = parseFloat(r.sell_price_incl_vat)
+    }
+
+    const priceFlags = []
+    for (const l of lines) {
+      const barcode = parseInt(String(l.ean).slice(5))
+      const pcode   = barcodeToPCode[barcode]
+      if (!pcode) continue
+      const sigmaPrice = sigmaByPCode[pcode]
+      if (sigmaPrice == null) continue
+      const dbPrice = parseFloat(l.sell ?? 0)
+      const diff    = Math.round((sigmaPrice - dbPrice) * 100) / 100
+      if (Math.abs(diff) > 0.01) {
+        priceFlags.push({
+          ean:         l.ean,
+          desc:        l.desc,
+          db_price:    Math.round(dbPrice    * 100) / 100,
+          sigma_price: Math.round(sigmaPrice * 100) / 100,
+          diff,
+        })
+      }
+    }
+
     // Business totals
     const businessSales = lines.reduce((s, l) => s + l.sales, 0)
     const commission    = Math.round(businessSales * rate       * 100) / 100
@@ -137,6 +186,7 @@ export async function GET(request) {
       top5,
       no_sales:       noSales,
       wrong_items:    wrongItems,
+      price_flags:    priceFlags,
     })
 
   } catch (err) {
