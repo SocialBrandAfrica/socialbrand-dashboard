@@ -14,6 +14,14 @@ const STORE     = '10116'
 const SUBDEPT   = 'HMR SUSHI'
 const CLIENT_ID = 'socialbrand'
 
+// PLU codes from the 64-line sushi menu list — used to split sushi vs Chinese/other
+const SUSHI_PLUS = new Set([
+  653,650,895,888,863,851,846,844,843,841,835,533,831,824,818,810,792,790,
+  785,778,773,767,766,749,747,832,762,737,722,744,718,715,9677,710,700,736,
+  632,638,597,307,308,309,889,924,930,599,699,694,693,696,695,697,698,840,
+  836,897,834,809,806,803,784,771,748,753,
+])
+
 // Items excluded from consignment business figures -- silently dropped, not shown.
 // BREAKFAST / MABELA: misfiled, recoded in Sigma 2026-06-05.
 // Generic dept-key EANs: HMR SUSHI 14% and 0% open keys -- unattributed sales
@@ -141,22 +149,44 @@ export async function GET(request) {
       }
     }
 
+    // Classify each line as sushi or chinese/other using the 64-line PLU list.
+    // EAN format: 10116 (5) + 002 (3) + PLU zero-padded (5) = 13 digits.
+    // SUBSTRING(ean,6)::bigint gives the velocity barcode (e.g. 200895).
+    // PLU = barcode - 200000 (e.g. 200895 - 200000 = 895).
+    const classified = lines.map(l => {
+      const barcode = parseInt(String(l.ean).slice(5))
+      const plu     = barcode - 200000
+      return { ...l, type: SUSHI_PLUS.has(plu) ? 'sushi' : 'chinese' }
+    })
+
     // Business totals
-    const businessSales = lines.reduce((s, l) => s + l.sales, 0)
+    const businessSales = classified.reduce((s, l) => s + l.sales, 0)
     const commission    = Math.round(businessSales * rate       * 100) / 100
     const owed          = Math.round(businessSales * (1 - rate) * 100) / 100
 
-    // Top 5 sellers (by sales value)
-    const top5 = lines
+    // Sushi / Chinese split
+    const sushiSales   = classified.filter(l => l.type === 'sushi')
+      .reduce((s, l) => s + l.sales, 0)
+    const chineseSales = classified.filter(l => l.type === 'chinese')
+      .reduce((s, l) => s + l.sales, 0)
+
+    // Full ranked list — all selling lines, best first
+    const allRanked = classified
       .filter(l => l.sales > 0)
       .sort((a, b) => b.sales - a.sales)
-      .slice(0, 5)
-      .map(l => ({ desc: l.desc, ean: l.ean, sales: Math.round(l.sales * 100) / 100, qty: l.qty }))
+      .map((l, i) => ({
+        rank:  i + 1,
+        desc:  l.desc,
+        ean:   l.ean,
+        sales: Math.round(l.sales * 100) / 100,
+        qty:   l.qty,
+        type:  l.type,
+      }))
 
     // No-sales lines (present in sub-dept but zero sales this month)
-    const noSales = lines
+    const noSales = classified
       .filter(l => l.sales === 0)
-      .map(l => ({ desc: l.desc, ean: l.ean, sell: l.sell }))
+      .map(l => ({ desc: l.desc, ean: l.ean, sell: l.sell, type: l.type }))
 
     // Daily cashflow (sum today_sales across all business lines per date)
     const dailyMap = {}
@@ -175,18 +205,30 @@ export async function GET(request) {
       }
     })
 
+    // Month projection — daily avg × days in month
+    const daysElapsed    = Math.max(1, daily.length)
+    const daysInMonth    = new Date(Date.UTC(year, month, 0)).getDate()
+    const dailyAvg       = Math.round(businessSales / daysElapsed * 100) / 100
+    const monthProjection = Math.round(dailyAvg * daysInMonth * 100) / 100
+
     return NextResponse.json({
-      month:          monthLabel,
+      month:             monthLabel,
       rate,
-      business_sales: Math.round(businessSales * 100) / 100,
+      business_sales:    Math.round(businessSales * 100) / 100,
       commission,
       owed,
-      float:          Math.round(businessSales * 100) / 100,
+      float:             Math.round(businessSales * 100) / 100,
+      sushi_sales:       Math.round(sushiSales   * 100) / 100,
+      chinese_sales:     Math.round(chineseSales  * 100) / 100,
+      daily_avg:         dailyAvg,
+      month_projection:  monthProjection,
+      days_elapsed:      daysElapsed,
+      days_in_month:     daysInMonth,
       daily,
-      top5,
-      no_sales:       noSales,
-      wrong_items:    wrongItems,
-      price_flags:    priceFlags,
+      all_ranked:        allRanked,
+      no_sales:          noSales,
+      wrong_items:       wrongItems,
+      price_flags:       priceFlags,
     })
 
   } catch (err) {

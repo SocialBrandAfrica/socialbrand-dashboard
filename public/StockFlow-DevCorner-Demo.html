@@ -130,12 +130,21 @@
     cursor:pointer;font-family:inherit;backdrop-filter:blur(12px);box-shadow:var(--bevel)}
   .c2col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px}
   @media(max-width:700px){.c2col{grid-template-columns:1fr}}
-  .top5row{display:flex;align-items:baseline;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.55);font-size:13px;gap:8px}
-  .top5row:last-child{border-bottom:none}
-  .top5row .rk{font-size:9.5px;font-weight:800;color:var(--muted);width:14px;flex:none;text-align:right}
-  .top5row .nm{font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .top5row .amt{font-weight:800;white-space:nowrap}
-  .top5row .qty{font-size:11px;color:var(--muted);white-space:nowrap;margin-left:6px}
+  /* Ranked list */
+  .ranked{max-height:380px;overflow-y:auto;margin-top:6px}
+  .ranked::-webkit-scrollbar{width:4px} .ranked::-webkit-scrollbar-thumb{background:rgba(59,111,160,.25);border-radius:4px}
+  .rankrow{display:flex;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.5);font-size:12.5px;gap:8px}
+  .rankrow:last-child{border-bottom:none}
+  .rankrow .rk{font-size:9px;font-weight:800;color:var(--muted);width:18px;flex:none;text-align:right}
+  .rankrow .dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .rankrow .nm{font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rankrow .amt{font-weight:800;white-space:nowrap;font-size:13px}
+  .rankrow .qty{font-size:11px;color:var(--muted);white-space:nowrap}
+  .rtotal{display:flex;justify-content:space-between;padding:8px 0 2px;font-size:11px;color:var(--muted);border-top:1px solid rgba(255,255,255,.6);margin-top:4px}
+  /* Split bar */
+  .splitbar{height:6px;border-radius:3px;overflow:hidden;display:flex;margin:8px 0 4px;gap:2px}
+  .splitbar .s{background:#3b6fa0;border-radius:3px 0 0 3px}
+  .splitbar .c{background:#a8730f;border-radius:0 3px 3px 0;flex:1}
   .flagbox{border-radius:14px;padding:13px 15px;background:rgba(168,115,15,.10);
            border:1px solid rgba(168,115,15,.28);margin-bottom:12px}
   .flagbox h2{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
@@ -218,9 +227,12 @@
     <div class="cards" id="cCards">
       <div class="stat"><div class="k">Loading</div><div class="v">...</div></div>
     </div>
+    <div class="cards" id="cSplit" style="margin-top:-6px;margin-bottom:14px">
+      <div class="stat"><div class="k">Loading</div><div class="v">...</div></div>
+    </div>
     <div class="c2col">
       <div class="panel" id="cCashflow"><div class="empty">Loading...</div></div>
-      <div class="panel" id="cTop5"><div class="empty">Loading...</div></div>
+      <div class="panel" id="cRanked"><div class="empty">Loading...</div></div>
     </div>
     <div id="cFlags"></div>
   </div>
@@ -490,9 +502,24 @@ function renderCons(d) {
     cCard('Your commission', '#3f8f86', zar(d.commission),     rPct+'% of sales') +
     cCard('Owed to supplier','#b5443a', zar(d.owed),           'due at month-end') +
     cCard('Capital float',   '#5566b3', zar(d.float),          'held in bank now');
+  renderConsSplit(d);
   renderConsCashflow(d);
-  renderConsTop5(d.top5);
+  renderConsRanked(d.all_ranked);
   renderConsFlags(d);
+}
+
+function renderConsSplit(d) {
+  const el = document.getElementById('cSplit');
+  const total = d.business_sales || 1;
+  const sPct  = Math.round(d.sushi_sales   / total * 100);
+  const cPct  = Math.round(d.chinese_sales / total * 100);
+  const daysLeft = d.days_in_month - d.days_elapsed;
+  const projComm = Math.round(d.month_projection * d.rate * 100) / 100;
+  el.innerHTML =
+    cCard('Sushi counter',   '#3b6fa0', zar(d.sushi_sales),       sPct+'% of takings') +
+    cCard('Chinese / other', '#a8730f', zar(d.chinese_sales),     cPct+'% of takings') +
+    cCard('Daily avg',       '#5b6b7b', zar(d.daily_avg),         'over '+d.days_elapsed+' trading days') +
+    cCard('Month projection','#3f8f86', zar(d.month_projection),  'at current pace &mdash; '+daysLeft+'d left &bull; commission ~'+zar(projComm));
 }
 
 function renderConsCashflow(d) {
@@ -506,7 +533,7 @@ function renderConsCashflow(d) {
   let bars = '';
   daily.forEach(function(day) {
     const pct = Math.round(day.cumulative / max * 96);
-    const lbl = day.date.slice(8); // DD
+    const lbl = day.date.slice(8);
     bars += '<div class="bar">'+
       '<div class="val" style="color:#3b6fa0;font-size:9px">'+zar(day.cumulative)+'</div>'+
       '<div class="col" style="height:'+pct+'%;background:linear-gradient(180deg,'+
@@ -517,24 +544,38 @@ function renderConsCashflow(d) {
   el.innerHTML =
     '<h2 style="margin:0 0 3px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800">Cumulative cash held</h2>'+
     '<p class="sub">Light top = commission &middot; Dark = owed to supplier</p>'+
-    '<div class="bars" style="height:130px">'+bars+'</div>'+
+    '<div class="bars" style="height:118px">'+bars+'</div>'+
     '<div style="font-size:11px;color:var(--muted);margin-top:8px">Month-end supplier payment resets the balance to zero.</div>';
 }
 
-function renderConsTop5(top5) {
-  const el = document.getElementById('cTop5');
-  if (!top5 || !top5.length) { el.innerHTML = '<div class="empty">No sales data.</div>'; return; }
+function renderConsRanked(ranked) {
+  const el = document.getElementById('cRanked');
+  if (!ranked || !ranked.length) { el.innerHTML = '<div class="empty">No sales data.</div>'; return; }
+  const total = ranked.reduce(function(s,l){ return s + l.sales; }, 0);
   let rows = '';
-  top5.forEach(function(l, i) {
-    rows += '<div class="top5row">'+
-      '<span class="rk">'+(i+1)+'</span>'+
+  ranked.forEach(function(l) {
+    const isSushi = l.type === 'sushi';
+    const dotCol  = isSushi ? '#3b6fa0' : '#a8730f';
+    rows += '<div class="rankrow">'+
+      '<span class="rk">'+l.rank+'</span>'+
+      '<span class="dot" style="background:'+dotCol+'"></span>'+
       '<span class="nm">'+l.desc+'</span>'+
+      '<span class="qty">'+l.qty+'</span>'+
       '<span class="amt">'+zar(l.sales)+'</span>'+
-      '<span class="qty">'+l.qty+' sold</span></div>';
+      '</div>';
   });
+  const sushiTotal   = ranked.filter(function(l){ return l.type==='sushi'; })
+    .reduce(function(s,l){ return s+l.sales; },0);
+  const chineseTotal = ranked.filter(function(l){ return l.type==='chinese'; })
+    .reduce(function(s,l){ return s+l.sales; },0);
+  const sPct = Math.round(sushiTotal / (total||1) * 100);
   el.innerHTML =
-    '<h2 style="margin:0 0 3px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800">Top 5 sellers</h2>'+
-    '<p class="sub">By sales value, this month</p>'+rows;
+    '<h2 style="margin:0 0 2px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800">All lines ranked</h2>'+
+    '<p class="sub"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#3b6fa0;margin-right:4px"></span>Sushi &nbsp;'+
+    '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#a8730f;margin-right:4px"></span>Chinese / other</p>'+
+    '<div class="splitbar"><div class="s" style="width:'+sPct+'%"></div><div class="c"></div></div>'+
+    '<div class="rtotal"><span>'+zar(sushiTotal)+' sushi</span><span>'+zar(chineseTotal)+' Chinese</span></div>'+
+    '<div class="ranked">'+rows+'</div>';
 }
 
 function renderConsFlags(d) {
