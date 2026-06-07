@@ -31,6 +31,8 @@
 --   slow_mover_signal-- NORMAL + soh > 0 + no sale in 14d + active line
 --   ghost_stock_flag    -- PRODUCTION class only with positive SOH (physically impossible)
 --   investigate_stock_flag -- NON_STOCK with positive SOH (bags/vouchers/returnables)
+--   stale_ledger_flag   -- NORMAL + soh>0 + no receipt 2yr + no recent sales (deposit artefacts)
+--   cost_sanity_flag    -- unit_cost > sell price (pack_size=1 bug in sigma_supplier_link)
 --   soh_delta           -- soh today vs yesterday (NULL until l2_soh_daily has data)
 --
 -- COST SOURCE NOTE:
@@ -237,6 +239,27 @@ SELECT
      AND COALESCE(lc.soh, 0) > 0
     )                      AS investigate_stock_flag,
 
+    -- Stale ledger: NORMAL + soh > 0 + no receipt in 2+ years + no recent sales.
+    -- Catches deposit/returnable items whose SOH accumulated and never depleted
+    -- (e.g. deposit empties, crates booked in but returns never offset the ledger).
+    -- These items inflate capital_value with ledger artefacts, not real stock.
+    (    COALESCE(cl.class, 'NORMAL') = 'NORMAL'
+     AND COALESCE(lc.soh, 0) > 0
+     AND (   lc.last_receipt_date IS NULL
+          OR lc.last_receipt_date < CURRENT_DATE - 730
+         )
+     AND COALESCE(ros.sales_qty_91d, 0) = 0
+    )                      AS stale_ledger_flag,
+
+    -- Cost sanity: unit_cost exceeds VAT-inclusive sell price.
+    -- When pack_size is left as 1 in sigma_supplier_link but list_cost is per case,
+    -- unit_cost is inflated by the case size factor (e.g. cost R1,010 for a R10 cup).
+    -- These rows should be excluded from any capital KPI until the pack_size is fixed.
+    (    bc.list_cost IS NOT NULL
+     AND a.sell_price_incl_vat > 0
+     AND bc.list_cost > a.sell_price_incl_vat
+    )                      AS cost_sanity_flag,
+
     CURRENT_TIMESTAMP      AS positioned_at
 
 FROM sigma_articles a
@@ -311,6 +334,16 @@ CREATE INDEX IF NOT EXISTS idx_l2_pos_capital
 CREATE INDEX IF NOT EXISTS idx_l2_pos_neg_soh
     ON l2_stock_position (store_code)
     WHERE neg_soh_signal = TRUE;
+
+--   9. Stale ledger report
+CREATE INDEX IF NOT EXISTS idx_l2_pos_stale
+    ON l2_stock_position (store_code)
+    WHERE stale_ledger_flag = TRUE;
+
+--  10. Cost sanity report
+CREATE INDEX IF NOT EXISTS idx_l2_pos_cost_sanity
+    ON l2_stock_position (store_code)
+    WHERE cost_sanity_flag = TRUE;
 
 
 COMMENT ON MATERIALIZED VIEW l2_stock_position IS
