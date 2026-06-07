@@ -4,6 +4,60 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-07 — L2-001 Step 1 SQL migrations committed (commit 180d00c)
+
+**What (SB-CC-L2-001 step 1):** Two Layer 2 materialised view migrations added to
+`sql/` — pending Pieter's run in Supabase SQL Editor.
+
+- `sql/create_l2_movements_typed.sql` — MATERIALIZED VIEW over sigma_movements.
+  Classifies every DBBEBE row by movement_class (RECEIPT/IDT/ADJUSTMENT/
+  EOD_CORRECTION/OTHER) and adds `is_excluded` flag (TRUE for IDT; IBT slot
+  reserved). 4 indexes. Verified against live 10116 distribution (1,340,758 rows,
+  K/null 81%, R/W 13%, I/M 3%).
+- `sql/create_l2_rate_of_sale.sql` — MATERIALIZED VIEW over sigma_articles + sigma_sales.
+  91-day and 14-day rolling ROS windows relative to CURRENT_DATE at refresh.
+  daily_ros_91d feeds l2_ranging_tier; days_since_last_sale + never_sold feed
+  classifier (gate 6). Base: sigma_articles (69,798 rows). 4 indexes.
+
+**Pending:** Pieter runs both files in Supabase SQL Editor (read-only MCP).
+After run: verify row counts match sigma_articles, spot-check top sellers.
+
+---
+
+## 2026-06-07 — Push v3.19 + extractor sidecar + delta schedule script (commit 2e898df)
+
+**What (ROLLOUT-001 CC prep):**
+- `Push-SigmaToSupabase.ps1 v3.18 -> v3.19`: Added `Invoke-DeployExtractor()`
+  sidecar that downloads `Invoke-ExtractFromSigmaSQL.ps1` from GitHub raw on every
+  nightly run. Non-fatal on failure. Deploy path: self-updater carries v3.19 to all 5
+  servers on tonight's 20:00 push; extractor then present on disk for Pieter's
+  `-FullRefresh` RDP sessions per store.
+- `scripts/Create-ExtractorScheduledTask.ps1` (new): Run once per server as Admin
+  after full-refresh verifies (ROLLOUT-001 Gate 1-4). Creates
+  `SocialBrand-ExtractDelta` task at 19:40 daily (after EASYDB rebuild ~19:20,
+  before nightly push at 20:00). Requires Pieter's RDP; ASCII-only.
+
+---
+
+## 2026-06-07 — CRASH-001 fix: isActiveLine scope bug (commit c71dedf)
+
+**What (SB-CC-CRASH-001):** Fixed production crash that white-screened the entire
+dashboard whenever any report was opened.
+
+Root cause: `sellThroughRate` useMemo (page.jsx ~2073) called `isActiveLine(r)` —
+a helper defined inside `buildReport()` (line 255) — but the useMemo runs in
+component body scope where `isActiveLine` does not exist. ReferenceError escaped
+the memo with no error boundary, crashing the whole page.
+
+Fix: Defined `refDate` + `activeLineCutoff` + `isActiveLine` inside the
+`sellThroughRate` memo (3 lines), using the byte-identical definition from
+`buildReport` (`cutoff = shiftDate(refDate, -ACTIVE_LINE_LOOKBACK)`). Added
+`selectedDates` to the dependency array.
+
+Deploy path: pushed to GitHub main; Vercel auto-deploy active.
+
+---
+
 ## 2026-06-05 — DIWAAIS governance repo live (SocialBrandAfrica/diwaais-governance)
 
 **What:** The DIWAAIS governance layer (Bible, handovers, briefs, archive — 215 files) is
