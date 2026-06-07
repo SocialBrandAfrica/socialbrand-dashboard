@@ -87,7 +87,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.18'
+$ScriptVersion = 'v3.19'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -346,6 +346,35 @@ function Invoke-SelfUpdate {
     }
     finally {
         if (Test-Path $tempPath) { Remove-Item $tempPath -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Invoke-DeployExtractor {
+    # Downloads the latest Invoke-ExtractFromSigmaSQL.ps1 from GitHub and saves
+    # it alongside this push script. Non-fatal -- push continues on any failure.
+    # ROLLOUT-001: ensures extractor is present on all servers after next push.
+    $scriptDir   = if ($PSCommandPath) { Split-Path $PSCommandPath } else { $null }
+    if (-not $scriptDir) {
+        Write-Host "  [extractor-deploy] Script path unknown - skipping." -ForegroundColor DarkGray
+        return
+    }
+    $destPath  = Join-Path $scriptDir 'Invoke-ExtractFromSigmaSQL.ps1'
+    $remoteUrl = 'https://raw.githubusercontent.com/SocialBrandAfrica/socialbrand-dashboard/main/scripts/Invoke-ExtractFromSigmaSQL.ps1'
+    try {
+        $tempPath = "$env:TEMP\SBExtractor_update.tmp"
+        Invoke-WebRequest -Uri $remoteUrl -OutFile $tempPath -UseBasicParsing -TimeoutSec 60
+        $remoteContent = Get-Content $tempPath -Raw
+        if ($remoteContent -match '#.*Version.*v[\d.]+') {
+            Move-Item -Path $tempPath -Destination $destPath -Force
+            Write-Host "  [extractor-deploy] Extractor deployed to $destPath" -ForegroundColor Green
+        } else {
+            Write-Warning "[extractor-deploy] Downloaded file does not look like the extractor - skipping."
+            Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+    catch {
+        Write-Warning "[extractor-deploy] Deploy failed (non-fatal): $_"
+        Remove-Item "$env:TEMP\SBExtractor_update.tmp" -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -1189,6 +1218,7 @@ if ($Backfill) {
 }
 
 Invoke-SelfUpdate
+Invoke-DeployExtractor
 
 # Nightly stagger: each store waits a fixed offset so 5 servers do not all
 # hit the DB simultaneously. Skipped in backfill mode and in interactive (manual)
