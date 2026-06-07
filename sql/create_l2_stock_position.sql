@@ -170,9 +170,17 @@ SELECT
 
     -- -------------------------------------------------------------------------
     -- Ranging tier (l2_ranging_tier)
-    -- Default BOR if article has no tier row (new article not yet in ROS MV)
+    -- R21 / Decision 1-B: PRODUCTION, NON_STOCK and RECEIPTING_BREAK articles
+    -- receive CLASS_EXCLUDED so the engine can distinguish them from unsold NORMAL
+    -- lines. Their velocity ranks (value_rank, qty_rank) are still stored below
+    -- so the engine retains the full signal even for excluded classes.
+    -- Default BOR for NORMAL articles not yet in the ROS MV (new lines).
     -- -------------------------------------------------------------------------
-    COALESCE(rt.tier, 'BOR')   AS tier,
+    CASE
+        WHEN COALESCE(cl.class, 'NORMAL') IN ('PRODUCTION', 'NON_STOCK', 'RECEIPTING_BREAK')
+        THEN 'CLASS_EXCLUDED'
+        ELSE COALESCE(rt.tier, 'BOR')
+    END                        AS tier,
     rt.value_rank,
     rt.qty_rank,
     rt.in_both_top100,
