@@ -4,6 +4,43 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-08 session 2 — L2-001 Steps 3+SOH: extractor v1.4, l2_ranging_tier, l2_soh_daily
+
+**Commit:** 254191e (feat(L2-001): extractor v1.4 + l2_ranging_tier + l2_soh_daily SQL)
+
+**Extractor v1.4 (scripts/Invoke-ExtractFromSigmaSQL.ps1):**
+- Invoke-SnapshotSohDaily added. Runs before Invoke-ExtractLifecycle.
+  Reads product_code, dBestand (soh), dStdBest (standard_stock) from DBStAr.
+  Pushes to l2_soh_daily with ON CONFLICT DO NOTHING (ignore-duplicates).
+  UTF-8 POST body (PGRST102 prevention). ASCII-only. Batches at $BatchSize.
+- ValidateSet updated: soh_daily now a valid -TableName value for reruns.
+- Version history in .NOTES updated with v1.3 (UTF-8 fix) and v1.4 entries.
+
+**sql/create_l2_soh_daily.sql (Gate 2 Option A):**
+- Persistent history table: one row per (client_id, store_code, product_code, snapshot_date).
+- PK enforces ON CONFLICT DO NOTHING idempotency.
+- Two indexes: idx_l2_soh_store_date, idx_l2_soh_latest.
+- Scale: ~325k rows/day, 13-month retention, ~7.8 GB at full scale.
+
+**sql/create_l2_ranging_tier.sql (Step 3):**
+- MV: DENSE_RANK per store by 91d value DESC and qty DESC from l2_rate_of_sale.
+- Tier: TOP_100 (value_rank<=100 AND qty_rank<=100), TOP_1000 (either<=1000), BOR.
+- Carries: in_both_top100, value_rank, qty_rank, daily_ros_91d, never_sold (for l2_kpi_daily).
+- Four indexes: PK, store+tier, TOP_100 partial, value_rank.
+- Does NOT join l2_item_classification (Gate 3 still open).
+
+**Pending Pieter SQL-Editor actions (all pre-commit SQL done, deploy via Supabase SQL Editor):**
+1. REFRESH MATERIALIZED VIEW l2_movements_typed; (picks up 4 new stores)
+2. REFRESH MATERIALIZED VIEW l2_rate_of_sale;   (picks up 4 new stores)
+3. Run sql/create_l2_item_classification.sql    (Step 2 classifier MV)
+4. Run the Gate 3 verification queries at the bottom of that file
+5. Run sql/create_l2_soh_daily.sql             (Gate 2 history table)
+6. Run sql/create_l2_ranging_tier.sql          (Step 3 tier MV)
+
+**Self-updater will carry v1.4 to all 5 servers on next nightly run.**
+
+---
+
 ## 2026-06-08 — L2-001 Step 2: l2_item_classification SQL committed
 
 **What (SB-CC-L2-001 step 2):** Keystone Layer 2 classification MV written
