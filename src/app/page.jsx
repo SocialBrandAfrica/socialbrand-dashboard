@@ -2058,6 +2058,10 @@ export default function Home() {
   // Sell-Through Rate: % of ranged lines that sold >= 1 unit in period, by tier (SB-CC-003 item 5)
   const sellThroughRate = useMemo(() => {
     if (!reportLoaded || !mergedReportRows.length) return null
+    // Active-line check — same definition as buildReport (CRASH-001 fix: was out-of-scope here)
+    const refDate = selectedDates.length ? [...selectedDates].sort().reverse()[0] : null
+    const activeLineCutoff = refDate ? shiftDate(refDate, -ACTIVE_LINE_LOOKBACK) : null
+    const isActiveLine = r => !activeLineCutoff || ((r.last_sales_date_iso ?? '') >= activeLineCutoff)
     // Build tier map by daily_ros rank (same logic as velocity report)
     const byRos = [...rosMap.values()]
       .filter(r => (r.daily_ros ?? 0) > 0)
@@ -2081,7 +2085,7 @@ export default function Home() {
       sold:    counts[tier].sold,
       total:   counts[tier].total,
     }))
-  }, [reportLoaded, mergedReportRows, rosMap])
+  }, [reportLoaded, mergedReportRows, rosMap, selectedDates])
 
   // ── dept chart (top 10) — deptSummary is already one row per dept, sorted by sales ──
   const deptChart = useMemo(() => {
