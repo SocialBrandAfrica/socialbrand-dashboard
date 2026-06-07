@@ -84,10 +84,13 @@ SELECT
     product_code,
 
     -- Tier verdict (TOP_100 > TOP_1000 > BOR)
+    -- sales_qty_91d > 0 guard prevents zero-sales articles from landing in
+    -- TOP_1000 via DENSE_RANK on stores with fewer than 1000 active SKUs.
     CASE
         WHEN value_rank <= 100 AND qty_rank <= 100 THEN 'TOP_100'
-        WHEN value_rank <= 1000 OR qty_rank <= 1000 THEN 'TOP_1000'
-        ELSE                                              'BOR'
+        WHEN (value_rank <= 1000 OR qty_rank <= 1000)
+             AND sales_qty_91d > 0              THEN 'TOP_1000'
+        ELSE                                         'BOR'
     END::text                                   AS tier,
 
     -- Both-list flag: explicit signal that the article qualifies from both rankings
