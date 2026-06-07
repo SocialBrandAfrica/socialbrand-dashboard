@@ -34,7 +34,7 @@
 .PARAMETER TableName
     Extract a single named table only. Useful for reruns or troubleshooting.
     Valid values: sales, movements, articles, lifecycle, orders, orderlines,
-    suppliermaster, supplierlink, tradeterms, ean, departments, subdepts.
+    suppliermaster, supplierlink, tradeterms, ean, departments, subdepts, soh_daily.
 
 .EXAMPLE
     # Initial load -- full history, all tables
@@ -47,19 +47,22 @@
     powershell.exe -ExecutionPolicy Bypass -File ".\Invoke-ExtractFromSigmaSQL.ps1" -TableName articles
 
 .NOTES
-    Version  : v1.0
-    Date     : 2026-06-04
+    Version  : v1.4
+    Date     : 2026-06-08
     Schema   : sigma_layer1_schema.sql v1.0
     Requires : C:\socialbrand\sb-key.txt (Supabase service_role key, first line)
                SQL Server client libraries (present on all Sigma store servers)
 
     v1.0 : Initial release. 12 tables, delta + full-refresh modes.
+    v1.3 : UTF-8 POST body on all Supabase calls (PGRST102 fix).
+    v1.4 : Invoke-SnapshotSohDaily added (l2_soh_daily, Layer 2 Gate 2 Option A).
 #>
 param(
     [switch]$FullRefresh,
     [switch]$SkipEan,
     [ValidateSet('sales','movements','articles','lifecycle','orders','orderlines',
-                 'suppliermaster','supplierlink','tradeterms','ean','departments','subdepts')]
+                 'suppliermaster','supplierlink','tradeterms','ean','departments','subdepts',
+                 'soh_daily')]
     [string]$TableName = ''
 )
 
@@ -70,7 +73,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.3'
+$ScriptVersion  = 'v1.4'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -652,6 +655,71 @@ FROM dw220sdb.dbo.DBStAr WITH (NOLOCK)
     return $pushed
 }
 
+# --- L2. l2_soh_daily (daily SOH snapshot -- Layer 2 Gate 2 Option A) ----------
+# Snapshots today's SOH from DBStAr into l2_soh_daily before Invoke-ExtractLifecycle
+# overwrites sigma_lifecycle. ON CONFLICT DO NOTHING -- idempotent per day.
+# Approved: SB-CC-L2-001 v1.0 Gate 2 Option A (PM 2026-06-07).
+# Prerequisites: l2_soh_daily table must exist (sql/create_l2_soh_daily.sql).
+
+function Invoke-SnapshotSohDaily {
+    Write-Host "`n[L2] l2_soh_daily snapshot  (DBStAr -> l2_soh_daily)"
+    $today = (Get-Date).ToString('yyyy-MM-dd')
+    $sql = @"
+SELECT
+    CAST(dArtNr  AS BIGINT) AS product_code,
+    dBestand                AS soh,
+    dStdBest                AS standard_stock
+FROM dw220sdb.dbo.DBStAr WITH (NOLOCK)
+"@
+    $conn = New-SqlConn -Db $DwDb
+    try {
+        $dt = Invoke-SqlTable -Conn $conn -Sql $sql
+        Write-Host "  $($dt.Rows.Count) rows read from DBStAr..."
+    }
+    finally { $conn.Close() }
+
+    $url = "$SupabaseUrl/rest/v1/l2_soh_daily" +
+           "?on_conflict=client_id,store_code,product_code,snapshot_date"
+    $hdrs = @{
+        'apikey'        = $SupabaseKey
+        'Authorization' = "Bearer $SupabaseKey"
+        'Content-Type'  = 'application/json; charset=utf-8'
+        'Prefer'        = 'resolution=ignore-duplicates,return=minimal'
+        'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+    }
+    $pushed = 0
+    $batch  = [System.Collections.Generic.List[object]]::new()
+    foreach ($row in $dt.Rows) {
+        $null = $batch.Add([ordered]@{
+            client_id      = $ClientId
+            store_code     = $StoreCode
+            product_code   = Safe-BigInt $row['product_code']
+            snapshot_date  = $today
+            soh            = Safe-Dec   $row['soh']
+            standard_stock = Safe-Dec   $row['standard_stock']
+        })
+        if ($batch.Count -ge $BatchSize) {
+            $json  = ConvertTo-Json -InputObject $batch.ToArray() -Depth 5 -Compress
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+            try { $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body $bytes -TimeoutSec 90 }
+            catch { Write-Warning "  l2_soh_daily batch error: $_" }
+            $pushed += $batch.Count
+            $batch.Clear()
+            Write-Host "    $pushed / $($dt.Rows.Count)..." -NoNewline
+        }
+    }
+    if ($batch.Count -gt 0) {
+        $json  = ConvertTo-Json -InputObject $batch.ToArray() -Depth 5 -Compress
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+        try { $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body $bytes -TimeoutSec 90 }
+        catch { Write-Warning "  l2_soh_daily final batch error: $_" }
+        $pushed += $batch.Count
+    }
+    Write-Host ""
+    Write-Host "  l2_soh_daily: $pushed rows snapshotted (ignore-duplicates)." -ForegroundColor Green
+    return $pushed
+}
+
 # --- 5. sigma_orders (dw220sdb.DBAufK) ----------------------------------------
 # Purchase order header. Full refresh each run (35k rows, changes on receipt/invoice).
 
@@ -1116,6 +1184,7 @@ try {
     if (& $run 'sales')         { $totals['sigma_sales']           = Invoke-ExtractSales }
     if (& $run 'movements')     { $totals['sigma_movements']        = Invoke-ExtractMovements }
     if (& $run 'articles')      { $totals['sigma_articles']         = Invoke-ExtractArticles }
+    if (& $run 'soh_daily')     { $totals['l2_soh_daily']           = Invoke-SnapshotSohDaily }
     if (& $run 'lifecycle')     { $totals['sigma_lifecycle']        = Invoke-ExtractLifecycle }
     if (& $run 'orders')        { $totals['sigma_orders']           = Invoke-ExtractOrders }
     if (& $run 'orderlines')    { $totals['sigma_order_lines']      = Invoke-ExtractOrderLines }
