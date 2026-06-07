@@ -30,13 +30,19 @@
 --   Articles with zero 91-day sales (including never-sold) rank at the bottom
 --   of both lists by DENSE_RANK and therefore always land in BOR.
 --
--- CLASSIFIER NOTE:
---   This MV intentionally does NOT join l2_item_classification. Gate 3
---   (classifier precision against SB-AP-004 label CSVs) is still open; no
---   wiring until it is closed. Production/NON_STOCK articles naturally fall
---   to BOR because they have zero or negligible sales. The KPI mart
---   (l2_kpi_daily, step 4) will join both this MV and the classifier to
---   exclude PRODUCTION/NON_STOCK from capital-tied-by-tier.
+-- CLASSIFIER NOTE (D1 amendment, 2026-06-07):
+--   This MV now joins l2_item_classification to assign CLASS_EXCLUDED to
+--   PRODUCTION, NON_STOCK, and RECEIPTING_BREAK articles (D1=B ruling;
+--   SB-AP-L2-PM-BRIEF-001). Tier is the single authoritative source of
+--   truth for all downstream consumers (R21: fix the general rule, not
+--   each instance). l2_stock_position uses COALESCE(rt.tier, 'BOR')
+--   directly -- no longer re-applies CLASS_EXCLUDED inline.
+--   Gate 3 (classifier precision vs SB-AP-004 CSVs) remains open; this
+--   amendment does not depend on Gate 3 closing because CLASS_EXCLUDED
+--   is assigned from classifier verdict (not from product lists), and
+--   articles with no classification row default to NORMAL (velocity tier).
+--   Velocity ranks (value_rank, qty_rank) are still computed and stored
+--   for CLASS_EXCLUDED articles so the engine retains the full signal.
 --
 -- HOW TO RUN:
 --   Prerequisites: l2_rate_of_sale must exist and be refreshed.
@@ -56,60 +62,74 @@ WITH
 -- Articles with zero sales get value/qty = 0 and rank at the bottom.
 ranked AS (
     SELECT
-        client_id,
-        store_code,
-        product_code,
-        daily_ros_91d,
-        sales_qty_91d,
-        sales_value_incl_vat_91d,
-        never_sold,
+        ros.client_id,
+        ros.store_code,
+        ros.product_code,
+        ros.daily_ros_91d,
+        ros.sales_qty_91d,
+        ros.sales_value_incl_vat_91d,
+        ros.never_sold,
 
         -- Value rank: higher value = lower rank number (1 = highest seller)
         DENSE_RANK() OVER (
-            PARTITION BY client_id, store_code
-            ORDER BY sales_value_incl_vat_91d DESC, sales_qty_91d DESC
+            PARTITION BY ros.client_id, ros.store_code
+            ORDER BY ros.sales_value_incl_vat_91d DESC, ros.sales_qty_91d DESC
         ) AS value_rank,
 
         -- Volume rank: higher qty = lower rank number (1 = highest unit seller)
         DENSE_RANK() OVER (
-            PARTITION BY client_id, store_code
-            ORDER BY sales_qty_91d DESC, sales_value_incl_vat_91d DESC
+            PARTITION BY ros.client_id, ros.store_code
+            ORDER BY ros.sales_qty_91d DESC, ros.sales_value_incl_vat_91d DESC
         ) AS qty_rank
-    FROM l2_rate_of_sale
+    FROM l2_rate_of_sale ros
 )
 
 SELECT
-    client_id,
-    store_code,
-    product_code,
+    r.client_id,
+    r.store_code,
+    r.product_code,
 
-    -- Tier verdict (TOP_100 > TOP_1000 > BOR)
+    -- Tier verdict: CLASS_EXCLUDED overrides velocity tier for non-NORMAL classes.
+    -- Class defaults to NORMAL for articles not yet in l2_item_classification.
+    -- TOP_100 / TOP_1000 velocity guards apply only to NORMAL articles.
     -- sales_qty_91d > 0 guard prevents zero-sales articles from landing in
     -- TOP_1000 via DENSE_RANK on stores with fewer than 1000 active SKUs.
     CASE
-        WHEN value_rank <= 100 AND qty_rank <= 100 THEN 'TOP_100'
-        WHEN (value_rank <= 1000 OR qty_rank <= 1000)
-             AND sales_qty_91d > 0              THEN 'TOP_1000'
+        WHEN COALESCE(cl.class, 'NORMAL')
+                 IN ('PRODUCTION', 'NON_STOCK', 'RECEIPTING_BREAK')
+                                                THEN 'CLASS_EXCLUDED'
+        WHEN r.value_rank <= 100 AND r.qty_rank <= 100
+                                                THEN 'TOP_100'
+        WHEN (r.value_rank <= 1000 OR r.qty_rank <= 1000)
+             AND r.sales_qty_91d > 0            THEN 'TOP_1000'
         ELSE                                         'BOR'
     END::text                                   AS tier,
 
+    -- Class carry-forward: makes CLASS_EXCLUDED verdict transparent to consumers.
+    -- Defaults to 'NORMAL' for articles not yet in l2_item_classification.
+    COALESCE(cl.class, 'NORMAL')::text          AS article_class,
+
     -- Both-list flag: explicit signal that the article qualifies from both rankings
-    (value_rank <= 100 AND qty_rank <= 100)     AS in_both_top100,
+    (r.value_rank <= 100 AND r.qty_rank <= 100) AS in_both_top100,
 
     -- Rank values for diagnostics and days-cover ordering
-    value_rank,
-    qty_rank,
+    r.value_rank,
+    r.qty_rank,
 
     -- Carry-forward rate metrics needed by l2_kpi_daily (avoid a second join)
-    daily_ros_91d,
-    sales_qty_91d,
-    sales_value_incl_vat_91d,
-    never_sold,
+    r.daily_ros_91d,
+    r.sales_qty_91d,
+    r.sales_value_incl_vat_91d,
+    r.never_sold,
 
     -- Refresh timestamp
     CURRENT_TIMESTAMP                           AS tiered_at
 
-FROM ranked;
+FROM ranked r
+LEFT JOIN l2_item_classification cl
+    ON  cl.client_id    = r.client_id
+    AND cl.store_code   = r.store_code
+    AND cl.product_code = r.product_code;
 
 
 -- Indexes for the three primary access patterns:
@@ -132,11 +152,13 @@ CREATE INDEX IF NOT EXISTS idx_l2_tier_value_rank
 
 
 COMMENT ON MATERIALIZED VIEW l2_ranging_tier IS
-    'Per-article ranging tier from 91-day sales velocity. '
-    'TOP_100 = in both top-100 by value AND volume. '
-    'TOP_1000 = in top-1000 by value OR volume (not TOP_100). '
-    'BOR = Balance of Range (outside top-1000 by both). '
-    'Refresh nightly after l2_rate_of_sale. SB-CC-L2-001 step 3. '
+    'Per-article ranging tier from 91-day sales velocity + classifier class. '
+    'CLASS_EXCLUDED = PRODUCTION / NON_STOCK / RECEIPTING_BREAK (D1 ruling, 2026-06-07). '
+    'TOP_100 = in both top-100 by value AND volume (NORMAL only). '
+    'TOP_1000 = in top-1000 by value OR volume, not TOP_100 (NORMAL only). '
+    'BOR = Balance of Range -- outside top-1000 by both, or unclassified zero-sales. '
+    'article_class carry-forward makes CLASS_EXCLUDED verdict transparent. '
+    'Refresh nightly after l2_item_classification. SB-CC-L2-001 step 3 + D1 amendment. '
     'RULE-BOOK section 4 + constants TOP_TIER_RANK_CUTOFF=100 / MID_TIER_RANK_CUTOFF=1000.';
 
 

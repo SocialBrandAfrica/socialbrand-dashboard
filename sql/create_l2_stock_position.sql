@@ -170,17 +170,12 @@ SELECT
 
     -- -------------------------------------------------------------------------
     -- Ranging tier (l2_ranging_tier)
-    -- R21 / Decision 1-B: PRODUCTION, NON_STOCK and RECEIPTING_BREAK articles
-    -- receive CLASS_EXCLUDED so the engine can distinguish them from unsold NORMAL
-    -- lines. Their velocity ranks (value_rank, qty_rank) are still stored below
-    -- so the engine retains the full signal even for excluded classes.
-    -- Default BOR for NORMAL articles not yet in the ROS MV (new lines).
+    -- D1 amendment (2026-06-07): CLASS_EXCLUDED is now assigned in
+    -- l2_ranging_tier itself (joins l2_item_classification there).
+    -- l2_stock_position receives the final tier directly -- no inline override.
+    -- Default BOR for articles not yet in l2_ranging_tier (new lines).
     -- -------------------------------------------------------------------------
-    CASE
-        WHEN COALESCE(cl.class, 'NORMAL') IN ('PRODUCTION', 'NON_STOCK', 'RECEIPTING_BREAK')
-        THEN 'CLASS_EXCLUDED'
-        ELSE COALESCE(rt.tier, 'BOR')
-    END                        AS tier,
+    COALESCE(rt.tier, 'BOR')   AS tier,
     rt.value_rank,
     rt.qty_rank,
     rt.in_both_top100,
@@ -358,8 +353,9 @@ COMMENT ON MATERIALIZED VIEW l2_stock_position IS
     'Current stock position per article per store. Step 3b in L2 build order. '
     'Joins sigma_articles + sigma_lifecycle + sigma_supplier_link + '
     'l2_rate_of_sale + l2_ranging_tier + l2_item_classification + l2_soh_daily. '
+    'tier comes directly from l2_ranging_tier (which assigns CLASS_EXCLUDED per D1). '
     'soh_delta is NULL until l2_soh_daily holds prior-day data (from second night). '
-    'Source for l2_kpi_daily (step 4) aggregations. SB-CC-L2-001 step 3b.';
+    'Source for l2_kpi_daily (step 4) aggregations. SB-CC-L2-001 step 3b + D1 amendment.';
 
 GRANT SELECT ON l2_stock_position TO anon, authenticated;
 
