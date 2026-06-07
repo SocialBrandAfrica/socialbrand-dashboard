@@ -208,6 +208,10 @@
 
     <div class="grid">
       <div class="panel glass">
+        <h2>Daily sales</h2>
+        <p class="cap">Rand taken each day &mdash; loaded days only, no projections.</p>
+        <div class="cum" id="daily-bars"></div>
+        <hr style="border:0;border-top:1px solid var(--hair);margin:14px 0 12px">
         <h2>Cumulative cash held</h2>
         <p class="cap">Running total of counter cash, day 1 onward.</p>
         <div class="cum" id="cum"></div>
@@ -334,6 +338,14 @@ function render(L, LOADED, DIM){
   var daySums=new Array(LOADED).fill(0);
   L.forEach(function(l){l.s.forEach(function(v,i){if(i<LOADED)daySums[i]+=v;});});
   var cum=[],run=0; daySums.forEach(function(d){run+=d;cum.push(run);});
+  // Daily bars (loaded days only — no projection bars)
+  (function(){
+    var mx=Math.max.apply(null,daySums.concat([1])),h='';
+    daySums.forEach(function(v,i){var lbl=String(i+1).padStart(2,'0');
+      h+='<div class="col"><div class="v num">'+R(v)+'</div><div class="bar" style="height:'+Math.round(v/mx*100)+'%"></div><div class="d num">'+lbl+'</div></div>';});
+    $('daily-bars').innerHTML=h;
+  })();
+
   var avg=cash/Math.max(LOADED,1), pace=avg*DIM;
   (function(){
     var mx=Math.max.apply(null,cum.concat([1])),h='';
@@ -425,6 +437,7 @@ function showNoData(month){
   if($('k-units'))$('k-units').textContent='0';
   if($('proj'))$('proj').textContent='—'; if($('projn'))$('projn').textContent='';
   if($('cum'))$('cum').innerHTML=msg;
+  if($('daily-bars'))$('daily-bars').innerHTML=msg;
   ['tops','topc','more','op-sushi','op-chinese','flags-area'].forEach(function(id){if($(id))$(id).innerHTML='';});
   if($('sps'))$('sps').style.width='0%'; if($('spc'))$('spc').style.width='0%';
   if($('lgs'))$('lgs').textContent='R 0'; if($('lgc'))$('lgc').textContent='R 0';
