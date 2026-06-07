@@ -147,7 +147,7 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
         return (
             <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0, minHeight: 180, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 14, fontStyle: 'italic', color: 'rgba(245,245,244,0.3)' }}>
-                    Select a date range to see the trend
+                    No sales data in this period
                 </p>
             </div>
         )

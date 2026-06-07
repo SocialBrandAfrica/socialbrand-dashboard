@@ -1797,7 +1797,7 @@ export default function Home() {
     }
     loadSubDepts()
     return () => { cancelled = true }
-  }, [deptFilter, storeCodes, selectedDates])
+  }, [deptFilter, storeCodes, selectedDates, deptNormMap])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // REPORT — on-demand fetch
@@ -2296,7 +2296,13 @@ export default function Home() {
       } else {
         supabase.rpc('rpc_stock_integrity_report', { p_store_codes: storeCodes, p_date: date })
           .then(({ data, error }) => {
-            if (error) console.error('[stock_integrity_report]', error.message)
+            if (error) {
+              console.error('[stock_integrity_report]', error.message)
+              setStockIntegrityRows([{ 'Error': `RPC error: ${error.message}` }])
+              setReportLoaded(true)
+              setReportLoading(false)
+              return
+            }
             setStockIntegrityRows((data ?? []).map(r => ({
               'Store':        r.store_name ?? r.store_code,
               'EAN':          r.ean,

@@ -141,11 +141,10 @@ RETURNS TABLE(sub_dept_name text)
 LANGUAGE sql STABLE SECURITY DEFINER AS $$
     SELECT DISTINCT sub_dept_name
     FROM  daily_snapshots
-    WHERE store_code         = ANY(p_store_codes)
-      AND snapshot_date::text = ANY(p_dates)
-      AND is_placeholder     = FALSE
-      AND today_sales        > 0
-      AND sub_dept_name      IS NOT NULL
+    WHERE store_code     = ANY(p_store_codes)
+      AND snapshot_date  = ANY(p_dates::date[])
+      AND is_placeholder = FALSE
+      AND sub_dept_name  IS NOT NULL
       AND (p_dept_names IS NULL OR dept_name = ANY(p_dept_names))
     ORDER BY sub_dept_name;
 $$;
