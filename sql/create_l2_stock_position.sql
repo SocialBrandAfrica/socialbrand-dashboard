@@ -29,8 +29,9 @@
 --                       (l2_item_classification)
 --   reorder_signal   -- NORMAL + soh <= 0 + had sales in 91d
 --   slow_mover_signal-- NORMAL + soh > 0 + no sale in 14d + active line
---   ghost_stock_flag -- PRODUCTION/NON_STOCK with positive SOH (capital tied)
---   soh_delta        -- soh today vs yesterday (NULL until l2_soh_daily has data)
+--   ghost_stock_flag    -- PRODUCTION class only with positive SOH (physically impossible)
+--   investigate_stock_flag -- NON_STOCK with positive SOH (bags/vouchers/returnables)
+--   soh_delta           -- soh today vs yesterday (NULL until l2_soh_daily has data)
 --
 -- COST SOURCE NOTE:
 --   unit_cost is sourced from sigma_supplier_link (list_cost) via DISTINCT ON
@@ -209,19 +210,32 @@ SELECT
      AND COALESCE(lc.soh, 0) < 0
     )                      AS neg_soh_signal,
 
-    -- Ghost stock: PRODUCTION/NON_STOCK with positive SOH (capital tied in non-retail)
-    (    COALESCE(cl.class, 'NORMAL') IN ('PRODUCTION', 'NON_STOCK')
+    -- Ghost stock: PRODUCTION class with positive SOH only.
+    -- Definition: stock that physically CANNOT be on hand as discrete units --
+    -- production raw material inputs consumed during production, not sold at POS.
+    -- NON_STOCK excluded: bags are physically received (real stock, possible
+    -- miscount); virtual vouchers and returnables need separate investigation.
+    (    COALESCE(cl.class, 'NORMAL') = 'PRODUCTION'
      AND COALESCE(lc.soh, 0) > 0
      AND bc.list_cost IS NOT NULL
     )                      AS ghost_stock_flag,
 
     CASE
-        WHEN COALESCE(cl.class, 'NORMAL') IN ('PRODUCTION', 'NON_STOCK')
+        WHEN COALESCE(cl.class, 'NORMAL') = 'PRODUCTION'
              AND COALESCE(lc.soh, 0) > 0
              AND bc.list_cost IS NOT NULL
         THEN COALESCE(lc.soh, 0) * bc.list_cost
         ELSE 0
     END                    AS ghost_stock_value,
+
+    -- Virtual/investigate flag: NON_STOCK with positive SOH.
+    -- Carrier bags (FRONTEND PACK) = real physical stock, likely miscount.
+    -- Airtime/vouchers (ONLINE VAS PRODUCTS) = virtual, SOH should be zero.
+    -- Returnable bottles/crates (TOPS) = real physical items, may inflate capital.
+    -- Surfaces these for eyeballing without excluding from capital_value.
+    (    COALESCE(cl.class, 'NORMAL') = 'NON_STOCK'
+     AND COALESCE(lc.soh, 0) > 0
+    )                      AS investigate_stock_flag,
 
     CURRENT_TIMESTAMP      AS positioned_at
 
