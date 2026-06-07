@@ -21,10 +21,14 @@ Do not skip — these tools are deferred and fail with InputValidationError if c
 **Step 3 — Read DB-SCHEMA:**
 `Read("C:\Users\User\Desktop\DIWAAIS\DB-SCHEMA.md")`
 
-**Step 4 — Read the latest handover file:**
-Check `C:\Users\User\Desktop\DIWAAIS\` for the most recent `HANDOVER_YYYY-MM-DD*.md` and read it.
+**Step 4 — Read THE handover file (there is exactly one):**
+`Read("C:\Users\User\Desktop\DIWAAIS\HANDOVER-CURRENT.md")`
+There are NO dated handover files in root — ever. If you find one, that is a governance breach: absorb its content into HANDOVER-CURRENT.md (your own section) and move the stray to `archive/handovers/`.
 
-Only after all four steps: begin work.
+**Step 5 — Registry + clock gate:**
+Read `C:\Users\User\Desktop\DIWAAIS\FILE-GOVERNANCE.md` §0 (the Bible registry). Before creating ANY new file, run the §0 decision tree — if the content fits an existing canonical/log file, update that file in place. New root .md files are sanctioned ONLY as briefs (SB-XX-NNN-*) or PM-approved side-project folders. Take every date stamp from the system clock (`Get-Date` / `date`), never assumed — on 2026-06-07 two CC sessions were future-dated 06-08/06-09 and contaminated canon.
+
+Only after all five steps: begin work.
 
 Mid-session shortcut: `/autopilot` reloads all browser tool schemas if the session lost them.
 
@@ -41,7 +45,8 @@ Mid-session shortcut: `/autopilot` reloads all browser tool schemas if the sessi
 
 See memory files for full project context:
 - `memory/MEMORY.md` — index of all memory files
-- Handover files live in `C:\Users\User\Desktop\DIWAAIS\` — read the latest on session start
+- THE handover is `C:\Users\User\Desktop\DIWAAIS\HANDOVER-CURRENT.md` — the only live one; read on session start
+- No dated handover/session files in `memory/` either — session state belongs in HANDOVER-CURRENT.md; old dated memory handovers are archived in `DIWAAIS\archive\handovers\`
 
 ## Key rules
 
@@ -51,14 +56,6 @@ See memory files for full project context:
 - ASCII-only commit messages and PowerShell scripts
 - Never edit code concurrently with a Cowork Claude — check who owns the file first
 
-## Handover file rules
+## Handover file rules (CORRECTED 2026-06-07 — the old "one file per calendar day" rule here was WRONG and caused duplicate handovers; FILE-GOVERNANCE wins)
 
-One handover file per calendar day: `HANDOVER_YYYY-MM-DD.md` in `C:\Users\User\Desktop\DIWAAIS\`.
-CC writes the technical section. PM appends the strategy section. Never overwrite.
-
-To write a handover section:
-1. Check if `HANDOVER_<today>.md` already exists.
-2. If it exists: `Read` it, then `Edit` to append the new session section below the last one.
-3. If it does not exist: `Write` to create it.
-
-Never use `Write` on a handover file that already exists — `Write` silently overwrites and destroys prior session content.
+There is exactly ONE live handover: `C:\Users\User\Desktop\DIWAAIS\HANDOVER-CURRENT.md`. Both CC and PM write into it, each in their OWN section. Never create `HANDOVER_<date>.md`. Never use `Write` on it — always `Read` then `Edit` your own section (Write silently destroys the other author's content). Update the `Last touched:` line with name + system-clock timestamp on every edit; if it changed since you read, re-read before writing. Snapshots to `archive/handovers/` are made by PM at milestones — not by CC, not daily.
