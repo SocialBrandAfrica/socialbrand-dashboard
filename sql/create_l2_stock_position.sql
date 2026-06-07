@@ -62,12 +62,18 @@ WITH
 -- Best cost per article: active supplier link, most recently valid.
 -- DISTINCT ON picks one row per (client_id, store_code, product_code).
 -- Inactive links (status = 'I') excluded; NULL status retained (no status set).
+-- list_cost (dEKL) in sigma_supplier_link is cost per ORDER PACK (case),
+-- not per selling unit. Divide by pack_size to get the per-unit cost.
+-- NULL when pack_size is NULL or 0 (unit unknown -- safer than using wrong cost).
 best_cost AS (
     SELECT DISTINCT ON (client_id, store_code, product_code)
         client_id,
         store_code,
         product_code,
-        list_cost,
+        CASE WHEN pack_size > 0
+             THEN list_cost / pack_size
+             ELSE NULL
+        END AS list_cost,
         supplier_nr,
         pack_size
     FROM sigma_supplier_link
