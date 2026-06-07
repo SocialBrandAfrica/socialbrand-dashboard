@@ -2,24 +2,35 @@
 
 ## Session startup (run this first, every session)
 
-Before reading any handover file or doing any work, call ToolSearch once to pre-load the browser and session tool schemas:
+This sequence is MANDATORY on every session start — including context-continuation sessions
+that begin with a summary. A context summary is NOT a substitute for this procedure.
+Do not touch any file, run any command, or begin any task until all four steps are done.
 
+**Step 1 — ToolSearch (load browser + session tool schemas):**
 ```
 ToolSearch({
   query: "select:mcp__Claude_in_Chrome__browser_batch,mcp__Claude_in_Chrome__javascript_tool,mcp__Claude_in_Chrome__computer,mcp__Claude_in_Chrome__find,mcp__Claude_in_Chrome__navigate,mcp__Claude_in_Chrome__tabs_context_mcp,mcp__Claude_in_Chrome__get_page_text,mcp__Claude_in_Chrome__read_page,mcp__Claude_in_Chrome__form_input,mcp__Claude_in_Chrome__tabs_create_mcp,mcp__Claude_in_Chrome__read_network_requests,mcp__Claude_in_Chrome__read_console_messages,mcp__computer-use__screenshot,mcp__computer-use__request_access,mcp__ccd_session__mark_chapter",
   max_results: 15
 })
 ```
+Do not skip — these tools are deferred and fail with InputValidationError if called without loading.
 
-Do not skip this step — these tools appear as deferred and will fail with InputValidationError if called without loading first.
+**Step 2 — Read RULE-BOOK:**
+`Read("C:\Users\User\Desktop\DIWAAIS\RULE-BOOK.md")`
 
-After the ToolSearch, proceed normally (read handover, run session tasks, etc.).
+**Step 3 — Read DB-SCHEMA:**
+`Read("C:\Users\User\Desktop\DIWAAIS\DB-SCHEMA.md")`
+
+**Step 4 — Read the latest handover file:**
+Check `C:\Users\User\Desktop\DIWAAIS\` for the most recent `HANDOVER_YYYY-MM-DD*.md` and read it.
+
+Only after all four steps: begin work.
 
 Mid-session shortcut: `/autopilot` reloads all browser tool schemas if the session lost them.
 
 ---
 
-## Standing references (read before every code session)
+## Standing references
 
 - `C:\Users\User\Desktop\DIWAAIS\RULE-BOOK.md` — domain vocabulary, time conventions, KPI formulas, GP% rules, mandatory SQL patterns, naming conventions. Authoritative: if a brief contradicts this, update here first, then update the brief.
 - `C:\Users\User\Desktop\DIWAAIS\DB-SCHEMA.md` — live schema, RPC function signatures, pending SQL tracker.
@@ -39,3 +50,15 @@ See memory files for full project context:
 - Full SQL files: fix the file in `sql/`, reference with path only — never dump full SQL in chat
 - ASCII-only commit messages and PowerShell scripts
 - Never edit code concurrently with a Cowork Claude — check who owns the file first
+
+## Handover file rules
+
+One handover file per calendar day: `HANDOVER_YYYY-MM-DD.md` in `C:\Users\User\Desktop\DIWAAIS\`.
+CC writes the technical section. PM appends the strategy section. Never overwrite.
+
+To write a handover section:
+1. Check if `HANDOVER_<today>.md` already exists.
+2. If it exists: `Read` it, then `Edit` to append the new session section below the last one.
+3. If it does not exist: `Write` to create it.
+
+Never use `Write` on a handover file that already exists — `Write` silently overwrites and destroys prior session content.
