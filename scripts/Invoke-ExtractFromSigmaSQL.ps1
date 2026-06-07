@@ -56,13 +56,14 @@
     v1.0 : Initial release. 12 tables, delta + full-refresh modes.
     v1.3 : UTF-8 POST body on all Supabase calls (PGRST102 fix).
     v1.4 : Invoke-SnapshotSohDaily added (l2_soh_daily, Layer 2 Gate 2 Option A).
+    v1.5 : Invoke-ExtractPromotions + Invoke-ExtractPromotionArticles (DBAKTK/DBAKTP).
 #>
 param(
     [switch]$FullRefresh,
     [switch]$SkipEan,
     [ValidateSet('sales','movements','articles','lifecycle','orders','orderlines',
                  'suppliermaster','supplierlink','tradeterms','ean','departments','subdepts',
-                 'soh_daily')]
+                 'soh_daily','promotions','promotionarticles')]
     [string]$TableName = ''
 )
 
@@ -73,7 +74,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.4'
+$ScriptVersion  = 'v1.5'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -1162,6 +1163,156 @@ FROM dw220sdb.dbo.DBWGRP WITH (NOLOCK)
     return $pushed
 }
 
+# --- 13. sigma_promotions (dw220sdb.DBAKTK) -----------------------------------
+# Promotion headers. Full refresh each run (small table, headers change).
+
+function Invoke-ExtractPromotions {
+    Write-Host "`n[13] sigma_promotions  (dw220sdb.DBAKTK)"
+    $conflict = 'client_id,store_code,promo_nr'
+    $sql = @"
+SELECT
+    CAST(lNummer     AS BIGINT)  AS promo_nr,
+    dtStart                      AS start_date,
+    dtEnde                       AS end_date,
+    siArt                        AS promo_type,
+    cText                        AS description,
+    siKeineAend                  AS no_changes,
+    cStatus                      AS status
+FROM dw220sdb.dbo.DBAKTK WITH (NOLOCK)
+"@
+    $conn = New-SqlConn -Db $DwDb
+    try {
+        $dt = Invoke-SqlTable -Conn $conn -Sql $sql
+        Write-Host "  $($dt.Rows.Count) rows read from Sigma..."
+        $pushed = Push-DataTable -Table 'sigma_promotions' -ConflictCols $conflict -Dt $dt -RowMapper {
+            param($row)
+            [ordered]@{
+                client_id   = $ClientId
+                store_code  = $StoreCode
+                promo_nr    = Safe-BigInt   $row['promo_nr']
+                start_date  = Safe-Date     $row['start_date']
+                end_date    = Safe-Date     $row['end_date']
+                promo_type  = Safe-SmallInt $row['promo_type']
+                description = Safe-Text     $row['description']
+                no_changes  = Safe-SmallInt $row['no_changes']
+                status      = Safe-Text     $row['status']
+            }
+        }
+    }
+    finally { $conn.Close() }
+    Write-Host "  sigma_promotions: $pushed rows pushed." -ForegroundColor Green
+    return $pushed
+}
+
+# --- 14. sigma_promotion_articles (dw220sdb.DBAKTP) ---------------------------
+# Promotion lines. Full refresh each run.
+
+function Invoke-ExtractPromotionArticles {
+    Write-Host "`n[14] sigma_promotion_articles  (dw220sdb.DBAKTP)"
+    $conflict = 'client_id,store_code,line_id'
+    $sql = @"
+SELECT
+    CAST(lAZaehler   AS BIGINT)  AS line_id,
+    CAST(lNummer     AS BIGINT)  AS promo_nr,
+    CAST(dArtNr      AS BIGINT)  AS product_code,
+    siKz                         AS indicator,
+    dtDatum                      AS promo_date,
+    dVkAlt                       AS old_price,
+    dVkNeu                       AS new_price,
+    dtStart                      AS start_date,
+    dtEnde                       AS end_date,
+    cStatus                      AS status,
+    cEbene                       AS level,
+    dEKListe                     AS list_cost,
+    dPMg7Ta1                     AS promo_qty_d1,
+    dPMg7Ta2                     AS promo_qty_d2,
+    dPMg7Ta3                     AS promo_qty_d3,
+    dPMg7Ta4                     AS promo_qty_d4,
+    dPMg7Ta5                     AS promo_qty_d5,
+    dPMg7Ta6                     AS promo_qty_d6,
+    dPMg7Ta7                     AS promo_qty_d7,
+    dPMg7Wo1                     AS promo_qty_w1,
+    dPMg7Wo2                     AS promo_qty_w2,
+    dPMg7Wo3                     AS promo_qty_w3,
+    dPMg7Wo4                     AS promo_qty_w4,
+    dPMg7Wo5                     AS promo_qty_w5,
+    dPMg7Wo6                     AS promo_qty_w6,
+    dMenge                       AS qty,
+    dtVkLetzt                    AS last_sale_date,
+    CAST(lFolgNr     AS BIGINT)  AS follow_nr,
+    dBewert                      AS valuation,
+    siMultiV                     AS multi_buy_type,
+    dRabattDM                    AS discount_amount,
+    dRabattProz                  AS discount_pct,
+    dRabattDMAlt                 AS discount_amount_old,
+    dRabattProzAlt               AS discount_pct_old,
+    dVkAlt2                      AS old_price_2,
+    dVkNeu2                      AS new_price_2,
+    dEndBestand                  AS end_stock,
+    siRabVar                     AS discount_variant,
+    CAST(lMultiGr    AS BIGINT)  AS multi_buy_group,
+    siMultiMg                    AS multi_buy_min_qty,
+    CAST(lMMGr       AS BIGINT)  AS multi_group_ref
+FROM dw220sdb.dbo.DBAKTP WITH (NOLOCK)
+"@
+    $conn = New-SqlConn -Db $DwDb
+    try {
+        $dt = Invoke-SqlTable -Conn $conn -Sql $sql -TimeoutSecs 300
+        Write-Host "  $($dt.Rows.Count) rows read from Sigma..."
+        $pushed = Push-DataTable -Table 'sigma_promotion_articles' -ConflictCols $conflict -Dt $dt -RowMapper {
+            param($row)
+            [ordered]@{
+                client_id           = $ClientId
+                store_code          = $StoreCode
+                line_id             = Safe-BigInt   $row['line_id']
+                promo_nr            = Safe-BigInt   $row['promo_nr']
+                product_code        = Safe-BigInt   $row['product_code']
+                indicator           = Safe-SmallInt $row['indicator']
+                promo_date          = Safe-Date     $row['promo_date']
+                old_price           = Safe-Dec      $row['old_price']
+                new_price           = Safe-Dec      $row['new_price']
+                start_date          = Safe-Date     $row['start_date']
+                end_date            = Safe-Date     $row['end_date']
+                status              = Safe-Text     $row['status']
+                level               = Safe-Text     $row['level']
+                list_cost           = Safe-Dec      $row['list_cost']
+                promo_qty_d1        = Safe-Dec      $row['promo_qty_d1']
+                promo_qty_d2        = Safe-Dec      $row['promo_qty_d2']
+                promo_qty_d3        = Safe-Dec      $row['promo_qty_d3']
+                promo_qty_d4        = Safe-Dec      $row['promo_qty_d4']
+                promo_qty_d5        = Safe-Dec      $row['promo_qty_d5']
+                promo_qty_d6        = Safe-Dec      $row['promo_qty_d6']
+                promo_qty_d7        = Safe-Dec      $row['promo_qty_d7']
+                promo_qty_w1        = Safe-Dec      $row['promo_qty_w1']
+                promo_qty_w2        = Safe-Dec      $row['promo_qty_w2']
+                promo_qty_w3        = Safe-Dec      $row['promo_qty_w3']
+                promo_qty_w4        = Safe-Dec      $row['promo_qty_w4']
+                promo_qty_w5        = Safe-Dec      $row['promo_qty_w5']
+                promo_qty_w6        = Safe-Dec      $row['promo_qty_w6']
+                qty                 = Safe-Dec      $row['qty']
+                last_sale_date      = Safe-Date     $row['last_sale_date']
+                follow_nr           = Safe-BigInt   $row['follow_nr']
+                valuation           = Safe-Dec      $row['valuation']
+                multi_buy_type      = Safe-SmallInt $row['multi_buy_type']
+                discount_amount     = Safe-Dec      $row['discount_amount']
+                discount_pct        = Safe-Dec      $row['discount_pct']
+                discount_amount_old = Safe-Dec      $row['discount_amount_old']
+                discount_pct_old    = Safe-Dec      $row['discount_pct_old']
+                old_price_2         = Safe-Dec      $row['old_price_2']
+                new_price_2         = Safe-Dec      $row['new_price_2']
+                end_stock           = Safe-Dec      $row['end_stock']
+                discount_variant    = Safe-SmallInt $row['discount_variant']
+                multi_buy_group     = Safe-BigInt   $row['multi_buy_group']
+                multi_buy_min_qty   = Safe-SmallInt $row['multi_buy_min_qty']
+                multi_group_ref     = Safe-BigInt   $row['multi_group_ref']
+            }
+        }
+    }
+    finally { $conn.Close() }
+    Write-Host "  sigma_promotion_articles: $pushed rows pushed." -ForegroundColor Green
+    return $pushed
+}
+
 # =============================================================================
 # MAIN
 # =============================================================================
@@ -1171,7 +1322,7 @@ Write-Host "=================================================="
 Write-Host " Sigma Layer 1 Extractor  $ScriptVersion"
 Write-Host " Store  : $StoreName ($StoreCode)"
 Write-Host " Mode   : $(if ($FullRefresh) { 'FULL REFRESH' } else { 'DELTA' })"
-Write-Host " Table  : $(if ($TableName) { $TableName } else { 'all 12' })"
+Write-Host " Table  : $(if ($TableName) { $TableName } else { 'all 14' })"
 Write-Host " Started: $($startTime.ToString('yyyy-MM-dd HH:mm:ss'))"
 Write-Host "=================================================="
 
@@ -1191,9 +1342,11 @@ try {
     if (& $run 'suppliermaster'){ $totals['sigma_supplier_master']  = Invoke-ExtractSupplierMaster }
     if (& $run 'supplierlink')  { $totals['sigma_supplier_link']    = Invoke-ExtractSupplierLink }
     if (& $run 'tradeterms')    { $totals['sigma_trade_terms']      = Invoke-ExtractTradeTerms }
-    if (& $run 'ean')           { $totals['sigma_ean_master']       = Invoke-ExtractEanMaster }
-    if (& $run 'departments')   { $totals['sigma_departments']      = Invoke-ExtractDepartments }
-    if (& $run 'subdepts')      { $totals['sigma_subdepts']         = Invoke-ExtractSubdepts }
+    if (& $run 'ean')               { $totals['sigma_ean_master']            = Invoke-ExtractEanMaster }
+    if (& $run 'departments')       { $totals['sigma_departments']           = Invoke-ExtractDepartments }
+    if (& $run 'subdepts')          { $totals['sigma_subdepts']              = Invoke-ExtractSubdepts }
+    if (& $run 'promotions')        { $totals['sigma_promotions']            = Invoke-ExtractPromotions }
+    if (& $run 'promotionarticles') { $totals['sigma_promotion_articles']    = Invoke-ExtractPromotionArticles }
 }
 catch {
     Write-Host "`nFATAL ERROR: $_" -ForegroundColor Red
