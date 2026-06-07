@@ -4,6 +4,79 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-08 — L2-001 Step 2: l2_item_classification SQL committed
+
+**What (SB-CC-L2-001 step 2):** Keystone Layer 2 classification MV written
+to `sql/create_l2_item_classification.sql`. Pending Pieter's run in Supabase
+SQL Editor (read-only MCP cannot run REFRESH or CREATE).
+
+**Signal stack (priority cascade):**
+- S1 NON_STOCK_DEPT: dept in (AIRTIME, FRONTEND PACK, EXPENSES, DORMANT,
+  NON SCAN SALES, ONLINE *, SPAR MOBILE, dept 99). Deterministic. conf=1.00.
+- S2 DIM_EXCLUDED: dept_nr=0 (DEPT_ZERO_PLACEHOLDER) OR subdept orphan
+  (merch_group_nr absent from sigma_subdepts). Deterministic. conf=1.00.
+- S3 PROD_INPUT_SUBDEPT: subdept name contains INGREDIENTS, PACKAGING, or
+  WASTAGE. conf=0.95. Covers all production depts (Bakery/Deli/Butchery/HMR
+  /FishShop/Produce/Flowers/CoffeeShop via *XING/*XPAC/*XWAS short codes).
+- S4 RECEIPTING_BREAK: scale_flag='0' AND SOH < -1000. Scale items excluded
+  (their negative SOH is Type A depletion, not a data error). conf=0.90.
+- S5 PROD_DEPT_NEVER_SOLD: production dept + last_sale_date=1990-01-01
+  sentinel. Base conf=0.80; boosted to 0.85 by S7, 0.88 by S6, 0.92 by both.
+- NORMAL: everything else. conf=0.99.
+
+**Design decisions verified against live 10116 data (2026-06-08):**
+- scale_flag from cWAG (one A): valid (0=67,024 / 1=2,775). Not cWAAGE.
+- 1990-01-01 sentinel = never-sold in sigma_lifecycle (64,289 articles on 10116).
+- sigma_lifecycle.last_sale_date always populated (0 nulls on 10116).
+- DIM_EXCLUDED covers sigma_dimension_exclusions rules without querying that
+  table directly (dept_nr=0 catches DEPT_CODE; NULL subdept join catches SUBDEPT_ORPHAN).
+- plu_flag='1': 99 articles on 10116 (SPAR only). Boosts PRODUCTION confidence.
+
+**80175 SPAR Roosville Gate 1 verified this session:** All 12 tables loaded,
+1,049,117 sales rows, span 2025-02-01 to 2026-06-07. Gate 1 PASS. All 5
+stores now hold full Layer 1 history.
+
+**Two pending Pieter SQL-Editor actions:**
+1. REFRESH MATERIALIZED VIEW l2_movements_typed;
+   REFRESH MATERIALIZED VIEW l2_rate_of_sale;
+   (picks up the 4 new stores loaded since Step 1 was created)
+2. Run sql/create_l2_item_classification.sql (creates the MV + indexes).
+   Then run the Gate 3 verification queries at the bottom of the file.
+
+---
+
+## 2026-06-07 session 3 — ROLLOUT-001 complete (4/5), L2-001 Step 1 LIVE, gates 2+4 written
+
+**ROLLOUT-001 — Layer 1 full-refresh + scheduled tasks:**
+- 21355 TOPS Delareyville: all 12 tables loaded (sales 114k, movements 123k, articles 52k). Gate 1 PASS.
+- 80176 TOPS Roosville: all 12 tables loaded (sales 121k, movements 122k, articles 46k). Gate 1 PASS.
+- 80579 TOPS Dice: all 12 tables loaded (sales 118k, movements 109k, articles 52k). Gate 1 PASS.
+- 80175 SPAR Roosville: first run partial (sales+movements only); second run in progress at handover.
+  Gate 1 pending — verify on next session start.
+- 10116 SRSDELAREYVILES: delta catch-up run (no -FullRefresh). Sales now current to 2026-06-07.
+- All 5 servers: SocialBrand Sunday Push task registered (weekly Sunday 16:15, based on observed
+  TAC zip times 15:23-15:34 on 4 Sundays). Script: Create-SundayPushTask.ps1.
+- All 5 servers: SocialBrand-ExtractDelta task registered (daily 19:40). Script: Create-ExtractorScheduledTask.ps1.
+
+**L2-001 Step 1 SQL — LIVE (Pieter ran in Supabase SQL Editor, 2026-06-07):**
+- l2_movements_typed: 1,340,758 rows, 5 movement classes, 10116 only.
+- l2_rate_of_sale: 69,798 rows (= all sigma_articles), 10116 only.
+- Both MVs need REFRESH once 80175 load completes (picks up all 5 stores).
+  Run in SQL Editor: REFRESH MATERIALIZED VIEW l2_movements_typed;
+                     REFRESH MATERIALIZED VIEW l2_rate_of_sale;
+
+**L2-001 brief SB-CC-L2-001 updated:**
+- Gates 2+4 proposals written (CC, data-backed from 10116 analysis).
+  Gate 2 rec: Option A (sigma_lifecycle.soh daily snapshot -> l2_soh_daily). Gate 4 rec: sigma_supplier_link.list_cost.
+- SOH data quality section added: ghost stock patterns + negative SOH patterns documented with 10116 evidence.
+  Engine handles programmatically via classification signal stack (no per-store manual fixes).
+- Scope expansion: sigma_promotions + sigma_promotion_articles added as L1 additions (DBPROME/DBPROMAR);
+  l2_promotion_effect + l2_production_yield added to object map.
+- configuration_group_map (production reverse-cost engine) documented as non-L1 config table.
+- PM ratification required before Step 2 build starts.
+
+---
+
 ## 2026-06-07 — L2-001 Step 1 SQL migrations committed (commit 180d00c)
 
 **What (SB-CC-L2-001 step 1):** Two Layer 2 materialised view migrations added to
