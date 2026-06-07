@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pulse Mini — Consignment (design reference)</title>
+<title>Pulse Mini — HMR Sushi</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
@@ -23,17 +23,19 @@
   .glass{background:linear-gradient(180deg,rgba(255,255,255,.74),rgba(255,255,255,.48));
          backdrop-filter:blur(16px) saturate(135%);-webkit-backdrop-filter:blur(16px) saturate(135%);
          border:1px solid rgba(255,255,255,.8);border-radius:14px;
-         box-shadow:inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 2px rgba(36,78,121,.06), 0 8px 24px rgba(30,60,100,.13), 0 2px 4px rgba(30,60,100,.07)}
+         box-shadow:inset 0 1px 0 rgba(255,255,255,.95),inset 0 -1px 2px rgba(36,78,121,.06),0 8px 24px rgba(30,60,100,.13),0 2px 4px rgba(30,60,100,.07)}
 
+  /* Header */
   .head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;color:#fff;border-radius:14px;
         background:linear-gradient(180deg,rgba(54,108,164,.92),rgba(33,72,113,.86));border:1px solid rgba(255,255,255,.28);
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.4), 0 8px 26px rgba(20,45,80,.28)}
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 8px 26px rgba(20,45,80,.28)}
   .head h1{margin:0;font-size:19px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.18)}
   .head .sub{margin:2px 0 0;font-size:12.5px;color:#d6e4f3}
   .live{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.2);padding:6px 12px;border-radius:999px;font:700 11px Inter;letter-spacing:.6px}
   .live .dot{width:8px;height:8px;border-radius:50%;background:#FFD24A;box-shadow:0 0 6px #FFD24A;animation:p 2s infinite}
   @keyframes p{0%{box-shadow:0 0 0 0 rgba(255,210,74,.6)}70%{box-shadow:0 0 0 7px rgba(255,210,74,0)}100%{box-shadow:0 0 0 0 rgba(255,210,74,0)}}
 
+  /* Weather */
   .wxbar{display:flex;align-items:center;justify-content:space-between;margin:12px 2px 6px;color:var(--slate);font-size:11.5px}
   .wxbar b{color:var(--blue-d);font:700 12px Inter}
   .wxstrip{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:6px}
@@ -44,17 +46,19 @@
   .wd .hi{font:700 14px Roboto} .wd .lo{font:12px Roboto;color:var(--slate)}
   .wd .rn{font-size:10px;color:var(--blue);margin-top:3px}
 
+  /* Meta + controls */
   .meta{display:flex;gap:18px;flex-wrap:wrap;margin:10px 2px;color:var(--slate);font-size:11.5px}
   .meta b{color:var(--ink)}
   .tabs{display:flex;gap:7px;margin:12px 0 12px}
   .tab{font:700 12px Inter;color:var(--slate);padding:8px 16px;border-radius:999px;cursor:pointer;
        background:linear-gradient(180deg,rgba(255,255,255,.7),rgba(255,255,255,.45));border:1px solid var(--glass-b);
-       box-shadow:inset 0 1px 0 rgba(255,255,255,.9), 0 2px 6px rgba(30,60,100,.08)}
+       box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 2px 6px rgba(30,60,100,.08)}
   .tab.on{background:linear-gradient(180deg,#3a72ad,#2c5b8c);color:#fff;border-color:#2c5b8c;box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 4px 12px rgba(30,60,100,.22)}
   .controls{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:12px;font-size:12px;color:var(--slate)}
   .controls label{font:700 12px Inter;margin-right:6px}
   .controls input,.controls select{font:13px Roboto;padding:6px 9px;border:1px solid var(--glass-b);border-radius:8px;background:rgba(255,255,255,.6)}
 
+  /* KPI cards */
   .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
   .kpi{padding:12px 14px;border-top:3px solid #cdd9e8}
   .kpi .lab{font:700 10px Inter;letter-spacing:.5px;color:var(--slate);text-transform:uppercase}
@@ -64,15 +68,16 @@
   .k3{border-top-color:var(--pos)} .k3 .val{color:var(--pos)}
   .k4{border-top-color:var(--gold)} .k4 .val{color:var(--gold-d)}
 
+  /* Main grid */
   .grid{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:12px;margin-top:12px}
   .panel{padding:14px 16px;min-width:0}
   .panel h2{margin:0 0 2px;font-size:12.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:var(--blue-d)}
   .panel .cap{font-size:11px;color:var(--slate);margin:0 0 11px}
 
+  /* Cumulative chart */
   .cum{display:flex;align-items:flex-end;gap:7px;height:128px;padding-top:8px;border-bottom:1px solid var(--hair)}
   .cum .col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
   .cum .bar{width:100%;max-width:36px;background:linear-gradient(180deg,#3a72ad,#2c5b8c);border-radius:5px 5px 0 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 2px 5px rgba(30,60,100,.18)}
-  .cum .bar.proj{background:repeating-linear-gradient(45deg,#b9cbe0,#b9cbe0 5px,#d8e3f0 5px,#d8e3f0 10px)}
   .cum .v{font:700 9px Roboto;color:var(--slate);margin-bottom:3px;white-space:nowrap}
   .cum .d{font:9.5px Roboto;color:var(--slate);margin-top:5px}
   .closing{margin-top:11px;background:rgba(47,97,150,.08);border:1px solid rgba(47,97,150,.15);border-radius:8px;padding:10px 12px}
@@ -80,6 +85,7 @@
   .closing .pv{font:700 20px Roboto;color:var(--blue-d);margin-top:1px}
   .closing .pn{font-size:11px;color:var(--slate);margin-top:2px}
 
+  /* Split bar + ranked list */
   .splitbar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:rgba(36,78,121,.12)}
   .splitbar i{display:block;height:100%}
   .splitleg{display:flex;gap:18px;margin-top:8px;font-size:11.5px;color:var(--slate)}
@@ -101,6 +107,17 @@
   .mrow .nm .tag{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:1px}
   .mrow .am{font:700 12px Roboto;color:var(--slate)}
 
+  /* Order plan rows — 4 columns */
+  .oprow{display:grid;grid-template-columns:1fr 74px 46px 54px;gap:6px;align-items:center;padding:7px 6px;cursor:pointer;border-radius:6px}
+  .oprow:hover{background:rgba(47,97,150,.08)}
+  .oprow.sel{background:rgba(47,97,150,.14);box-shadow:inset 0 0 0 1px var(--blue)}
+  .oprow .nm{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .oprow .oam{font:700 11.5px Roboto;text-align:right}
+  .op-hdr{display:grid;grid-template-columns:1fr 74px 46px 54px;gap:6px;padding:0 6px 5px;border-bottom:1px solid var(--hair);margin-bottom:4px}
+  .op-hdr span{font:700 9.5px Inter;letter-spacing:.4px;text-transform:uppercase;color:var(--slate);text-align:right}
+  .op-hdr span:first-child{text-align:left}
+
+  /* Detail panel */
   .detail .dh{display:flex;justify-content:space-between;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:3px}
   .detail h2 span{color:var(--slate);font-weight:400;font-size:12px;text-transform:none;letter-spacing:0}
   .stats{display:flex;gap:18px;font-size:11.5px;color:var(--slate)}
@@ -113,18 +130,18 @@
   .dayx{display:flex;margin-top:5px}
   .dayx .dl{flex:1 1 0;min-width:0;text-align:center;font:9px Roboto;color:#758799}
 
+  /* Flags */
   .flag{margin-top:12px;background:rgba(201,136,42,.12);border:1px solid rgba(201,136,42,.3);border-left:4px solid var(--gold);
         border-radius:0 8px 8px 0;padding:11px 15px;display:flex;align-items:center;gap:10px}
   .flag .ft{font:700 10px Inter;letter-spacing:.5px;text-transform:uppercase;color:#8a6420}
   .flag .fn{font:700 14px Roboto;margin-top:1px}
 
-  .order-placeholder{padding:56px 24px;text-align:center;color:var(--slate)}
-  .order-placeholder h3{font:700 16px Inter;color:var(--blue-d);margin:0 0 8px}
-  .order-placeholder p{margin:0;font-size:13px}
+  /* Empty / no-data state */
+  .nodata{padding:28px 0;text-align:center;color:var(--slate);font-size:12.5px}
+  .nodata b{display:block;font:700 15px Inter;color:var(--blue-d);margin-bottom:6px}
 
   footer{margin-top:16px;text-align:center;color:var(--slate);font-size:11px;line-height:1.6}
-
-  @media(max-width:880px){.kpis{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.moregrid{grid-template-columns:repeat(3,1fr)}.tops{grid-template-columns:1fr}}
+  @media(max-width:880px){.kpis{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.moregrid{grid-template-columns:repeat(3,1fr)}.tops{grid-template-columns:1fr}.op-hdr,.oprow{grid-template-columns:1fr 74px 46px}}
   @media(max-width:560px){.moregrid{grid-template-columns:repeat(2,1fr)}.wxstrip{grid-template-columns:repeat(4,1fr)}}
 </style>
 </head>
@@ -132,14 +149,18 @@
 <div class="wrap">
 
   <div class="head">
-    <div><h1>Pulse Mini · Consignment</h1><div class="sub">SPAR Delareyville — HMR Sushi counter · What sells when</div></div>
+    <div><h1>Pulse Mini · HMR Sushi</h1><div class="sub">SPAR Delareyville — HMR Sushi counter · What sells, When</div></div>
     <div class="live"><span class="dot"></span>LIVE</div>
   </div>
 
   <div class="wxbar"><b>7-day forecast</b><span id="wx-status">Delareyville · live</span></div>
   <div class="wxstrip" id="wxstrip"></div>
 
-  <div class="meta"><span>Data as at <b id="meta-asat">loading</b></span><span id="meta-month">HMR Sushi counter · June</span><span>Source <b id="meta-src">Live from Pulse</b></span></div>
+  <div class="meta">
+    <span>Data as at <b id="meta-asat">loading</b></span>
+    <span id="meta-month">HMR Sushi · June</span>
+    <span>Source <b id="meta-src">Live from Pulse</b></span>
+  </div>
 
   <div class="tabs">
     <div class="tab" id="tab-order">Order Plan</div>
@@ -147,64 +168,98 @@
   </div>
   <div class="controls">
     <span><label>Month</label><input type="month" id="month-input" value="2026-06"></span>
-    <span><label>Commission</label><select id="comm-select"><option>10%</option><option>9%</option><option>12.5%</option></select></span>
+    <span><label>Commission</label>
+      <select id="comm-select">
+        <option value="0.10">10%</option>
+        <option value="0.09">9%</option>
+        <option value="0.125">12.5%</option>
+      </select>
+    </span>
   </div>
 
-  <!-- Order Plan placeholder (hidden by default) -->
+  <!-- ===== ORDER PLAN BODY ===== -->
   <div id="order-body" style="display:none">
-    <div class="panel glass order-placeholder">
-      <h3>Order Plan</h3>
-      <p>Order recommendations driven by sales history will appear here.</p>
+    <div class="panel glass">
+      <h2>What to prepare <span style="font-weight:400;font-size:11px;text-transform:none;color:var(--slate)" id="op-title"></span></h2>
+      <p class="cap">Average daily units sold this month — use as your daily production guide. Tap a line for its day-by-day pattern.</p>
+      <div class="tops">
+        <div>
+          <div class="toph" style="color:var(--blue);border-color:var(--blue)">Sushi lines</div>
+          <div class="op-hdr"><span>Item</span><span>avg / day</span><span>peak</span><span>yesterday</span></div>
+          <div id="op-sushi"></div>
+        </div>
+        <div>
+          <div class="toph" style="color:var(--gold);border-color:var(--gold)">Chinese lines</div>
+          <div class="op-hdr"><span>Item</span><span>avg / day</span><span>peak</span><span>yesterday</span></div>
+          <div id="op-chinese"></div>
+        </div>
+      </div>
     </div>
-  </div>
+  </div><!-- /order-body -->
 
-  <!-- Consignment body -->
+  <!-- ===== CONSIGNMENT BODY ===== -->
   <div id="consign-body">
     <div class="kpis">
-      <div class="kpi glass k1"><div class="lab">Cash taken</div><div class="val num" id="k-cash"></div><div class="hint">counter sales, month so far</div></div>
-      <div class="kpi glass k4"><div class="lab">Units sold</div><div class="val num" id="k-units"></div><div class="hint">items across all lines</div></div>
-      <div class="kpi glass k3"><div class="lab">Your commission</div><div class="val num" id="k-comm"></div><div class="hint" id="k-comm-hint">10% — what you keep</div></div>
-      <div class="kpi glass k2"><div class="lab">Owed to supplier</div><div class="val num" id="k-owe"></div><div class="hint">supplier's share</div></div>
+      <div class="kpi glass k1"><div class="lab">Cash taken</div><div class="val num" id="k-cash">&mdash;</div><div class="hint">counter sales, month so far</div></div>
+      <div class="kpi glass k4"><div class="lab">Units sold</div><div class="val num" id="k-units">&mdash;</div><div class="hint">items across all lines</div></div>
+      <div class="kpi glass k3"><div class="lab">Your commission</div><div class="val num" id="k-comm">&mdash;</div><div class="hint" id="k-comm-hint">10% — what you keep</div></div>
+      <div class="kpi glass k2"><div class="lab">Owed to supplier</div><div class="val num" id="k-owe">&mdash;</div><div class="hint">supplier's share</div></div>
     </div>
 
     <div class="grid">
       <div class="panel glass">
         <h2>Cumulative cash held</h2>
-        <p class="cap">Running total of counter cash, month 1 onward.</p>
+        <p class="cap">Running total of counter cash, day 1 onward.</p>
         <div class="cum" id="cum"></div>
-        <div class="closing"><div class="pl">Ballpark month pace</div><div class="pv num" id="proj"></div><div class="pn" id="projn"></div></div>
+        <div class="closing">
+          <div class="pl">Ballpark month pace</div>
+          <div class="pv num" id="proj">&mdash;</div>
+          <div class="pn" id="projn"></div>
+        </div>
       </div>
       <div class="panel glass">
         <h2>Lines ranked — tap any line for its daily sales</h2>
         <p class="cap">Sushi and Chinese share one counter.</p>
         <div class="splitbar"><i id="sps" style="background:var(--blue)"></i><i id="spc" style="background:var(--gold)"></i></div>
-        <div class="splitleg"><span><span class="sw" style="background:var(--blue)"></span>Sushi <b class="num" id="lgs"></b></span><span><span class="sw" style="background:var(--gold)"></span>Chinese <b class="num" id="lgc"></b></span></div>
+        <div class="splitleg">
+          <span><span class="sw" style="background:var(--blue)"></span>Sushi <b class="num" id="lgs"></b></span>
+          <span><span class="sw" style="background:var(--gold)"></span>Chinese <b class="num" id="lgc"></b></span>
+        </div>
         <div class="tops">
           <div><div class="toph" style="color:var(--blue);border-color:var(--blue)">Top 5 sushi</div><div id="tops"></div></div>
           <div><div class="toph" style="color:var(--gold);border-color:var(--gold)">Top 5 Chinese</div><div id="topc"></div></div>
         </div>
         <hr class="divider">
-        <div class="mh"><span id="moreh">Remaining lines</span><span>units · rand</span></div>
+        <div class="mh"><span id="moreh">Remaining lines</span><span>units &middot; rand</span></div>
         <div class="moregrid" id="more"></div>
       </div>
-    </div>
-
-    <div class="panel glass detail" style="margin-top:12px">
-      <div class="dh"><h2 id="dtitle"></h2><div class="stats"><span>Month total <b class="num" id="dtot"></b></span><span>Units <b class="num" id="duni"></b></span><span>Best day <b id="dbest"></b></span></div></div>
-      <p class="daycap" id="daycap">Actual daily sales — hover a bar for rand and units.</p>
-      <div class="days" id="days"></div>
-      <div class="dayx" id="dayx"></div>
     </div>
 
     <div id="flags-area"></div>
   </div><!-- /consign-body -->
 
-  <footer>Read only. Sales are real recorded counter takings. Ledger stock is not reliable on these lines, so ordering is driven by sales, not stock.</footer>
+  <!-- ===== SHARED DETAIL PANEL (both tabs) ===== -->
+  <div class="panel glass detail" id="detail-body" style="margin-top:12px;display:none">
+    <div class="dh">
+      <h2 id="dtitle"></h2>
+      <div class="stats">
+        <span>Month total <b class="num" id="dtot"></b></span>
+        <span>Units <b class="num" id="duni"></b></span>
+        <span>Best day <b id="dbest"></b></span>
+      </div>
+    </div>
+    <p class="daycap" id="daycap">Actual daily sales — hover a bar for rand and units.</p>
+    <div class="days" id="days"></div>
+    <div class="dayx" id="dayx"></div>
+  </div>
+
+  <footer>Read only. Sales are real recorded counter takings. Ledger stock is not reliable on these lines — ordering is driven by sales, not stock.</footer>
 </div>
 
 <script>
-/* === Fallback: real sigma_sales, store 10116, merch group 610, Jun 1-4 2026 ===
-   BREAKFAST excluded (misfiled, not consignment). Used when API unavailable. */
+/* === Fallback data — Jun 1-4 2026, real sigma_sales (store 10116, group 610).
+   Used ONLY when the API itself fails (503 / network error).
+   Empty months (future or no data) show a no-data state, NOT this fallback. === */
 const L_FB=[
 {n:"AVALANCHE PRAWNS/SALMON",t:"s",s:[0,0,105,0],q:[0,0,1,0]},
 {n:"CHOW MEIN NOODLES CHICKEN",t:"c",s:[105,105,0,105],q:[1,1,0,1]},
@@ -244,120 +299,169 @@ const L_FB=[
 ];
 
 /* === Helpers === */
-const R=n=>"R "+Math.round(n).toLocaleString('en-ZA');
-const $=id=>document.getElementById(id);
-const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const R  = function(n){ return "R "+Math.round(n).toLocaleString('en-ZA'); };
+const $  = function(id){ return document.getElementById(id); };
+const MON= ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function fmtDate(iso){
-  if(!iso)return'—';
-  const d=new Date(iso+'T00:00:00');
+  if(!iso) return '—';
+  var d=new Date(iso+'T00:00:00');
   return String(d.getDate()).padStart(2,'0')+' '+MON[d.getMonth()]+' '+d.getFullYear();
 }
 
 /* === Global state === */
-let G_L=[], G_LOADED=0, G_DIM=30, G_RATE=0.10, G_MON_SHORT='Jun';
+var G_L=[], G_LOADED=0, G_DIM=30, G_RATE=0.10, G_MON_SHORT='Jun';
 
-/* === Render — called with live or fallback data === */
-function render(L,LOADED,DIM){
+/* === Consignment render === */
+function render(L, LOADED, DIM){
   G_L=L; G_LOADED=LOADED; G_DIM=DIM;
-  L.forEach(l=>{l.sales=l.s.reduce((a,b)=>a+b,0);l.qty=l.q.reduce((a,b)=>a+b,0);});
-  L.sort((a,b)=>b.sales-a.sales); L.forEach((l,i)=>l.rank=i+1);
-  const cash=L.reduce((a,l)=>a+l.sales,0), units=L.reduce((a,l)=>a+l.qty,0);
-  const sushi=L.filter(l=>l.t==='s').reduce((a,l)=>a+l.sales,0), chin=cash-sushi;
+  L.forEach(function(l){l.sales=l.s.reduce(function(a,b){return a+b;},0);l.qty=l.q.reduce(function(a,b){return a+b;},0);});
+  L.sort(function(a,b){return b.sales-a.sales;}); L.forEach(function(l,i){l.rank=i+1;});
+  var cash=L.reduce(function(a,l){return a+l.sales;},0), units=L.reduce(function(a,l){return a+l.qty;},0);
+  var sushi=L.filter(function(l){return l.t==='s';}).reduce(function(a,l){return a+l.sales;},0), chin=cash-sushi;
 
   // KPI cards
-  $('k-cash').textContent=R(cash);
-  $('k-units').textContent=units;
-  $('k-comm').textContent=R(cash*G_RATE);
-  $('k-owe').textContent=R(cash*(1-G_RATE));
-  const pct=(G_RATE*100).toLocaleString('en-ZA',{maximumFractionDigits:1});
-  const hint=$('k-comm-hint');if(hint)hint.textContent=pct+'% — what you keep';
+  $('k-cash').textContent=R(cash); $('k-units').textContent=units;
+  $('k-comm').textContent=R(cash*G_RATE); $('k-owe').textContent=R(cash*(1-G_RATE));
+  var pct=(G_RATE*100).toLocaleString('en-ZA',{maximumFractionDigits:1});
+  var hint=$('k-comm-hint'); if(hint)hint.textContent=pct+'% — what you keep';
 
   // Daycap
-  const dc=$('daycap');
+  var dc=$('daycap');
   if(dc)dc.textContent='Actual daily sales — hover a bar for rand and units. Loaded through '+
     LOADED+' day'+(LOADED!==1?'s':'')+' of '+G_MON_SHORT+'; remaining days fill in nightly.';
 
   // Cumulative bars
-  const daySums=Array(LOADED).fill(0);
-  L.forEach(l=>l.s.forEach((v,i)=>{if(i<LOADED)daySums[i]+=v;}));
-  let cum=[],run=0; daySums.forEach(d=>{run+=d;cum.push(run);});
-  const avg=cash/Math.max(LOADED,1), pace=avg*DIM;
-  (function(){const mx=Math.max(...cum,1);let h='';
-    cum.forEach((c,i)=>{const lbl=String(i+1).padStart(2,'0');
-      h+=`<div class="col"><div class="v num">${R(c)}</div><div class="bar" style="height:${c/mx*100}%"></div><div class="d num">${lbl}</div></div>`;});
+  var daySums=new Array(LOADED).fill(0);
+  L.forEach(function(l){l.s.forEach(function(v,i){if(i<LOADED)daySums[i]+=v;});});
+  var cum=[],run=0; daySums.forEach(function(d){run+=d;cum.push(run);});
+  var avg=cash/Math.max(LOADED,1), pace=avg*DIM;
+  (function(){
+    var mx=Math.max.apply(null,cum.concat([1])),h='';
+    cum.forEach(function(c,i){var lbl=String(i+1).padStart(2,'0');
+      h+='<div class="col"><div class="v num">'+R(c)+'</div><div class="bar" style="height:'+Math.round(c/mx*100)+'%"></div><div class="d num">'+lbl+'</div></div>';});
     $('cum').innerHTML=h;
   })();
-  $('proj').textContent="≈ "+R(pace);
-  $('projn').textContent="Rough guide only — "+R(avg)+"/day over "+LOADED+" day"+(LOADED!==1?"s":"")+" loaded, stretched to "+DIM+" days. Not a commitment.";
+  $('proj').textContent='≈ '+R(pace);
+  $('projn').textContent='Rough guide — '+R(avg)+'/day over '+LOADED+' day'+(LOADED!==1?'s':'')+' loaded, stretched to '+DIM+' days. Not a commitment.';
 
   // Split bar
-  $('sps').style.width=sushi/Math.max(cash,1)*100+'%';
-  $('spc').style.width=chin/Math.max(cash,1)*100+'%';
-  $('lgs').textContent=R(sushi);$('lgc').textContent=R(chin);
+  $('sps').style.width=Math.round(sushi/Math.max(cash,1)*100)+'%';
+  $('spc').style.width=Math.round(chin/Math.max(cash,1)*100)+'%';
+  $('lgs').textContent=R(sushi); $('lgc').textContent=R(chin);
 
-  // Row builder
+  // Row builder (consignment ranked list)
   function rowM(l,c){
-    return `<div class="${c}" data-r="${l.rank}">`+
-      (c==='row'
-        ?`<span class="rk num">${l.rank}</span><span class="nm">${l.n}</span><span class="am num">${l.qty}&nbsp;&middot;&nbsp;${R(l.sales)}</span>`
-        :`<span class="nm"><span class="tag" style="background:${l.t==='s'?'var(--blue)':'var(--gold)'}"></span>${l.n}</span><span class="am num">${l.qty}&nbsp;&middot;&nbsp;${R(l.sales)}</span>`
-      )+`</div>`;
+    if(c==='row')
+      return '<div class="row" data-r="'+l.rank+'"><span class="rk num">'+l.rank+'</span><span class="nm">'+l.n+'</span><span class="am num">'+l.qty+'&nbsp;&middot;&nbsp;'+R(l.sales)+'</span></div>';
+    return '<div class="mrow" data-r="'+l.rank+'"><span class="nm"><span class="tag" style="background:'+(l.t==='s'?'var(--blue)':'var(--gold)')+'"></span>'+l.n+'</span><span class="am num">'+l.qty+'&nbsp;&middot;&nbsp;'+R(l.sales)+'</span></div>';
   }
-  const tS=L.filter(l=>l.t==='s').slice(0,5),tC=L.filter(l=>l.t==='c').slice(0,5);
-  $('tops').innerHTML=tS.map(l=>rowM(l,'row')).join('');
-  $('topc').innerHTML=tC.map(l=>rowM(l,'row')).join('');
-  const inTop=new Set([...tS,...tC].map(l=>l.rank));
-  const rest=L.filter(l=>!inTop.has(l.rank));
-  $('moreh').textContent=`Remaining lines (${rest.length})`;
-  $('more').innerHTML=rest.map(l=>rowM(l,'mrow')).join('');
+  var tS=L.filter(function(l){return l.t==='s';}).slice(0,5);
+  var tC=L.filter(function(l){return l.t==='c';}).slice(0,5);
+  $('tops').innerHTML=tS.map(function(l){return rowM(l,'row');}).join('');
+  $('topc').innerHTML=tC.map(function(l){return rowM(l,'row');}).join('');
+  var inTop=new Set([].concat(tS,tC).map(function(l){return l.rank;}));
+  var rest=L.filter(function(l){return !inTop.has(l.rank);});
+  $('moreh').textContent='Remaining lines ('+rest.length+')';
+  $('more').innerHTML=rest.map(function(l){return rowM(l,'mrow');}).join('');
+
+  // Populate Order Plan too
+  renderOrderPlan(L, LOADED);
+
   sel(1);
 }
 
-/* === Detail chart — called on line click === */
+/* === Order Plan render === */
+function renderOrderPlan(L, LOADED){
+  var sushi=L.filter(function(l){return l.t==='s';}).slice().sort(function(a,b){return b.qty-a.qty;});
+  var chin =L.filter(function(l){return l.t==='c';}).slice().sort(function(a,b){return b.qty-a.qty;});
+  function opRow(l){
+    var avgQ=LOADED>0?(l.qty/LOADED).toFixed(1):'0';
+    var peak=Math.max.apply(null,l.q.concat([0]));
+    var yest=LOADED>0?(l.q[LOADED-1]||0):0;
+    return '<div class="oprow" data-r="'+l.rank+'">'+
+      '<span class="nm">'+l.n+'</span>'+
+      '<span class="oam num" style="color:var(--ink)">'+avgQ+'</span>'+
+      '<span class="oam num" style="color:var(--slate)">'+peak+'</span>'+
+      '<span class="oam num" style="color:var(--slate)">'+yest+'</span>'+
+    '</div>';
+  }
+  var noMsg='<div style="padding:12px 6px;color:var(--slate);font-size:12px">No data</div>';
+  $('op-sushi').innerHTML=sushi.length?sushi.map(opRow).join(''):noMsg;
+  $('op-chinese').innerHTML=chin.length?chin.map(opRow).join(''):noMsg;
+  var op=$('op-title');
+  if(op)op.textContent=LOADED>0?'— based on '+LOADED+' day'+(LOADED!==1?'s':'')+' of '+G_MON_SHORT:'';
+}
+
+/* === Detail chart — shared between tabs === */
 function sel(r){
-  const L=G_L, LOADED=G_LOADED, DIM=G_DIM;
-  const l=L.find(x=>x.rank===r); if(!l)return;
-  document.querySelectorAll('[data-r]').forEach(e=>e.classList.toggle('sel',+e.dataset.r===r));
-  $('dtitle').innerHTML=`${l.n} <span>· daily sales</span>`;
+  var L=G_L, LOADED=G_LOADED, DIM=G_DIM;
+  var l=L.find(function(x){return x.rank===r;}); if(!l)return;
+  var db=$('detail-body'); if(db)db.style.display='';
+  document.querySelectorAll('[data-r]').forEach(function(e){e.classList.toggle('sel',+e.dataset.r===r);});
+  $('dtitle').innerHTML=l.n+' <span>&middot; daily sales</span>';
   $('dtot').textContent=R(l.sales); $('duni').textContent=l.qty;
-  const mx=Math.max(...l.s,1), b=l.s.indexOf(Math.max(...l.s));
-  $('dbest').textContent=l.s[b]>0?G_MON_SHORT+' '+(b+1):'—';
-  let bars='',labs='';
-  for(let i=0;i<DIM;i++){
-    const el=i<LOADED, v=el?l.s[i]:0, u=el?l.q[i]:0;
-    bars+=`<div class="day" title="${G_MON_SHORT} ${i+1}${el?(v>0?': '+R(v)+' · '+u+' units':': no sales'):' — to come'}"><div class="db ${el?'':'empty'}" style="height:${el?(v>0?Math.max(v/mx*100,3):0):100}%"></div></div>`;
-    labs+=`<div class="dl">${i+1}</div>`;
+  var mx=Math.max.apply(null,l.s.concat([1]));
+  var bIdx=l.s.indexOf(Math.max.apply(null,l.s));
+  $('dbest').textContent=l.s[bIdx]>0?G_MON_SHORT+' '+(bIdx+1):'—';
+  var bars='',labs='';
+  for(var i=0;i<DIM;i++){
+    var el=i<LOADED, v=el?l.s[i]:0, u=el?l.q[i]:0;
+    var tip=G_MON_SHORT+' '+(i+1)+(el?(v>0?': '+R(v)+' · '+u+' units':': no sales'):' — to come');
+    bars+='<div class="day" title="'+tip+'"><div class="db '+(el?'':'empty')+'" style="height:'+(el?(v>0?Math.max(Math.round(v/mx*100),3):0):100)+'%"></div></div>';
+    labs+='<div class="dl">'+(i+1)+'</div>';
   }
   $('days').innerHTML=bars; $('dayx').innerHTML=labs;
 }
 
-/* === Global click handler for ranked rows === */
+/* === No-data state (empty month — no fallback to snapshot) === */
+function showNoData(month){
+  G_L=[]; G_LOADED=0;
+  var parts=month.split('-');
+  var label=(MON[parseInt(parts[1],10)-1]||'?')+' '+parts[0];
+  if($('meta-asat'))$('meta-asat').textContent='—';
+  if($('meta-src'))$('meta-src').textContent='no data for '+label;
+  var msg='<div class="nodata"><b>No data for '+label+'</b>No sales recorded in daily_snapshots for this month.</div>';
+  ['k-cash','k-comm','k-owe'].forEach(function(id){if($(id))$(id).textContent='R 0';});
+  if($('k-units'))$('k-units').textContent='0';
+  if($('proj'))$('proj').textContent='—'; if($('projn'))$('projn').textContent='';
+  if($('cum'))$('cum').innerHTML=msg;
+  ['tops','topc','more','op-sushi','op-chinese','flags-area'].forEach(function(id){if($(id))$(id).innerHTML='';});
+  if($('sps'))$('sps').style.width='0%'; if($('spc'))$('spc').style.width='0%';
+  if($('lgs'))$('lgs').textContent='R 0'; if($('lgc'))$('lgc').textContent='R 0';
+  if($('days'))$('days').innerHTML=''; if($('dayx'))$('dayx').innerHTML='';
+  if($('dtitle'))$('dtitle').innerHTML=''; if($('dtot'))$('dtot').textContent='';
+  if($('duni'))$('duni').textContent=''; if($('dbest'))$('dbest').textContent='';
+  if($('detail-body'))$('detail-body').style.display='none';
+  if($('op-title'))$('op-title').textContent='';
+}
+
+/* === Global click handler — rows in both tabs === */
 document.addEventListener('click',function(e){
-  const r=e.target.closest('[data-r]');
+  var r=e.target.closest('[data-r]');
   if(r)sel(+r.dataset.r);
 });
 
 /* === Tab switching === */
 document.querySelectorAll('.tab').forEach(function(tab){
   tab.addEventListener('click',function(){
-    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
+    document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('on');});
     tab.classList.add('on');
-    const isConsign=(tab.id==='tab-consign');
-    const cb=$('consign-body'), ob=$('order-body');
-    if(cb)cb.style.display=isConsign?'':'none';
-    if(ob)ob.style.display=isConsign?'none':'block';
+    var isOrder=(tab.id==='tab-order');
+    var ob=$('order-body'), cb=$('consign-body');
+    if(ob)ob.style.display=isOrder?'':'none';
+    if(cb)cb.style.display=isOrder?'none':'';
   });
 });
 
-/* === Commission change — recalculate live, no reload === */
+/* === Commission change — live recalculate, no reload === */
 $('comm-select').addEventListener('change',function(){
-  G_RATE=parseFloat(this.value)/100;
+  G_RATE=parseFloat(this.value);
   if(!G_L.length)return;
-  const cash=G_L.reduce((a,l)=>a+l.sales,0);
+  var cash=G_L.reduce(function(a,l){return a+l.sales;},0);
   $('k-comm').textContent=R(cash*G_RATE);
   $('k-owe').textContent=R(cash*(1-G_RATE));
-  const pct=(G_RATE*100).toLocaleString('en-ZA',{maximumFractionDigits:1});
-  const hint=$('k-comm-hint');if(hint)hint.textContent=pct+'% — what you keep';
+  var pct=(G_RATE*100).toLocaleString('en-ZA',{maximumFractionDigits:1});
+  var hint=$('k-comm-hint'); if(hint)hint.textContent=pct+'% — what you keep';
 });
 
 /* === Month change — full reload === */
@@ -365,88 +469,96 @@ $('month-input').addEventListener('change',loadAndRender);
 
 /* === Flags area === */
 function renderFlags(noSales,priceFlags){
-  const fa=$('flags-area'); if(!fa)return;
-  let h='';
+  var fa=$('flags-area'); if(!fa)return;
+  var h='';
   if(noSales&&noSales.length){
-    const names=noSales.map(l=>l.desc).join(' &middot; ');
-    h+=`<div class="flag"><div><div class="ft">No sales this month &mdash; ${noSales.length} line${noSales.length!==1?'s':''}</div><div class="fn">${names}</div></div></div>`;
+    var names=noSales.map(function(l){return l.desc;}).join(' &middot; ');
+    h+='<div class="flag"><div><div class="ft">No sales this month &mdash; '+noSales.length+' line'+(noSales.length!==1?'s':'')+'</div><div class="fn">'+names+'</div></div></div>';
   }
   if(priceFlags&&priceFlags.length){
     priceFlags.forEach(function(f){
-      h+=`<div class="flag"><div><div class="ft">Price update pending</div><div class="fn">${f.desc} &mdash; Sigma R ${parseFloat(f.sigma_price).toFixed(2)}, DB R ${parseFloat(f.db_price).toFixed(2)}</div></div></div>`;
+      h+='<div class="flag"><div><div class="ft">Price update pending</div><div class="fn">'+f.desc+' &mdash; Sigma R '+parseFloat(f.sigma_price).toFixed(2)+', DB R '+parseFloat(f.db_price).toFixed(2)+'</div></div></div>';
     });
   }
   fa.innerHTML=h;
 }
 
-/* === Bootstrap: load data and render === */
+/* === Bootstrap — loads data, never falls back to snapshot for empty months === */
 async function loadAndRender(){
-  const monthEl=$('month-input');
-  const month=monthEl?monthEl.value:'2026-06';
-  const [rawY,rawM]=month.split('-');
-  G_MON_SHORT=MON[parseInt(rawM,10)-1]||'Jun';
+  var monthEl=$('month-input');
+  var month=monthEl?monthEl.value:'2026-06';
+  var parts=month.split('-');
+  G_MON_SHORT=MON[parseInt(parts[1],10)-1]||'Jun';
 
   // Update meta month label
-  const mm=$('meta-month');
-  if(mm)mm.textContent='HMR Sushi counter · '+G_MON_SHORT+' '+rawY;
+  var mm=$('meta-month'); if(mm)mm.textContent='HMR Sushi · '+G_MON_SHORT+' '+parts[0];
 
-  // Read current commission rate
-  const commEl=$('comm-select');
-  if(commEl)G_RATE=parseFloat(commEl.value)/100;
+  // Read commission
+  var commEl=$('comm-select'); if(commEl)G_RATE=parseFloat(commEl.value);
 
-  // Primary fetch: per-line per-day data
-  let ok=false;
+  // Update hint label immediately
+  var pct=(G_RATE*100).toLocaleString('en-ZA',{maximumFractionDigits:1});
+  var hint=$('k-comm-hint'); if(hint)hint.textContent=pct+'% — what you keep';
+
+  var apiOk=false;
   try{
-    const resp=await fetch('/api/dev-corner/sigma-lines?month='+encodeURIComponent(month),
+    var resp=await fetch('/api/dev-corner/sigma-lines?month='+encodeURIComponent(month),
       {headers:{Accept:'application/json'}});
+
     if(resp.ok){
-      const d=await resp.json();
+      var d=await resp.json();
+      apiOk=true; // API responded — don't use hardcoded fallback regardless
+
       if(d.lines&&d.lines.length){
+        // Good data — render it
         if($('meta-asat')&&d.as_at)$('meta-asat').textContent=fmtDate(d.as_at);
         if($('meta-src'))$('meta-src').textContent='daily_snapshots · nightly';
         render(d.lines,d.loaded_days,d.days_in_month||30);
-        ok=true;
+      } else {
+        // API worked but no rows for this month — show empty state
+        showNoData(month);
       }
     }
   }catch(e){}
 
-  if(!ok){
+  if(!apiOk){
+    // Only reach here on genuine API failure (503, network error, etc.)
     if($('meta-asat'))$('meta-asat').textContent='04 Jun 2026 (snapshot)';
-    if($('meta-src'))$('meta-src').textContent='fallback snapshot';
-    render(L_FB.map(l=>({...l,s:[...l.s],q:[...l.q]})),4,30);
+    if($('meta-src'))$('meta-src').textContent='fallback — API unavailable';
+    G_MON_SHORT='Jun';
+    render(L_FB.map(function(l){return {n:l.n,t:l.t,s:l.s.slice(),q:l.q.slice()};}),4,30);
   }
 
-  // Secondary fetch: no-sales + price flags from consignment endpoint
+  // Secondary: no-sales + price flags (consignment endpoint)
   try{
-    const cr=await fetch('/api/dev-corner/consignment?month='+encodeURIComponent(month)+'&rate='+G_RATE,
+    var cr=await fetch('/api/dev-corner/consignment?month='+encodeURIComponent(month)+'&rate='+G_RATE,
       {headers:{Accept:'application/json'}});
-    if(cr.ok){
-      const cd=await cr.json();
-      renderFlags(cd.no_sales,cd.price_flags);
-    }
+    if(cr.ok){var cd=await cr.json(); renderFlags(cd.no_sales,cd.price_flags);}
   }catch(e){}
 }
 
 loadAndRender();
 
-/* === Weather: LIVE Open-Meteo (no key). Falls back to snapshot if fetch fails. === */
-const WX_FALLBACK={time:["2026-06-06","2026-06-07","2026-06-08","2026-06-09","2026-06-10","2026-06-11","2026-06-12"],weather_code:[3,1,3,2,0,3,3],temperature_2m_max:[15.4,18.2,20.3,19.9,19.9,19.7,20.9],temperature_2m_min:[0.6,1.3,4.0,4.3,3.8,8.5,9.2],precipitation_probability_max:[0,0,0,0,0,0,0]};
-const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-function icon(c,r){if(r>=40)return '<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 16a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 16z"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="13" y1="20" x2="13" y2="22"/></svg>';
-  if(c<=1)return '<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><line x1="12" y1="3" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="21"/><line x1="3" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="21" y2="12"/><line x1="5.5" y1="5.5" x2="6.9" y2="6.9"/><line x1="17.1" y1="17.1" x2="18.5" y2="18.5"/><line x1="5.5" y1="18.5" x2="6.9" y2="17.1"/><line x1="17.1" y1="6.9" x2="18.5" y2="5.5"/></svg>';
-  if(c===2)return '<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="9" r="3"/><path d="M11 18a4 4 0 010-8 5 5 0 019.6 1A3.2 3.2 0 0119 18z" stroke="#5b7da3"/></svg>';
-  return '<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 18a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 18z"/></svg>';}
+/* === Weather: LIVE Open-Meteo. Falls back to snapshot on network error. === */
+var WX_FB={time:["2026-06-06","2026-06-07","2026-06-08","2026-06-09","2026-06-10","2026-06-11","2026-06-12"],weather_code:[3,1,3,2,0,3,3],temperature_2m_max:[15.4,18.2,20.3,19.9,19.9,19.7,20.9],temperature_2m_min:[0.6,1.3,4.0,4.3,3.8,8.5,9.2],precipitation_probability_max:[0,0,0,0,0,0,0]};
+var DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function icon(c,r){
+  if(r>=40)return'<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 16a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 16z"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="13" y1="20" x2="13" y2="22"/></svg>';
+  if(c<=1)return'<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><line x1="12" y1="3" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="21"/><line x1="3" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="21" y2="12"/><line x1="5.5" y1="5.5" x2="6.9" y2="6.9"/><line x1="17.1" y1="17.1" x2="18.5" y2="18.5"/><line x1="5.5" y1="18.5" x2="6.9" y2="17.1"/><line x1="17.1" y1="6.9" x2="18.5" y2="5.5"/></svg>';
+  if(c===2)return'<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="9" r="3"/><path d="M11 18a4 4 0 010-8 5 5 0 019.6 1A3.2 3.2 0 0119 18z" stroke="#5b7da3"/></svg>';
+  return'<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 18a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 18z"/></svg>';
+}
 function renderWx(d,live){
-  let h='';
-  for(let i=0;i<d.time.length;i++){
-    const dt=new Date(d.time[i]+'T00:00:00');
-    h+=`<div class="wd glass${i===0?' today':''}"><div class="dn">${DOW[dt.getDay()]}</div><div class="dd">${dt.getDate()} Jun</div>${icon(d.weather_code[i],d.precipitation_probability_max[i])}<div class="hi">${Math.round(d.temperature_2m_max[i])}&deg;</div><div class="lo">${Math.round(d.temperature_2m_min[i])}&deg;</div><div class="rn">${d.precipitation_probability_max[i]}%</div></div>`;
+  var h='';
+  for(var i=0;i<d.time.length;i++){
+    var dt=new Date(d.time[i]+'T00:00:00');
+    h+='<div class="wd glass'+(i===0?' today':'')+'"><div class="dn">'+DOW[dt.getDay()]+'</div><div class="dd">'+dt.getDate()+' Jun</div>'+icon(d.weather_code[i],d.precipitation_probability_max[i])+'<div class="hi">'+Math.round(d.temperature_2m_max[i])+'&deg;</div><div class="lo">'+Math.round(d.temperature_2m_min[i])+'&deg;</div><div class="rn">'+d.precipitation_probability_max[i]+'%</div></div>';
   }
   $('wxstrip').innerHTML=h;
   $('wx-status').textContent='Delareyville · '+(live?'live':'last snapshot');
 }
 fetch("https://api.open-meteo.com/v1/forecast?latitude=-26.68&longitude=25.45&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Africa/Johannesburg&forecast_days=7")
-  .then(r=>r.json()).then(j=>renderWx(j.daily,true)).catch(()=>renderWx(WX_FALLBACK,false));
+  .then(function(r){return r.json();}).then(function(j){renderWx(j.daily,true);}).catch(function(){renderWx(WX_FB,false);});
 </script>
 </body>
 </html>
