@@ -4,6 +4,62 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-08 — SB-INDEX-005 Phase 1: l2_kpi_daily sales source migrated to sigma_sales
+
+**Commit:** 63b1ef9 (feat(SB-INDEX-005): Phase 1 -- l2_kpi_daily sales from sigma_sales)
+**Status: PENDING PIETER SQL DEPLOY** — paste `sql/create_l2_kpi_daily.sql` in SQL Editor.
+
+**Change:** `sales_agg` CTE in l2_kpi_daily rewritten. Source changed from `daily_snapshots` to `sigma_sales`.
+
+| Before | After |
+|---|---|
+| `MAX(snapshot_date)` per store from `daily_snapshots` | `MAX(sale_date)` per store from `sigma_sales` (period_kind='T' AND txn_kind=1) |
+| `SUM(today_sales/cost/qty)` | `SUM(sales_incl_vat/qty)` from sigma_sales; `sales_cost=0`; `gp_pct=NULL` |
+
+**PM rulings (SB-INDEX-005 v1.3, 2026-06-08):**
+- Decision 1: Option A (NULL/0 now) + Option B (dEKUmsatz via extractor) bundled with next extractor version
+- Decision 2: Phase 2 (v_kpi_by_date migration) = separate PM brief, not concurrent
+
+**Pre-deploy verification (live DB, 2026-06-08):**
+- sigma_sales latest_date = 2026-06-07 on all 5 stores (80579 date lag now resolved in sigma_sales)
+- sigma_sales 2026-05-29 for 10116: R383,388 / 2,786 lines — CONFIRMED (the missing EOD exists in DBUMBA)
+- Expected post-deploy sales_incl_vat vs current daily_snapshots values:
+
+| Store | daily_snapshots (current) | sigma_sales 06-07 (post-deploy) | Delta |
+|---|---|---|---|
+| 10116 | R153,801 | R155,537 | +1.1% (PRSSALE variance) |
+| 21355 | R6,720 | R6,720 | 0.0% |
+| 80175 | R91,553 | R91,811 | +0.3% |
+| 80176 | R22,244 | R22,244 | 0.0% |
+| 80579 | R33,072 @ 06-06 | R2,712 @ 06-07 | Date moves; R2,712 Sunday TOPS plausible |
+
+- Nothing in frontend or RPCs reads l2_kpi_daily.gp_pct (verified 2026-06-08)
+- stock_agg/capital/signals: unchanged (still from l2_stock_position)
+
+**Acceptance query (run after deploy + REFRESH):**
+```sql
+SELECT
+    kpi.store_code,
+    kpi.sales_date,
+    ROUND(kpi.sales_incl_vat::numeric, 0)  AS kpi_sales,
+    ROUND(sig.sigma_sales::numeric, 0)      AS sigma_src,
+    ROUND((kpi.sales_incl_vat - sig.sigma_sales)::numeric, 0) AS delta
+FROM l2_kpi_daily kpi
+JOIN (
+    SELECT store_code, SUM(sales_incl_vat) AS sigma_sales
+    FROM sigma_sales
+    WHERE period_kind = 'T' AND txn_kind = 1
+      AND sale_date = (SELECT MAX(sale_date) FROM sigma_sales
+                       WHERE store_code = sigma_sales.store_code
+                         AND period_kind = 'T' AND txn_kind = 1)
+    GROUP BY store_code
+) sig ON sig.store_code = kpi.store_code
+ORDER BY kpi.store_code;
+-- Expected: delta = 0 (kpi_sales sourced directly from sigma_sales)
+```
+
+---
+
 ## 2026-06-08 — AUDIT-002 L2 restructure: l2_consignment_daily + rpc_consignment_lines thin SELECT
 
 **Commits:** 450928f (sql/create_l2_consignment_daily.sql NEW + sql/rpc_consignment_lines.sql REWRITE)
