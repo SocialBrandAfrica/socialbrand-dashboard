@@ -74,7 +74,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.5'
+$ScriptVersion  = 'v1.6'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -1050,16 +1050,31 @@ function Invoke-ExtractEanMaster {
     }
 
     $conflict = 'client_id,store_code,barcode,product_code'
+    # Dedup on (dREFNR, dARTNR): EASYDB stores multiple EAN-system rows per
+    # barcode+product (EAN13 + ITF14 etc).  Sending both in the same 500-row
+    # batch triggers "ON CONFLICT DO UPDATE command cannot affect row a second
+    # time" (PG-21000).  ROW_NUMBER PARTITION BY (dREFNR,dARTNR) ORDER BY
+    # Sorter ASC keeps the primary EAN designation (lowest Sorter) per pair.
     $sql = @"
-SELECT
-    CAST(dREFNR  AS BIGINT)  AS barcode,
-    CAST(dARTNR  AS BIGINT)  AS product_code,
-    cSYSTEM                  AS ean_system,
-    cTYP                     AS ean_type,
-    dPrufZif                 AS check_digit,
-    Orderable                AS orderable,
-    Sorter                   AS sorter
-FROM IntelliAcc.IntellistoX_EAN_Master WITH (NOLOCK)
+WITH ranked AS (
+    SELECT
+        CAST(dREFNR  AS BIGINT)  AS barcode,
+        CAST(dARTNR  AS BIGINT)  AS product_code,
+        cSYSTEM                  AS ean_system,
+        cTYP                     AS ean_type,
+        dPrufZif                 AS check_digit,
+        Orderable                AS orderable,
+        Sorter                   AS sorter,
+        ROW_NUMBER() OVER (
+            PARTITION BY dREFNR, dARTNR
+            ORDER BY Sorter ASC, dPrufZif ASC
+        ) AS rn
+    FROM IntelliAcc.IntellistoX_EAN_Master WITH (NOLOCK)
+)
+SELECT barcode, product_code, ean_system, ean_type,
+       check_digit, orderable, sorter
+FROM   ranked
+WHERE  rn = 1
 "@
     try {
         $conn = New-SqlConn -Db $EasyDb
