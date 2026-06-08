@@ -1,9 +1,16 @@
 -- rpc_consignment_lines
--- SB-CC-PMINI-002: per-line per-day sales from sigma_sales (Layer 1)
--- Join: sigma_sales -> sigma_articles on store + client + product_code
--- Filter: merch_group_nr 610 (HMR Sushi counter), period_kind='T', txn_kind=1
--- Excludes: BREAKFAST and MABELA (misfiled into 610, not consignment)
--- Currency: data only as current as the nightly sigma_sales delta (SB-CC-ROLLOUT-001)
+-- SB-CC-AUDIT-002 (L2 restructure, 2026-06-08): thin SELECT from l2_consignment_daily.
+--
+-- Classification (sigma_sales x sigma_articles join, merch_group 610 filter,
+-- BREAKFAST + MABELA exclusions, June anchor, item_type) is pre-computed in
+-- l2_consignment_daily at nightly refresh time (L2 engine).
+-- This RPC is L3 display: no join at fetch, no classification at fetch.
+--
+-- Signature unchanged for backward compatibility with ConsignmentPanel.jsx and
+-- the sigma-lines API route. p_group and p_client are kept but not used --
+-- l2_consignment_daily is already pre-filtered for group 610 + 'socialbrand'.
+--
+-- Pre-June months return 0 rows by design (recycled product codes, R20 class).
 
 DROP FUNCTION IF EXISTS rpc_consignment_lines(text, text, integer, text);
 
@@ -21,35 +28,30 @@ RETURNS TABLE (
 )
 LANGUAGE sql STABLE SECURITY DEFINER AS $$
   SELECT
-    a.description,
-    s.sale_date,
-    SUM(s.sales_incl_vat)  AS sales,
-    SUM(s.qty)              AS qty
-  FROM sigma_sales s
-  JOIN sigma_articles a
-    ON  a.store_code    = s.store_code
-    AND a.client_id     = s.client_id
-    AND a.product_code  = s.product_code
-  WHERE s.store_code     = p_store
-    AND s.client_id      = p_client
-    AND a.merch_group_nr = p_group
-    AND s.sale_date BETWEEN
-          (p_month || '-01')::date
-          AND (date_trunc('month', (p_month || '-01')::date) + INTERVAL '1 month - 1 day')::date
-    AND s.period_kind = 'T'
-    AND s.txn_kind    = 1
-    AND a.description NOT ILIKE 'BREAKFAST%'
-    AND a.description NOT ILIKE 'MABELA%'
-  GROUP BY a.description, s.sale_date
-  ORDER BY a.description, s.sale_date;
+    description,
+    sale_date,
+    SUM(sales)::numeric AS sales,
+    SUM(qty)::numeric   AS qty
+  FROM l2_consignment_daily
+  WHERE store_code = p_store
+    AND sale_date BETWEEN
+        (p_month || '-01')::date
+        AND (date_trunc('month', (p_month || '-01')::date)
+             + INTERVAL '1 month - 1 day')::date
+  GROUP BY description, sale_date
+  ORDER BY description, sale_date;
 $$;
 
--- Verification: run after creating -- must return rows, totals must reconcile
--- June MTD expected: cash R19,501 (excl BREAKFAST), sushi ~R16,128, Chinese ~R3,373
+-- ---------------------------------------------------------------------------
+-- Regression check -- must match verified June daily totals to the rand:
+--   Jun 1=8110 / Jun 2=4119 / Jun 3=5093 / Jun 4=2179
+--   Jun 5=4598 / Jun 6=3957 / Jun 7=2731
+-- ---------------------------------------------------------------------------
+
 SELECT
-  SUM(sales)                                          AS total_sales,
-  COUNT(DISTINCT description)                         AS distinct_lines,
-  COUNT(DISTINCT sale_date)                           AS days_loaded,
-  MIN(sale_date)                                      AS first_date,
-  MAX(sale_date)                                      AS last_date
+  SUM(sales)               AS total_sales,
+  COUNT(DISTINCT description) AS distinct_lines,
+  COUNT(DISTINCT sale_date)   AS days_loaded,
+  MIN(sale_date)              AS first_date,
+  MAX(sale_date)              AS last_date
 FROM rpc_consignment_lines('2026-06');
