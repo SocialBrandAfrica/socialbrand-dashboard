@@ -1,37 +1,30 @@
 // src/app/api/dev-corner/sigma-lines/route.js
-// SB-CC-PMINI-002 — per-line per-day consignment sales from daily_snapshots.
-// Source: daily_snapshots (same table as the consignment totals endpoint).
-// Updates automatically with every nightly push — always current.
-// Returns lines[] with per-day arrays in the format the PM design expects.
+// SB-CC-AUDIT-002 — per-line per-day consignment sales.
+// Source switched to sigma_sales (DBUMBA) via rpc_consignment_lines.
+// Adds rpc_feed_health_daily output so the mini app can show the completeness strip.
+//
+// Why DBUMBA: daily_snapshots (PRSSALE) misses any day where the store EOD/Catman
+// export did not run (e.g. 10116 2026-05-29 = R383,388 absent, never recoverable).
+// sigma_sales is the exact Sigma ledger and is always complete.
+//
+// Classification (sushi vs chinese) derives from sigma_articles.product_code
+// → sigma_ean_master.barcode → PLU = barcode-200000 → SUSHI_PLUS set.
 
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse }  from 'next/server'
 
-const STORE   = '10116'
-const SUBDEPT = 'HMR SUSHI'
+const STORE  = '10116'
+const CLIENT = 'socialbrand'
+const GROUP  = 610   // merch_group_nr — HMR SUSHI counter
 
-// EANs silently excluded — misfiled lines and generic dept keys
-const EXCLUDED = new Set([
-  '1011600209210',  // BREAKFAST — recoded to GRAB & GO 2026-06-05
-  '1011600200923',  // MABELA PORRIDGE — recoded to HMR HOT MEALS
-  '2106100000006',  // HMR SUSHI 14% open dept key
-  '2206100000003',  // HMR SUSHI 0% open dept key
-])
-
-// PLU codes from the 64-line sushi menu — used to split sushi vs Chinese/other.
-// EAN format: 10116 (5) + 002 (3) + PLU zero-padded (5) = 13 digits.
-// PLU = parseInt(ean.slice(5)) - 200000.
+// PLU codes from the 64-line sushi menu — split sushi vs Chinese/other.
+// PLU = sigma_ean_master.barcode - 200000.
 const SUSHI_PLUS = new Set([
   653,650,895,888,863,851,846,844,843,841,835,533,831,824,818,810,792,790,
   785,778,773,767,766,749,747,832,762,737,722,744,718,715,9677,710,700,736,
   632,638,597,307,308,309,889,924,930,599,699,694,693,696,695,697,698,840,
   836,897,834,809,806,803,784,771,748,753,
 ])
-
-function classifyEan(ean) {
-  const plu = parseInt(String(ean).slice(5)) - 200000
-  return SUSHI_PLUS.has(plu) ? 's' : 'c'
-}
 
 function lastDayOfMonth(year, month) {
   return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10)
@@ -50,13 +43,11 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url)
   const rawMonth = searchParams.get('month') ?? ''
   const [rawY, rawM] = rawMonth.split('-').map(Number)
-  const now        = new Date()
-  const year       = rawY && rawY > 2020 && rawY < 2100 ? rawY : now.getUTCFullYear()
-  const month      = rawM && rawM >= 1 && rawM <= 12 ? rawM : now.getUTCMonth() + 1
-  const mm         = String(month).padStart(2, '0')
-  const monthStart = `${year}-${mm}-01`
-  const monthEnd   = lastDayOfMonth(year, month)
-  const monthLabel = `${year}-${mm}`
+  const now         = new Date()
+  const year        = rawY && rawY > 2020 && rawY < 2100 ? rawY : now.getUTCFullYear()
+  const month       = rawM && rawM >= 1 && rawM <= 12 ? rawM : now.getUTCMonth() + 1
+  const mm          = String(month).padStart(2, '0')
+  const monthLabel  = `${year}-${mm}`
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getDate()
 
   const supabase = createClient(
@@ -66,54 +57,88 @@ export async function GET(request) {
   )
 
   try {
-    // One row per (ean, snapshot_date) — already the natural grain of daily_snapshots
-    const { data: rows, error } = await supabase
-      .from('daily_snapshots')
-      .select('description, ean, snapshot_date, today_sales, today_qty')
-      .eq('store_code', STORE)
-      .eq('sub_dept_name', SUBDEPT)
-      .gte('snapshot_date', monthStart)
-      .lte('snapshot_date', monthEnd)
+    // ── 1. Parallel: consignment lines + feed health + article classification ──
+    const [linesRes, healthRes, artRes] = await Promise.all([
+      supabase.rpc('rpc_consignment_lines', { p_month: monthLabel, p_store: STORE }),
+      supabase.rpc('rpc_feed_health_daily', { p_store: STORE, p_month: monthLabel }),
+      supabase
+        .from('sigma_articles')
+        .select('description, product_code')
+        .eq('store_code', STORE)
+        .eq('client_id', CLIENT)
+        .eq('merch_group_nr', GROUP),
+    ])
 
-    if (error) throw error
+    if (linesRes.error) throw linesRes.error
+    if (healthRes.error) throw healthRes.error
 
-    // Strip excluded EANs
-    const goodRows = (rows ?? []).filter(r => !EXCLUDED.has(String(r.ean)))
+    // ── 2. Build description→type map via sigma_ean_master ───────────────────
+    const productCodes = (artRes.data ?? []).map(r => r.product_code)
+    const descToType   = {}
 
-    // Determine which dates have data (sorted)
-    const dateSet    = new Set(goodRows.map(r => r.snapshot_date))
-    const dates      = [...dateSet].sort()
-    const loadedDays = dates.length
+    if (productCodes.length) {
+      const { data: eanRows } = await supabase
+        .from('sigma_ean_master')
+        .select('product_code, barcode')
+        .eq('store_code', STORE)
+        .eq('client_id', CLIENT)
+        .in('product_code', productCodes)
 
-    // Pivot: group by EAN → per-date arrays
-    const byEan = {}
-    for (const r of goodRows) {
-      const key = r.ean
-      if (!byEan[key]) {
-        byEan[key] = {
-          n:      r.description,
-          t:      classifyEan(r.ean),
-          byDate: {},
+      const eanByPCode = {}
+      for (const e of (eanRows ?? [])) eanByPCode[e.product_code] = e.barcode
+
+      for (const a of (artRes.data ?? [])) {
+        const barcode = eanByPCode[a.product_code]
+        if (barcode != null) {
+          descToType[a.description] = SUSHI_PLUS.has(barcode - 200000) ? 's' : 'c'
         }
-      }
-      byEan[key].byDate[r.snapshot_date] = {
-        s: Math.round(Math.max(0, r.today_sales ?? 0) * 100) / 100,
-        q: Math.round(Math.max(0, r.today_qty   ?? 0) * 10)  / 10,
       }
     }
 
-    // Build output lines — same shape as PM reference L[] array
-    const lines = Object.values(byEan).map(l => {
-      const s = dates.map(d => l.byDate[d]?.s ?? 0)
-      const q = dates.map(d => l.byDate[d]?.q ?? 0)
-      return { n: l.n, t: l.t, s, q }
-    })
+    // ── 3. Pivot rpc_consignment_lines rows by description ───────────────────
+    const rows   = linesRes.data ?? []
+    const health = healthRes.data ?? []
+
+    // Sorted dates that have at least one sushi sale
+    const dateSet = new Set(rows.map(r => r.sale_date))
+    const dates   = [...dateSet].sort()
+
+    const byDesc = {}
+    for (const r of rows) {
+      if (!byDesc[r.description]) {
+        byDesc[r.description] = {
+          n:      r.description,
+          t:      descToType[r.description] ?? 'c',
+          byDate: {},
+        }
+      }
+      byDesc[r.description].byDate[r.sale_date] = {
+        s: Math.round(Number(r.sales) * 100) / 100,
+        q: Math.round(Number(r.qty)   * 10)  / 10,
+      }
+    }
+
+    const lines = Object.values(byDesc).map(l => ({
+      n: l.n,
+      t: l.t,
+      s: dates.map(d => l.byDate[d]?.s ?? 0),
+      q: dates.map(d => l.byDate[d]?.q ?? 0),
+    }))
+
+    // as_at = latest non-FUTURE date from feed health (more reliable than last sales date)
+    const tradingDays  = health.filter(h => h.status !== 'FUTURE')
+    const asAt         = tradingDays.length
+      ? tradingDays[tradingDays.length - 1].sale_date
+      : (dates.length ? dates[dates.length - 1] : null)
 
     return NextResponse.json({
-      month,
-      loaded_days:   loadedDays,
+      month:         monthLabel,
+      loaded_days:   dates.length,
       days_in_month: daysInMonth,
-      as_at:         dates.length ? dates[dates.length - 1] : null,
+      as_at:         asAt,
+      source:        'sigma_sales',   // DBUMBA — exact Sigma ledger
+      dates,                          // actual ISO date strings (use for labels, not i+1)
+      health,                         // per-day feed health for completeness strip
       lines,
     })
 

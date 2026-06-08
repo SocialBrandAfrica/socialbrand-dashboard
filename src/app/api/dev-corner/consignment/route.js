@@ -1,45 +1,26 @@
 // src/app/api/dev-corner/consignment/route.js
-// SB-CC-PMINI-001 -- HMR SUSHI consignment panel data endpoint.
+// SB-CC-AUDIT-002 — consignment flags endpoint (no-sales + price mismatches).
 //
-// Security contract (matches brief section 6a):
-//   - SELECT-only: anon key has no write rights.
-//   - No schema leak: response uses curated field names only.
-//   - CORS: same-origin (no Access-Control-Allow-Origin: *).
-//   - Keys never in response, page, or URL.
+// Business figures (business_sales, commission, owed) are no longer computed here.
+// The mini app gets those from sigma-lines (DBUMBA). This endpoint is flags-only.
+//
+// no_sales: articles in sigma_articles (merch_group_nr=610) that do NOT appear in
+//   rpc_consignment_lines for the month → zero sales from exact Sigma ledger.
+//   (Old approach read daily_snapshots which could miss EOD-missing days.)
+//
+// price_flags: still reads sell_price from daily_snapshots as the "DB price" to
+//   compare against sigma_articles — this catches Sigma price changes not yet
+//   reflected in our pipeline. daily_snapshots is acceptable here because this
+//   is a price-consistency check, not a sales figure.
 
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse }  from 'next/server'
 
-const STORE     = '10116'
-const SUBDEPT   = 'HMR SUSHI'
-const CLIENT_ID = 'socialbrand'
-
-// PLU codes from the 64-line sushi menu list — used to split sushi vs Chinese/other
-const SUSHI_PLUS = new Set([
-  653,650,895,888,863,851,846,844,843,841,835,533,831,824,818,810,792,790,
-  785,778,773,767,766,749,747,832,762,737,722,744,718,715,9677,710,700,736,
-  632,638,597,307,308,309,889,924,930,599,699,694,693,696,695,697,698,840,
-  836,897,834,809,806,803,784,771,748,753,
-])
-
-// Items excluded from consignment business figures -- silently dropped, not shown.
-// BREAKFAST / MABELA: misfiled, recoded in Sigma 2026-06-05.
-// Generic dept-key EANs: HMR SUSHI 14% and 0% open keys -- unattributed sales
-// that cannot be itemised and are not paid to the supplier.
-const EXCLUDED_EANS = new Set([
-  '1011600209210',   // BREAKFAST -- recoded to HMR GRAB & GO
-  '1011600200923',   // MABELA PORRIDGE -- recoded to HMR HOT MEALS
-  '2106100000006',   // HMR SUSHI 14% generic dept key
-  '2206100000003',   // HMR SUSHI 0% generic dept key
-])
-function isExcluded(row) {
-  if (EXCLUDED_EANS.has(String(row.ean))) return true
-  const d = (row.description ?? '').toUpperCase()
-  return d.startsWith('MABELA')
-}
+const STORE  = '10116'
+const CLIENT = 'socialbrand'
+const GROUP  = 610
 
 function lastDayOfMonth(year, month) {
-  // month is 1-based
   return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10)
 }
 
@@ -53,19 +34,12 @@ export async function GET(request) {
   if (!allowed) return new NextResponse('Forbidden', { status: 403 })
 
   const { searchParams } = new URL(request.url)
-
-  // Commission rate: clamp to [0, 1], default 0.10
-  const rate = Math.max(0, Math.min(1, parseFloat(searchParams.get('rate') ?? '0.1')))
-
-  // Month: YYYY-MM, default current month
   const rawMonth = searchParams.get('month') ?? ''
   const [rawY, rawM] = rawMonth.split('-').map(Number)
   const now   = new Date()
   const year  = rawY && rawY > 2020 && rawY < 2100 ? rawY : now.getUTCFullYear()
   const month = rawM && rawM >= 1 && rawM <= 12 ? rawM : now.getUTCMonth() + 1
   const mm    = String(month).padStart(2, '0')
-  const monthStart = `${year}-${mm}-01`
-  const monthEnd   = lastDayOfMonth(year, month)
   const monthLabel = `${year}-${mm}`
 
   const supabase = createClient(
@@ -75,161 +49,93 @@ export async function GET(request) {
   )
 
   try {
-    const { data: rows, error } = await supabase
-      .from('daily_snapshots')
-      .select('ean, description, snapshot_date, today_sales, today_qty, sell_price')
-      .eq('store_code', STORE)
-      .eq('sub_dept_name', SUBDEPT)
-      .gte('snapshot_date', monthStart)
-      .lte('snapshot_date', monthEnd)
+    // ── 1. Parallel: sigma_articles catalog + rpc_consignment_lines sales ────
+    const [artRes, linesRes] = await Promise.all([
+      supabase
+        .from('sigma_articles')
+        .select('description, product_code, sell_price_incl_vat')
+        .eq('store_code', STORE)
+        .eq('client_id', CLIENT)
+        .eq('merch_group_nr', GROUP),
+      supabase.rpc('rpc_consignment_lines', { p_month: monthLabel, p_store: STORE }),
+    ])
 
-    if (error) throw error
+    const articles = artRes.data ?? []
+    const lines    = linesRes.data ?? []
 
-    const allRows = rows ?? []
+    // ── 2. no_sales: articles not appearing in any sales row this month ──────
+    const descsSold = new Set(lines.map(r => r.description))
+    const noSales   = articles
+      .filter(a => !descsSold.has(a.description))
+      .map(a => ({ desc: a.description }))
 
-    // Silently drop all excluded items -- misfiled lines + generic dept keys.
-    const goodRows = allRows.filter(r => !isExcluded(r))
-    const wrongItems = [] // reserved for future misfiled items; currently none
+    // ── 3. price_flags: sigma_articles price vs daily_snapshots sell_price ───
+    // daily_snapshots is acceptable here — this is a price-pipeline consistency
+    // check, not the sales figure. Mismatches flag Sigma price changes not yet
+    // pushed through to our snapshot table.
+    const productCodes = articles.map(a => a.product_code)
+    const sigmaByPCode = {}
+    for (const a of articles) sigmaByPCode[a.product_code] = parseFloat(a.sell_price_incl_vat)
 
-    // Aggregate by EAN for business lines
-    const byEan = {}
-    for (const r of goodRows) {
-      const k = r.ean
-      if (!byEan[k]) byEan[k] = { ean: r.ean, desc: r.description, sales: 0, qty: 0, sell: r.sell_price }
-      byEan[k].sales += Math.max(0, r.today_sales ?? 0)
-      byEan[k].qty   += Math.max(0, r.today_qty   ?? 0)
-    }
-    const lines = Object.values(byEan)
-
-    // Sigma price check — detect any price changed in Sigma since last push.
-    // Join path (R20): ean → SUBSTRING(ean,6)::bigint = sigma_ean_master.barcode
-    //                        → product_code = sigma_articles.product_code
-    const barcodes = [...new Set(lines.map(l => parseInt(String(l.ean).slice(5))))]
-      .filter(b => b > 0 && isFinite(b))
-
+    // Get EANs for the product codes so we can look up daily_snapshots (which uses EAN)
     const { data: eanRows } = await supabase
       .from('sigma_ean_master')
-      .select('barcode, product_code')
+      .select('product_code, barcode')
       .eq('store_code', STORE)
-      .eq('client_id', CLIENT_ID)
-      .in('barcode', barcodes)
+      .eq('client_id', CLIENT)
+      .in('product_code', productCodes)
 
-    const barcodeToPCode = {}
-    for (const r of (eanRows ?? [])) barcodeToPCode[r.barcode] = r.product_code
-    const productCodes = Object.values(barcodeToPCode)
+    const eanByPCode = {}
+    for (const e of (eanRows ?? [])) eanByPCode[e.product_code] = e.barcode
 
-    let sigmaByPCode = {}
-    if (productCodes.length) {
-      const { data: sigmaRows } = await supabase
-        .from('sigma_articles')
-        .select('product_code, sell_price_incl_vat')
-        .eq('store_code', STORE)
-        .eq('client_id', CLIENT_ID)
-        .in('product_code', productCodes)
-      for (const r of (sigmaRows ?? [])) sigmaByPCode[r.product_code] = parseFloat(r.sell_price_incl_vat)
+    // Build synthetic EANs (same format as daily_snapshots)
+    // Synthetic EAN = store_code (5) + '002' (3) + barcode zero-padded (5)
+    const syntheticEans = []
+    const eanToPCode    = {}
+    for (const a of articles) {
+      const barcode = eanByPCode[a.product_code]
+      if (barcode != null) {
+        const synEan = STORE + '002' + String(barcode).padStart(5, '0')
+        syntheticEans.push(synEan)
+        eanToPCode[synEan] = a.product_code
+      }
     }
 
     const priceFlags = []
-    for (const l of lines) {
-      const barcode = parseInt(String(l.ean).slice(5))
-      const pcode   = barcodeToPCode[barcode]
-      if (!pcode) continue
-      const sigmaPrice = sigmaByPCode[pcode]
-      if (sigmaPrice == null) continue
-      const dbPrice = parseFloat(l.sell ?? 0)
-      const diff    = Math.round((sigmaPrice - dbPrice) * 100) / 100
-      if (Math.abs(diff) > 0.01) {
-        priceFlags.push({
-          ean:         l.ean,
-          desc:        l.desc,
-          db_price:    Math.round(dbPrice    * 100) / 100,
-          sigma_price: Math.round(sigmaPrice * 100) / 100,
-          diff,
-        })
+    if (syntheticEans.length) {
+      const monthEnd = lastDayOfMonth(year, month)
+      // Get most recent sell_price from daily_snapshots for these EANs
+      const { data: snapRows } = await supabase
+        .from('daily_snapshots')
+        .select('ean, description, sell_price')
+        .eq('store_code', STORE)
+        .in('ean', syntheticEans)
+        .lte('snapshot_date', monthEnd)
+        .order('snapshot_date', { ascending: false })
+        .limit(syntheticEans.length)   // one row per EAN (latest)
+
+      const seenEan = new Set()
+      for (const row of (snapRows ?? [])) {
+        if (seenEan.has(row.ean)) continue
+        seenEan.add(row.ean)
+        const pcode      = eanToPCode[row.ean]
+        const sigmaPrice = pcode != null ? sigmaByPCode[pcode] : null
+        if (sigmaPrice == null) continue
+        const dbPrice = parseFloat(row.sell_price ?? 0)
+        const diff    = Math.round((sigmaPrice - dbPrice) * 100) / 100
+        if (Math.abs(diff) > 0.01) {
+          priceFlags.push({
+            ean:         row.ean,
+            desc:        row.description,
+            db_price:    Math.round(dbPrice    * 100) / 100,
+            sigma_price: Math.round(sigmaPrice * 100) / 100,
+            diff,
+          })
+        }
       }
     }
 
-    // Classify each line as sushi or chinese/other using the 64-line PLU list.
-    // EAN format: 10116 (5) + 002 (3) + PLU zero-padded (5) = 13 digits.
-    // SUBSTRING(ean,6)::bigint gives the velocity barcode (e.g. 200895).
-    // PLU = barcode - 200000 (e.g. 200895 - 200000 = 895).
-    const classified = lines.map(l => {
-      const barcode = parseInt(String(l.ean).slice(5))
-      const plu     = barcode - 200000
-      return { ...l, type: SUSHI_PLUS.has(plu) ? 'sushi' : 'chinese' }
-    })
-
-    // Business totals
-    const businessSales = classified.reduce((s, l) => s + l.sales, 0)
-    const commission    = Math.round(businessSales * rate       * 100) / 100
-    const owed          = Math.round(businessSales * (1 - rate) * 100) / 100
-
-    // Sushi / Chinese split
-    const sushiSales   = classified.filter(l => l.type === 'sushi')
-      .reduce((s, l) => s + l.sales, 0)
-    const chineseSales = classified.filter(l => l.type === 'chinese')
-      .reduce((s, l) => s + l.sales, 0)
-
-    // Full ranked list — all selling lines, best first
-    const allRanked = classified
-      .filter(l => l.sales > 0)
-      .sort((a, b) => b.sales - a.sales)
-      .map((l, i) => ({
-        rank:  i + 1,
-        desc:  l.desc,
-        ean:   l.ean,
-        sales: Math.round(l.sales * 100) / 100,
-        qty:   l.qty,
-        type:  l.type,
-      }))
-
-    // No-sales lines (present in sub-dept but zero sales this month)
-    const noSales = classified
-      .filter(l => l.sales === 0)
-      .map(l => ({ desc: l.desc, ean: l.ean, sell: l.sell, type: l.type }))
-
-    // Daily cashflow (sum today_sales across all business lines per date)
-    const dailyMap = {}
-    for (const r of goodRows) {
-      const d = r.snapshot_date
-      if (!dailyMap[d]) dailyMap[d] = 0
-      dailyMap[d] += Math.max(0, r.today_sales ?? 0)
-    }
-    let cumulative = 0
-    const daily = Object.keys(dailyMap).sort().map(d => {
-      cumulative += dailyMap[d]
-      return {
-        date:       d,
-        sales:      Math.round(dailyMap[d] * 100) / 100,
-        cumulative: Math.round(cumulative  * 100) / 100,
-      }
-    })
-
-    // Month projection — daily avg × days in month
-    const daysElapsed    = Math.max(1, daily.length)
-    const daysInMonth    = new Date(Date.UTC(year, month, 0)).getDate()
-    const dailyAvg       = Math.round(businessSales / daysElapsed * 100) / 100
-    const monthProjection = Math.round(dailyAvg * daysInMonth * 100) / 100
-
-    return NextResponse.json({
-      month:             monthLabel,
-      rate,
-      business_sales:    Math.round(businessSales * 100) / 100,
-      commission,
-      owed,
-      float:             Math.round(businessSales * 100) / 100,
-      sushi_sales:       Math.round(sushiSales   * 100) / 100,
-      chinese_sales:     Math.round(chineseSales  * 100) / 100,
-      daily_avg:         dailyAvg,
-      month_projection:  monthProjection,
-      days_elapsed:      daysElapsed,
-      days_in_month:     daysInMonth,
-      daily,
-      all_ranked:        allRanked,
-      no_sales:          noSales,
-      wrong_items:       wrongItems,
-      price_flags:       priceFlags,
-    })
+    return NextResponse.json({ no_sales: noSales, price_flags: priceFlags })
 
   } catch (err) {
     console.error('[dev-corner/consignment]', err?.message ?? err)
