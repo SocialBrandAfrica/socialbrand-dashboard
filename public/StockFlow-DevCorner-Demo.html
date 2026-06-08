@@ -421,7 +421,7 @@ function showNoData(month){
   if($('completeness-area'))$('completeness-area').style.display='none';
   if($('eod-banner'))$('eod-banner').style.display='none';
   if($('boundary-note'))$('boundary-note').style.display='none';
-  var msg='<div class="nodata"><b>No data for '+label+'</b>No sales recorded in daily_snapshots for this month.</div>';
+  var msg='<div class="nodata"><b>No data for '+label+'</b>No HMR Sushi sales recorded for this month.</div>';
   ['k-cash','k-comm','k-owe'].forEach(function(id){if($(id))$(id).textContent='R 0';});
   if($('k-units'))$('k-units').textContent='0';
   if($('proj'))$('proj').textContent='—'; if($('projn'))$('projn').textContent='';
@@ -569,7 +569,12 @@ async function loadAndRender(){
 loadAndRender();
 
 /* === Weather: live Open-Meteo, fallback on error === */
-var WX_FB={time:["2026-06-06","2026-06-07","2026-06-08","2026-06-09","2026-06-10","2026-06-11","2026-06-12"],weather_code:[3,1,3,2,0,3,3],temperature_2m_max:[15.4,18.2,20.3,19.9,19.9,19.7,20.9],temperature_2m_min:[0.6,1.3,4.0,4.3,3.8,8.5,9.2],precipitation_probability_max:[0,0,0,0,0,0,0]};
+/* Fallback weather dates are generated dynamically from today so they stay correct every week */
+var WX_FB=(function(){
+  var now=new Date(),t=[],i;
+  for(i=0;i<7;i++){var d=new Date(now.getTime()+i*86400000);t.push(d.toISOString().slice(0,10));}
+  return{time:t,weather_code:[3,1,3,2,0,3,3],temperature_2m_max:[15.4,18.2,20.3,19.9,19.9,19.7,20.9],temperature_2m_min:[0.6,1.3,4.0,4.3,3.8,8.5,9.2],precipitation_probability_max:[0,0,0,0,0,0,0]};
+})();
 var DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 function icon(c,r){
   if(r>=40)return'<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 16a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 16z"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="13" y1="20" x2="13" y2="22"/></svg>';
@@ -578,12 +583,14 @@ function icon(c,r){
   return'<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 18a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 18z"/></svg>';
 }
 function renderWx(d,live){
+  var todayStr=new Date().toISOString().slice(0,10);
   var h='';
   for(var i=0;i<d.time.length;i++){
     var dt=new Date(d.time[i]+'T00:00:00');
-    h+='<div class="wd glass'+(i===0?' today':'')+'">'+
+    var isToday=(d.time[i]===todayStr);
+    h+='<div class="wd glass'+(isToday?' today':'')+'">'+
        '<div class="dn">'+DOW[dt.getDay()]+'</div>'+
-       '<div class="dd">'+dt.getDate()+' Jun</div>'+
+       '<div class="dd">'+dt.getDate()+' '+MON[dt.getMonth()]+'</div>'+
        icon(d.weather_code[i],d.precipitation_probability_max[i])+
        '<div class="hi">'+Math.round(d.temperature_2m_max[i])+'&deg;</div>'+
        '<div class="lo">'+Math.round(d.temperature_2m_min[i])+'&deg;</div>'+

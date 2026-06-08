@@ -30,7 +30,8 @@ export async function GET(request) {
     origin.includes('localhost') ||
     origin.includes('vercel.app') ||
     origin.includes('socialbrand') ||
-    origin.includes('stockflow')
+    origin.includes('stockflow') ||
+    origin.includes('replit')
   if (!allowed) return new NextResponse('Forbidden', { status: 403 })
 
   const { searchParams } = new URL(request.url)
