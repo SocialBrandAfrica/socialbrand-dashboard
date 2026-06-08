@@ -20,6 +20,14 @@
            included Prefer: resolution=merge-duplicates (an INSERT hint) on PATCH calls.
            Added Get-PatchHeaders for PATCH-only calls (omits resolution=merge-duplicates).
            Complete-PushLog and Clear-StuckRuns now use Get-PatchHeaders.
+    v3.20: Chain L1 sigma extractor after every nightly push (Invoke-RunExtractor).
+           Extractor was deployed by Invoke-DeployExtractor but never executed --
+           l2_soh_daily + sigma_promotions + sigma_promotion_articles had 0 rows.
+           Fix: Invoke-RunExtractor calls the deployed Invoke-ExtractFromSigmaSQL.ps1
+           as a subprocess after the PRSSALE push completes. Logs result to push_log
+           (push_type=sigma_extractor) for Family-1 staleness monitoring.
+           Hardens Invoke-DeployExtractor: logs FAILED to push_log on GitHub download
+           failure so a silent non-deploy surfaces in the dashboard. SB-CC-L1-001.
     v3.18: UTF-8 body fix (SB-CC-PUSH-003). All data POST bodies now sent as
            UTF-8 bytes ([System.Text.Encoding]::UTF8.GetBytes) with explicit
            charset=utf-8 in Content-Type. Same root cause as extractor PGRST102
@@ -87,7 +95,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.19'
+$ScriptVersion = 'v3.20'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -373,8 +381,113 @@ function Invoke-DeployExtractor {
         }
     }
     catch {
-        Write-Warning "[extractor-deploy] Deploy failed (non-fatal): $_"
+        $deployErr = $_
+        Write-Warning "[extractor-deploy] Deploy failed (non-fatal): $deployErr"
         Remove-Item "$env:TEMP\SBExtractor_update.tmp" -Force -ErrorAction SilentlyContinue
+        # Log failure to push_log so Family-1 monitoring surfaces it.
+        try {
+            $errStr  = $deployErr.ToString().Substring(0, [Math]::Min(500, $deployErr.ToString().Length))
+            $failRec = [ordered]@{
+                store_code     = $StoreCode
+                push_type      = 'extractor_deploy'
+                table_name     = 'extractor_deploy'
+                status         = 'FAILED'
+                script_version = $ScriptVersion
+                error_message  = $errStr
+                started_at     = (Get-Date -Format 'o')
+                completed_at   = (Get-Date -Format 'o')
+            }
+            $failUrl  = "$SupabaseUrl/rest/v1/push_log"
+            $failHdrs = @{
+                'apikey'        = $SupabaseKey
+                'Authorization' = "Bearer $SupabaseKey"
+                'Content-Type'  = 'application/json; charset=utf-8'
+                'Prefer'        = 'return=minimal'
+                'User-Agent'    = "SocialBrand-PushScript/$ScriptVersion PowerShell"
+            }
+            $failJson  = ConvertTo-Json -InputObject $failRec -Compress
+            $failBytes = [System.Text.Encoding]::UTF8.GetBytes($failJson)
+            $null = Invoke-RestMethod -Uri $failUrl -Method POST -Headers $failHdrs -Body $failBytes -TimeoutSec 15
+        }
+        catch {}
+    }
+}
+
+function Send-ExtractorLog {
+    # Writes a single completion record to push_log for Family-1 monitoring.
+    # push_type=sigma_extractor; status=SUCCESS or FAILED.
+    # Non-fatal -- push has already completed before this is called.
+    param([string]$Status, [string]$ErrorMsg, [int]$Elapsed, [datetime]$StartTime)
+    try {
+        $rec = [ordered]@{
+            store_code       = $StoreCode
+            client_id        = $ClientId
+            push_type        = 'sigma_extractor'
+            table_name       = 'sigma_extractor'
+            status           = $Status
+            script_version   = $ScriptVersion
+            duration_seconds = $Elapsed
+            started_at       = $StartTime.ToString('o')
+            completed_at     = (Get-Date -Format 'o')
+        }
+        if ($ErrorMsg) { $rec['error_message'] = $ErrorMsg }
+        $url  = "$SupabaseUrl/rest/v1/push_log"
+        $hdrs = @{
+            'apikey'        = $SupabaseKey
+            'Authorization' = "Bearer $SupabaseKey"
+            'Content-Type'  = 'application/json; charset=utf-8'
+            'Prefer'        = 'return=minimal'
+            'User-Agent'    = "SocialBrand-PushScript/$ScriptVersion PowerShell"
+        }
+        $json  = ConvertTo-Json -InputObject $rec -Compress
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+        $null  = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body $bytes -TimeoutSec 15
+    }
+    catch {
+        Write-Warning "[extractor-run] push_log write failed (non-fatal): $_"
+    }
+}
+
+function Invoke-RunExtractor {
+    # Runs the L1 sigma extractor (Invoke-ExtractFromSigmaSQL.ps1) after the
+    # PRSSALE push completes. The extractor file is already refreshed from GitHub
+    # by Invoke-DeployExtractor earlier in the same run.
+    # Logs start/end to push_log (push_type=sigma_extractor) so Family-1
+    # staleness monitoring can alert if no extractor run appears for a day.
+    # Non-fatal -- a failed extractor run does not fail the push.
+    $scriptDir = if ($PSCommandPath) { Split-Path $PSCommandPath } else { $null }
+    if (-not $scriptDir) {
+        Write-Warning "[extractor-run] PSCommandPath unknown -- skipping extractor."
+        return
+    }
+    $extractorPath = Join-Path $scriptDir 'Invoke-ExtractFromSigmaSQL.ps1'
+    if (-not (Test-Path $extractorPath)) {
+        Write-Warning "[extractor-run] Extractor not found at $extractorPath."
+        Send-ExtractorLog -Status 'FAILED' -ErrorMsg "Extractor not found at $extractorPath" -Elapsed 0 -StartTime (Get-Date)
+        return
+    }
+    Write-Host ""
+    Write-Host "[extractor-run] Starting L1 sigma extractor ($extractorPath)..." -ForegroundColor Cyan
+    $t0       = Get-Date
+    $exitCode = 0
+    $errMsg   = $null
+    try {
+        & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File $extractorPath
+        $exitCode = $LASTEXITCODE
+    }
+    catch {
+        $exitCode = -1
+        $errMsg   = $_.ToString()
+    }
+    $elapsed = [int]((Get-Date) - $t0).TotalSeconds
+    if ($exitCode -ne 0) {
+        $msg = if ($errMsg) { $errMsg } else { "Exit code $exitCode" }
+        Write-Warning "[extractor-run] Extractor failed (code $exitCode) after ${elapsed}s."
+        Send-ExtractorLog -Status 'FAILED' -ErrorMsg $msg -Elapsed $elapsed -StartTime $t0
+    }
+    else {
+        Write-Host "[extractor-run] Extractor finished in ${elapsed}s." -ForegroundColor Green
+        Send-ExtractorLog -Status 'SUCCESS' -ErrorMsg $null -Elapsed $elapsed -StartTime $t0
     }
 }
 
@@ -1264,5 +1377,7 @@ switch ($Mode) {
         exit 0
     }
 }
+
+Invoke-RunExtractor
 
 Write-Host "`nCompleted: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor White

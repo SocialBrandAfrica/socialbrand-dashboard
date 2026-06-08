@@ -3,7 +3,7 @@
 -- SocialBrand Intelligence Platform -- Layer 2, Step 4
 -- =============================================================================
 -- Reference   : SB-CC-L2-001 v1.0 (build-order step 4)
--- Version     : 1.1
+-- Version     : 1.2
 -- Date        : 2026-06-08
 -- Target      : Supabase (PostgreSQL), project socialbrand-data
 -- Sources     : l2_stock_position (step 3b), sigma_sales (DBUMBA, L1)
@@ -31,13 +31,16 @@
 --   as background columns for intelligence and cleanup trend verification.
 --   capital_total = sum of all four classes.
 --
--- GP% NOTE (Phase 1, SB-INDEX-005 Decision 1, PM ruling 2026-06-08):
---   gp_pct = NULL and sales_cost = 0 until dEKUmsatz is pushed into sigma_sales
---   (Option B, bundled with next extractor version). l2_kpi_daily's GP% was
---   already a flagged flat-15% approximation; the dashboard's authoritative GP%
---   remains on v_kpi_by_date. Nothing in the frontend reads l2_kpi_daily.gp_pct
---   (verified 2026-06-08 -- no frontend or RPC references). Product-level GP%
---   must use the per-article vat_code (rpc_focus_chart / rpc_product_detail).
+-- GP% NOTE (SB-INDEX-005 Option B, enabled 2026-06-08):
+--   gp_pct and sales_cost now use sigma_sales.cost_value (dEKUmsatz from DBUmBA).
+--   cost_value is 100% populated on all 5 stores from 2025-02-01 to present --
+--   the extractor has always extracted dEKUmsatz; it was never a missing field.
+--   Plausibility verified 2026-06-08: SPAR stores 15-20%, TOPS 11-16%; all in
+--   realistic South African food/liquor retail range.
+--   PRSSALE today_cost is NOT a valid cross-reference: pack_size-induced errors
+--   inflate it by ~2800x vs sigma (e.g. SPAR Milk 6-pack -11.9% GP in PRSSALE).
+--   VAT divisor is flat 1.15 until per-item siMWST is ingested (L1-001 Step 3).
+--   Dashboard authoritative GP% remains v_kpi_by_date (Phase 2 brief).
 --
 -- HOW TO RUN:
 --   Run after REFRESH of l2_rate_of_sale, l2_item_classification,
@@ -155,7 +158,7 @@ stock_agg AS (
 -- Phase 1 of SB-INDEX-005: sigma_sales replaces daily_snapshots for revenue
 -- so a missed store EOD never creates a silent hole in l2_kpi_daily.
 -- Filter: period_kind='T' AND txn_kind=1 (sales rows only, same as L2 pipeline).
--- sales_cost=0, gp_pct=NULL pending dEKUmsatz in sigma_sales (Option B).
+-- Option B (2026-06-08): sales_cost = dEKUmsatz; gp_pct = ex-VAT margin.
 -- ---------------------------------------------------------------------------
 latest_sigma_day AS (
     SELECT
@@ -172,11 +175,18 @@ sales_agg AS (
         s.store_code,
         lsd.latest_date                               AS sales_date,
         COALESCE(SUM(s.sales_incl_vat), 0)            AS sales_incl_vat,
-        -- sales_cost: 0 pending dEKUmsatz in sigma_sales (SB-INDEX-005 Option B)
-        0::numeric                                    AS sales_cost,
+        -- sales_cost: dEKUmsatz (SB-INDEX-005 Option B, enabled 2026-06-08)
+        COALESCE(SUM(s.cost_value),     0)            AS sales_cost,
         COALESCE(SUM(s.qty),            0)            AS sales_qty,
-        -- gp_pct: NULL pending cost via extractor (SB-INDEX-005 Option B; PM ruling 2026-06-08)
-        NULL::numeric                                 AS gp_pct
+        -- gp_pct: (revenue_ex_vat - cost) / revenue_ex_vat. Flat 1.15 VAT divisor
+        --   until per-item siMWST is ingested (L1-001 Step 3).
+        CASE WHEN SUM(s.sales_incl_vat) > 0
+             THEN ROUND(
+                    ((SUM(s.sales_incl_vat) / 1.15 - COALESCE(SUM(s.cost_value), 0))
+                     / NULLIF(SUM(s.sales_incl_vat) / 1.15, 0))::numeric,
+                    4)
+             ELSE NULL
+        END                                           AS gp_pct
     FROM sigma_sales s
     INNER JOIN latest_sigma_day lsd
         ON  lsd.store_code  = s.store_code
@@ -257,8 +267,8 @@ CREATE INDEX IF NOT EXISTS idx_l2_kpi_daily_sales_date
 COMMENT ON MATERIALIZED VIEW l2_kpi_daily IS
     'Daily store-level intelligence summary. Step 4 in L2 build order. '
     'One row per store. Stock/capital source: l2_stock_position. '
-    'Sales source: sigma_sales (DBUMBA, Phase 1 SB-INDEX-005 2026-06-08). '
-    'gp_pct=NULL, sales_cost=0 until dEKUmsatz added to sigma_sales (Option B). '
+    'Sales source: sigma_sales (DBUMBA, SB-INDEX-005 Phase 1 + Option B 2026-06-08). '
+    'gp_pct = (revenue_ex_vat - dEKUmsatz) / revenue_ex_vat; flat-1.15 VAT divisor. '
     'capital_normal is the headline capital KPI (NORMAL class orderable stock). '
     'All four class capitals stored for trend intelligence (R21, Decision 2-B). '
     'Refresh nightly after all step 1-3b MVs and after sigma_sales extract. SB-CC-L2-001.';
