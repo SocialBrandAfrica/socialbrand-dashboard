@@ -7,7 +7,7 @@ Reverse-chronological. Each entry = one production deploy.
 ## 2026-06-08 — SB-INDEX-005 Phase 1: l2_kpi_daily sales source migrated to sigma_sales
 
 **Commit:** 63b1ef9 (feat(SB-INDEX-005): Phase 1 -- l2_kpi_daily sales from sigma_sales)
-**Status: PENDING PIETER SQL DEPLOY** — paste `sql/create_l2_kpi_daily.sql` in SQL Editor.
+**Status: LIVE 2026-06-08 — deployed by Pieter, acceptance query returned 0 delta rows (all stores match sigma_sales exactly).**
 
 **Change:** `sales_agg` CTE in l2_kpi_daily rewritten. Source changed from `daily_snapshots` to `sigma_sales`.
 
