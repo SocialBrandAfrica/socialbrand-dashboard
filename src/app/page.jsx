@@ -8,6 +8,7 @@ import { FocusAreaPanel }    from '@/components/FocusAreaPanel'
 import { SalesTrendPanel }   from '@/components/SalesTrendPanel'
 import { CalendarPopover } from '@/components/CalendarPopover'
 import PushStatusStrip from '@/components/PushStatusStrip'
+import ConsignmentPanel from '@/components/ConsignmentPanel'
 import './dashboard.css'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,6 +59,7 @@ const REPORTS = [
   { key: 'focus_export',    title: 'Focus Area Export',  desc: 'Download current basket with all columns' },
   { key: 'ghost_stock',     title: 'Ghost Stock',         desc: 'Production items removed from Capital Tied — fix at source in Sigma' },
   { key: 'full',            title: 'Data Export',        desc: 'All fields — for analysts and system integrations' },
+  { key: 'consignment',     title: 'Sushi Consignment',  desc: 'HMR SUSHI — exact ledger source, feed health and supplier liability' },
 ]
 
 const PAGE_SIZE = 200
@@ -2321,6 +2323,8 @@ export default function Home() {
       }
       return
     }
+    // Consignment panel self-fetches — just mark loaded so the drawer renders it immediately
+    if (key === 'consignment') { setReportLoaded(true); return }
     if (!reportLoaded && !reportLoading) loadReport()
   }
 
@@ -3481,7 +3485,11 @@ export default function Home() {
 
             {/* Preview table */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', borderTop: '1px solid rgba(255,255,255,0.07)', overflow: 'hidden' }}>
-              {!reportLoaded ? (
+              {currentReport === 'consignment' ? (
+                <div style={{ flex: 1, overflow: 'auto' }}>
+                  <ConsignmentPanel store={storeCodes[0] ?? '10116'} />
+                </div>
+              ) : !reportLoaded ? (
                 reportLoading ? (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 }}>
                     <div style={{ width: 36, height: 36, border: '3px solid rgba(74,222,128,0.2)', borderTopColor: '#4ade80', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
