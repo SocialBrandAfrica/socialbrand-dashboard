@@ -3,15 +3,16 @@
 -- SocialBrand Intelligence Platform -- Layer 2, Step 4
 -- =============================================================================
 -- Reference   : SB-CC-L2-001 v1.0 (build-order step 4)
--- Version     : 1.0
--- Date        : 2026-06-09
+-- Version     : 1.1
+-- Date        : 2026-06-08
 -- Target      : Supabase (PostgreSQL), project socialbrand-data
--- Sources     : l2_stock_position (step 3b), daily_snapshots (L1 push)
+-- Sources     : l2_stock_position (step 3b), sigma_sales (DBUMBA, L1)
+--               [Phase 1, SB-INDEX-005: daily_snapshots no longer used for sales]
 --
 -- WHAT THIS IS
 --   One row per store. Point-in-time daily summary of the engine's current
 --   verdict on each store. Refreshed nightly after all step 1-3b MVs are
---   refreshed and after the L1 nightly push completes.
+--   refreshed and after the L1 sigma_sales extract completes.
 --
 --   This is the primary source for L3 analytics, trend intelligence, and the
 --   dashboard's store-level KPI cards (Capital Tied, signal counts, days cover).
@@ -30,16 +31,18 @@
 --   as background columns for intelligence and cleanup trend verification.
 --   capital_total = sum of all four classes.
 --
--- GP% NOTE:
---   Uses a flat 15% VAT divisor on today_sales for the store-level estimate.
---   Individual product VAT rates vary (zero-rated food items are 0%). The
---   result is an approximation consistent with the existing dashboard KPI card
---   basis note. Product-level GP% must use the per-article vat_code.
+-- GP% NOTE (Phase 1, SB-INDEX-005 Decision 1, PM ruling 2026-06-08):
+--   gp_pct = NULL and sales_cost = 0 until dEKUmsatz is pushed into sigma_sales
+--   (Option B, bundled with next extractor version). l2_kpi_daily's GP% was
+--   already a flagged flat-15% approximation; the dashboard's authoritative GP%
+--   remains on v_kpi_by_date. Nothing in the frontend reads l2_kpi_daily.gp_pct
+--   (verified 2026-06-08 -- no frontend or RPC references). Product-level GP%
+--   must use the per-article vat_code (rpc_focus_chart / rpc_product_detail).
 --
 -- HOW TO RUN:
 --   Run after REFRESH of l2_rate_of_sale, l2_item_classification,
---   l2_ranging_tier and l2_stock_position. daily_snapshots must have at least
---   one push for the current date. Safe to re-run (DROP + CREATE).
+--   l2_ranging_tier and l2_stock_position. sigma_sales must have today's
+--   rows (pushed by nightly extractor) before REFRESH. Safe to re-run (DROP + CREATE).
 -- =============================================================================
 
 
@@ -148,39 +151,39 @@ stock_agg AS (
 ),
 
 -- ---------------------------------------------------------------------------
--- Sales aggregation: latest daily_snapshots push per store.
--- Joins on store_code only (daily_snapshots has no client_id).
--- today_sales / today_cost are the single-day fields (RULE-BOOK §3).
+-- Sales aggregation: latest sigma_sales (DBUMBA) day per store.
+-- Phase 1 of SB-INDEX-005: sigma_sales replaces daily_snapshots for revenue
+-- so a missed store EOD never creates a silent hole in l2_kpi_daily.
+-- Filter: period_kind='T' AND txn_kind=1 (sales rows only, same as L2 pipeline).
+-- sales_cost=0, gp_pct=NULL pending dEKUmsatz in sigma_sales (Option B).
 -- ---------------------------------------------------------------------------
-latest_push AS (
-    SELECT store_code, MAX(snapshot_date) AS latest_date
-    FROM daily_snapshots
+latest_sigma_day AS (
+    SELECT
+        store_code,
+        MAX(sale_date) AS latest_date
+    FROM sigma_sales
+    WHERE period_kind = 'T'
+      AND txn_kind    = 1
     GROUP BY store_code
 ),
 
 sales_agg AS (
     SELECT
-        ds.store_code,
-        lp.latest_date                                AS sales_date,
-        COALESCE(SUM(ds.today_sales), 0)              AS sales_incl_vat,
-        COALESCE(SUM(ds.today_cost),  0)              AS sales_cost,
-        COALESCE(SUM(ds.today_qty),   0)              AS sales_qty,
-        -- GP% approximation: flat 15% VAT divisor (see header note)
-        CASE
-            WHEN SUM(ds.today_sales) > 0
-            THEN ROUND(
-                ((SUM(ds.today_sales) / 1.15 - SUM(ds.today_cost))
-                 / NULLIF(SUM(ds.today_sales) / 1.15, 0)
-                )::numeric,
-                4
-            )
-            ELSE NULL
-        END                                           AS gp_pct
-    FROM daily_snapshots ds
-    INNER JOIN latest_push lp
-        ON  lp.store_code    = ds.store_code
-        AND lp.latest_date   = ds.snapshot_date
-    GROUP BY ds.store_code, lp.latest_date
+        s.store_code,
+        lsd.latest_date                               AS sales_date,
+        COALESCE(SUM(s.sales_incl_vat), 0)            AS sales_incl_vat,
+        -- sales_cost: 0 pending dEKUmsatz in sigma_sales (SB-INDEX-005 Option B)
+        0::numeric                                    AS sales_cost,
+        COALESCE(SUM(s.qty),            0)            AS sales_qty,
+        -- gp_pct: NULL pending cost via extractor (SB-INDEX-005 Option B; PM ruling 2026-06-08)
+        NULL::numeric                                 AS gp_pct
+    FROM sigma_sales s
+    INNER JOIN latest_sigma_day lsd
+        ON  lsd.store_code  = s.store_code
+        AND lsd.latest_date = s.sale_date
+    WHERE s.period_kind = 'T'
+      AND s.txn_kind    = 1
+    GROUP BY s.store_code, lsd.latest_date
 )
 
 -- ---------------------------------------------------------------------------
@@ -253,10 +256,12 @@ CREATE INDEX IF NOT EXISTS idx_l2_kpi_daily_sales_date
 
 COMMENT ON MATERIALIZED VIEW l2_kpi_daily IS
     'Daily store-level intelligence summary. Step 4 in L2 build order. '
-    'One row per store. Sources: l2_stock_position + daily_snapshots. '
+    'One row per store. Stock/capital source: l2_stock_position. '
+    'Sales source: sigma_sales (DBUMBA, Phase 1 SB-INDEX-005 2026-06-08). '
+    'gp_pct=NULL, sales_cost=0 until dEKUmsatz added to sigma_sales (Option B). '
     'capital_normal is the headline capital KPI (NORMAL class orderable stock). '
     'All four class capitals stored for trend intelligence (R21, Decision 2-B). '
-    'Refresh nightly after all step 1-3b MVs and after L1 push. SB-CC-L2-001.';
+    'Refresh nightly after all step 1-3b MVs and after sigma_sales extract. SB-CC-L2-001.';
 
 GRANT SELECT ON l2_kpi_daily TO anon, authenticated;
 
