@@ -36,12 +36,17 @@
 --   - Nightly governance check: call for each store, surface EOD_MISSING + DIVERGENT.
 -- =============================================================================
 
+-- NOTE: daily_snapshots.client_id is UUID; sigma_sales.client_id is text.
+-- Schema inconsistency -- both are single-tenant constants (architecture note:
+-- "client_id is a constant, not an isolation key"). client_id filters omitted
+-- from both CTEs. Flag for DB-SCHEMA.md pending fixes.
+
 DROP FUNCTION IF EXISTS public.rpc_feed_health_daily(text, text, text);
+DROP FUNCTION IF EXISTS public.rpc_feed_health_daily(text, text);
 
 CREATE FUNCTION public.rpc_feed_health_daily(
     p_store  text,
-    p_month  text,            -- 'YYYY-MM'
-    p_client text DEFAULT 'socialbrand'
+    p_month  text             -- 'YYYY-MM'
 )
 RETURNS TABLE (
     sale_date     date,
@@ -77,7 +82,6 @@ dbumba AS (
         ROUND(SUM(sales_incl_vat)::numeric, 2) AS total
     FROM sigma_sales
     WHERE store_code  = p_store
-      AND client_id   = p_client
       AND period_kind = 'T'
       AND txn_kind    = 1
       AND sale_date  >= (SELECT d_start FROM month_start)
@@ -90,8 +94,7 @@ prssale AS (
         snapshot_date                           AS sale_date,
         ROUND(SUM(today_sales)::numeric, 2)     AS total
     FROM daily_snapshots
-    WHERE store_code  = p_store
-      AND client_id   = p_client
+    WHERE store_code     = p_store
       AND snapshot_date >= (SELECT d_start FROM month_start)
       AND snapshot_date <= (SELECT d_end   FROM month_end)
     GROUP BY snapshot_date
@@ -138,7 +141,7 @@ LEFT JOIN prssale pr ON pr.sale_date = ds.d
 ORDER BY ds.d;
 $$;
 
-COMMENT ON FUNCTION public.rpc_feed_health_daily IS
+COMMENT ON FUNCTION public.rpc_feed_health_daily(text, text) IS
     'AUDIT-002 Step 2: per-day EOD + reconciliation health. '
     'One row per calendar day for the requested store/month. '
     'EOD_MISSING = sigma_sales has the day, daily_snapshots has nothing (EOD export did not run). '
