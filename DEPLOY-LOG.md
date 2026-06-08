@@ -4,6 +4,36 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-08 — AUDIT-002 L2 restructure: l2_consignment_daily + rpc_consignment_lines thin SELECT
+
+**Commits:** 450928f (sql/create_l2_consignment_daily.sql NEW + sql/rpc_consignment_lines.sql REWRITE)
+**Deployed by Pieter in SQL Editor — both files LIVE 2026-06-08.**
+
+**Structural change:** rpc_consignment_lines was performing the sigma_sales x sigma_articles classification join at fetch time (L2 logic in the L3 path). Restructured per PM GO:
+
+**sql/create_l2_consignment_daily.sql (NEW — L2 derived table):**
+- DROP + CREATE per Rule 19. L2 engine output for HMR SUSHI consignment (store 10116, merch_group 610).
+- Pre-classifies at refresh: sigma_sales x sigma_articles join, BREAKFAST + MABELA excluded, anchor sale_date >= 2026-06-01 (combo-launch boundary; pre-June recycled 100k-range product codes do not map to current sigma_articles — blank by design, R20 class).
+- Per-row: store_code, sale_date, product_code, description, item_type (s/c), sales, qty, commission (10%), owed (90%).
+- Refresh function refresh_l2_consignment_daily(p_store): DELETE + re-INSERT current month only; historical months committed.
+- GRANT SELECT TO anon. Unique: (store_code, sale_date, product_code).
+- Nightly refresh: call after l2_kpi_daily. Pending wiring into extractor post-push chain.
+
+**sql/rpc_consignment_lines.sql (REWRITE — thin SELECT):**
+- Plain SELECT from l2_consignment_daily. No join at fetch. No classification at fetch.
+- Signature unchanged (p_month, p_store, p_group, p_client) for backward compat.
+- Pre-June returns 0 rows by design.
+
+**Regression verified to the rand (all 7 June days):**
+Jun 1=8110 / Jun 2=4119 / Jun 3=5093 / Jun 4=2179 / Jun 5=4598 / Jun 6=3957 / Jun 7=2731
+rpc thin SELECT: R30,787 total / 37 distinct lines / 7 days loaded.
+
+**Classification note:** item_type='s' vs 'c' currently all 'c' — June product_codes link to sigma_ean_master barcodes outside 200000+ range. Column structurally correct; split populates when barcode data is reconciled (separate data-maintenance item, no impact on totals).
+
+**Standing rule established:** applets source sales from sigma_sales (DBUMBA) only. daily_snapshots acceptable for non-sales data (shelf price, SOH, EAN catalogue) until those are mirrored directly. A missed EOD must never create a silent hole in any number driving a business decision. Core pipeline migration (l2_kpi_daily sales input) = SB-INDEX-005.
+
+---
+
 ## 2026-06-08 session 2 — L2-001 Steps 3+SOH: extractor v1.4, l2_ranging_tier, l2_soh_daily
 
 **Commit:** 254191e (feat(L2-001): extractor v1.4 + l2_ranging_tier + l2_soh_daily SQL)
