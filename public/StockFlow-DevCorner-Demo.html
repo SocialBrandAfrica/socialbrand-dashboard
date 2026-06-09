@@ -310,8 +310,7 @@ function render(L, LOADED, DIM, dates, health){
 
   /* Daycap */
   var dc=$('daycap');
-  if(dc)dc.textContent='Actual daily sales — hover a bar for rand and units. Loaded through '+
-    LOADED+' day'+(LOADED!==1?'s':'')+' of '+G_MON_SHORT+'; remaining days fill in nightly.';
+  if(dc)dc.textContent='Days 1–'+LOADED+' of '+G_MON_SHORT+'. Hover a bar for rand and units. Faint bars = no sushi sales that day. Nightly push adds the next day.';
 
   /* Daily sums across all lines for the two bar charts */
   var daySums=new Array(LOADED).fill(0);
@@ -397,11 +396,15 @@ function sel(r){
   var bestDayNum=bestDateStr?parseInt(bestDateStr.slice(-2)):(bIdx+1);
   $('dbest').textContent=l.s[bIdx]>0?G_MON_SHORT+' '+bestDayNum:'—';
   var bars='',labs='';
-  for(var i=0;i<G_DIM;i++){
-    var el=i<G_LOADED, v=el?l.s[i]:0, u=el?l.q[i]:0;
+  /* Loop only over loaded days — no future dashed bars overflowing the right side.
+     Zero-sales days get a 2% stub bar (faint) so the calendar day is visibly present. */
+  for(var i=0;i<G_LOADED;i++){
+    var v=l.s[i]||0, u=l.q[i]||0;
     var dayNum=G_DATES.length>i?parseInt(G_DATES[i].slice(-2)):(i+1);
-    var tip=G_MON_SHORT+' '+dayNum+(el?(v>0?': '+R(v)+' · '+u+' units':': no sales'):' — to come');
-    bars+='<div class="day" title="'+tip+'"><div class="db '+(el?'':'empty')+'" style="height:'+(el?(v>0?Math.max(Math.round(v/mx*100),3):0):100)+'%"></div></div>';
+    var tip=G_MON_SHORT+' '+dayNum+(v>0?': '+R(v)+' · '+u+' units':': no sales');
+    var ht=v>0?Math.max(Math.round(v/mx*100),3):2;
+    var op=v>0?'':'opacity:0.18;';
+    bars+='<div class="day" title="'+tip+'"><div class="db" style="height:'+ht+'%;'+op+'"></div></div>';
     labs+='<div class="dl">'+dayNum+'</div>';
   }
   $('days').innerHTML=bars; $('dayx').innerHTML=labs;
