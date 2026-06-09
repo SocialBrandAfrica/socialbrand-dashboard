@@ -38,6 +38,7 @@ Mid-session shortcut: `/autopilot` reloads all browser tool schemas if the sessi
 
 - `C:\Users\User\Desktop\DIWAAIS\RULE-BOOK.md` — domain vocabulary, time conventions, KPI formulas, GP% rules, mandatory SQL patterns, naming conventions. Authoritative: if a brief contradicts this, update here first, then update the brief.
 - `C:\Users\User\Desktop\DIWAAIS\DB-SCHEMA.md` — live schema, RPC function signatures, pending SQL tracker.
+- **Sigma Fix Strategy (LIVING canon — read before ANY stock-cleanup / phantom-stock / TLX / Capital-Tied work):** `STOCK-TRIAGE-TOOL.md` (SB-INDEX-014) + `SIGMA-CLEANUP-WORKFLOW.md` (SB-INDEX-015). Every session develops and refines these — fold what you learn back in. CC's engine version = SB-CC-ANOM-001 Family 3 (Anomaly Radar item-outliers); the tool is the manual prototype you productionise.
 
 ---
 

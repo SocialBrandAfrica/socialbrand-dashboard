@@ -94,7 +94,8 @@
       "mcp__supabase__execute_sql",
       "mcp__supabase__get_publishable_keys",
       "mcp__supabase__apply_migration",
-      "mcp__supabase__list_tables"
+      "mcp__supabase__list_tables",
+      "mcp__Claude_Preview__preview_start"
     ]
   }
 }
