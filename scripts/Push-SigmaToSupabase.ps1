@@ -20,6 +20,13 @@
            included Prefer: resolution=merge-duplicates (an INSERT hint) on PATCH calls.
            Added Get-PatchHeaders for PATCH-only calls (omits resolution=merge-duplicates).
            Complete-PushLog and Clear-StuckRuns now use Get-PatchHeaders.
+    v3.22: Fix Invoke-RunExtractor on PS7 stores (80175, 21355): hard-coded
+           powershell.exe call replaced with the running process's own executable
+           ([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName).
+           This resolves "The term 'powershell.exe' is not recognized" on stores
+           running pwsh (PS7). Also reads extractor_last_error.txt written by
+           extractor v1.8 on fatal failure, so push_log captures the actual error
+           message instead of a bare "Exit code 1". SB-CC-L1-EAN-COMPLETENESS.
     v3.21: Wire refresh_l2_consignment_daily into nightly post-push chain (store 10116
            only). Closes the open wire from SB-CC-AUDIT-002 that required Pieter to
            run the refresh manually each morning. Invoke-RefreshConsignmentDaily runs
@@ -100,7 +107,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.21'
+$ScriptVersion = 'v3.22'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -471,13 +478,20 @@ function Invoke-RunExtractor {
         Send-ExtractorLog -Status 'FAILED' -ErrorMsg "Extractor not found at $extractorPath" -Elapsed 0 -StartTime (Get-Date)
         return
     }
+    # Use the same PowerShell executable as the current process (works for both
+    # powershell.exe PS5.1 and pwsh.exe PS7 -- fixes "not recognized" on PS7 stores).
+    $psExe   = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    # Extractor v1.8+ writes its last fatal error to extractor_last_error.txt so
+    # we can surface the actual exception in push_log instead of a bare exit code.
+    $errFile = Join-Path $scriptDir 'extractor_last_error.txt'
     Write-Host ""
     Write-Host "[extractor-run] Starting L1 sigma extractor ($extractorPath)..." -ForegroundColor Cyan
+    Write-Host "[extractor-run] Using PS executable: $psExe" -ForegroundColor DarkGray
     $t0       = Get-Date
     $exitCode = 0
     $errMsg   = $null
     try {
-        & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File $extractorPath
+        & $psExe -ExecutionPolicy Bypass -NonInteractive -File $extractorPath
         $exitCode = $LASTEXITCODE
     }
     catch {
@@ -486,9 +500,20 @@ function Invoke-RunExtractor {
     }
     $elapsed = [int]((Get-Date) - $t0).TotalSeconds
     if ($exitCode -ne 0) {
-        $msg = if ($errMsg) { $errMsg } else { "Exit code $exitCode" }
+        if (-not $errMsg) {
+            # Read the diagnostic file written by extractor v1.8+ on fatal error.
+            try {
+                if (Test-Path $errFile) {
+                    $raw    = (Get-Content $errFile -Raw -Encoding UTF8 -ErrorAction SilentlyContinue).Trim()
+                    $clip   = if ($raw.Length -gt 500) { $raw.Substring(0, 500) } else { $raw }
+                    $errMsg = if ($clip) { "Exit code $exitCode | $clip" } else { "Exit code $exitCode" }
+                }
+                else { $errMsg = "Exit code $exitCode" }
+            }
+            catch { $errMsg = "Exit code $exitCode" }
+        }
         Write-Warning "[extractor-run] Extractor failed (code $exitCode) after ${elapsed}s."
-        Send-ExtractorLog -Status 'FAILED' -ErrorMsg $msg -Elapsed $elapsed -StartTime $t0
+        Send-ExtractorLog -Status 'FAILED' -ErrorMsg $errMsg -Elapsed $elapsed -StartTime $t0
     }
     else {
         Write-Host "[extractor-run] Extractor finished in ${elapsed}s." -ForegroundColor Green

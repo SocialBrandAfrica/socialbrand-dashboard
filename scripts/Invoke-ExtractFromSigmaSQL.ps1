@@ -57,6 +57,12 @@
     v1.3 : UTF-8 POST body on all Supabase calls (PGRST102 fix).
     v1.4 : Invoke-SnapshotSohDaily added (l2_soh_daily, Layer 2 Gate 2 Option A).
     v1.5 : Invoke-ExtractPromotions + Invoke-ExtractPromotionArticles (DBAKTK/DBAKTP).
+    v1.6 : ROW_NUMBER dedup for sigma_ean_master (fix PG-21000 duplicate-batch).
+    v1.7 : Fix dREFNR float truncation -- CONVERT(varchar,CONVERT(bigint,ROUND(dREFNR,0)))
+           instead of CAST(dREFNR AS BIGINT). barcode stored as text, not bigint.
+    v1.8 : Write fatal error to C:\socialbrand\extractor_last_error.txt on exit 1 so
+           push_log in Push-SigmaToSupabase v3.22+ captures the actual exception text
+           instead of a bare "Exit code 1". Cleared at start of each run.
 #>
 param(
     [switch]$FullRefresh,
@@ -74,7 +80,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.7'
+$ScriptVersion  = 'v1.8'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -1333,6 +1339,10 @@ FROM dw220sdb.dbo.DBAKTP WITH (NOLOCK)
 # =============================================================================
 
 $startTime = Get-Date
+# Clear any stale error file from the previous run so the push script does not
+# read stale diagnostics if this run succeeds or fails for a different reason.
+try { Remove-Item 'C:\socialbrand\extractor_last_error.txt' -Force -ErrorAction SilentlyContinue } catch {}
+
 Write-Host "=================================================="
 Write-Host " Sigma Layer 1 Extractor  $ScriptVersion"
 Write-Host " Store  : $StoreName ($StoreCode)"
@@ -1364,7 +1374,15 @@ try {
     if (& $run 'promotionarticles') { $totals['sigma_promotion_articles']    = Invoke-ExtractPromotionArticles }
 }
 catch {
-    Write-Host "`nFATAL ERROR: $_" -ForegroundColor Red
+    $fatalMsg = $_.ToString()
+    Write-Host "`nFATAL ERROR: $fatalMsg" -ForegroundColor Red
+    # Write error to a known file so Push-SigmaToSupabase v3.22+ can read it
+    # and include the actual message in push_log (Write-Host is not capturable
+    # via stream redirection in PS5.1 subprocesses).
+    try {
+        Set-Content -Path 'C:\socialbrand\extractor_last_error.txt' -Value $fatalMsg -Encoding UTF8 -Force
+    }
+    catch {}
     exit 1
 }
 
