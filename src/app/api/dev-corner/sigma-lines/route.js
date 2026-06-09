@@ -99,8 +99,11 @@ export async function GET(request) {
     const rows   = linesRes.data ?? []
     const health = healthRes.data ?? []
 
-    // as_at: latest non-FUTURE date from feed health; fall back to latest sales date.
-    // Computed first so we can generate the full calendar range below.
+    // as_at: for DISPLAY only — last confirmed non-FUTURE day per feed health,
+    // or last day with actual sushi sales. Shown in the UI as "Data as at …".
+    // NOTE: do NOT use asAt to bound the dates array — health coverage can lag
+    // behind the calendar (e.g. Jun 8 lands NO_TRADE when nightly push hasn't run)
+    // which would drop an entire elapsed day from the charts.
     const tradingDays  = health.filter(h => h.status !== 'FUTURE')
     const salesDateMax = rows.length
       ? [...new Set(rows.map(r => r.sale_date))].sort().pop()
@@ -109,13 +112,18 @@ export async function GET(request) {
       ? tradingDays[tradingDays.length - 1].sale_date
       : salesDateMax
 
-    // Generate every calendar day from month start to as_at so all elapsed days
-    // appear in the charts — including days with zero sushi sales (shown as flat bars).
+    // Date range for charts: ALL elapsed calendar days from month start to today
+    // (or last day of month when viewing a past month).
+    // Zero-fill fills in days with no sushi sales — ensures every bar is present.
+    const todayISO     = new Date().toISOString().slice(0, 10)   // UTC date from API server
+    const monthLastISO = `${year}-${mm}-${String(daysInMonth).padStart(2, '0')}`
+    const dateCeiling  = todayISO <= monthLastISO ? todayISO : monthLastISO
+
     const dates = []
-    if (asAt) {
-      const start = new Date(`${year}-${mm}-01T12:00:00Z`)
-      const end   = new Date(asAt + 'T12:00:00Z')
-      for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {
+    if (dateCeiling >= `${year}-${mm}-01`) {
+      const dStart = new Date(`${year}-${mm}-01T12:00:00Z`)
+      const dEnd   = new Date(dateCeiling + 'T12:00:00Z')
+      for (let d = new Date(dStart); d <= dEnd; d = new Date(d.getTime() + 86400000)) {
         dates.push(d.toISOString().slice(0, 10))
       }
     }
