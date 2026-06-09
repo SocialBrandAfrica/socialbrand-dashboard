@@ -57,10 +57,10 @@
   .panel{padding:14px 16px;min-width:0}
   .panel h2{margin:0 0 2px;font-size:12.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:var(--blue-d)}
   .panel .cap{font-size:11px;color:var(--slate);margin:0 0 11px}
-  .cum{display:flex;align-items:flex-end;gap:7px;height:128px;padding-top:8px;border-bottom:1px solid var(--hair)}
-  .cum .col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+  .cum{display:flex;align-items:flex-end;gap:5px;height:128px;padding-top:8px;border-bottom:1px solid var(--hair);overflow:hidden}
+  .cum .col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;cursor:default}
   .cum .bar{width:100%;max-width:36px;background:linear-gradient(180deg,#3a72ad,#2c5b8c);border-radius:5px 5px 0 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 2px 5px rgba(30,60,100,.18)}
-  .cum .v{font:700 9px Roboto;color:var(--slate);margin-bottom:3px;white-space:nowrap}
+  .cum .v{font:700 9px Roboto;color:var(--slate);margin-bottom:3px;white-space:nowrap;overflow:hidden;max-width:100%}
   .cum .d{font:9.5px Roboto;color:var(--slate);margin-top:5px}
   .closing{margin-top:11px;background:rgba(47,97,150,.08);border:1px solid rgba(47,97,150,.15);border-radius:8px;padding:10px 12px}
   .closing .pl{font:700 10.5px Inter;letter-spacing:.3px;color:var(--slate);text-transform:uppercase}
@@ -93,7 +93,7 @@
   .stats{display:flex;gap:18px;font-size:11.5px;color:var(--slate)}
   .stats b{color:var(--ink);font:700 14px Roboto}
   .daycap{font-size:11px;color:var(--slate);margin:2px 0 11px}
-  .days{display:flex;align-items:flex-end;gap:0;height:118px;border-bottom:1px solid var(--hair)}
+  .days{display:flex;align-items:flex-end;gap:0;height:118px;border-bottom:1px solid var(--hair);overflow:hidden}
   .days .day{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;padding:0 1px}
   .days .db{width:100%;background:linear-gradient(180deg,#3a72ad,#2c5b8c);border-radius:2px 2px 0 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.3)}
   .days .db.empty{background:rgba(47,97,150,.06);border:1px dashed rgba(47,97,150,.22);border-bottom:none}
@@ -318,12 +318,19 @@ function render(L, LOADED, DIM, dates, health){
   var cumArr=[],run=0;
   daySums.forEach(function(d){run+=d;cumArr.push(run);});
 
+  /* Dynamic gap: tighter when more bars so they always fit the card */
+  var barGap = LOADED > 25 ? 1 : LOADED > 18 ? 2 : LOADED > 12 ? 3 : 5;
+  if($('daily-bars')) $('daily-bars').style.gap = barGap+'px';
+  if($('cum'))        $('cum').style.gap        = barGap+'px';
+
   /* Daily bars — loaded days only, no projection */
   (function(){
     var mx=Math.max.apply(null,daySums.concat([1])),h='';
     daySums.forEach(function(v,i){
       var dayNum=G_DATES.length>i?parseInt(G_DATES[i].slice(-2)):(i+1);
-      h+='<div class="col"><div class="v num">'+(v>0?R(v):'')+'</div>'+
+      var tip=G_MON_SHORT+' '+dayNum+(v>0?': '+R(v):': no sales');
+      h+='<div class="col" title="'+tip+'">'+
+         '<div class="v num">'+(v>0?R(v):'')+'</div>'+
          '<div class="bar" style="height:'+Math.round(v/mx*100)+'%"></div>'+
          '<div class="d num">'+String(dayNum).padStart(2,'0')+'</div></div>';
     });
@@ -335,7 +342,9 @@ function render(L, LOADED, DIM, dates, health){
     var mx=Math.max.apply(null,cumArr.concat([1])),h='';
     cumArr.forEach(function(c,i){
       var dayNum=G_DATES.length>i?parseInt(G_DATES[i].slice(-2)):(i+1);
-      h+='<div class="col"><div class="v num">'+R(c)+'</div>'+
+      var tip=G_MON_SHORT+' '+dayNum+' cumul: '+R(c);
+      h+='<div class="col" title="'+tip+'">'+
+         '<div class="v num">'+(c>0?R(c):'')+'</div>'+
          '<div class="bar" style="height:'+Math.round(c/mx*100)+'%"></div>'+
          '<div class="d num">'+String(dayNum).padStart(2,'0')+'</div></div>';
     });
