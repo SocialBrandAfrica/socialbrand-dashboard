@@ -353,7 +353,7 @@ function render(L, LOADED, DIM, dates, health){
 
   var avg=cash/Math.max(LOADED,1);
   $('proj').textContent='≈ '+R(avg*DIM);
-  $('projn').textContent='Rough guide — '+R(avg)+'/day over '+LOADED+' day'+(LOADED!==1?'s':'')+' loaded, stretched to '+DIM+' days. Not a commitment.';
+  $('projn').textContent='Rough guide — '+R(cash)+' earned in '+LOADED+' of '+DIM+' days. Not a commitment.';
 
   /* Split bar — based on selling lines only */
   $('sps').style.width=Math.round(sushi/Math.max(cash,1)*100)+'%';
