@@ -4,6 +4,32 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-09 09:40 SAST — Family 3 count engine: l2_stock_count_plan DDL + refresh function
+
+**Commit:** bb94377 (feat(family3): add l2_stock_count_plan DDL + refresh function)
+**Status: PENDING DEPLOY — Pieter runs Steps 1-7 in Supabase SQL Editor.**
+
+**What:** SB-CC-FAMILY3-COUNT-ENGINE-001 v1.0. Two new SQL files:
+- `sql/create_l2_stock_count_plan.sql` — DROP+CREATE table, indexes, grants
+- `sql/refresh_l2_stock_count_plan.sql` — deterministic cascade function
+
+**Gate:** NORMAL + soh<>0 + sigma_articles JOIN. No capital floor (Pieter's law).
+**Cascade:** deposit_like->AMBIGUOUS / sold+positive_soh->HEALTHY /
+sold+negative_soh->AMBIGUOUS / recv_365d->STOCKFLOW / dead+barcode->TLX / else->AMBIGUOUS.
+**Recycled-code guard:** barcode_list NULL forces AMBIGUOUS + surfaced in JSONB alert field.
+**Runs alongside** l2_anomaly_daily (not a replacement; different gate, different purpose).
+
+**Pieter: deploy steps (Supabase SQL Editor):**
+1. Paste + run `sql/create_l2_stock_count_plan.sql` (table DDL)
+2. Paste + run `sql/refresh_l2_stock_count_plan.sql` (function)
+3. `SELECT refresh_l2_stock_count_plan('21355');`
+4. Pool reconcile check (see comments in refresh file)
+5. Determinism self-test: run Step 3 again — JSONB must be identical
+6. Golden baseline: 21355 pool=948 HEALTHY=708 STOCKFLOW=111 TLX=75 AMBIGUOUS=54
+7. Extend to all stores once 21355 verified
+
+---
+
 ## 2026-06-09 08:04 SAST — Pulse Mini: fix charts showing only some days (root cause)
 
 **Commit:** 1ad3c09 (fix(pulse-mini): drive chart dates from server today, not health as_at)
