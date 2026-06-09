@@ -4,6 +4,25 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-09 08:04 SAST — Pulse Mini: fix charts showing only some days (root cause)
+
+**Commit:** 1ad3c09 (fix(pulse-mini): drive chart dates from server today, not health as_at)
+**Status: LIVE 2026-06-09 — auto-deployed to Vercel from GitHub push.**
+
+**Root cause:** `sigma-lines/route.js` was generating the `dates` array using `asAt` (last
+non-FUTURE day per `rpc_feed_health_daily`). If sigma_sales hasn't been pushed for today
+(nightly push runs ~20:00 SAST), today lands `NO_TRADE` (both feeds zero). In edge cases
+health errors and `asAt` falls back to the last actual sushi-sales date — which could be
+days earlier. Result: charts showed fewer bars than elapsed calendar days.
+
+**Fix:** Dates array now built from `new Date()` (UTC, capped at month-end). `asAt` kept
+for display label only. All elapsed days always appear; zero-fill shows stub bars for
+days with no sushi data yet.
+
+**Changes:** `src/app/api/dev-corner/sigma-lines/route.js` only.
+
+---
+
 ## 2026-06-09 — Pulse Mini live: auth gate removed + weather + no-data fixes
 
 **Commit:** 789aaf1 (feat(pulse-mini): make app publicly accessible + fix weather bugs)
