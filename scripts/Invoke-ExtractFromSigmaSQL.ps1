@@ -74,7 +74,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.6'
+$ScriptVersion  = 'v1.7'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -1058,7 +1058,7 @@ function Invoke-ExtractEanMaster {
     $sql = @"
 WITH ranked AS (
     SELECT
-        CAST(dREFNR  AS BIGINT)  AS barcode,
+        CONVERT(varchar(20), CONVERT(bigint, ROUND(dREFNR, 0))) AS barcode,
         CAST(dARTNR  AS BIGINT)  AS product_code,
         cSYSTEM                  AS ean_system,
         cTYP                     AS ean_type,
@@ -1091,7 +1091,7 @@ WHERE  rn = 1
             [ordered]@{
                 client_id    = $ClientId
                 store_code   = $StoreCode
-                barcode      = Safe-BigInt  $row['barcode']
+                barcode      = Safe-Text    $row['barcode']
                 product_code = Safe-BigInt  $row['product_code']
                 ean_system   = Safe-Text    $row['ean_system']
                 ean_type     = Safe-Text    $row['ean_type']

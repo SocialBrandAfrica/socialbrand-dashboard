@@ -91,6 +91,10 @@ CREATE TABLE l2_anomaly_daily (
     last_receipt_date   date,
     never_sold          boolean,    -- no till sale ever (full history from sigma_lifecycle)
     has_barcode         boolean,
+    is_confirmed_plu    boolean     DEFAULT false,
+    -- TRUE when sigma_articles.plu_flag='1' (cPLU) or scale_flag='1' (cWAG) and
+    -- no GS1 barcode exists.  Confirmed made-in-store / scale item, not a data gap.
+    -- Source: v_item_ean.is_confirmed_plu (SB-CC-L1-EAN-COMPLETENESS).
 
     -- Behavioural signals computed at detection (R22 audit trail)
     deposit_sg_count    int,        -- count of S/G events (>=2 = deposit class)

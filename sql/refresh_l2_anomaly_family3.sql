@@ -160,16 +160,19 @@ BEGIN
     ),
 
     -- -------------------------------------------------------------------------
-    -- C. Barcodes from sigma_ean_master (for TLX routing)
+    -- C. Barcodes from v_item_ean (authoritative reconciled view, R22)
+    --    One row per product: barcode_list, has_barcode, is_confirmed_plu.
+    --    Replaces direct sigma_ean_master join (SB-CC-L1-EAN-COMPLETENESS).
     -- -------------------------------------------------------------------------
     barcodes AS (
         SELECT
             product_code,
-            STRING_AGG(DISTINCT barcode::text, '|') AS barcode_list
-        FROM sigma_ean_master
+            barcode_list,
+            has_barcode,
+            is_confirmed_plu
+        FROM v_item_ean
         WHERE store_code = p_store
           AND product_code IN (SELECT product_code FROM suspects)
-        GROUP BY product_code
     ),
 
     -- -------------------------------------------------------------------------
@@ -295,7 +298,8 @@ BEGIN
             ms.total_grv_count,
 
             b.barcode_list,
-            b.barcode_list IS NOT NULL                      AS has_barcode,
+            COALESCE(b.has_barcode, FALSE)                  AS has_barcode,
+            COALESCE(b.is_confirmed_plu, FALSE)             AS is_confirmed_plu,
             pc.product_code IS NOT NULL                     AS parent_child_flag,
             pi.product_code IS NOT NULL                     AS production_interim,
             rs.product_code IS NOT NULL                     AS recode_sibling_flag,
@@ -468,7 +472,7 @@ BEGIN
         family, anomaly_type, route, cascade_step,
         description, subdept_name, dept_name,
         soh, capital_value, unit_cost, daily_ros, sales_qty_91d,
-        last_sale_date, last_receipt_date, never_sold, has_barcode,
+        last_sale_date, last_receipt_date, never_sold, has_barcode, is_confirmed_plu,
         deposit_sg_count, last_grv_date, last_any_inbound, last_any_movement,
         parent_child_flag, production_interim,
         confidence, evidence, signals_snapshot,
@@ -479,7 +483,7 @@ BEGIN
         '3A', r.anomaly_type, r.route, r.cascade_step,
         r.description, r.subdept_name, r.dept_name,
         r.soh, r.capital_value, r.unit_cost, r.daily_ros, r.sales_qty_91d,
-        r.last_sale_date, r.last_receipt_date, r.never_sold, r.has_barcode,
+        r.last_sale_date, r.last_receipt_date, r.never_sold, r.has_barcode, r.is_confirmed_plu,
         r.deposit_sg_count, r.last_grv_date, r.last_any_inbound, r.last_any_movement,
         r.parent_child_flag, r.production_interim,
         r.confidence, r.evidence,
