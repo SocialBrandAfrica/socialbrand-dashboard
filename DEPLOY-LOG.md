@@ -4,6 +4,30 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-09 — Pulse Mini live: auth gate removed + weather + no-data fixes
+
+**Commit:** 789aaf1 (feat(pulse-mini): make app publicly accessible + fix weather bugs)
+**Status: LIVE 2026-06-09 — auto-deployed to Vercel from GitHub push.**
+
+**Changes:**
+
+| File | Change |
+|---|---|
+| `middleware.js` | Added `/StockFlow-DevCorner-Demo.html` + `/api/dev-corner/*` to `isPublic` — app was previously auth-gated (required dashboard login). Now publicly accessible. |
+| `public/StockFlow-DevCorner-Demo.html` | Weather month label: removed hardcoded `' Jun'`, now uses `MON[dt.getMonth()]`. Today highlight: was `i===0`, now compares ISO date string. WX_FB fallback dates: converted from static June 6-12 to dynamic 7-day window from `new Date()`. No-data message: removed internal table name reference. |
+| `src/app/api/dev-corner/consignment/route.js` | Added `replit` to origin allow list (consistent with sigma-lines endpoint). |
+
+**Live URL:** `https://dashboard.socialbrand.africa/StockFlow-DevCorner-Demo.html`
+
+**Data layer (all pre-existing, confirmed live):**
+- `l2_consignment_daily` — June data live (deployed 2026-06-08 by Pieter)
+- `rpc_consignment_lines` — thin SELECT from L2, no join at fetch
+- `rpc_feed_health_daily` — per-day completeness for feed health strip
+
+**Open wire:** `refresh_l2_consignment_daily('10116')` must still be added to the nightly extractor post-push chain for July+ data to auto-populate. Until then, Pieter runs it manually in SQL Editor at month-start. Bundle with next extractor version.
+
+---
+
 ## 2026-06-08 — SB-INDEX-005 Phase 1: l2_kpi_daily sales source migrated to sigma_sales
 
 **Commit:** 63b1ef9 (feat(SB-INDEX-005): Phase 1 -- l2_kpi_daily sales from sigma_sales)
