@@ -324,7 +324,7 @@ function render(L, LOADED, DIM, dates, health){
     var mx=Math.max.apply(null,daySums.concat([1])),h='';
     daySums.forEach(function(v,i){
       var dayNum=G_DATES.length>i?parseInt(G_DATES[i].slice(-2)):(i+1);
-      h+='<div class="col"><div class="v num">'+R(v)+'</div>'+
+      h+='<div class="col"><div class="v num">'+(v>0?R(v):'')+'</div>'+
          '<div class="bar" style="height:'+Math.round(v/mx*100)+'%"></div>'+
          '<div class="d num">'+String(dayNum).padStart(2,'0')+'</div></div>';
     });

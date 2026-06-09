@@ -99,9 +99,26 @@ export async function GET(request) {
     const rows   = linesRes.data ?? []
     const health = healthRes.data ?? []
 
-    // Sorted dates that have at least one sushi sale
-    const dateSet = new Set(rows.map(r => r.sale_date))
-    const dates   = [...dateSet].sort()
+    // as_at: latest non-FUTURE date from feed health; fall back to latest sales date.
+    // Computed first so we can generate the full calendar range below.
+    const tradingDays  = health.filter(h => h.status !== 'FUTURE')
+    const salesDateMax = rows.length
+      ? [...new Set(rows.map(r => r.sale_date))].sort().pop()
+      : null
+    const asAt = tradingDays.length
+      ? tradingDays[tradingDays.length - 1].sale_date
+      : salesDateMax
+
+    // Generate every calendar day from month start to as_at so all elapsed days
+    // appear in the charts — including days with zero sushi sales (shown as flat bars).
+    const dates = []
+    if (asAt) {
+      const start = new Date(`${year}-${mm}-01T12:00:00Z`)
+      const end   = new Date(asAt + 'T12:00:00Z')
+      for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {
+        dates.push(d.toISOString().slice(0, 10))
+      }
+    }
 
     const byDesc = {}
     for (const r of rows) {
@@ -118,18 +135,13 @@ export async function GET(request) {
       }
     }
 
+    // dates.map fills 0 for any day the line had no sale — correct for all-day charts
     const lines = Object.values(byDesc).map(l => ({
       n: l.n,
       t: l.t,
       s: dates.map(d => l.byDate[d]?.s ?? 0),
       q: dates.map(d => l.byDate[d]?.q ?? 0),
     }))
-
-    // as_at = latest non-FUTURE date from feed health (more reliable than last sales date)
-    const tradingDays  = health.filter(h => h.status !== 'FUTURE')
-    const asAt         = tradingDays.length
-      ? tradingDays[tradingDays.length - 1].sale_date
-      : (dates.length ? dates[dates.length - 1] : null)
 
     return NextResponse.json({
       month:         monthLabel,
