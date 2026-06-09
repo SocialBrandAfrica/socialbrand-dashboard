@@ -4,10 +4,40 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-09 20:42 SAST — Pulse Mini: pace sub-text shows actual basis not rounded rate
+
+**Commit:** 2e89faf (fix(pulse-mini): pace sub-text shows actual basis not rounded rate)
+**Status: LIVE 2026-06-09 — auto-deployed to Vercel from GitHub push.**
+
+**Bug:** "Ballpark month pace" sub-text said "R 3 819/day × 30 days" but 3 819 × 30 = 114 570
+≠ 114 583 (projected value uses unrounded float — rounding drift made the description lie).
+**Fix:** Sub-text now reads "R 34 374 earned in 9 of 30 days" — honest basis, no fabricated
+per-day rate that doesn't multiply to the number shown.
+
+**Changes:** `public/StockFlow-DevCorner-Demo.html` (one line).
+
+---
+
+## 2026-06-09 20:30 SAST — Push script v3.21: wire refresh_l2_consignment_daily nightly
+
+**Commit:** 9e71723 (fix(push): wire refresh_l2_consignment_daily into nightly chain (v3.21))
+**Status: LIVE on GitHub. Self-updater delivers v3.21 to store servers tonight (~20:00 push
+downloads it); v3.21 first executes tomorrow night (~20:00 Jun 10). From Jun 10 onward
+Pulse Mini data is refreshed automatically after every nightly push.**
+
+**Fix:** Closes open wire from SB-CC-AUDIT-002. `Invoke-RefreshConsignmentDaily` added to
+nightly switch case (after `Invoke-UpsertSearchIndex`). Store 10116 only — all other stores
+skip silently. UTF-8 body, service role key, 60s timeout. Logs row count on success;
+warning + manual fallback instruction on failure.
+
+**Until Jun 10:** run manually if needed: `SELECT refresh_l2_consignment_daily('10116');`
+
+---
+
 ## 2026-06-09 09:40 SAST — Family 3 count engine: l2_stock_count_plan DDL + refresh function
 
 **Commit:** bb94377 (feat(family3): add l2_stock_count_plan DDL + refresh function)
-**Status: PENDING DEPLOY — Pieter runs Steps 1-7 in Supabase SQL Editor.**
+**Status: PARTIALLY DEPLOYED. 21355 VERIFIED PASS. Other 4 stores pending next session.**
 
 **What:** SB-CC-FAMILY3-COUNT-ENGINE-001 v1.0. Two new SQL files:
 - `sql/create_l2_stock_count_plan.sql` — DROP+CREATE table, indexes, grants
@@ -17,16 +47,20 @@ Reverse-chronological. Each entry = one production deploy.
 **Cascade:** deposit_like->AMBIGUOUS / sold+positive_soh->HEALTHY /
 sold+negative_soh->AMBIGUOUS / recv_365d->STOCKFLOW / dead+barcode->TLX / else->AMBIGUOUS.
 **Recycled-code guard:** barcode_list NULL forces AMBIGUOUS + surfaced in JSONB alert field.
-**Runs alongside** l2_anomaly_daily (not a replacement; different gate, different purpose).
 
-**Pieter: deploy steps (Supabase SQL Editor):**
-1. Paste + run `sql/create_l2_stock_count_plan.sql` (table DDL)
-2. Paste + run `sql/refresh_l2_stock_count_plan.sql` (function)
-3. `SELECT refresh_l2_stock_count_plan('21355');`
-4. Pool reconcile check (see comments in refresh file)
-5. Determinism self-test: run Step 3 again — JSONB must be identical
-6. Golden baseline: 21355 pool=948 HEALTHY=708 STOCKFLOW=111 TLX=75 AMBIGUOUS=54
-7. Extend to all stores once 21355 verified
+**21355 verification result (2026-06-09):**
+- Determinism: PASS (two identical runs)
+- Golden baseline: PASS — pool=948, HEALTHY=708, STOCKFLOW=111, TLX=75, AMBIGUOUS=54
+- `no_barcode_sf_alert`: 21 STOCKFLOW rows have no EAN in sigma_ean_master (investigate
+  before loading those 21 to StockFlow — recycled-code risk)
+
+**Next session: extend to remaining 4 stores:**
+```sql
+SELECT refresh_l2_stock_count_plan('10116');
+SELECT refresh_l2_stock_count_plan('80175');
+SELECT refresh_l2_stock_count_plan('80176');
+SELECT refresh_l2_stock_count_plan('80579');
+```
 
 ---
 
