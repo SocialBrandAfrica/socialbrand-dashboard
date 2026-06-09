@@ -20,6 +20,11 @@
            included Prefer: resolution=merge-duplicates (an INSERT hint) on PATCH calls.
            Added Get-PatchHeaders for PATCH-only calls (omits resolution=merge-duplicates).
            Complete-PushLog and Clear-StuckRuns now use Get-PatchHeaders.
+    v3.21: Wire refresh_l2_consignment_daily into nightly post-push chain (store 10116
+           only). Closes the open wire from SB-CC-AUDIT-002 that required Pieter to
+           run the refresh manually each morning. Invoke-RefreshConsignmentDaily runs
+           inside the nightly switch case after Invoke-UpsertSearchIndex. All other
+           stores skip it silently. SB-CC-AUDIT-002 / SB-CC-L1-001.
     v3.20: Chain L1 sigma extractor after every nightly push (Invoke-RunExtractor).
            Extractor was deployed by Invoke-DeployExtractor but never executed --
            l2_soh_daily + sigma_promotions + sigma_promotion_articles had 0 rows.
@@ -95,7 +100,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.20'
+$ScriptVersion = 'v3.21'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -1320,6 +1325,38 @@ function Invoke-UpsertSearchIndex {
 }
 
 # =============================================================================
+# REFRESH: l2_consignment_daily (store 10116 only)
+# Nightly L2 refresh for the HMR SUSHI consignment applet (Pulse Mini).
+# Called inside the nightly switch case after Invoke-UpsertSearchIndex.
+# Silently skips all stores except 10116.
+# Closes the open wire from SB-CC-AUDIT-002 (was run manually each morning).
+# =============================================================================
+
+function Invoke-RefreshConsignmentDaily {
+    if ($StoreCode -ne '10116') { return }
+
+    Write-Host "`n[consignment] Refreshing l2_consignment_daily for store $StoreCode..." -ForegroundColor Cyan
+    $url  = "$SupabaseUrl/rest/v1/rpc/refresh_l2_consignment_daily"
+    $hdrs = @{
+        'apikey'        = $SupabaseKey
+        'Authorization' = "Bearer $SupabaseKey"
+        'Content-Type'  = 'application/json; charset=utf-8'
+        'User-Agent'    = "SocialBrand-PushScript/$ScriptVersion PowerShell"
+    }
+    $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes(
+        (ConvertTo-Json ([ordered]@{ p_store = $StoreCode }) -Compress)
+    )
+    try {
+        $resp = Invoke-RestMethod -Uri $url -Method POST -Headers $hdrs -Body $bodyBytes -TimeoutSec 60
+        Write-Host "  l2_consignment_daily refreshed: $resp rows for store $StoreCode." -ForegroundColor Green
+    }
+    catch {
+        Write-Warning "l2_consignment_daily refresh failed: $_"
+        Write-Warning "Run manually: SELECT refresh_l2_consignment_daily('$StoreCode');"
+    }
+}
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -1371,6 +1408,7 @@ switch ($Mode) {
         }
         Invoke-RefreshKpiView
         Invoke-UpsertSearchIndex -SnapDate $script:LastNightlySnapDate
+        Invoke-RefreshConsignmentDaily
     }
     'intraday' {
         Write-Host "Intraday mode not yet implemented (Phase 2)." -ForegroundColor Yellow
