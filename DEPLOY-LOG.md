@@ -4,6 +4,37 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-10 22:38 SAST — Dashboard full evaluation: D1 amendment live, L2 nightly refresh wired, dept-filter fix
+
+**Commit:** c350e33 (fix(dashboard): full evaluation — dept-name normalize bug + L2 nightly refresh wired)
+**Status: ALL LIVE — DB-side only, no Vercel redeploy needed (PostgREST serves fixed RPCs immediately).**
+
+**Evaluation scope:** all 14 app RPCs + 3 direct views tested per store and per filter combination
+(dept, sub-dept, multi-store, multi-date, movers/non-movers, parents, activity, search, focus,
+product detail, lost-sales timeline, ghost stock, stock integrity). All return correct rows.
+Anon grants verified on every client-read object.
+
+**Fixed:**
+1. **Dept filter silent-empty** — rpc_top20 + rpc_focus_top5 raw-matched dept_name while the app
+   sends normalized names; 'BOTTLE, CRATES.' (80579) chip emptied Top 20/Focus. Now
+   period-insensitive both sides. Proof 0→1 row; regressions unchanged.
+2. **L2 chain never refreshed nightly** — no cron, no chain call anywhere. New
+   refresh_l2_pipeline() refreshes movements_typed→ros→classification→ranging_tier→
+   stock_position→kpi_daily + Family 3 anomaly engine ×5 stores; pg_cron 'refresh-l2-pipeline'
+   20:15 UTC (22:15 SAST). First run 113.6s clean. Closes ANOM-001 nightly-wiring open item.
+
+**Deployed (stuck "pending Pieter SQL-Editor" items since 06-07/06-08):**
+- D1 amendment (l2_ranging_tier_class_excluded.sql steps 1–4): CLASS_EXCLUDED tier live,
+  0 bad rows, 0 tier mismatches vs l2_stock_position.
+- l2_kpi_daily v1.2: **gp_pct LIVE** — 16.6% (10116) / 13.3% (21355) / 17.2% (80175) /
+  18.7% (80176) / 15.7% (80579); capital_normal 10116 R4.49M ≈ expected R4.7M.
+
+**Layer-hierarchy note:** dashboard KPI cards still read v/mv_kpi_by_date (L1 PRSSALE-derived).
+SB-INDEX-005 Phase 2 (switch sales KPIs to L2 sigma_sales sources) is now UNBLOCKED —
+l2_kpi_daily refreshes nightly with populated gp_pct. Needs PM sequencing brief before the swap.
+
+---
+
 ## 2026-06-10 22:15 SAST — v3.24 + consignment fix: Pulse Mini unfrozen, standing pg_cron refresh
 
 **Commit:** 5fc2390 (fix(pulse-mini): v3.24 — consignment refresh broken since barcode migration
