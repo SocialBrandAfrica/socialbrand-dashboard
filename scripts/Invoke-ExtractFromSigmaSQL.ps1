@@ -63,6 +63,11 @@
     v1.8 : Write fatal error to C:\socialbrand\extractor_last_error.txt on exit 1 so
            push_log in Push-SigmaToSupabase v3.22+ captures the actual exception text
            instead of a bare "Exit code 1". Cleared at start of each run.
+    v1.9 : Delete-before-insert for sigma_ean_master. Old truncated-barcode rows (from
+           pre-v1.7 CAST bigint runs) persist alongside new full-length barcodes because
+           the conflict key includes barcode -- different truncated vs full values never
+           collide, so no row is ever overwritten. Fix: DELETE all store rows first, then
+           INSERT fresh from EASYDB. Only runs if EASYDB read succeeds (safe guard).
 #>
 param(
     [switch]$FullRefresh,
@@ -80,7 +85,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.8'
+$ScriptVersion  = 'v1.9'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -1092,6 +1097,28 @@ WHERE  rn = 1
     try {
         $dt = Invoke-SqlTable -Conn $conn -Sql $sql
         Write-Host "  $($dt.Rows.Count) rows read from EASYDB..."
+
+        # Delete all existing sigma_ean_master rows for this store before inserting.
+        # Pre-v1.7 runs stored barcodes via CAST(dREFNR AS BIGINT), which truncates
+        # 13-digit EAN-13 codes to 12 digits. The conflict key includes barcode, so
+        # a truncated row (e.g. '600106068482') and its corrected row ('6001060684820')
+        # are different keys -- upsert inserts the correct row but leaves the stale one.
+        # Deleting first ensures the table reflects only the current EASYDB state.
+        $delUrl  = "$SupabaseUrl/rest/v1/sigma_ean_master?store_code=eq.$StoreCode&client_id=eq.$ClientId"
+        $delHdrs = @{
+            'apikey'        = $SupabaseKey
+            'Authorization' = "Bearer $SupabaseKey"
+            'Prefer'        = 'return=minimal'
+            'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+        }
+        try {
+            $null = Invoke-RestMethod -Uri $delUrl -Method DELETE -Headers $delHdrs -TimeoutSec 30
+            Write-Host "  sigma_ean_master: cleared $StoreCode rows before full refresh." -ForegroundColor Yellow
+        }
+        catch {
+            Write-Warning "  sigma_ean_master: pre-delete failed ($_) -- proceeding with upsert (stale rows may persist)."
+        }
+
         $pushed = Push-DataTable -Table 'sigma_ean_master' -ConflictCols $conflict -Dt $dt -RowMapper {
             param($row)
             [ordered]@{
