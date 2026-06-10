@@ -34,6 +34,10 @@ $ErrorActionPreference = 'Stop'
 $TaskName   = 'SocialBrand Sunday Push'
 $ScriptPath = Join-Path $ScriptDir 'Push-SigmaToSupabase.ps1'
 $ExeArgs    = '-WindowStyle Hidden -ExecutionPolicy Bypass -NonInteractive -File "' + $ScriptPath + '"'
+# Absolute path to powershell.exe -- bare 'powershell.exe' fails on servers where
+# System32\WindowsPowerShell is missing from the system PATH (observed on 80175
+# and 21355).
+$PsExePath  = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
 Write-Host "=== Create-SundayPushTask ===" -ForegroundColor Cyan
 Write-Host "Server  : $env:COMPUTERNAME"
@@ -55,7 +59,7 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
 
 # Weekly trigger: Sundays only at 16:15
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At '16:15'
-$action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $ExeArgs -WorkingDirectory $ScriptDir
+$action  = New-ScheduledTaskAction -Execute $PsExePath -Argument $ExeArgs -WorkingDirectory $ScriptDir
 $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Hours 2) `
     -StartWhenAvailable `

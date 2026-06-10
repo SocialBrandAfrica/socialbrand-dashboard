@@ -20,6 +20,22 @@
            included Prefer: resolution=merge-duplicates (an INSERT hint) on PATCH calls.
            Added Get-PatchHeaders for PATCH-only calls (omits resolution=merge-duplicates).
            Complete-PushLog and Clear-StuckRuns now use Get-PatchHeaders.
+    v3.23: ROOT CAUSE of three blind extractor nights: Invoke-DeployExtractor's
+           content guard regex ('#.*Version.*v[\d.]+') has NEVER matched the real
+           extractor file -- every nightly deploy silently discarded the download,
+           so all 5 servers kept running stale manually-copied extractor versions
+           (proof: 21355 chained SUCCESS on 2026-06-10 still pushed truncated
+           12-digit barcodes and zero l2_soh_daily rows = pre-v1.4 behaviour).
+           Fixes: (a) guard now uses the same proven regex as Invoke-SelfUpdate
+           ($ScriptVersion assignment line) and logs the deployed version;
+           (b) guard rejection now logs FAILED to push_log instead of a silent
+           Write-Warning; (c) Invoke-RunExtractor parses the deployed extractor's
+           $ScriptVersion and stamps it into push_log (tac_filename column) so the
+           version that actually ran is provable (R22); (d) extractor subprocess
+           stdout+stderr captured to extractor_last_run.log / extractor_last_err.log
+           via Start-Process redirect -- on failure the tail is pushed into
+           push_log error_message, covering crashes the v1.8 error-file mechanism
+           cannot see (parse errors, config throws before the main try block).
     v3.22: Fix Invoke-RunExtractor on PS7 stores (80175, 21355): hard-coded
            powershell.exe call replaced with the running process's own executable
            ([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName).
@@ -107,7 +123,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.22'
+$ScriptVersion = 'v3.23'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -384,12 +400,19 @@ function Invoke-DeployExtractor {
         $tempPath = "$env:TEMP\SBExtractor_update.tmp"
         Invoke-WebRequest -Uri $remoteUrl -OutFile $tempPath -UseBasicParsing -TimeoutSec 60
         $remoteContent = Get-Content $tempPath -Raw
-        if ($remoteContent -match '#.*Version.*v[\d.]+') {
+        # v3.23: guard regex must match the $ScriptVersion assignment line -- the
+        # same proven pattern Invoke-SelfUpdate uses. The old guard
+        # ('#.*Version.*v[\d.]+') never matched the real extractor file, so every
+        # nightly deploy was silently discarded and servers ran stale copies.
+        if ($remoteContent -match '\$ScriptVersion\s*=\s*''(v[\d.]+)''') {
+            $deployedVer = $Matches[1]
             Move-Item -Path $tempPath -Destination $destPath -Force
-            Write-Host "  [extractor-deploy] Extractor deployed to $destPath" -ForegroundColor Green
+            Write-Host "  [extractor-deploy] Extractor $deployedVer deployed to $destPath" -ForegroundColor Green
         } else {
-            Write-Warning "[extractor-deploy] Downloaded file does not look like the extractor - skipping."
             Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+            # Guard rejection is a deploy failure, not a silent skip -- log it so
+            # a stale-extractor night is visible in push_log (v3.23, R22).
+            throw "Downloaded file has no `$ScriptVersion assignment - not deployed (guard rejection)."
         }
     }
     catch {
@@ -429,7 +452,7 @@ function Send-ExtractorLog {
     # Writes a single completion record to push_log for Family-1 monitoring.
     # push_type=sigma_extractor; status=SUCCESS or FAILED.
     # Non-fatal -- push has already completed before this is called.
-    param([string]$Status, [string]$ErrorMsg, [int]$Elapsed, [datetime]$StartTime)
+    param([string]$Status, [string]$ErrorMsg, [int]$Elapsed, [datetime]$StartTime, [string]$ExtractorVersion)
     try {
         $rec = [ordered]@{
             store_code       = $StoreCode
@@ -443,6 +466,9 @@ function Send-ExtractorLog {
             completed_at     = (Get-Date -Format 'o')
         }
         if ($ErrorMsg) { $rec['error_message'] = $ErrorMsg }
+        # v3.23: stamp the extractor version that actually ran into tac_filename
+        # so push_log proves which file executed (R22). Format: extractor=v1.9
+        if ($ExtractorVersion) { $rec['tac_filename'] = "extractor=$ExtractorVersion" }
         $url  = "$SupabaseUrl/rest/v1/push_log"
         $hdrs = @{
             'apikey'        = $SupabaseKey
@@ -478,21 +504,38 @@ function Invoke-RunExtractor {
         Send-ExtractorLog -Status 'FAILED' -ErrorMsg "Extractor not found at $extractorPath" -Elapsed 0 -StartTime (Get-Date)
         return
     }
+    # v3.23: parse the deployed extractor's version from disk BEFORE running it,
+    # so push_log records which file actually executed (R22 -- three blind nights
+    # happened because stale copies ran while everyone assumed the deploy worked).
+    $extractorVer = 'unknown'
+    try {
+        $onDisk = Get-Content $extractorPath -Raw
+        if ($onDisk -match '\$ScriptVersion\s*=\s*''(v[\d.]+)''') { $extractorVer = $Matches[1] }
+    }
+    catch {}
     # Use the same PowerShell executable as the current process (works for both
     # powershell.exe PS5.1 and pwsh.exe PS7 -- fixes "not recognized" on PS7 stores).
     $psExe   = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
     # Extractor v1.8+ writes its last fatal error to extractor_last_error.txt so
     # we can surface the actual exception in push_log instead of a bare exit code.
     $errFile = Join-Path $scriptDir 'extractor_last_error.txt'
+    # v3.23: capture the subprocess's full stdout/stderr to files. This covers
+    # failures the error-file mechanism cannot see: parse errors, config-section
+    # throws before the extractor's main try block, module-load failures.
+    $outLog  = Join-Path $scriptDir 'extractor_last_run.log'
+    $errLog  = Join-Path $scriptDir 'extractor_last_err.log'
     Write-Host ""
-    Write-Host "[extractor-run] Starting L1 sigma extractor ($extractorPath)..." -ForegroundColor Cyan
+    Write-Host "[extractor-run] Starting L1 sigma extractor $extractorVer ($extractorPath)..." -ForegroundColor Cyan
     Write-Host "[extractor-run] Using PS executable: $psExe" -ForegroundColor DarkGray
     $t0       = Get-Date
     $exitCode = 0
     $errMsg   = $null
     try {
-        & $psExe -ExecutionPolicy Bypass -NonInteractive -File $extractorPath
-        $exitCode = $LASTEXITCODE
+        $proc = Start-Process -FilePath $psExe `
+            -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-NonInteractive','-File',"`"$extractorPath`"") `
+            -RedirectStandardOutput $outLog -RedirectStandardError $errLog `
+            -Wait -PassThru -NoNewWindow
+        $exitCode = $proc.ExitCode
     }
     catch {
         $exitCode = -1
@@ -501,23 +544,43 @@ function Invoke-RunExtractor {
     $elapsed = [int]((Get-Date) - $t0).TotalSeconds
     if ($exitCode -ne 0) {
         if (-not $errMsg) {
-            # Read the diagnostic file written by extractor v1.8+ on fatal error.
+            # Build the most informative message available, in order of preference:
+            # (1) extractor v1.8+ error file, (2) stderr tail, (3) stdout tail.
+            $detail = ''
             try {
                 if (Test-Path $errFile) {
-                    $raw    = (Get-Content $errFile -Raw -Encoding UTF8 -ErrorAction SilentlyContinue).Trim()
-                    $clip   = if ($raw.Length -gt 500) { $raw.Substring(0, 500) } else { $raw }
-                    $errMsg = if ($clip) { "Exit code $exitCode | $clip" } else { "Exit code $exitCode" }
+                    $raw = (Get-Content $errFile -Raw -Encoding UTF8 -ErrorAction SilentlyContinue)
+                    if ($raw) { $detail = $raw.Trim() }
                 }
-                else { $errMsg = "Exit code $exitCode" }
             }
-            catch { $errMsg = "Exit code $exitCode" }
+            catch {}
+            if (-not $detail) {
+                try {
+                    if (Test-Path $errLog) {
+                        $raw = (Get-Content $errLog -Raw -ErrorAction SilentlyContinue)
+                        if ($raw) { $detail = ('stderr: ' + $raw.Trim()) }
+                    }
+                }
+                catch {}
+            }
+            if (-not $detail) {
+                try {
+                    if (Test-Path $outLog) {
+                        $tail = Get-Content $outLog -Tail 8 -ErrorAction SilentlyContinue
+                        if ($tail) { $detail = ('stdout tail: ' + (($tail | Where-Object { $_ }) -join ' / ')) }
+                    }
+                }
+                catch {}
+            }
+            if ($detail.Length -gt 450) { $detail = $detail.Substring(0, 450) }
+            $errMsg = if ($detail) { "Exit code $exitCode | $detail" } else { "Exit code $exitCode | no output captured" }
         }
-        Write-Warning "[extractor-run] Extractor failed (code $exitCode) after ${elapsed}s."
-        Send-ExtractorLog -Status 'FAILED' -ErrorMsg $errMsg -Elapsed $elapsed -StartTime $t0
+        Write-Warning "[extractor-run] Extractor $extractorVer failed (code $exitCode) after ${elapsed}s."
+        Send-ExtractorLog -Status 'FAILED' -ErrorMsg $errMsg -Elapsed $elapsed -StartTime $t0 -ExtractorVersion $extractorVer
     }
     else {
-        Write-Host "[extractor-run] Extractor finished in ${elapsed}s." -ForegroundColor Green
-        Send-ExtractorLog -Status 'SUCCESS' -ErrorMsg $null -Elapsed $elapsed -StartTime $t0
+        Write-Host "[extractor-run] Extractor $extractorVer finished in ${elapsed}s." -ForegroundColor Green
+        Send-ExtractorLog -Status 'SUCCESS' -ErrorMsg $null -Elapsed $elapsed -StartTime $t0 -ExtractorVersion $extractorVer
     }
 }
 
@@ -815,18 +878,18 @@ function Invoke-TacExtract {
     }
     if (-not $dateRaw) { throw "No P row found in PRSSALE.dat extracted from $ZipPath" }
 
-    # KI-002: normalise DD-MM-YYYY / DD/MM/YYYY → ISO.
+    # KI-002: normalise DD-MM-YYYY / DD/MM/YYYY -> ISO.
     # KI-003: some TOPS stores (e.g. Dice) emit dates already in YYYY-MM-DD
     # inside the P row. Detect by checking if the first segment is 4 digits
-    # (the year). If so, treat as-is; otherwise invert DD/MM/YYYY → YYYY-MM-DD.
+    # (the year). If so, treat as-is; otherwise invert DD/MM/YYYY -> YYYY-MM-DD.
     $dateNorm = $dateRaw.Replace('-', '/')
     $p        = $dateNorm -split '/'
     if ($p[0].Length -eq 4) {
-        # Already YYYY/MM/DD — no inversion needed
+        # Already YYYY/MM/DD - no inversion needed
         $yyyymmdd = "$($p[0])$($p[1])$($p[2])"
         $isoDate  = "$($p[0])-$($p[1])-$($p[2])"
     } else {
-        # DD/MM/YYYY — invert to YYYY-MM-DD
+        # DD/MM/YYYY - invert to YYYY-MM-DD
         $yyyymmdd = "$($p[2])$($p[1])$($p[0])"
         $isoDate  = "$($p[2])-$($p[1])-$($p[0])"
     }

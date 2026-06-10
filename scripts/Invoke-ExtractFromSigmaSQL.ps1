@@ -68,6 +68,10 @@
            the conflict key includes barcode -- different truncated vs full values never
            collide, so no row is ever overwritten. Fix: DELETE all store rows first, then
            INSERT fresh from EASYDB. Only runs if EASYDB read succeeds (safe guard).
+           Also: script-scope trap added so CONFIG-section failures (unknown host,
+           missing key file) write extractor_last_error.txt too -- previously only
+           main-try failures were captured and startup crashes showed as a bare
+           "Exit code 1" in push_log.
 #>
 param(
     [switch]$FullRefresh,
@@ -80,6 +84,19 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# Script-scope trap: catches terminating errors thrown OUTSIDE the main
+# try/catch -- i.e. the CONFIG section below (unknown host, missing key file).
+# Without this, such failures exit 1 with no error file and push_log shows a
+# bare "Exit code 1" (the v1.8 mechanism only covers the main try block).
+trap {
+    try {
+        Set-Content -Path 'C:\socialbrand\extractor_last_error.txt' -Value ("CONFIG/STARTUP: " + $_.ToString()) -Encoding UTF8 -Force
+    }
+    catch {}
+    Write-Host "FATAL (startup): $_" -ForegroundColor Red
+    exit 1
+}
 
 # =============================================================================
 # CONFIG

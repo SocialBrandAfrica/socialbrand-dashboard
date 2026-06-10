@@ -31,6 +31,11 @@ $ErrorActionPreference = 'Stop'
 $TaskName   = 'SocialBrand-ExtractDelta'
 $ScriptPath = Join-Path $ScriptDir 'Invoke-ExtractFromSigmaSQL.ps1'
 $ExeArgs    = '-ExecutionPolicy Bypass -NonInteractive -WindowStyle Hidden -File "' + $ScriptPath + '"'
+# Absolute path to powershell.exe -- bare 'powershell.exe' fails on servers where
+# System32\WindowsPowerShell is missing from the system PATH (observed on 80175
+# and 21355: "The term 'powershell.exe' is not recognized"). The absolute path
+# works regardless of PATH state.
+$PsExePath  = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
 Write-Host "=== Create-ExtractorScheduledTask ===" -ForegroundColor Cyan
 Write-Host "Server  : $env:COMPUTERNAME"
@@ -51,7 +56,7 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
 }
 
 $trigger = New-ScheduledTaskTrigger -Daily -At '19:40'
-$action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $ExeArgs -WorkingDirectory $ScriptDir
+$action  = New-ScheduledTaskAction -Execute $PsExePath -Argument $ExeArgs -WorkingDirectory $ScriptDir
 $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
     -StartWhenAvailable `
