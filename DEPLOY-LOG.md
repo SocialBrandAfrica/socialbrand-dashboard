@@ -4,6 +4,36 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-10 21:45 SAST — Push v3.23 + extractor v1.9: deploy guard root-cause fix (3 blind nights)
+
+**Commits:** 51b45c7 (fix(pipeline): v3.23 — extractor deploy guard never matched, stale copies
+ran 3 nights) + 5a89213 (fix(extractor): v1.9 — delete-before-insert for sigma_ean_master)
+**Status: LIVE on GitHub. Self-update path: tomorrow 20:00 sweep (v3.22) downloads v3.23;
+21:00 sweep runs v3.23 → fixed guard deploys extractor v1.9 → first real v1.9 ride.
+Pieter manual runbook in HANDOVER-CURRENT.md gets proof in the morning instead.**
+
+**Root cause (proven):** `Invoke-DeployExtractor` guard regex `'#.*Version.*v[\d.]+'` never
+matches the extractor file (tested: False). Every nightly deploy silently discarded the
+download — v1.7/v1.8 never reached any server; all 5 ran stale manual copies. Proof: 21355's
+chained SUCCESS (06-10 21:03, 529s) still pushed 12-digit truncated barcodes + zero
+l2_soh_daily rows = pre-v1.4 behaviour.
+
+**v3.23:** guard uses self-updater's proven `\$ScriptVersion\s*=` regex; guard rejection
+logs FAILED to push_log; extractor version stamped into push_log tac_filename
+(`extractor=vX.Y`); subprocess stdout/stderr captured to extractor_last_run.log /
+extractor_last_err.log, tail pushed into error_message on failure (R22 — no blind nights
+structurally possible).
+
+**v1.9:** sigma_ean_master per-store DELETE before INSERT (conflict key includes barcode, so
+corrected 13-digit rows never collided with stale 12-digit rows); script-scope trap captures
+CONFIG-section crashes to extractor_last_error.txt.
+
+**Also:** Create-ExtractorScheduledTask.ps1 + Create-SundayPushTask.ps1 use absolute
+powershell.exe path (bare name unresolvable on 80175/21355 — killed 80175's 19:40 task;
+80175 has had no extraction since 06-08 22:04).
+
+---
+
 ## 2026-06-09 20:42 SAST — Pulse Mini: pace sub-text shows actual basis not rounded rate
 
 **Commit:** 2e89faf (fix(pulse-mini): pace sub-text shows actual basis not rounded rate)
