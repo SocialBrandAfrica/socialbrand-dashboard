@@ -4,6 +4,32 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-10 22:15 SAST — v3.24 + consignment fix: Pulse Mini unfrozen, standing pg_cron refresh
+
+**Commit:** 5fc2390 (fix(pulse-mini): v3.24 — consignment refresh broken since barcode migration
++ wrong chain order)
+**Status: LIVE — DB function fixed + refreshed via Supabase MCP (migration
+fix_refresh_l2_consignment_daily_barcode_text); pg_cron jobs 13+14 scheduled; v3.24 on GitHub
+(self-update delivers with the v3.23 chain).**
+
+**Defect 1:** refresh_l2_consignment_daily() threw `operator does not exist: text - integer`
+on every call since the 2026-06-09 sigma_ean_master.barcode bigint→text migration
+(`em.barcode - 200000`). Push chain swallowed it (Write-Warning). Pulse Mini froze at Jun 9.
+Fixed: regex guard + ::bigint cast. Refreshed: June 1–10 live, 153 lines, R36,543 — matches
+raw sigma_sales to the rand on all 10 days.
+
+**Defect 2:** Invoke-RefreshConsignmentDaily ran before Invoke-RunExtractor (reads what the
+extractor writes). v3.24 reorders.
+
+**Standing daily update (indefinite):** pg_cron `refresh-consignment-evening` (18:05 UTC) +
+`refresh-consignment-night` (19:55 UTC) — in-database, independent of push script health.
+
+**Boss-R56k reconciliation:** our R36,543 verified to the rand, dual-channel exact Jun 1–5.
+Gap is scope, not tally — likely chinese hot food under HMR HOT MEALS (605, R83.5k June) or
+deliveries-vs-sales. Pieter to get boss's June-1 breakdown (ours: R8,110).
+
+---
+
 ## 2026-06-10 21:45 SAST — Push v3.23 + extractor v1.9: deploy guard root-cause fix (3 blind nights)
 
 **Commits:** 51b45c7 (fix(pipeline): v3.23 — extractor deploy guard never matched, stale copies
