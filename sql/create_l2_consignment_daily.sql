@@ -1,5 +1,8 @@
 -- l2_consignment_daily
 -- SB-CC-AUDIT-002 (L2 restructure, 2026-06-08)
+-- 2026-06-10: function fixed for sigma_ean_master.barcode bigint->text migration
+--   (text - integer operator error broke every refresh after 2026-06-09 21:45;
+--   regex guard + ::bigint cast added in classified_articles CTE).
 -- Layer 2 derived table: pre-classified HMR SUSHI consignment lines.
 -- Engine classifies once at refresh; rpc_consignment_lines reads only (no join at fetch).
 --
@@ -87,7 +90,12 @@ BEGIN
       a.description,
       COALESCE((
         SELECT CASE
-          WHEN (em.barcode - 200000) = ANY(ARRAY[
+          -- barcode is TEXT since 2026-06-09 migration (was bigint). Guard the
+          -- cast: non-numeric barcodes classify 'c'. text - integer has no
+          -- operator -- this broke every refresh after the migration (caught
+          -- 2026-06-10: silent Write-Warning in push chain, Pulse Mini froze).
+          WHEN em.barcode ~ '^[0-9]+$'
+           AND (em.barcode::bigint - 200000) = ANY(ARRAY[
             653,650,895,888,863,851,846,844,843,841,835,533,831,824,818,810,792,790,
             785,778,773,767,766,749,747,832,762,737,722,744,718,715,9677,710,700,736,
             632,638,597,307,308,309,889,924,930,599,699,694,693,696,695,697,698,840,

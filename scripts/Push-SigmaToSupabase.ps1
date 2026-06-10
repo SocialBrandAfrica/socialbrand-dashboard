@@ -20,6 +20,16 @@
            included Prefer: resolution=merge-duplicates (an INSERT hint) on PATCH calls.
            Added Get-PatchHeaders for PATCH-only calls (omits resolution=merge-duplicates).
            Complete-PushLog and Clear-StuckRuns now use Get-PatchHeaders.
+    v3.24: Pulse Mini daily-update fix (two defects found 2026-06-10 night):
+           (a) Invoke-RefreshConsignmentDaily ran BEFORE Invoke-RunExtractor but
+           reads sigma_sales, which the extractor populates -- moved to run after
+           the extractor; (b) refresh_l2_consignment_daily() itself had been
+           throwing 'operator does not exist: text - integer' on every call since
+           the 2026-06-09 sigma_ean_master.barcode bigint->text migration (fixed
+           in DB + sql/create_l2_consignment_daily.sql -- regex guard + cast).
+           Standing daily refresh now ALSO scheduled in pg_cron
+           (refresh-consignment-evening 18:05 UTC / refresh-consignment-night
+           19:55 UTC) so Pulse Mini updates even if a push run fails.
     v3.23: ROOT CAUSE of three blind extractor nights: Invoke-DeployExtractor's
            content guard regex ('#.*Version.*v[\d.]+') has NEVER matched the real
            extractor file -- every nightly deploy silently discarded the download,
@@ -123,7 +133,7 @@ $ErrorActionPreference = 'Stop'
 # CONFIG
 # =============================================================================
 
-$ScriptVersion = 'v3.23'
+$ScriptVersion = 'v3.24'
 $ClientName    = 'SocialBrand'
 
 # Retention cutoff - mirrors purge_old_snapshots() formula exactly.
@@ -1496,7 +1506,6 @@ switch ($Mode) {
         }
         Invoke-RefreshKpiView
         Invoke-UpsertSearchIndex -SnapDate $script:LastNightlySnapDate
-        Invoke-RefreshConsignmentDaily
     }
     'intraday' {
         Write-Host "Intraday mode not yet implemented (Phase 2)." -ForegroundColor Yellow
@@ -1505,5 +1514,12 @@ switch ($Mode) {
 }
 
 Invoke-RunExtractor
+
+# v3.24: consignment refresh moved AFTER the extractor -- it reads sigma_sales,
+# which the extractor populates. Running it before (v3.21-v3.23 position) meant
+# the refresh could only see sales from the previous extraction. Belt-and-braces:
+# pg_cron jobs refresh-consignment-evening (18:05 UTC) + refresh-consignment-night
+# (19:55 UTC) run the same refresh in-database, independent of this script.
+Invoke-RefreshConsignmentDaily
 
 Write-Host "`nCompleted: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor White
