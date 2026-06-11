@@ -76,12 +76,19 @@
            SUCCESS with rows_pushed or FAILED with error). R22 / DASH-TRUTH-001
            P0.1: 80175 sigma_sales was dark for 2 days behind a green summary row.
            A green night with a dark table is now structurally impossible.
+    v1.11: sigma_scan_refs extraction from dw220sdb.dbo.DBREFE -- Sigma's NATIVE
+           scan-reference table (R25 source-of-record, PM ruling 2026-06-11).
+           Sigma stores check-digit-stripped bodies natively; the GS1 check-digit
+           computation (12->13 EAN, 11->12 UPC-A) is the approved decode, with
+           per-row provenance (code_kind, decode_method). Includes dPACK (native
+           pack-link home). IntellistoX/sigma_ean_master stays as derivative
+           cross-check during transition. SB-CC-SOURCE-001.
 #>
 param(
     [switch]$FullRefresh,
     [switch]$SkipEan,
     [ValidateSet('sales','movements','articles','lifecycle','orders','orderlines',
-                 'suppliermaster','supplierlink','tradeterms','ean','departments','subdepts',
+                 'suppliermaster','supplierlink','tradeterms','ean','scanrefs','departments','subdepts',
                  'soh_daily','promotions','promotionarticles')]
     [string]$TableName = ''
 )
@@ -106,7 +113,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.10'
+$ScriptVersion  = 'v1.11'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -1160,6 +1167,127 @@ WHERE  rn = 1
     return $pushed
 }
 
+# --- 10b. sigma_scan_refs (dw220sdb.DBREFE -- R25 NATIVE source-of-record) ----
+
+function Get-Gs1CheckDigit {
+    # GS1 check digit over a 12-digit body (EAN-13). For 11-digit UPC-A bodies
+    # the same algorithm applies after left-padding to 12 with '0'.
+    # Position weighting (1-indexed over the body): odd x1, even x3.
+    param([string]$Body)
+    $padded = $Body.PadLeft(12, '0')
+    $sum = 0
+    for ($i = 0; $i -lt 12; $i++) {
+        $d = [int][string]$padded[$i]
+        if ((($i + 1) % 2) -eq 0) { $sum += $d * 3 } else { $sum += $d }
+    }
+    return ((10 - ($sum % 10)) % 10)
+}
+
+function Invoke-ExtractScanRefs {
+    # PM ruling 2026-06-11 18:50 (R25): dw220sdb.dbo.DBREFE is Sigma's NATIVE
+    # scan-reference table -- the source-of-record for scan codes. Sigma stores
+    # CHECK-DIGIT-STRIPPED bodies natively (12-digit EAN-13 bodies, 11-digit
+    # UPC-A bodies, 6/7-digit PLUs); the full 13-digit code exists nowhere on
+    # the server. The GS1 check-digit computation is the APPROVED decode, with
+    # provenance stamped per row (code_kind + decode_method). Proof: 15,161 of
+    # 15,182 TAC EAN-13s on 10116 exactly = len-12 body + computed check digit.
+    # IntellistoX (sigma_ean_master) stays as derivative cross-check during
+    # transition. Full refresh: delete store rows, then insert.
+    Write-Host "`n[10b/16] sigma_scan_refs  (dw220sdb.DBREFE -- native scan references)"
+    $conflict = 'client_id,store_code,scan_code,product_code'
+    $sql = @"
+WITH ranked AS (
+    SELECT
+        CONVERT(varchar(20), CONVERT(decimal(20,0), ROUND(dREFNR, 0))) AS scan_code,
+        CONVERT(bigint, ROUND(dARTNR, 0)) AS product_code,
+        cSYSTEM        AS system_flag,
+        cTYP           AS type_flag,
+        dPACK          AS pack_size,
+        siMENGE        AS qty_flag,
+        siGESPERRT     AS blocked_flag,
+        cHerk          AS origin_flag,
+        dtDATE         AS ref_date,
+        dtDatumAnlage  AS created_date,
+        dtLetztAend    AS last_changed,
+        ROW_NUMBER() OVER (
+            PARTITION BY dREFNR, dARTNR
+            ORDER BY dtLetztAend DESC
+        ) AS rn
+    FROM dw220sdb.dbo.DBREFE WITH (NOLOCK)
+)
+SELECT scan_code, product_code, system_flag, type_flag, pack_size, qty_flag,
+       blocked_flag, origin_flag, ref_date, created_date, last_changed
+FROM   ranked
+WHERE  rn = 1
+"@
+    $conn = New-SqlConn -Db $DwDb
+    try {
+        $dt = Invoke-SqlTable -Conn $conn -Sql $sql
+        Write-Host "  $($dt.Rows.Count) rows read from DBREFE..."
+
+        # Full refresh: clear this store's rows first (same rationale as
+        # sigma_ean_master v1.9 -- scan_code is in the conflict key, so stale
+        # codes would otherwise persist forever).
+        $delUrl  = "$SupabaseUrl/rest/v1/sigma_scan_refs?store_code=eq.$StoreCode&client_id=eq.$ClientId"
+        $delHdrs = @{
+            'apikey'        = $SupabaseKey
+            'Authorization' = "Bearer $SupabaseKey"
+            'Prefer'        = 'return=minimal'
+            'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+        }
+        try {
+            $null = Invoke-RestMethod -Uri $delUrl -Method DELETE -Headers $delHdrs -TimeoutSec 30
+            Write-Host "  sigma_scan_refs: cleared $StoreCode rows before full refresh." -ForegroundColor Yellow
+        }
+        catch {
+            Write-Warning "  sigma_scan_refs: pre-delete failed ($_) -- proceeding with upsert (stale rows may persist)."
+        }
+
+        $pushed = Push-DataTable -Table 'sigma_scan_refs' -ConflictCols $conflict -Dt $dt -RowMapper {
+            param($row)
+            $code   = Safe-Text $row['scan_code']
+            $kind   = 'OTHER'
+            $full   = $code
+            $method = 'AS_IS'
+            if ($code -and $code -match '^[0-9]+$') {
+                if ($code.Length -eq 12) {
+                    $kind = 'EAN13_BODY'; $full = $code + (Get-Gs1CheckDigit $code); $method = 'CHECK_DIGIT_APPENDED'
+                }
+                elseif ($code.Length -eq 11) {
+                    $kind = 'UPCA_BODY';  $full = $code + (Get-Gs1CheckDigit $code); $method = 'CHECK_DIGIT_APPENDED'
+                }
+                elseif ($code.Length -eq 13) {
+                    $kind = 'FULL13'
+                }
+                elseif ($code.Length -le 8) {
+                    $kind = 'PLU'
+                }
+            }
+            [ordered]@{
+                client_id     = $ClientId
+                store_code    = $StoreCode
+                scan_code     = $code
+                product_code  = Safe-BigInt $row['product_code']
+                code_kind     = $kind
+                barcode_full  = $full
+                decode_method = $method
+                system_flag   = Safe-Text $row['system_flag']
+                type_flag     = Safe-Text $row['type_flag']
+                pack_size     = Safe-Dec  $row['pack_size']
+                qty_flag      = Safe-Dec  $row['qty_flag']
+                blocked_flag  = Safe-Text $row['blocked_flag']
+                origin_flag   = Safe-Text $row['origin_flag']
+                ref_date      = Safe-Date $row['ref_date']
+                created_date  = Safe-Date $row['created_date']
+                last_changed  = Safe-Date $row['last_changed']
+            }
+        }
+    }
+    finally { $conn.Close() }
+    Write-Host "  sigma_scan_refs: $pushed rows pushed." -ForegroundColor Green
+    return $pushed
+}
+
 # --- 11. sigma_departments (dw220sdb.DBABTL) ----------------------------------
 
 function Invoke-ExtractDepartments {
@@ -1467,6 +1595,7 @@ try {
     Invoke-LoggedStep 'supplierlink'      'sigma_supplier_link'      { Invoke-ExtractSupplierLink }
     Invoke-LoggedStep 'tradeterms'        'sigma_trade_terms'        { Invoke-ExtractTradeTerms }
     Invoke-LoggedStep 'ean'               'sigma_ean_master'         { Invoke-ExtractEanMaster }
+    Invoke-LoggedStep 'scanrefs'          'sigma_scan_refs'          { Invoke-ExtractScanRefs }
     Invoke-LoggedStep 'departments'       'sigma_departments'        { Invoke-ExtractDepartments }
     Invoke-LoggedStep 'subdepts'          'sigma_subdepts'           { Invoke-ExtractSubdepts }
     Invoke-LoggedStep 'promotions'        'sigma_promotions'         { Invoke-ExtractPromotions }
