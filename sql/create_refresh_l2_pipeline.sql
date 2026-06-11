@@ -34,6 +34,7 @@ DECLARE
   v_t0     timestamptz := clock_timestamp();
   v_result jsonb := '{}'::jsonb;
   v_store  text;
+  v_snap   date;
 BEGIN
   REFRESH MATERIALIZED VIEW l2_movements_typed;
   v_result := v_result || jsonb_build_object('movements_typed_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
@@ -51,6 +52,25 @@ BEGIN
       PERFORM refresh_l2_anomaly_family3(v_store);
     EXCEPTION WHEN OTHERS THEN
       v_result := v_result || jsonb_build_object('anomaly_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+
+  -- L1 dashboard recovery steps (PM 06-11 ruling): belt-and-braces for the
+  -- push script's REST 500s -- refresh mv_kpi_by_date + search index in-DB.
+  BEGIN
+    REFRESH MATERIALIZED VIEW mv_kpi_by_date;
+  EXCEPTION WHEN OTHERS THEN
+    v_result := v_result || jsonb_build_object('mv_kpi_error', SQLERRM);
+  END;
+  FOR v_store IN SELECT unnest(ARRAY['10116','21355','80175','80176','80579'])
+  LOOP
+    BEGIN
+      SELECT MAX(snapshot_date) INTO v_snap FROM daily_snapshots WHERE store_code = v_store;
+      IF v_snap IS NOT NULL THEN
+        PERFORM upsert_search_index(v_store, v_snap);
+      END IF;
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('search_index_error_' || v_store, SQLERRM);
     END;
   END LOOP;
 
