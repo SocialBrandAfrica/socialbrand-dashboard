@@ -4,6 +4,33 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-11 19:10 SAST — Extractor v1.11: DBREFE native scan refs + GS1 check-digit decode (R25)
+
+**Commits:** 43215f0 (extractor v1.11) · e4feec1 (v_item_ean v2 staged) · 4e7d31f (pipeline +L1 recovery)
+**DB migrations (live):** create_sigma_scan_refs · extend_refresh_l2_pipeline_l1_recovery
+**Status: v1.11 on main 55 min before the 20:00 sweep — sigma_scan_refs fills ×5 tonight.**
+
+**EAN trace verdict (Pieter SSMS ×4 hops + CC data-side proof):** Sigma natively stores
+check-digit-stripped bodies; `dw220sdb.dbo.DBREFE` is the native scan-reference table; the
+full 13-digit code exists nowhere on the server. CC bulk proof: 15,161/15,182 TAC EAN-13s
+on 10116 = len-12 body + computed GS1 check digit. PM ruling R25: DBREFE = source-of-record;
+check-digit decode (12→13, 11→12) APPROVED with provenance; IntellistoX = derivative
+cross-check during transition.
+
+**v1.11:** Invoke-ExtractScanRefs — decimal(20,0) cast, ROW_NUMBER dedup, full-refresh
+delete-before-insert, decode in mapper (unit-tested: B&H →1, EAN-13 + UPC-A refs pass),
+carries dPACK (native pack-link home).
+**Staged behind data gate:** v_item_ean v2 (sigma_scan_refs source-of-record, ean_source
+provenance, engine contract unchanged) — deploy only after scan_refs rows ×5; gate audits,
+TAC dual-proof and the 452 triage queries in the file.
+**Also:** refresh_l2_pipeline now refreshes mv_kpi_by_date + runs upsert_search_index ×5
+(PM ruling — belt-and-braces for push REST 500s). SIGMA-SERVER-SCHEMA-MAP v1.5 (DBREFE +
+authenticity columns, SB-CC-SOURCE-001 deliverable A first entry).
+**Owed tonight:** cron rows 13/14/15/17 (20:05/21:55/22:15/22:45 SAST) → then dash-truth-001
+merges (all other legs met).
+
+---
+
 ## 2026-06-11 09:10 SAST — DASH-TRUTH-001 P0: v1.10 per-table logging + feed sentinel + freshness RPC
 
 **Commits:** a82c741 (main — extractor v1.10 + check_l1_feed_freshness) ·
