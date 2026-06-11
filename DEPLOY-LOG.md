@@ -4,6 +4,30 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-11 20:25 SAST — Extractor v1.12: EOD-collision guard (probe-and-wait for dw220sdb)
+
+**Commit:** 78745d1 (extractor v1.12) — on GitHub before the 21:00 sweep, self-deploys tonight.
+
+**v1.11 first ride post-mortem (20:00 sweep):** 21355 = FULL SUCCESS — first-ever
+sigma_scan_refs fill (50,522 rows, 5 code kinds; DBREFE extraction + GS1 decode proven in
+production). 10116/80175/80176/80579 FAILED at first dw220sdb contact: "Cannot open database
+dw220sdb requested by the login. The login failed" (20:01–20:12 SAST). Evidence acquits the
+code: same login green at 17:18 + 19:40 (v1.10) on the same stores; identical v1.11 green on
+21355 at 20:03. Verdict: **Sigma EOD holds dw220sdb restricted around 20:00, per-store
+timing** — the chained extractor fires into the EOD window. Data damage minimal:
+sigma_sales current to 06-11 ×5 via the 19:40 task; only scan_refs ×4 missing.
+
+**v1.12:** `Wait-ForSigmaDw` probes dw220sdb at chain start (skipped for the EASYDB-only
+`ean` single-table run) and retries every 5 min, max 9 probes (~40 min) — the extractor
+starts the moment EOD releases the DB instead of dying on first contact. Clear error after
+the window. Likely also explains the historical bare "Exit code 1" failures from 06-09's
+21:00 runs (pre-error-capture).
+
+**Watch tonight:** 21:00 sweep deploys v1.12 → scan_refs should fill ×4 remaining stores
+(~60k/SPAR). Cron proofs: job 13 succeeded 20:05 ✓; 14 (21:55) / 15 (22:15) / 17 (22:45) pending.
+
+---
+
 ## 2026-06-11 19:10 SAST — Extractor v1.11: DBREFE native scan refs + GS1 check-digit decode (R25)
 
 **Commits:** 43215f0 (extractor v1.11) · e4feec1 (v_item_ean v2 staged) · 4e7d31f (pipeline +L1 recovery)
