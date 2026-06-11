@@ -9,11 +9,90 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
 
+/* ── GLASS-ON-NAVY TOKEN BLOCK (SB-CC-DASH-TRUTH-001 §4) ─────────────────
+   Defined ONCE here; dashboard + Forge + future panels import this block.
+   Palette: bg #1A1A2E · card #16213E · border #0F3460 ·
+   accents green #2E7D32 / red #C62828 / amber #F57F17 / blue #1565C0 */
+:root {
+  --sb-bg-grad: linear-gradient(135deg, #141428, #1A1A2E, #16213E);
+  --sb-card-grad: linear-gradient(160deg, rgba(22,33,62,0.55), rgba(22,33,62,0.35));
+  --sb-border-glass: rgba(255,255,255,0.08);
+  --sb-bevel: inset 0 1px 0 rgba(255,255,255,0.10),
+              inset 0 -1px 2px rgba(0,0,0,0.25),
+              0 8px 24px rgba(0,0,0,0.35);
+  --sb-green: #2E7D32; --sb-red: #C62828; --sb-amber: #F57F17; --sb-blue: #1565C0;
+}
+
 .sb-glass {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 16px;
-  backdrop-filter: blur(20px);
+  background: var(--sb-card-grad);
+  border: 1px solid var(--sb-border-glass);
+  border-radius: 14px;
+  backdrop-filter: blur(16px) saturate(135%);
+  -webkit-backdrop-filter: blur(16px) saturate(135%);
+  box-shadow: var(--sb-bevel);
+  min-width: 0; /* grid kids must shrink — mobile hard requirement */
+}
+
+/* Coloured 3px top edge per KPI card (accent per metric) */
+.sb-edge       { position: relative; overflow: hidden; }
+.sb-edge::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  border-radius: 14px 14px 0 0;
+}
+.sb-edge-green::before { background: linear-gradient(90deg, #2E7D32, #4ade80); }
+.sb-edge-red::before   { background: linear-gradient(90deg, #C62828, #fca5a5); }
+.sb-edge-amber::before { background: linear-gradient(90deg, #F57F17, #fbbf24); }
+.sb-edge-blue::before  { background: linear-gradient(90deg, #1565C0, #60a5fa); }
+
+/* Tabular figures for ALL numbers (brief §4 type rule) */
+.sb-num, .sb-table td.r, .sb-table td.mono,
+.sb-kpi-strip p, .sb-raw-chip, .sb-delta-badge {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── DUAL-SOURCE ELEMENTS (brief §3) ─────────────────────────────────────
+   Headline = L2 engine · raw chip = L1 audit companion · delta badge */
+.sb-raw-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; font-family: 'Geist Mono', monospace;
+  color: rgba(245,245,244,0.40);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 5px; padding: 2px 6px;
+}
+.sb-raw-chip .lbl { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.08em; color: rgba(245,245,244,0.25); }
+.sb-delta-badge {
+  display: inline-flex; align-items: center;
+  font-size: 9.5px; font-family: 'Geist Mono', monospace;
+  border-radius: 5px; padding: 2px 5px; cursor: help;
+}
+.sb-delta-ok    { color: rgba(245,245,244,0.30); background: transparent; }
+.sb-delta-amber { color: #fbbf24; background: rgba(245,127,23,0.12); border: 1px solid rgba(245,127,23,0.3); }
+.sb-delta-red   { color: #fca5a5; background: rgba(198,40,40,0.14); border: 1px solid rgba(198,40,40,0.35); }
+
+/* ── LAYER FRESHNESS STRIP (brief P1.3) ──────────────────────────────────── */
+.sb-fresh-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  font-size: 10.5px; font-family: 'Geist Mono', monospace;
+  color: rgba(245,245,244,0.45);
+  padding: 6px 2px 0;
+}
+.sb-fresh-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px; border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.07);
+  white-space: nowrap;
+}
+.sb-fresh-chip.lag {
+  color: #fca5a5;
+  background: rgba(198,40,40,0.12);
+  border-color: rgba(198,40,40,0.35);
+  cursor: help;
+}
+@media (max-width: 767px) {
+  .sb-fresh-strip { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 3px; }
+  .sb-fresh-strip::-webkit-scrollbar { display: none; }
 }
 
 .sb-chip {
