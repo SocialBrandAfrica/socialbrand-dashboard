@@ -72,6 +72,10 @@
            missing key file) write extractor_last_error.txt too -- previously only
            main-try failures were captured and startup crashes showed as a bare
            "Exit code 1" in push_log.
+    v1.10: Per-table push_log rows (push_type='l1_table', one per table per run,
+           SUCCESS with rows_pushed or FAILED with error). R22 / DASH-TRUTH-001
+           P0.1: 80175 sigma_sales was dark for 2 days behind a green summary row.
+           A green night with a dark table is now structurally impossible.
 #>
 param(
     [switch]$FullRefresh,
@@ -102,7 +106,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.9'
+$ScriptVersion  = 'v1.10'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -1400,22 +1404,73 @@ $totals = @{}
 $runAll  = ($TableName -eq '')
 $run     = { param($name) $runAll -or $TableName -eq $name }
 
+# v1.10: per-table push_log row (push_type='l1_table') for every table this run
+# touches. R22 / SB-CC-DASH-TRUTH-001 P0.1: a green night with a dark table must
+# be structurally impossible -- 80175 sigma_sales was dark for 2 days while the
+# nightly summary row looked green. Non-fatal: a failed log write never fails
+# the extraction.
+function Send-TableLog {
+    param([string]$Table, [string]$Status, [int]$Rows, [datetime]$StartTime, [string]$ErrorMsg)
+    try {
+        $rec = [ordered]@{
+            store_code       = $StoreCode
+            push_type        = 'l1_table'
+            table_name       = $Table
+            status           = $Status
+            script_version   = $ScriptVersion
+            rows_pushed      = $Rows
+            duration_seconds = [int]((Get-Date) - $StartTime).TotalSeconds
+            started_at       = $StartTime.ToString('o')
+            completed_at     = (Get-Date -Format 'o')
+        }
+        if ($ErrorMsg) { $rec['error_message'] = $ErrorMsg.Substring(0, [Math]::Min(490, $ErrorMsg.Length)) }
+        $json  = ConvertTo-Json -InputObject $rec -Compress
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+        $hdrs  = @{
+            'apikey'        = $SupabaseKey
+            'Authorization' = "Bearer $SupabaseKey"
+            'Content-Type'  = 'application/json; charset=utf-8'
+            'Prefer'        = 'return=minimal'
+            'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+        }
+        $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log" -Method POST -Headers $hdrs -Body $bytes -TimeoutSec 15
+    }
+    catch {
+        Write-Warning "  push_log l1_table row failed (non-fatal): $_"
+    }
+}
+
+function Invoke-LoggedStep {
+    param([string]$Name, [string]$Table, [scriptblock]$Step)
+    if (-not ($runAll -or $TableName -eq $Name)) { return }
+    $t0 = Get-Date
+    try {
+        $rows = & $Step
+        $totals[$Table] = $rows
+        Send-TableLog -Table $Table -Status 'SUCCESS' -Rows ([int]$rows) -StartTime $t0
+    }
+    catch {
+        Send-TableLog -Table $Table -Status 'FAILED' -Rows 0 -StartTime $t0 -ErrorMsg $_.ToString()
+        throw
+    }
+}
+
 try {
-    if (& $run 'sales')         { $totals['sigma_sales']           = Invoke-ExtractSales }
-    if (& $run 'movements')     { $totals['sigma_movements']        = Invoke-ExtractMovements }
-    if (& $run 'articles')      { $totals['sigma_articles']         = Invoke-ExtractArticles }
-    if (& $run 'soh_daily')     { $totals['l2_soh_daily']           = Invoke-SnapshotSohDaily }
-    if (& $run 'lifecycle')     { $totals['sigma_lifecycle']        = Invoke-ExtractLifecycle }
-    if (& $run 'orders')        { $totals['sigma_orders']           = Invoke-ExtractOrders }
-    if (& $run 'orderlines')    { $totals['sigma_order_lines']      = Invoke-ExtractOrderLines }
-    if (& $run 'suppliermaster'){ $totals['sigma_supplier_master']  = Invoke-ExtractSupplierMaster }
-    if (& $run 'supplierlink')  { $totals['sigma_supplier_link']    = Invoke-ExtractSupplierLink }
-    if (& $run 'tradeterms')    { $totals['sigma_trade_terms']      = Invoke-ExtractTradeTerms }
-    if (& $run 'ean')               { $totals['sigma_ean_master']            = Invoke-ExtractEanMaster }
-    if (& $run 'departments')       { $totals['sigma_departments']           = Invoke-ExtractDepartments }
-    if (& $run 'subdepts')          { $totals['sigma_subdepts']              = Invoke-ExtractSubdepts }
-    if (& $run 'promotions')        { $totals['sigma_promotions']            = Invoke-ExtractPromotions }
-    if (& $run 'promotionarticles') { $totals['sigma_promotion_articles']    = Invoke-ExtractPromotionArticles }
+    Invoke-LoggedStep 'sales'             'sigma_sales'              { Invoke-ExtractSales }
+    Invoke-LoggedStep 'movements'         'sigma_movements'          { Invoke-ExtractMovements }
+    Invoke-LoggedStep 'articles'          'sigma_articles'           { Invoke-ExtractArticles }
+    Invoke-LoggedStep 'soh_daily'         'l2_soh_daily'             { Invoke-SnapshotSohDaily }
+    Invoke-LoggedStep 'lifecycle'         'sigma_lifecycle'          { Invoke-ExtractLifecycle }
+    Invoke-LoggedStep 'orders'            'sigma_orders'             { Invoke-ExtractOrders }
+    Invoke-LoggedStep 'orderlines'        'sigma_order_lines'        { Invoke-ExtractOrderLines }
+    Invoke-LoggedStep 'suppliermaster'    'sigma_supplier_master'    { Invoke-ExtractSupplierMaster }
+    Invoke-LoggedStep 'supplierlink'      'sigma_supplier_link'      { Invoke-ExtractSupplierLink }
+    Invoke-LoggedStep 'tradeterms'        'sigma_trade_terms'        { Invoke-ExtractTradeTerms }
+    Invoke-LoggedStep 'ean'               'sigma_ean_master'         { Invoke-ExtractEanMaster }
+    Invoke-LoggedStep 'departments'       'sigma_departments'        { Invoke-ExtractDepartments }
+    Invoke-LoggedStep 'subdepts'          'sigma_subdepts'           { Invoke-ExtractSubdepts }
+    Invoke-LoggedStep 'promotions'        'sigma_promotions'         { Invoke-ExtractPromotions }
+    Invoke-LoggedStep 'promotionarticles' 'sigma_promotion_articles' { Invoke-ExtractPromotionArticles }
 }
 catch {
     $fatalMsg = $_.ToString()
