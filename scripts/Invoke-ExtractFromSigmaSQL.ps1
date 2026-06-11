@@ -83,6 +83,12 @@
            per-row provenance (code_kind, decode_method). Includes dPACK (native
            pack-link home). IntellistoX/sigma_ean_master stays as derivative
            cross-check during transition. SB-CC-SOURCE-001.
+    v1.12: EOD-collision guard. 2026-06-11 20:00 run: 4/5 stores failed with
+           "Cannot open database dw220sdb requested by the login" -- Sigma EOD
+           holds dw220sdb in a restricted state around 20:00 (same login worked
+           at 19:40 and on 21355 at 20:03). Fix: Wait-ForSigmaDw probes the DB
+           at startup and retries every 5 min (max 9 probes, ~40 min) until EOD
+           releases it, instead of failing the whole chain on first contact.
 #>
 param(
     [switch]$FullRefresh,
@@ -113,7 +119,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.11'
+$ScriptVersion  = 'v1.12'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -171,6 +177,35 @@ function New-SqlConn {
     $conn = New-Object System.Data.SqlClient.SqlConnection($cs)
     $conn.Open()
     return $conn
+}
+
+function Wait-ForSigmaDw {
+    # v1.12 EOD-collision guard. Sigma EOD holds dw220sdb in a restricted state
+    # around 20:00 SAST ("Cannot open database ... The login failed" on a login
+    # that works minutes earlier). Probe the DB and wait until EOD releases it
+    # rather than failing the whole chain on first contact.
+    param(
+        [int]$MaxProbes     = 9,
+        [int]$WaitSeconds   = 300
+    )
+    for ($i = 1; $i -le $MaxProbes; $i++) {
+        try {
+            $conn = New-SqlConn -Db $DwDb
+            $conn.Close()
+            if ($i -gt 1) {
+                Write-Host "[dw-probe] $DwDb available on probe $i -- EOD released, continuing." -ForegroundColor Green
+            }
+            return
+        }
+        catch {
+            $msg = $_.ToString()
+            if ($i -eq $MaxProbes) {
+                throw "dw220sdb still unavailable after $MaxProbes probes (~$([int]($MaxProbes * $WaitSeconds / 60)) min) -- giving up. Last error: $msg"
+            }
+            Write-Host "[dw-probe] $DwDb not available (probe $i/$MaxProbes) -- likely Sigma EOD running. Waiting $($WaitSeconds)s. ($msg)" -ForegroundColor Yellow
+            Start-Sleep -Seconds $WaitSeconds
+        }
+    }
 }
 
 function Invoke-SqlTable {
@@ -1584,6 +1619,12 @@ function Invoke-LoggedStep {
 }
 
 try {
+    # v1.12: probe dw220sdb before the chain. Every table except sigma_ean_master
+    # (EASYDB-sourced) reads dw220sdb; if Sigma EOD still holds it, wait for the
+    # release instead of dying at the first connection (2026-06-11: 4/5 stores
+    # failed at 20:01-20:12 on a login that worked at 19:40).
+    if ($TableName -ne 'ean') { Wait-ForSigmaDw }
+
     Invoke-LoggedStep 'sales'             'sigma_sales'              { Invoke-ExtractSales }
     Invoke-LoggedStep 'movements'         'sigma_movements'          { Invoke-ExtractMovements }
     Invoke-LoggedStep 'articles'          'sigma_articles'           { Invoke-ExtractArticles }
