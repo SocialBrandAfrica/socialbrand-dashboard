@@ -4,6 +4,27 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-11 09:10 SAST — DASH-TRUTH-001 P0: v1.10 per-table logging + feed sentinel + freshness RPC
+
+**Commits:** a82c741 (main — extractor v1.10 + check_l1_feed_freshness) ·
+563618b (branch `dash-truth-001` — dual-source UI + glass tokens, NOT merged; gated on tonight's P0 proofs)
+**DB migrations (live):** create_check_l1_feed_freshness (+ pg_cron `feed-freshness-check` 20:45 UTC) ·
+create_rpc_layer_freshness · cron_canary_test (canary fired 2× succeeded, then unscheduled)
+
+**P0.1 auditability:** extractor v1.10 writes a push_log row per table per run (push_type='l1_table');
+check_l1_feed_freshness() writes per-store feed_check rows nightly — first run correctly flagged
+80175 (sigma_sales AND sigma_movements dark since 06-08) + l2_soh_daily empty ×5.
+**P0.2:** cron infrastructure proven via canary (jobid 16, 2× succeeded); jobs 13/14/15 first
+scheduled rides tonight 20:05/21:55/22:15 SAST — proof rows expected in cron.job_run_details.
+**P0.4:** 80176 GP 18.7% traced — genuine beer/wine-day mix (BEER 21.0%, SPIRITS only R2.9k @11.6%);
+~1.3pp from one zero-cost row (true ≈17.4%); CIGARETTES 24.8% flagged for Pieter eyeball.
+**P1:** DASH-SOURCE-MATRIX.md delivered (DIWAAIS root) for PM review.
+**Branch build:** dual-source KPI pairing (L2 headline + raw L1 chip + delta badge 0.5/2% bands),
+layer freshness strip (rpc_layer_freshness), glass-on-navy token block, mobile guards.
+`npm run build` clean 9/9 routes. Merge checklist in HANDOVER CC §09:05.
+
+---
+
 ## 2026-06-10 22:38 SAST — Dashboard full evaluation: D1 amendment live, L2 nightly refresh wired, dept-filter fix
 
 **Commit:** c350e33 (fix(dashboard): full evaluation — dept-name normalize bug + L2 nightly refresh wired)
