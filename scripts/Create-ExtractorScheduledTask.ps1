@@ -6,10 +6,16 @@
 
 .DESCRIPTION
     Registers a Windows Scheduled Task that runs Invoke-ExtractFromSigmaSQL.ps1
-    in delta mode (no flags) every night at 19:40 SAST.
+    in delta mode (no flags) every day at 18:40 SAST.
 
-    Schedule: 19:40 -- after EASYDB rebuild (~19:20, ~15 min) and before the
-    nightly push at 20:00.  Delta runs are fast (minutes, not hours).
+    Schedule: 18:40 -- BEFORE the 19:00 store close (Pieter ruling 2026-06-12:
+    pre-EOD means before close; staff can start Sigma EOD any time after 19:00,
+    and on 2026-06-11 the EOD lock held dw220sdb from ~20:01 to past 21:54 on
+    4/5 stores -- the old 19:40 slot fired into that risk window). A delta run
+    takes 5-10 min, so it ends ~18:50, clear of the close AND the EASYDB
+    rebuild (~19:20). The last ~20 min of trading is recovered by the nightly
+    sweep's 3-day delta overlap. sigma_ean_master read at 18:40 reflects the
+    previous EASYDB rebuild; the post-rebuild sweep run refreshes it.
 
     Run this script once per server after the full-refresh has been verified
     (ROLLOUT-001 Gate 1-4). Run as Administrator.
@@ -41,7 +47,7 @@ Write-Host "=== Create-ExtractorScheduledTask ===" -ForegroundColor Cyan
 Write-Host "Server  : $env:COMPUTERNAME"
 Write-Host "Script  : $ScriptPath"
 Write-Host "Task    : $TaskName"
-Write-Host "Trigger : daily 19:40"
+Write-Host "Trigger : daily 18:40"
 Write-Host ""
 
 if (-not (Test-Path $ScriptPath)) {
@@ -55,7 +61,7 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
 
-$trigger = New-ScheduledTaskTrigger -Daily -At '19:40'
+$trigger = New-ScheduledTaskTrigger -Daily -At '18:40'
 $action  = New-ScheduledTaskAction -Execute $PsExePath -Argument $ExeArgs -WorkingDirectory $ScriptDir
 $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
