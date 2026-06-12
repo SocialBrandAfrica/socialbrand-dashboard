@@ -4,6 +4,40 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-12 07:35 SAST — Extractor v1.13: dw-probe discriminator (names the lock cause)
+
+**Commit:** a50ee5b — on GitHub; self-deploys via tonight's 20:00 sweep.
+
+**v1.12 first ride post-mortem (full timeline from push_log, corrects both 23:07 CC and
+23:20 PM readings):** Every launched run logged — nothing silent, nothing killed.
+- 19:40 pre-EOD task ×4 (21355/80175/80176/80579) rode **v1.10 from disk** (v1.11/v1.12
+  deploy only happens in the push sweep) — that's why pre-EOD didn't fill scan_refs. 10116's
+  19:40 task did not fire (still owed — server-side check, commands in handover 23:07 §3).
+- 20:00 sweep = v1.11 (no probe): 21355 SUCCESS (scan_refs 50,522); other 4 failed instantly
+  (11–14s) at 20:01–20:12.
+- 21:00 sweep = v1.12 (self-deployed): 21355 SUCCESS again; other 4 **started probing at
+  21:00–21:12 and gave up at completed_at 21:42–21:54** (2,491–2,510s = the full 9-probe
+  window). PM read started_at as the give-up moment — the give-up rows ARE the 21:00-sweep
+  runs; there are no unlogged runs. ExecutionTimeLimit theory moot (42-min runs completed
+  and logged; limit ≥ ~54 min observed).
+- Net: **dw220sdb was locked on the 4 stores from ~20:01 until past 21:54 (~2 h)** while
+  21355 stayed open throughout and TAC60611 had already been generated+pushed at 20:00.
+  What holds dw220sdb for 2 h post-TAC is exactly what v1.13 will name tonight.
+
+**v1.13:** every failed probe now queries `sys.databases` via `master` (reachable whenever
+instance + Windows login are healthy) and logs `state_desc`/`user_access_desc`; the give-up
+error carries the last observed state. Discrimination: RESTRICTED_USER/SINGLE_USER/OFFLINE/
+RESTORING = EOD-style lock (waiting correct) · ONLINE+MULTI_USER yet open fails = permission
+problem (waiting useless) · master unreachable = instance/login broken, not an EOD lock.
+Probe count/timing unchanged (9 × 5 min) — extend only after tonight's logs show the actual
+release time vs the unknown task ExecutionTimeLimit.
+
+**Tonight's fill path:** disk = v1.12 on all 5 servers, so the 19:40 pre-EOD runs carry the
+scanrefs step for the first time → scan_refs fills on the 4 firing stores BEFORE the EOD
+window. 10116 = task fix or 1-min manual run. 20:00/21:00 sweeps then deploy + ride v1.13.
+
+---
+
 ## 2026-06-11 20:25 SAST — Extractor v1.12: EOD-collision guard (probe-and-wait for dw220sdb)
 
 **Commit:** 78745d1 (extractor v1.12) — on GitHub before the 21:00 sweep, self-deploys tonight.
