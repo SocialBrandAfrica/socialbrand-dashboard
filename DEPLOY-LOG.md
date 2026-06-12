@@ -4,6 +4,36 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-12 11:00 SAST — EAN gate CLEARED: scan_refs ×5 + v_item_ean v2 live + dash-truth-001 merged
+
+**Commits:** 4f785c8 (merge dash-truth-001 → main, Vercel deploy) · 2508091 (pre-EOD task 19:40→18:40)
+**DB (via MCP):** v_item_ean v2 deployed (DROP+CREATE per Rule 19; `sql/create_v_item_ean.sql` v2.0)
+
+**Morning sequence (all proof-verified):**
+1. Pieter re-registered SocialBrand-ExtractDelta at **18:40** on all 5 servers (Pieter ruling:
+   pre-EOD = before the 19:00 close; absolute powershell.exe path required — bare name
+   CommandNotFound on 80175, the known PATH quirk) — also recreated 10116's dead task.
+2. Pieter ran `-TableName scanrefs` manually ×4 → **sigma_scan_refs 5/5**: 10116=63,447 /
+   21355=50,522 / 80175=57,999 / 80176=45,609 / 80579=49,710 (≈267k refs, 5 code kinds,
+   push_log SUCCESS rows 10:04–10:42).
+3. **v_item_ean v2 deployed** (source-of-record = DBREFE; sigma_ean_master demoted to
+   derivative cross-check). Engine contract unchanged.
+4. **Gate audits PASSED:** B&H SPECIAL RED = `6001060684821` full 13-digit (10116 + 21355);
+   Scottish Leader / Inverroche all full DBREFE codes; TAC dual-proof = 15,449 decoded codes
+   exactly matching PRSSALE EANs on 10116 (11,864 on 80175). **Unresolved 452 → 410**, split:
+   **337 ABSENT_IDENTITY_CODE (R6.74M)** → LINK_CODES / canon §8.4 path (top: ACE WRAPPED
+   STRAWS R4.2M, V/A CROPS, CASTLE MILK STOUT CASE — the predicted consumable/case-code
+   family) + **73 IN_DBREFE code_kind=OTHER (R93k)**. Detail CSV:
+   `DIWAAIS/EAN_TRIAGE_DBREFE_2026-06-12.csv` (410 rows).
+5. **dash-truth-001 merged** (dual-source KPI pairing + layer-freshness strip + glass tokens,
+   238 insertions) — `next build` clean before push; Vercel deploys from 4f785c8.
+
+**Still owed tonight:** job 15 first clean scheduled fire 22:15; v1.13 first ride (probe
+discriminator names the dw220sdb lock state if EOD collision recurs); 18:40 tasks' first
+scheduled fire ×5.
+
+---
+
 ## 2026-06-12 07:35 SAST — Extractor v1.13: dw-probe discriminator (names the lock cause)
 
 **Commit:** a50ee5b — on GitHub; self-deploys via tonight's 20:00 sweep.
