@@ -89,6 +89,17 @@
            at 19:40 and on 21355 at 20:03). Fix: Wait-ForSigmaDw probes the DB
            at startup and retries every 5 min (max 9 probes, ~40 min) until EOD
            releases it, instead of failing the whole chain on first contact.
+    v1.13: Probe discriminator. 2026-06-11: the lock outlasted the full 45-min
+           probe window on 4 stores (held 20:01 to past 21:54) and the bare
+           "Cannot open database" text cannot distinguish an EOD lock from a
+           broken login or a downed instance. On every failed probe the guard
+           now asks master (always reachable when instance + Windows login are
+           healthy) for dw220sdb's state_desc/user_access_desc from
+           sys.databases and logs it: RESTRICTED_USER / SINGLE_USER / OFFLINE /
+           RESTORING = EOD-style lock (waiting is right); ONLINE + MULTI_USER
+           yet open fails = permission problem (waiting will not help); master
+           unreachable = instance/login broken, not an EOD lock. The give-up
+           error carries the last observed state so push_log names the cause.
 #>
 param(
     [switch]$FullRefresh,
@@ -119,7 +130,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.12'
+$ScriptVersion  = 'v1.13'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -179,11 +190,45 @@ function New-SqlConn {
     return $conn
 }
 
+function Get-DwStateDiag {
+    # v1.13 probe discriminator. The dw220sdb open failed -- ask master WHY.
+    # master is accessible whenever the instance and the Windows login are
+    # healthy, so the answer splits the failure into named causes:
+    #   state/user_access RESTRICTED_USER, SINGLE_USER, OFFLINE, RESTORING
+    #     = EOD-style lock, waiting is correct
+    #   ONLINE + MULTI_USER yet the open fails
+    #     = permission/login-mapping problem, waiting will not help
+    #   master itself unreachable
+    #     = instance down or Windows login broken, NOT an EOD lock
+    # Returns a one-line diagnosis. Never throws.
+    try {
+        $m = New-SqlConn -Db 'master'
+        try {
+            $cmd = New-Object System.Data.SqlClient.SqlCommand(
+                "SELECT state_desc, user_access_desc FROM sys.databases WHERE name = '$DwDb'", $m)
+            $r = $cmd.ExecuteReader()
+            try {
+                if ($r.Read()) {
+                    return "$DwDb state=$($r.GetString(0)) user_access=$($r.GetString(1)) (instance+login OK)"
+                }
+                return "$DwDb NOT IN sys.databases -- detached or dropped during EOD? (instance+login OK)"
+            }
+            finally { $r.Close() }
+        }
+        finally { $m.Close() }
+    }
+    catch {
+        return "master also unreachable ($($_.ToString().Trim())) -- instance down or Windows login broken, NOT an EOD lock"
+    }
+}
+
 function Wait-ForSigmaDw {
     # v1.12 EOD-collision guard. Sigma EOD holds dw220sdb in a restricted state
     # around 20:00 SAST ("Cannot open database ... The login failed" on a login
     # that works minutes earlier). Probe the DB and wait until EOD releases it
     # rather than failing the whole chain on first contact.
+    # v1.13: every failed probe logs the sys.databases state via master, and
+    # the give-up error carries the last observed state (see Get-DwStateDiag).
     param(
         [int]$MaxProbes     = 9,
         [int]$WaitSeconds   = 300
@@ -198,11 +243,12 @@ function Wait-ForSigmaDw {
             return
         }
         catch {
-            $msg = $_.ToString()
+            $msg  = $_.ToString()
+            $diag = Get-DwStateDiag
             if ($i -eq $MaxProbes) {
-                throw "dw220sdb still unavailable after $MaxProbes probes (~$([int]($MaxProbes * $WaitSeconds / 60)) min) -- giving up. Last error: $msg"
+                throw "dw220sdb still unavailable after $MaxProbes probes (~$([int]($MaxProbes * $WaitSeconds / 60)) min) -- giving up. Diagnosis: $diag | Last error: $msg"
             }
-            Write-Host "[dw-probe] $DwDb not available (probe $i/$MaxProbes) -- likely Sigma EOD running. Waiting $($WaitSeconds)s. ($msg)" -ForegroundColor Yellow
+            Write-Host "[dw-probe] $DwDb not available (probe $i/$MaxProbes). Diagnosis: $diag. Waiting $($WaitSeconds)s. ($msg)" -ForegroundColor Yellow
             Start-Sleep -Seconds $WaitSeconds
         }
     }
