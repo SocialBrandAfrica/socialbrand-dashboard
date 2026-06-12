@@ -657,6 +657,37 @@ function DaisyLogo({ size = 44 }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// LAYER FRESHNESS STRIP (SB-CC-DASH-TRUTH-001 P1.3)
+// "L1 current to X · L2 refreshed Y · per-store red chips when a feed lags."
+// Source: rpc_layer_freshness (L1/L2 max dates + latest feed_check verdict).
+// Staleness is visible, never silent.
+// ─────────────────────────────────────────────────────────────────────────────
+function LayerFreshnessStrip({ rows }) {
+  if (!rows || rows.length === 0) return null
+  const l1Min   = rows.map(r => r.l1_max).filter(Boolean).sort()[0] ?? '—'
+  const l2Ref   = rows.map(r => r.l2_refreshed).filter(Boolean).sort().reverse()[0] ?? '—'
+  const lagging = rows.filter(r => r.feed_status === 'FAILED')
+  return (
+    <div className="sb-fresh-strip">
+      <span className="sb-fresh-chip" title="Latest daily_snapshots date across selected stores (PRSSALE/TAC channel)">
+        L1 → {l1Min}
+      </span>
+      <span className="sb-fresh-chip" title="l2_kpi_daily.positioned_at — last L2 engine refresh (refresh_l2_pipeline, nightly 22:15 SAST)">
+        L2 engine → {l2Ref}
+      </span>
+      {lagging.length > 0
+        ? lagging.map(r => (
+            <span key={r.store_code} className="sb-fresh-chip lag" title={r.feed_detail ?? 'feed lagging'}>
+              ⚠ {r.store_code}
+            </span>
+          ))
+        : <span className="sb-fresh-chip" style={{ color: '#4ade80' }}>all feeds fresh</span>
+      }
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // FILTER DROPDOWN — compact pill that shows current selection; opens a menu
 // ─────────────────────────────────────────────────────────────────────────────
 function FilterDropdown({ label, value, options, onChange, emptyMsg }) {
@@ -1133,6 +1164,29 @@ export default function Home() {
   const [lostSalesTimeline, setLostSalesTimeline] = useState(new Map()) // ean → [{store_code, store_name, days:[{snap_date,sold_bool,oos_bool,soh}]}]
   const [timelineLoading,   setTimelineLoading]   = useState(false)
   const [capTiedModalOpen,  setCapTiedModalOpen]  = useState(false) // Capital Tied drill-down modal
+
+  // ── L2 engine KPI + layer freshness (SB-CC-DASH-TRUTH-001 P1) ──────────────
+  // l2_kpi_daily: one row per store — the engine verdict for the latest sigma day.
+  // rpc_layer_freshness: per-store L1/L2 max dates + latest feed_check verdict.
+  const [l2Kpi, setL2Kpi]           = useState([])
+  const [layerFresh, setLayerFresh] = useState([])
+  useEffect(() => {
+    if (!storeCodes.length) return
+    let cancelled = false
+    Promise.all([
+      supabase.from('l2_kpi_daily')
+        .select('store_code,sales_date,sales_incl_vat,sales_cost,sales_qty,gp_pct,capital_normal,capital_production,capital_non_stock,capital_receipting_break,capital_total,days_cover_normal_wtd,neg_soh_count,slow_mover_count,ghost_stock_value,positioned_at')
+        .in('store_code', storeCodes),
+      supabase.rpc('rpc_layer_freshness'),
+    ]).then(([l2Res, frRes]) => {
+      if (cancelled) return
+      if (l2Res.error) console.error('[l2_kpi_daily]', l2Res.error.message)
+      if (frRes.error) console.error('[rpc_layer_freshness]', frRes.error.message)
+      setL2Kpi(l2Res.data ?? [])
+      setLayerFresh(frRes.data ?? [])
+    })
+    return () => { cancelled = true }
+  }, [storeCodes])
   const [tooltipCard,       setTooltipCard]       = useState(null)  // key of KPI card showing tooltip
 
   // ── product detail panel ────────────────────────────────────────────────────
@@ -2007,6 +2061,55 @@ export default function Home() {
   const kpiGPRand = kpiSalesExVat - kpiCost
   const kpiGP     = kpiSalesExVat > 0 ? (kpiGPRand / kpiSalesExVat) * 100 : 0
 
+  // ── Dual-source aggregates (SB-CC-DASH-TRUTH-001 §3) ───────────────────────
+  // Headline = L2 engine, raw chip = L1, delta badge surfaced.
+  // Pairing rules (DASH-SOURCE-MATRIX): sales/GP pair only on a single-date,
+  // whole-store selection matching every store's engine sales day; stock
+  // figures pair whenever the latest available date is in the selection.
+  const l2Agg = useMemo(() => {
+    if (!l2Kpi.length) return null
+    const rows = l2Kpi.filter(r => storeCodes.includes(r.store_code))
+    if (!rows.length) return null
+    const sales   = rows.reduce((s, r) => s + Number(r.sales_incl_vat ?? 0), 0)
+    const cost    = rows.reduce((s, r) => s + Number(r.sales_cost ?? 0), 0)
+    const exVat   = sales / 1.15
+    const gp      = exVat > 0 ? ((exVat - cost) / exVat) * 100 : null
+    const capital = rows.reduce((s, r) => s + Number(r.capital_normal ?? 0), 0)
+    const capProd = rows.reduce((s, r) => s + Number(r.capital_production ?? 0), 0)
+    const capNonStock = rows.reduce((s, r) => s + Number(r.capital_non_stock ?? 0), 0)
+    const negSoh  = rows.reduce((s, r) => s + Number(r.neg_soh_count ?? 0), 0)
+    const dcDen   = rows.reduce((s, r) => s + (r.days_cover_normal_wtd != null ? Number(r.capital_normal ?? 0) : 0), 0)
+    const dcNum   = rows.reduce((s, r) => s + (r.days_cover_normal_wtd != null ? Number(r.capital_normal ?? 0) * Number(r.days_cover_normal_wtd) : 0), 0)
+    const daysCover = dcDen > 0 ? dcNum / dcDen : null
+    return { rows, sales, gp, capital, capProd, capNonStock, negSoh, daysCover }
+  }, [l2Kpi, storeCodes])
+
+  const wholeStoreScope = deptFilter === 'all' && subDeptFilter === 'all' && !focusEans
+
+  const dualSalesPairable = useMemo(() => (
+    l2Agg != null && wholeStoreScope && selectedDates.length === 1 &&
+    l2Agg.rows.every(r => r.sales_date === selectedDates[0])
+  ), [l2Agg, wholeStoreScope, selectedDates])
+
+  const dualStockPairable = useMemo(() => (
+    l2Agg != null && wholeStoreScope &&
+    availableDates.length > 0 && selectedDates.includes(availableDates[0])
+  ), [l2Agg, wholeStoreScope, selectedDates, availableDates])
+
+  // Delta badge per brief: <=0.5 silent grey, 0.5-2 amber, >2 red.
+  // kind 'pct' = relative %, kind 'pp' = percentage-point difference (GP).
+  function dualDelta(l2v, rawv, kind = 'pct') {
+    if (l2v == null || rawv == null) return null
+    const diff = kind === 'pp'
+      ? Math.abs(l2v - rawv)
+      : (rawv !== 0 ? Math.abs(l2v - rawv) / Math.abs(rawv) * 100 : null)
+    if (diff == null) return null
+    return {
+      text: kind === 'pp' ? diff.toFixed(1) + 'pp' : diff.toFixed(1) + '%',
+      cls: diff <= 0.5 ? 'sb-delta-ok' : diff <= 2 ? 'sb-delta-amber' : 'sb-delta-red',
+    }
+  }
+
   // BUG-3: normalize dept_name before comparing — dots stripped in deptFilter but
   // rpc_kpi_dept_counts may return the raw name (e.g. "GROCERIES.FOODS").
   // BUG-4: also respond to subDeptFilter (deptSohCounts already pre-filtered by RPC).
@@ -2478,7 +2581,7 @@ export default function Home() {
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: '100vh', background: '#0a0e1a', color: '#f5f5f4', fontFamily: "'Geist', -apple-system, sans-serif", position: 'relative', overflowX: 'hidden' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--sb-bg-grad, #0a0e1a)', color: '#f5f5f4', fontFamily: "'Geist', -apple-system, sans-serif", position: 'relative', overflowX: 'hidden' }}>
 
       {/* Aurora */}
       <div style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none',
@@ -2704,6 +2807,7 @@ export default function Home() {
         </header>
 
         <PushStatusStrip />
+        <LayerFreshnessStrip rows={layerFresh} />
 
         <div style={{ display: 'grid', gap: 14 }}>
 
@@ -2723,7 +2827,7 @@ export default function Home() {
                     {
                       key:           'sales',
                       label:         selectedDates.length > 1 ? `Total Sales · ${selectedDates.length} dates` : `Sales · ${selectedDates[0] ?? ''}`,
-                      value:         zarShort(kpiSales),
+                      value:         dualSalesPairable ? zarShort(l2Agg.sales) : zarShort(kpiSales),
                       sparkline:     sparklineArrays.sales,
                       lyRef:         hasLY ? zarShort(lyKpiSales) : null,
                       lyDelta:       hasLY ? deltaInfo(kpiSales, lyKpiSales) : null,
@@ -2732,23 +2836,35 @@ export default function Home() {
                       benchN:        sameWeekdayBenchmark?.n,
                       sub:           `${num(kpiQty, 0)} units`,
                       accent:        true,
-                      basisNote:     'VAT-inclusive',
-                      tooltip:       `TOTAL SALES\nVAT-inclusive (raw today_sales).\n\nSource: Sum daily_snapshots.today_sales\nLY: Same filter · dates -364 days\nDelta: (This period - LY) / LY x 100`,
+                      edge:          'green',
+                      basisNote:     dualSalesPairable ? 'engine (sigma_sales) · VAT-incl' : 'VAT-inclusive',
+                      dual:          dualSalesPairable ? {
+                        rawLabel: zarShort(kpiSales),
+                        delta:    dualDelta(l2Agg.sales, kpiSales, 'pct'),
+                        explain:  'Headline = L2 engine (sigma_sales, till channel). Raw = L1 PRSSALE TAC snapshot. Delta sources: intraday-vs-EOD cut timing.',
+                      } : null,
+                      tooltip:       `TOTAL SALES\nVAT-inclusive.\n\n${dualSalesPairable ? 'DUAL-SOURCE: headline = L2 engine (l2_kpi_daily.sales_incl_vat from sigma_sales);\nraw chip = L1 (daily_snapshots.today_sales).\n\n' : ''}L1 source: Sum daily_snapshots.today_sales\nLY: Same filter · dates -364 days\nDelta: (This period - LY) / LY x 100`,
                     },
                     {
                       key:           'gp',
                       label:         'Gross Profit',
-                      value:         pct(kpiGP),
+                      value:         dualSalesPairable && l2Agg.gp != null ? pct(l2Agg.gp) : pct(kpiGP),
                       sparkline:     sparklineArrays.gpPct,
                       lyRef:         hasLY && lyKpiGP != null ? pct(lyKpiGP) : null,
                       lyDelta:       hasLY && lyKpiGP != null ? ppDeltaInfo(kpiGP, lyKpiGP) : null,
                       wowDelta:      null,
                       bench:         null,
                       sub:           `Cost ${zarShort(kpiCost)}`,
-                      warn:          kpiGP < 20,
-                      danger:        kpiGP < 10,
-                      basisNote:     `${zarShort(kpiGPRand)} · ex-VAT`,
-                      tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\nConsistent with SPAR scorecard method.\n\nGP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nSales ex-VAT: SUM(today_sales / (1 + vat_pct/100)) per item\nCost: SUM(today_cost) from daily_snapshots\nLY: Same filter · dates -364 days`,
+                      warn:          (dualSalesPairable && l2Agg.gp != null ? l2Agg.gp : kpiGP) < 20,
+                      danger:        (dualSalesPairable && l2Agg.gp != null ? l2Agg.gp : kpiGP) < 10,
+                      edge:          'blue',
+                      basisNote:     dualSalesPairable && l2Agg.gp != null ? 'engine (dEKUmsatz cost) · ex-VAT' : `${zarShort(kpiGPRand)} · ex-VAT`,
+                      dual:          dualSalesPairable && l2Agg.gp != null ? {
+                        rawLabel: pct(kpiGP),
+                        delta:    dualDelta(l2Agg.gp, kpiGP, 'pp'),
+                        explain:  'Headline = L2 engine GP (sigma dEKUmsatz cost). Raw = L1 PRSSALE-cost GP. A red delta usually means PRSSALE pack_size cost corruption on this store -- the red IS the finding (R22).',
+                      } : null,
+                      tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\n\n${dualSalesPairable ? 'DUAL-SOURCE: headline = L2 engine gp_pct (sigma_sales cost_value / dEKUmsatz);\nraw chip = L1 PRSSALE-cost GP. Large deltas = PRSSALE cost corruption, a finding.\n\n' : ''}L1 GP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nL1 Cost: SUM(today_cost) from daily_snapshots\nLY: Same filter · dates -364 days`,
                     },
                     {
                       key:           'lostsalesvalue',
@@ -2791,21 +2907,35 @@ export default function Home() {
                       bench:         null,
                       sub:           'Stock errors / shrinkage',
                       danger:        kpiNegSOH > 0,
+                      edge:          'red',
                       onClick:       () => { setDrawerOpen(true); handleReportCardClick('stock_integrity') },
-                      tooltip:       `NEGATIVE SOH\nCount of all products where SOH < 0\nat the latest snapshot per store.\n\nSource: daily_snapshots.soh\nIncludes: All lines — retail and production\nType A: Production dept deep negatives\nType B: Retail lines that sold through without GRV\n\nIndicates: Receiving errors · Wastage · Stocktake gaps`,
+                      dual:          dualStockPairable ? {
+                        rawLabel: `engine ${num(l2Agg.negSoh)}`,
+                        delta:    dualDelta(l2Agg.negSoh, kpiNegSOH, 'pct'),
+                        explain:  'Raw headline counts ALL negative lines (L1). Engine chip = NORMAL-class negatives only (l2_kpi_daily.neg_soh_count) -- the difference is production/deposit negatives, classified and excluded with reasons (R21).',
+                      } : null,
+                      tooltip:       `NEGATIVE SOH\nCount of all products where SOH < 0\nat the latest snapshot per store.\n\n${dualStockPairable ? 'DUAL-SOURCE: headline = L1 all-lines count; engine chip = NORMAL-class only.\nDifference = production/deposit negatives (classified, not hidden).\n\n' : ''}Source: daily_snapshots.soh\nType A: Production dept deep negatives\nType B: Retail lines that sold through without GRV`,
                     },
                     {
                       key:           'captied',
                       label:         'Capital Tied',
-                      value:         zarShort(kpiCapTied),
+                      value:         dualStockPairable ? zarShort(l2Agg.capital) : zarShort(kpiCapTied),
                       sparkline:     sparklineArrays.capitalTied,
                       lyRef:         hasLY ? zarShort(lyKpiCapTied) : null,
                       lyDelta:       hasLY ? deltaInfo(kpiCapTied, lyKpiCapTied) : null,
                       lyDeltaInvert: true,
                       wowDelta:      null,
                       bench:         null,
-                      sub:           'SOH x unit cost (latest snapshot)',
+                      sub:           dualStockPairable
+                        ? `engine NORMAL-class capital · cover ${l2Agg.daysCover != null ? l2Agg.daysCover.toFixed(0) + 'd' : '--'}`
+                        : 'SOH x unit cost (latest snapshot)',
                       warn:          true,
+                      edge:          'amber',
+                      dual:          dualStockPairable ? {
+                        rawLabel: zarShort(kpiCapTied),
+                        delta:    dualDelta(l2Agg.capital, kpiCapTied, 'pct'),
+                        explain:  `Headline = L2 purified capital (NORMAL class only, l2_kpi_daily.capital_normal). Raw = L1 SOH x unit_cost incl ghosts. Earned exclusions: production ${zarShort(l2Agg.capProd)}, non-stock ${zarShort(l2Agg.capNonStock)} (R21 -- surfaced, never hidden).`,
+                      } : null,
                       tooltip:       `CAPITAL TIED\nTotal value of stock on shelf at cost price.\n\nFormula: Sum (SOH x unit_cost)\nSnapshot: Latest date in selected range\nLY: Last day of LY period (-364 days)\nTarget: <= 30 days cover (standard lines), <= 15 days cover (top-tier lines)\n\nExclusions (INTERIM — dept/sub-dept rule):\n  • Production inputs: BAKERY/BUTCHERY/HMR/DELI INGREDIENTS, CATERING, SCALE sub-depts\n  • Non-stock: EXPENSES, FRONTEND PACK, PACKAGING, CRATE, ADVERTISING sub-depts\n  • Fresh impossible-stock: perishable dept + SOH > 0 + no sale 30+ days\nGhost Stock report shows every excluded line. Totals reconcile.\nReplaced by full classifier verdict join when SQL pipeline ships (Option B).`,
                       onClick:       kpiCapTied > 0 ? () => setCapTiedModalOpen(true) : undefined,
                     },
@@ -2815,7 +2945,7 @@ export default function Home() {
                     const lyGood = k.lyDeltaInvert ? !lyUp : lyUp
                     const wowUp  = k.wowDelta?.positive
                     return (
-                      <div key={k.key} className="sb-glass"
+                      <div key={k.key} className={`sb-glass sb-edge ${k.edge ? `sb-edge-${k.edge}` : ''}`}
                         onClick={k.onClick}
                         onMouseEnter={k.tooltip ? () => setTooltipCard(k.key) : undefined}
                         onMouseLeave={k.tooltip ? () => setTooltipCard(null)  : undefined}
@@ -2842,6 +2972,18 @@ export default function Home() {
                           color: k.accent ? '#4ade80' : k.danger && k.value !== '0' ? '#fca5a5' : k.warn ? '#f59e0b' : '#f5f5f4' }}>
                           {k.value}
                         </p>
+
+                        {/* Dual-source row: raw companion + delta badge (DASH-TRUTH-001 P1) */}
+                        {k.dual && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                            <span className="sb-raw-chip"><span className="lbl">raw</span>{k.dual.rawLabel}</span>
+                            {k.dual.delta && (
+                              <span className={`sb-delta-badge ${k.dual.delta.cls}`} title={k.dual.explain}>
+                                {'Δ'} {k.dual.delta.text}
+                              </span>
+                            )}
+                          </div>
+                        )}
 
                         {k.sparkline && (
                           <div style={{ margin: '8px 0 6px', height: 28 }}>
