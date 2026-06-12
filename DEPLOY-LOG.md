@@ -4,6 +4,39 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-12 12:25 SAST — P2 visual: Brand Bible v2.1 veld/sky/aurora migration
+
+**Commit:** 014bda1 (main → Vercel)
+
+**What shipped (bible §5–§9 + Appendix A, references SB-PULSE-LIVE-CONCEPT.html + showcase):**
+- **Token block** = Appendix A verbatim in dashboard.css — the ONE shared CC-owned copy;
+  legacy `--sb-*` names alias onto it (old navies re-classified as sky tones per §5).
+- **Sky backdrop** (zenith→deep→horizon→veld floor, fixed); page-level cyan/purple radial
+  wash REMOVED (aurora = box-shadow light only).
+- **Liquid glass at rest** on all `.sb-glass`: growth tint 0.10, blur 14px saturate 140%,
+  top-left light edge + green return (inset bevel), specular streak, 16px radius.
+- **KPI hero break-away**: deep glass `rgba(12,16,12,0.55)`, 3px LEFT rail (Growth Green;
+  Sales = the focus KPI = Core Yellow rail), aurora under-glows gold/green/sky
+  (Sales/GP%/Capital Tied; Neg SOH = none, restraint), 32px Roboto Bold tabular heroes.
+- **The Unfrost** on the KPI row: 28→14px melt, 800ms, 80ms reading-order stagger, one
+  daisy border pulse; `--unfrost-to` var fixes the deep-glass fill-mode handoff;
+  reduced-motion 150ms fade; <768px solid Charcoal Veld fallback (§7 guard).
+- **Banned colours swept (main view):** green→cyan CTA gradients → Core Yellow solid
+  (ratified Reload style); cyan Reports buttons → Growth Green; chips/tabs/date/report
+  actives → Growth Green + Core Yellow underline on store chips; data colours → on-dark
+  tokens; zebra 3%; veld table headers; raised-glass drawer.
+
+**Verification:** production build clean ×2 (PostCSS + SWC + types). Preview: page serves
+200, zero console errors, token wiring confirmed by eval; **visual eyeball NOT done by CC**
+— dashboard sits behind Google OAuth and the preview screenshot pipe was dead this session.
+Pieter eyeballs on Vercel (already in the queue).
+
+**Known follow-ups:** full font migration (Geist/Fraunces → Inter/Roboto) beyond KPI heroes;
+inline `#4ade80` sweep in sub-panels (trend/top20/focus); report-controls skeuomorph canon
+(§9 segmented/slider/toggle) when those controls are next touched; 8-blur-cap audit.
+
+---
+
 ## 2026-06-12 11:00 SAST — EAN gate CLEARED: scan_refs ×5 + v_item_ean v2 live + dash-truth-001 merged
 
 **Commits:** 4f785c8 (merge dash-truth-001 → main, Vercel deploy) · 2508091 (pre-EOD task 19:40→18:40)
