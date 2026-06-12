@@ -2551,9 +2551,9 @@ export default function Home() {
   // ─────────────────────────────────────────────────────────────────────────────
   if (userProfile === undefined) {
     return (
-      <div style={{ minHeight: '100vh', background: '#0a0e1a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Geist', sans-serif" }}>
+      <div style={{ minHeight: '100vh', background: '#0C100C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Geist', sans-serif" }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ width: 36, height: 36, border: '3px solid rgba(74,222,128,0.2)', borderTopColor: '#4ade80', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }} />
+          <div style={{ width: 36, height: 36, border: '3px solid rgba(74,107,83,0.30)', borderTopColor: '#FFD100', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }} />
           <p style={{ color: 'rgba(245,245,244,0.35)', fontSize: 13 }}>Loading…</p>
         </div>
       </div>
@@ -2562,7 +2562,7 @@ export default function Home() {
 
   if (userProfile === null) {
     return (
-      <div style={{ minHeight: '100vh', background: '#0a0e1a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Geist', sans-serif", padding: 24 }}>
+      <div style={{ minHeight: '100vh', background: '#0C100C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Geist', sans-serif", padding: 24 }}>
         <div style={{ maxWidth: 380, textAlign: 'center' }}>
           <h2 style={{ fontFamily: 'Fraunces, Georgia, serif', color: '#f5f5f4', marginBottom: 12, fontSize: 24 }}>Access Pending</h2>
           <p style={{ color: 'rgba(245,245,244,0.5)', marginBottom: 28, lineHeight: 1.7, fontSize: 14 }}>
@@ -2581,17 +2581,12 @@ export default function Home() {
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--sb-bg-grad, #0a0e1a)', color: '#f5f5f4', fontFamily: "'Geist', -apple-system, sans-serif", position: 'relative', overflowX: 'hidden' }}>
-
-      {/* Aurora */}
-      <div style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none',
-        background: 'radial-gradient(ellipse 70% 50% at 15% 0%, rgba(74,222,128,0.18), transparent 60%), radial-gradient(ellipse 50% 40% at 90% 30%, rgba(34,211,238,0.12), transparent 55%), radial-gradient(ellipse 60% 50% at 50% 100%, rgba(168,85,247,0.1), transparent 60%)'
-      }} />
+    <div style={{ minHeight: '100vh', background: 'var(--sb-bg-grad, #0C100C)', backgroundAttachment: 'fixed', color: '#f5f5f4', fontFamily: "'Geist', -apple-system, sans-serif", position: 'relative', overflowX: 'hidden' }}>
 
       {/* ── STICKY FILTER BAR ────────────────────────────────────────────────── */}
       <div style={{
         position: 'sticky', top: 0, zIndex: 100,
-        background: 'rgba(10,14,26,0.94)',
+        background: 'rgba(12,16,12,0.94)',
         borderBottom: '1px solid rgba(255,255,255,0.09)',
         backdropFilter: 'blur(32px)',
       }}>
@@ -2656,9 +2651,9 @@ export default function Home() {
                 onClick={() => setDrawerOpen(true)}
                 style={{
                   padding: '6px 14px', fontSize: 12, fontWeight: 600,
-                  background: 'rgba(34,211,238,0.08)',
-                  border: '1px solid rgba(34,211,238,0.22)',
-                  borderRadius: 8, cursor: 'pointer', color: '#22d3ee',
+                  background: 'rgba(74,107,83,0.18)',
+                  border: '1px solid rgba(74,107,83,0.55)',
+                  borderRadius: 8, cursor: 'pointer', color: '#F9FBF7',
                   fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', flexShrink: 0,
                   transition: 'all 0.15s',
                 }}
@@ -2740,9 +2735,9 @@ export default function Home() {
                   onClick={() => setDrawerOpen(true)}
                   style={{
                     padding: '6px 12px', fontSize: 11, fontWeight: 600,
-                    background: 'rgba(34,211,238,0.08)',
-                    border: '1px solid rgba(34,211,238,0.22)',
-                    borderRadius: 8, cursor: 'pointer', color: '#22d3ee',
+                    background: 'rgba(74,107,83,0.18)',
+                    border: '1px solid rgba(74,107,83,0.55)',
+                    borderRadius: 8, cursor: 'pointer', color: '#F9FBF7',
                     fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', flexShrink: 0,
                   }}
                 >
@@ -2815,7 +2810,7 @@ export default function Home() {
           <div className="sb-kpi-strip">
             {viewsLoading
               ? Array.from({ length: 6 }, (_, i) => (
-                  <div key={i} className="sb-glass" style={{ padding: '18px 20px' }}>
+                  <div key={i} className="sb-glass sb-frosted" style={{ padding: '18px 20px' }}>
                     <Skeleton h={10} w={80} r={4} mb={12} />
                     <Skeleton h={30} w={120} r={6} mb={8} />
                     <Skeleton h={28} w="100%" r={4} mb={8} />
@@ -2940,12 +2935,12 @@ export default function Home() {
                       onClick:       kpiCapTied > 0 ? () => setCapTiedModalOpen(true) : undefined,
                     },
                   ]
-                  return kpiCards.map(k => {
+                  return kpiCards.map((k, kpiIdx) => {
                     const lyUp   = k.lyDelta?.positive
                     const lyGood = k.lyDeltaInvert ? !lyUp : lyUp
                     const wowUp  = k.wowDelta?.positive
                     return (
-                      <div key={k.key} className={`sb-glass sb-edge ${k.edge ? `sb-edge-${k.edge}` : ''}`}
+                      <div key={k.key} className={`sb-glass sb-edge sb-unfrost ${k.edge ? `sb-edge-${k.edge}` : ''}`}
                         onClick={k.onClick}
                         onMouseEnter={k.tooltip ? () => setTooltipCard(k.key) : undefined}
                         onMouseLeave={k.tooltip ? () => setTooltipCard(null)  : undefined}
@@ -2954,22 +2949,11 @@ export default function Home() {
                         cursor: k.onClick ? 'pointer' : 'default',
                         position: 'relative',
                         zIndex: tooltipCard === k.key ? 200 : undefined,
-                        background: k.accent
-                          ? 'linear-gradient(135deg,rgba(74,222,128,0.1),rgba(74,222,128,0.03))'
-                          : k.danger && k.value !== '0'
-                          ? 'linear-gradient(135deg,rgba(239,68,68,0.09),rgba(239,68,68,0.02))'
-                          : k.warn
-                          ? 'linear-gradient(135deg,rgba(245,158,11,0.08),rgba(245,158,11,0.02))'
-                          : undefined,
-                        borderColor: k.accent
-                          ? 'rgba(74,222,128,0.22)'
-                          : k.danger && k.value !== '0'
-                          ? 'rgba(239,68,68,0.18)'
-                          : undefined,
+                        '--d': `${kpiIdx * 80}ms`,
                       }}>
-                        <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 8 }}>{k.label}</p>
-                        <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 28, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1,
-                          color: k.accent ? '#4ade80' : k.danger && k.value !== '0' ? '#fca5a5' : k.warn ? '#f59e0b' : '#f5f5f4' }}>
+                        <p style={{ fontSize: 10, color: 'var(--veld-mist)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 8, fontFamily: 'var(--font-head)', fontWeight: 500 }}>{k.label}</p>
+                        <p className="sb-kpi-num" style={{
+                          color: k.danger && k.value !== '0' ? 'var(--data-neg)' : k.warn ? 'var(--data-warn)' : undefined }}>
                           {k.value}
                         </p>
 
@@ -2989,7 +2973,7 @@ export default function Home() {
                           <div style={{ margin: '8px 0 6px', height: 28 }}>
                             <Sparkline
                               values={k.sparkline}
-                              color={k.accent ? '#4ade80' : k.warn || k.danger ? '#f59e0b' : 'rgba(245,245,244,0.4)'}
+                              color={k.accent ? '#66BB6A' : k.warn || k.danger ? '#FFB300' : 'rgba(245,245,244,0.4)'}
                               height={28}
                             />
                           </div>
@@ -3000,8 +2984,8 @@ export default function Home() {
                             {k.lyDelta && (
                               <span style={{
                                 fontSize: 10, padding: '2px 6px', borderRadius: 4, fontFamily: "'Geist Mono', monospace",
-                                background: lyGood ? 'rgba(74,222,128,0.12)' : 'rgba(239,68,68,0.12)',
-                                color:      lyGood ? '#4ade80'               : '#fca5a5',
+                                background: lyGood ? 'rgba(102,187,106,0.14)' : 'rgba(239,83,80,0.14)',
+                                color:      lyGood ? 'var(--data-pos)'        : 'var(--data-neg)',
                               }}>{k.lyDelta.label}</span>
                             )}
                             {k.lyRef && (
@@ -3013,7 +2997,7 @@ export default function Home() {
                               <span style={{
                                 fontSize: 10, padding: '2px 5px', borderRadius: 4, fontFamily: "'Geist Mono', monospace",
                                 borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 8, marginLeft: 2,
-                                color: wowUp ? 'rgba(74,222,128,0.7)' : 'rgba(239,68,68,0.7)',
+                                color: wowUp ? 'rgba(102,187,106,0.75)' : 'rgba(239,83,80,0.75)',
                               }}>WoW {k.wowDelta.label}</span>
                             )}
                           </div>
@@ -3026,7 +3010,7 @@ export default function Home() {
                         )}
 
                         {!k.lyDelta && !k.lyRef && !k.wowDelta && !k.bench && (
-                          <p style={{ fontSize: 11, color: k.onClick ? 'rgba(34,211,238,0.7)' : 'rgba(245,245,244,0.35)', marginTop: 8, fontFamily: "'Geist Mono', monospace", textDecoration: k.onClick ? 'underline' : 'none' }}>
+                          <p style={{ fontSize: 11, color: k.onClick ? 'rgba(249,251,247,0.75)' : 'rgba(245,245,244,0.35)', marginTop: 8, fontFamily: "'Geist Mono', monospace", textDecoration: k.onClick ? 'underline' : 'none' }}>
                             {k.sub}
                           </p>
                         )}
@@ -3045,7 +3029,7 @@ export default function Home() {
                           <div style={{
                             position: 'absolute', top: 'calc(100% + 8px)', left: 0,
                             width: '100%', zIndex: 9999,
-                            background: 'rgba(15,20,35,0.97)', border: '1px solid rgba(255,255,255,0.12)',
+                            background: 'rgba(14,18,14,0.97)', border: '1px solid rgba(255,255,255,0.12)',
                             borderRadius: 10, padding: '12px 14px',
                             boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
                             pointerEvents: 'none',
@@ -3251,7 +3235,7 @@ export default function Home() {
                               </span>
                             )}
                             <div style={{ height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 999, overflow: 'hidden' }}>
-                              <div style={{ height: '100%', width: `${d.pct}%`, background: 'linear-gradient(90deg, #4ade80, #22d3ee)', borderRadius: 999, transition: 'width 0.5s ease' }} />
+                              <div style={{ height: '100%', width: `${d.pct}%`, background: '#4A6B53', borderRadius: 999, transition: 'width 0.5s ease' }} />
                             </div>
                           </div>
                         )
@@ -3619,7 +3603,7 @@ export default function Home() {
               <button
                 onClick={() => downloadExcel(reportData, currentReport, activeStoreName, selectedDates.length === 1 ? selectedDates[0] : null)}
                 disabled={reportData.length === 0}
-                style={{ width: '100%', padding: '10px 22px', fontFamily: 'Geist, sans-serif', fontSize: 13, fontWeight: 600, background: reportData.length === 0 ? 'rgba(255,255,255,0.06)' : 'linear-gradient(135deg, #4ade80, #22d3ee)', color: reportData.length === 0 ? 'rgba(245,245,244,0.25)' : '#0a0e1a', border: 'none', borderRadius: 10, cursor: reportData.length === 0 ? 'not-allowed' : 'pointer', transition: 'all 0.2s', boxShadow: reportData.length === 0 ? 'none' : '0 8px 24px rgba(74,222,128,0.25)' }}
+                style={{ width: '100%', padding: '10px 22px', fontFamily: 'Geist, sans-serif', fontSize: 13, fontWeight: 600, background: reportData.length === 0 ? 'rgba(255,255,255,0.06)' : '#FFD100', color: reportData.length === 0 ? 'rgba(245,245,244,0.25)' : '#121612', border: 'none', borderRadius: 10, cursor: reportData.length === 0 ? 'not-allowed' : 'pointer', transition: 'all 0.2s', boxShadow: reportData.length === 0 ? 'none' : '0 8px 24px rgba(255,209,0,0.25)' }}
               >
                 ↓ Download {activeReportDef?.title} as Excel
               </button>
@@ -3634,7 +3618,7 @@ export default function Home() {
               ) : !reportLoaded ? (
                 reportLoading ? (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 }}>
-                    <div style={{ width: 36, height: 36, border: '3px solid rgba(74,222,128,0.2)', borderTopColor: '#4ade80', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                    <div style={{ width: 36, height: 36, border: '3px solid rgba(74,107,83,0.30)', borderTopColor: '#FFD100', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
                     <p style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: 'rgba(245,245,244,0.4)' }}>Fetching report data…</p>
                   </div>
                 ) : (
@@ -3643,7 +3627,7 @@ export default function Home() {
                       Select a report above to load data
                     </p>
                     <button onClick={loadReport}
-                      style={{ padding: '10px 24px', fontFamily: 'Geist, sans-serif', fontSize: 13, fontWeight: 600, background: 'linear-gradient(135deg, #4ade80, #22d3ee)', color: '#0a0e1a', border: 'none', borderRadius: 10, cursor: 'pointer', boxShadow: '0 8px 24px rgba(74,222,128,0.25)' }}>
+                      style={{ padding: '10px 24px', fontFamily: 'Geist, sans-serif', fontSize: 13, fontWeight: 600, background: '#FFD100', color: '#121612', border: 'none', borderRadius: 10, cursor: 'pointer', boxShadow: '0 8px 24px rgba(255,209,0,0.25)' }}>
                       Load Report Data
                     </button>
                   </div>

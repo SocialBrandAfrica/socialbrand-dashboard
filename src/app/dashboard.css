@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,800&family=Geist+Mono:wght@400;500;600&family=Geist:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,800&family=Geist+Mono:wght@400;500;600&family=Geist:wght@300;400;500;600;700&family=Inter:wght@500;600;700&family=Roboto:wght@400;500;700&display=swap');
 
 @keyframes spin  { to { transform: rotate(360deg); } }
 @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
@@ -9,40 +9,195 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
 
-/* ── GLASS-ON-NAVY TOKEN BLOCK (SB-CC-DASH-TRUTH-001 §4) ─────────────────
-   Defined ONCE here; dashboard + Forge + future panels import this block.
-   Palette: bg #1A1A2E · card #16213E · border #0F3460 ·
-   accents green #2E7D32 / red #C62828 / amber #F57F17 / blue #1565C0 */
+/* ══ THE TOKEN BLOCK — Brand Bible v2.1 Appendix A (SB-INDEX-002) ═════════
+   The ONE shared block for the dashboard, FORGE.html and every L3 app.
+   CC owns this single copy; apps import it, never fork it.
+   The veld and the sky: blue is backdrop atmosphere ONLY — never on a
+   component, button, text, icon, chart line or data value.
+   Aurora colours live in box-shadow glows ONLY — lint any other use. */
 :root {
-  --sb-bg-grad: linear-gradient(135deg, #141428, #1A1A2E, #16213E);
-  --sb-card-grad: linear-gradient(160deg, rgba(22,33,62,0.55), rgba(22,33,62,0.35));
-  --sb-border-glass: rgba(255,255,255,0.08);
-  --sb-bevel: inset 0 1px 0 rgba(255,255,255,0.10),
-              inset 0 -1px 2px rgba(0,0,0,0.25),
-              0 8px 24px rgba(0,0,0,0.35);
-  --sb-green: #2E7D32; --sb-red: #C62828; --sb-amber: #F57F17; --sb-blue: #1565C0;
+  /* SKY (backdrop only — never on components) */
+  --sky-zenith: #070D1A;
+  --sky-deep: #10182E;
+  --sky-horizon: #16213E;
+  --backdrop: linear-gradient(180deg,
+      var(--sky-zenith) 0%, var(--sky-deep) 45%,
+      var(--sky-horizon) 78%, var(--veld-floor) 100%);
+
+  /* VELD (surfaces) */
+  --veld-floor: #0C100C;
+  --charcoal-veld: #121612;
+  --glass-tint-frosted: rgba(74, 107, 83, 0.20);
+  --glass-tint-rest: rgba(74, 107, 83, 0.10);
+  --glass-blur-loading: 28px;
+  --glass-blur-rest: 14px;
+  --glass-border: rgba(255, 255, 255, 0.10);
+  --glass-border-hover: rgba(255, 255, 255, 0.16);
+  --glass-edge-light: rgba(255, 255, 255, 0.28);   /* top-left of the gradient edge */
+  --glass-edge-return: rgba(74, 107, 83, 0.25);    /* bottom-right green return */
+  --glass-bevel: rgba(255, 255, 255, 0.06);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.30);
+
+  /* AURORA (glow/shadow light ONLY — never fills, borders, text or marks) */
+  --aurora-gold: rgba(255, 209, 0, 0.35);
+  --aurora-green: rgba(52, 211, 153, 0.30);
+  --aurora-sky: rgba(59, 130, 246, 0.28);
+  --aurora-violet: rgba(139, 124, 246, 0.28);
+
+  /* BRAND */
+  --veld-green: #1E3F20;
+  --growth-green: #4A6B53;
+  --core-yellow: #FFD100;
+  --daisy-white: #F9FBF7;
+  --veld-mist: #A8B5A8;
+
+  /* DATA (on dark) */
+  --data-pos: #66BB6A;
+  --data-neg: #EF5350;
+  --data-warn: #FFB300;
+  --data-neutral: #9E9E9E;
+
+  /* TYPE */
+  --font-head: 'Inter', system-ui, sans-serif;
+  --font-data: 'Roboto', system-ui, sans-serif;
+
+  /* KPI hero treatment (deep glass + rail) */
+  --kpi-glass: rgba(12, 16, 12, 0.55);
+  --kpi-rail: var(--growth-green);
+  --kpi-rail-focus: var(--core-yellow);
+  --kpi-number-size: 32px;
+
+  /* MOTION */
+  --unfrost-duration: 800ms;
+  --unfrost-ease: ease-in-out;
+  --unfrost-stagger: 80ms;
+  --refresh-frost: blur(8px);
+  --hover-duration: 150ms;
+  --radius-card: 16px;
+  --radius-chip: 8px;
+
+  /* Legacy aliases (pre-v2.1 names still referenced by page.jsx).
+     The navies they used to carry are re-classified as SKY tones (§5
+     migration note) — they survive only inside the backdrop gradient. */
+  --sb-bg-grad: var(--backdrop);
+  --sb-card-grad: var(--glass-tint-rest);
+  --sb-border-glass: var(--glass-border);
+  --sb-inset: inset 0 1px 0 rgba(255,255,255,0.16),
+              inset 1px 0 0 rgba(255,255,255,0.06),
+              inset -1px -1px 0 var(--glass-edge-return);
+  --sb-bevel: var(--glass-shadow), var(--sb-inset);
+  --sb-green: var(--data-pos); --sb-red: var(--data-neg);
+  --sb-amber: var(--data-warn); --sb-blue: var(--data-neutral);
 }
 
+/* ── Liquid glass at rest (§7): growth tint over a resting frost, light
+   from the top-left, faint green return bottom-right, one specular streak
+   baked into the background. Never crystal clear. */
 .sb-glass {
-  background: var(--sb-card-grad);
-  border: 1px solid var(--sb-border-glass);
-  border-radius: 14px;
-  backdrop-filter: blur(16px) saturate(135%);
-  -webkit-backdrop-filter: blur(16px) saturate(135%);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0) 16%),
+    var(--glass-tint-rest);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  backdrop-filter: blur(var(--glass-blur-rest)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-rest)) saturate(140%);
   box-shadow: var(--sb-bevel);
+  transition: border-color var(--hover-duration), box-shadow var(--hover-duration);
   min-width: 0; /* grid kids must shrink — mobile hard requirement */
 }
+.sb-glass:hover { border-color: var(--glass-border-hover); }
 
-/* Coloured 3px top edge per KPI card (accent per metric) */
-.sb-edge       { position: relative; overflow: hidden; }
-.sb-edge::before {
-  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
-  border-radius: 14px 14px 0 0;
+/* ── KPI hero break-away (§9): deep glass, 3px LEFT rail, aurora under-glow.
+   The one focus KPI carries the Core Yellow rail + gold glow; every other
+   rail stays Growth Green and the glow does the differentiating.
+   Class mapping (page.jsx edge values, fixed set):
+     sb-edge-green = Total Sales  -> FOCUS: yellow rail + Aurora Gold
+     sb-edge-blue  = GP%          -> growth-type: Aurora Green
+     sb-edge-amber = Capital Tied -> capital-type: Aurora Sky
+     sb-edge-red   = Negative SOH -> integrity count: no aurora (restraint) */
+.sb-glass.sb-edge {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 18%),
+    var(--kpi-glass);
 }
-.sb-edge-green::before { background: linear-gradient(90deg, #2E7D32, #4ade80); }
-.sb-edge-red::before   { background: linear-gradient(90deg, #C62828, #fca5a5); }
-.sb-edge-amber::before { background: linear-gradient(90deg, #F57F17, #fbbf24); }
-.sb-edge-blue::before  { background: linear-gradient(90deg, #1565C0, #60a5fa); }
+.sb-edge       { position: relative; overflow: hidden; }
+.sb-edge:hover { transform: translateY(-2px); }
+.sb-edge {
+  transition: transform var(--hover-duration),
+              border-color var(--hover-duration), box-shadow var(--hover-duration);
+}
+.sb-edge::before {
+  content: ''; position: absolute; top: 0; left: 0; bottom: 0; width: 3px;
+  border-radius: var(--radius-card) 0 0 var(--radius-card);
+  background: var(--kpi-rail);
+}
+.sb-edge-green::before { background: var(--kpi-rail-focus); }
+.sb-edge-green { box-shadow: var(--glass-shadow), 0 8px 28px var(--aurora-gold),  var(--sb-inset); }
+.sb-edge-blue  { box-shadow: var(--glass-shadow), 0 8px 28px var(--aurora-green), var(--sb-inset); }
+.sb-edge-amber { box-shadow: var(--glass-shadow), 0 8px 28px var(--aurora-sky),   var(--sb-inset); }
+
+/* KPI hero numerals: 32px Roboto Bold tabular (§6), Daisy White unless the
+   number itself carries data semantics (warn/danger set inline). */
+.sb-kpi-num {
+  font-family: var(--font-data);
+  font-size: var(--kpi-number-size);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  color: var(--daisy-white);
+}
+
+/* ── The Unfrost (§8) — signature motion. Cards mount frosted and melt to
+   liquid rest over 800ms; content fades on the same clock; the border
+   pulses Core Yellow once. Stagger via --d (reading order, 80ms steps). */
+@keyframes sb-unfrost-melt {
+  0% {
+    background-color: var(--glass-tint-frosted);
+    backdrop-filter: blur(var(--glass-blur-loading));
+    -webkit-backdrop-filter: blur(var(--glass-blur-loading));
+  }
+  100% {
+    /* must land exactly on the class's resting colour or the fill-mode
+       handoff jumps — deep-glass cards override via --unfrost-to */
+    background-color: var(--unfrost-to, var(--glass-tint-rest));
+    backdrop-filter: blur(var(--glass-blur-rest)) saturate(140%);
+    -webkit-backdrop-filter: blur(var(--glass-blur-rest)) saturate(140%);
+  }
+}
+.sb-glass.sb-edge { --unfrost-to: var(--kpi-glass); }
+@keyframes sb-daisy-pulse {
+  0%   { border-color: var(--glass-border); }
+  50%  { border-color: rgba(255, 209, 0, 0.45); }
+  100% { border-color: var(--glass-border); }
+}
+@keyframes sb-content-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.sb-unfrost {
+  /* backwards fill: frosted during the stagger delay, class styles own the
+     resting state after the melt (no persistent keyframe override) */
+  animation: sb-unfrost-melt var(--unfrost-duration) var(--unfrost-ease) backwards,
+             sb-daisy-pulse  var(--unfrost-duration) var(--unfrost-ease) 1;
+  animation-delay: var(--d, 0ms);
+}
+.sb-unfrost > * {
+  animation: sb-content-in var(--unfrost-duration) var(--unfrost-ease) backwards;
+  animation-delay: var(--d, 0ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-unfrost, .sb-unfrost > * { animation-duration: 150ms; }
+  .sb-unfrost { animation-name: sb-content-in; }
+}
+
+/* Heavy frost (§8 loading state) — skeleton cards wait behind full frost
+   until the data lands, then the mounted cards run the Unfrost. */
+.sb-frosted {
+  background: var(--glass-tint-frosted);
+  backdrop-filter: blur(var(--glass-blur-loading));
+  -webkit-backdrop-filter: blur(var(--glass-blur-loading));
+}
 
 /* Tabular figures for ALL numbers (brief §4 type rule) */
 .sb-num, .sb-table td.r, .sb-table td.mono,
@@ -107,8 +262,16 @@
   white-space: nowrap;
   font-family: 'Geist', sans-serif;
 }
-.sb-chip:hover { background: rgba(255,255,255,0.08); color: #f5f5f4; }
-.sb-chip.on    { background: #4ade80; color: #0a0e1a; border-color: #4ade80; font-weight: 500; }
+.sb-chip:hover { background: rgba(255,255,255,0.08); color: var(--daisy-white); }
+/* Active store chip = Core Yellow underline on glass (§9) — yellow is light,
+   not fill, so the rationing law holds across a multi-select row. */
+.sb-chip.on {
+  background: rgba(74,107,83,0.18);
+  color: var(--daisy-white);
+  border-color: var(--glass-border-hover);
+  box-shadow: inset 0 -2px 0 var(--core-yellow);
+  font-weight: 500;
+}
 
 .sb-tab {
   padding: 7px 18px;
@@ -122,9 +285,9 @@
   transition: all 0.15s;
   font-family: 'Geist', sans-serif;
 }
-.sb-tab:hover    { background: rgba(255,255,255,0.08); color: #f5f5f4; }
-.sb-tab.on       { background: #4ade80; color: #0a0e1a; border-color: #4ade80; font-weight: 600; box-shadow: 0 4px 16px rgba(74,222,128,0.3); }
-.sb-tab.group.on { background: linear-gradient(135deg, #22d3ee, #4ade80); border-color: #22d3ee; }
+.sb-tab:hover    { background: rgba(255,255,255,0.08); color: var(--daisy-white); }
+.sb-tab.on       { background: var(--growth-green); color: var(--daisy-white); border-color: var(--growth-green); font-weight: 600; box-shadow: 0 4px 16px rgba(74,107,83,0.35); }
+.sb-tab.group.on { background: var(--veld-green); border-color: var(--growth-green); }
 
 .sb-date-btn {
   flex-shrink: 0;
@@ -140,12 +303,12 @@
   min-width: 96px;
   text-align: center;
 }
-.sb-date-btn:hover { background: rgba(255,255,255,0.07); color: #f5f5f4; }
+.sb-date-btn:hover { background: rgba(255,255,255,0.07); color: var(--daisy-white); }
 .sb-date-btn.on {
-  background: linear-gradient(135deg, rgba(74,222,128,0.22), rgba(74,222,128,0.08));
-  color: #4ade80;
-  border-color: rgba(74,222,128,0.5);
-  box-shadow: 0 4px 14px rgba(74,222,128,0.18);
+  background: linear-gradient(135deg, rgba(74,107,83,0.35), rgba(74,107,83,0.14));
+  color: var(--daisy-white);
+  border-color: rgba(74,107,83,0.65);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.20);
   font-weight: 600;
 }
 
@@ -161,16 +324,16 @@
   font-family: inherit;
   position: relative;
 }
-.sb-report-card:hover { background: rgba(255,255,255,0.07); transform: translateY(-2px); border-color: rgba(255,255,255,0.15); }
-.sb-report-card.on    { background: linear-gradient(135deg, rgba(74,222,128,0.18), rgba(74,222,128,0.06)); border-color: rgba(74,222,128,0.45); box-shadow: 0 8px 32px rgba(74,222,128,0.18); }
+.sb-report-card:hover { background: rgba(255,255,255,0.07); transform: translateY(-2px); border-color: var(--glass-border-hover); }
+.sb-report-card.on    { background: linear-gradient(135deg, rgba(74,107,83,0.30), rgba(74,107,83,0.10)); border-color: rgba(74,107,83,0.60); box-shadow: 0 8px 28px var(--aurora-green); }
 
 .sb-table { width: 100%; border-collapse: collapse; font-size: 11.5px; table-layout: auto; }
 .sb-table thead { position: sticky; top: 0; z-index: 2; }
 .sb-table th {
   padding: 9px 10px;
-  background: rgba(10,14,26,0.9);
+  background: rgba(18,22,18,0.92); /* Charcoal Veld — sticky headers sit on the veld, not the sky */
   font-weight: 500;
-  color: rgba(245,245,244,0.4);
+  color: var(--veld-mist);
   font-size: 9.5px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -188,12 +351,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.sb-table tbody tr:hover { background: rgba(255,255,255,0.025); cursor: pointer; }
+.sb-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.03); } /* zebra at 3% (§9) */
+.sb-table tbody tr:hover { background: rgba(255,255,255,0.05); cursor: pointer; }
 .sb-table td.r    { text-align: right; font-family: 'Geist Mono', monospace; font-size: 11px; max-width: 90px; }
 .sb-table td.mono { font-family: 'Geist Mono', monospace; font-size: 10.5px; color: rgba(245,245,244,0.4); }
-.sb-table td.desc { color: #f5f5f4; max-width: 280px; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sb-table .soh-pos  { color: #4ade80; font-weight: 500; }
-.sb-table .soh-neg  { color: #fca5a5; font-weight: 500; }
+.sb-table td.desc { color: var(--daisy-white); max-width: 280px; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-table .soh-pos  { color: var(--data-pos); font-weight: 500; }
+.sb-table .soh-neg  { color: var(--data-neg); font-weight: 500; }
 .sb-table .soh-zero { color: rgba(245,245,244,0.3); }
 
 .sb-btn-sm {
@@ -260,9 +424,10 @@
   position: absolute;
   top: 0; right: 0; bottom: 0;
   width: 460px;
-  background: rgba(10,14,26,0.98);
-  border-left: 1px solid rgba(255,255,255,0.1);
+  background: rgba(10, 14, 10, 0.97); /* raised glass on the veld, near-solid */
+  border-left: 1px solid var(--glass-border);
   backdrop-filter: blur(32px);
+  box-shadow: 0 16px 64px rgba(0,0,0,0.45); /* raised-glass shadow (§7) */
   display: flex;
   flex-direction: column;
   z-index: 1;
@@ -367,4 +532,14 @@
   /* Prevent tiny font sizes on mobile */
   .sb-table th { font-size: 10px; }
   .sb-table td { font-size: 12px; }
+
+  /* §7 performance guard: below 768px all frost falls back to solid
+     Charcoal Veld — the motion survives, the GPU cost does not. */
+  .sb-glass, .sb-drawer-panel {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--charcoal-veld);
+  }
+  .sb-glass.sb-edge { background: #0E120E; } /* deep-glass solid equivalent */
+  .sb-unfrost { animation-name: sb-content-in, sb-daisy-pulse; }
 }
