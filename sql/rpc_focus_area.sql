@@ -22,8 +22,11 @@
 --   Optional dept / sub-dept filters resolved sigma-native (sigma_articles ->
 --   sigma_departments / sigma_subdepts.name), mirroring rpc_dept_summary.
 --   One row per ean + store_code so multi-store selections draw per-store lines.
+-- DROP + CREATE (R19).
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION rpc_focus_top5(
+DROP FUNCTION IF EXISTS rpc_focus_top5(text[], text[], text, text);
+
+CREATE FUNCTION rpc_focus_top5(
     p_store_codes  text[],
     p_dates        text[],
     p_dept         text DEFAULT NULL,
@@ -81,8 +84,11 @@ GRANT EXECUTE ON FUNCTION rpc_focus_top5(text[], text[], text, text) TO anon, au
 --   missed-EOD sale still draws (soh NULL that day). Labels (description/size/
 --   unit) fall back to sigma_articles / product_catalog for sigma-only rows.
 --   today_qty = SUM(qty) selling-units per the resolved qty convention.
+--   DROP + CREATE (R19; return type changed from the PRSSALE version).
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION rpc_focus_chart(
+DROP FUNCTION IF EXISTS rpc_focus_chart(text[], text[], text[]);
+
+CREATE FUNCTION rpc_focus_chart(
     p_eans        text[],
     p_store_codes text[],
     p_dates       text[]
