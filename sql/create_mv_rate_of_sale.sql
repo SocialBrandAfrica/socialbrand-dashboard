@@ -1,8 +1,10 @@
 -- =============================================================================
 -- create_mv_rate_of_sale.sql
 -- SB-CC-DASH-SOURCE-002 (SB-INDEX-005 Phase 2) -- rate-of-sale source migration.
--- STATUS: PREPARED, NOT YET DEPLOYED. Deploy after rpc_top20 reconcile/merge,
---   per PM sequence. ROS foundation reconciled read-only (see below).
+-- STATUS: DEPLOYED LIVE 2026-06-13 via dash_source_002_mv_rate_of_sale_to_sigma;
+--   refresh wired into refresh_l2_pipeline via _wire_mv_rate_of_sale_into_pipeline.
+--   Reconciled: 35,531 rows == 35,531 distinct (store,ean) keys (no fan-out);
+--   ROS matches PM worked example; SIZZLER days_cover 0.6 (soh 9 / ros 15.69).
 -- =============================================================================
 -- HYBRID migration (per PM qty/ROS ruling):
 --   ROS (SALES FACT) -> sigma_sales. daily_ros = SUM(qty over 91d)/91 in
@@ -25,11 +27,9 @@
 --   Blast radius = 1 product across all 5 stores; clears when SRC-001 is fixed at
 --   the loader and/or when SOH migrates to canonical ean. Logged in BUG-LOG.
 --
--- REFRESH WIRING (gap to close on deploy): mv_rate_of_sale is referenced by NO
---   refresh function today (not in refresh_l2_pipeline). Per brief Step 4 it must
---   be added to the nightly pipeline (REFRESH MATERIALIZED VIEW CONCURRENTLY
---   mv_rate_of_sale -- the unique index below supports CONCURRENTLY) so it
---   advances with no manual step.
+-- REFRESH WIRING (done): added to refresh_l2_pipeline beside mv_kpi_by_date
+--   (plain REFRESH -- pg_cron wraps the pipeline call in a txn so CONCURRENTLY is
+--   not usable there; the unique index still supports a manual CONCURRENTLY).
 --
 -- ROS foundation reconcile (read-only, live, 10116, 91d to MAX sale_date):
 --   1011600240103 = 266.16/day (24,221u) | 1011600200332 = 15.69/day (1,428u) |
