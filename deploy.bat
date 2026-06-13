@@ -1,5 +1,5 @@
 @echo off
-cd /d "C:\Users\User\Desktop\DIWAAIS\socialbrand-dashboard"
+cd /d "C:\Users\User\Desktop\Daisy\socialbrand-dashboard"
 git add .
 git commit -m "Dashboard update %date% %time%"
 git push

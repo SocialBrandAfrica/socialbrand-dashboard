@@ -13,7 +13,7 @@ Run the SocialBrand data diagnostic. Checks push log health, date coverage gaps,
 Run the following command and show the full output to the user:
 
 ```
-cd C:\Users\User\Desktop\DIWAAIS && python diagnose_data.py $ARGUMENTS
+cd C:\Users\User\Desktop\Daisy && python diagnose_data.py $ARGUMENTS
 ```
 
 If `$ARGUMENTS` is empty, run without arguments (defaults: all stores, last 30 days).
