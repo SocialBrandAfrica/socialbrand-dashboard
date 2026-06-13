@@ -1170,6 +1170,10 @@ export default function Home() {
   // rpc_layer_freshness: per-store L1/L2 max dates + latest feed_check verdict.
   const [l2Kpi, setL2Kpi]           = useState([])
   const [layerFresh, setLayerFresh] = useState([])
+  // v_l2_capital_by_store: per-store purified Capital Tied from l2_classification
+  // (bucket IN HEALTHY/COUNT/AMBIGUOUS/LEAVE_COUNTED, latest snapshot per store) —
+  // the engine's cleanup verdict. SB-CC-DASH-WIRE-001 ticket 1.
+  const [l2CapStore, setL2CapStore] = useState([])
   useEffect(() => {
     if (!storeCodes.length) return
     let cancelled = false
@@ -1178,12 +1182,17 @@ export default function Home() {
         .select('store_code,sales_date,sales_incl_vat,sales_cost,sales_qty,gp_pct,capital_normal,capital_production,capital_non_stock,capital_receipting_break,capital_total,days_cover_normal_wtd,neg_soh_count,slow_mover_count,ghost_stock_value,positioned_at')
         .in('store_code', storeCodes),
       supabase.rpc('rpc_layer_freshness'),
-    ]).then(([l2Res, frRes]) => {
+      supabase.from('v_l2_capital_by_store')
+        .select('store_code,snapshot_date,capital_purified,capital_in_scope_total,rows')
+        .in('store_code', storeCodes),
+    ]).then(([l2Res, frRes, capRes]) => {
       if (cancelled) return
       if (l2Res.error) console.error('[l2_kpi_daily]', l2Res.error.message)
       if (frRes.error) console.error('[rpc_layer_freshness]', frRes.error.message)
+      if (capRes.error) console.error('[v_l2_capital_by_store]', capRes.error.message)
       setL2Kpi(l2Res.data ?? [])
       setLayerFresh(frRes.data ?? [])
+      setL2CapStore(capRes.data ?? [])
     })
     return () => { cancelled = true }
   }, [storeCodes])
@@ -2084,7 +2093,21 @@ export default function Home() {
     return { rows, sales, gp, capital, capProd, capNonStock, negSoh, daysCover }
   }, [l2Kpi, storeCodes])
 
+  // Engine purified Capital Tied (SB-CC-DASH-WIRE-001 ticket 1): sum the
+  // l2_classification bucket-in-4 capital over the SELECTED stores. Point-in-time
+  // (latest snapshot per store), store-selection aware. null until the view loads.
+  const enginePurifiedCap = useMemo(() => {
+    const rows = l2CapStore.filter(r => storeCodes.includes(r.store_code))
+    if (!rows.length) return null
+    return rows.reduce((s, r) => s + Number(r.capital_purified ?? 0), 0)
+  }, [l2CapStore, storeCodes])
+
   const wholeStoreScope = deptFilter === 'all' && subDeptFilter === 'all' && !focusEans
+
+  // Capital Tied reads the engine only at whole-store / store-selection scope
+  // (the engine view is not dept-scoped yet); a dept/subdept/focus filter falls
+  // back to rpc_dept_summary capital. Point-in-time, so not date-gated.
+  const engineCapPairable = enginePurifiedCap != null && wholeStoreScope
 
   const dualSalesPairable = useMemo(() => (
     l2Agg != null && wholeStoreScope && selectedDates.length === 1 &&
@@ -2282,6 +2305,14 @@ export default function Home() {
   const lyKpiStockTurn = (lyKpiCapTied > 0 && daysInPeriod > 0)
     ? (lyKpiCost / daysInPeriod * 365) / lyKpiCapTied
     : null
+
+  // SB-CC-DASH-WIRE-001 ticket 2: Stock Turn / Day's Cover off the PURIFIED base.
+  // The old period-COGS-over-ghost-capital method annualised a single day's COGS
+  // over the ghost-inflated capital -> the implausible "49 turns / 7d". The engine's
+  // capital-weighted Day's Cover (l2Agg.daysCover, SOH/ROS over NORMAL capital) is
+  // the ROS-based truth; turns = 365 / cover. Used whenever the engine pairs.
+  const engineDaysCover = engineCapPairable && l2Agg != null ? l2Agg.daysCover : null
+  const engineStockTurn = engineDaysCover != null && engineDaysCover > 0 ? 365 / engineDaysCover : null
 
   const sameWeekdayBenchmark = useMemo(() => {
     if (selectedDates.length !== 1) return null
@@ -2878,17 +2909,21 @@ export default function Home() {
                     {
                       key:           'stockturn',
                       label:         'Stock Turn',
-                      value:         kpiStockTurn != null
-                        ? `${kpiStockTurn.toFixed(1)} turns · ${kpiDaysCover}d cover`
-                        : '—',
+                      value:         (engineStockTurn != null
+                        ? `${engineStockTurn.toFixed(1)} turns · ${Math.round(engineDaysCover)}d cover`
+                        : (kpiStockTurn != null ? `${kpiStockTurn.toFixed(1)} turns · ${kpiDaysCover}d cover` : '—')),
                       sparkline:     null,
                       lyRef:         hasLY && lyKpiStockTurn != null ? `${lyKpiStockTurn.toFixed(1)} turns` : null,
-                      lyDelta:       hasLY && lyKpiStockTurn != null ? deltaInfo(kpiStockTurn, lyKpiStockTurn) : null,
+                      lyDelta:       null,
                       wowDelta:      null,
-                      bench:         kpiStockTurn != null ? `target: 12 turns · ${kpiStockTurn < 12 ? `↓ ${(12 - kpiStockTurn).toFixed(1)} vs target` : `↑ ${(kpiStockTurn - 12).toFixed(1)} above target`}` : null,
-                      sub:           kpiCapTied > 0 ? `Capital tied ${zarShort(kpiCapTied)}` : 'Insufficient data',
-                      warn:          kpiStockTurn != null && kpiStockTurn < 12,
-                      tooltip:       `STOCK TURN\nHow many times stock investment turns over annually.\n\nFormula: (Period COGS / Days * 365) / Capital Tied\nCOGS: SUM(today_cost) from daily_snapshots\nDays: Calendar days first to last selected date\nCapital: SUM(SOH x unit_cost) latest snapshot per store\nTarget: 12 turns per year\nDays Cover: 365 / Stock Turn`,
+                      bench:         (engineStockTurn ?? kpiStockTurn) != null ? (() => { const t = engineStockTurn ?? kpiStockTurn; return `target: 12 turns · ${t < 12 ? `↓ ${(12 - t).toFixed(1)} vs target` : `↑ ${(t - 12).toFixed(1)} above target`}` })() : null,
+                      sub:           engineStockTurn != null
+                        ? `engine ROS-based · purified ${zarShort(enginePurifiedCap)}`
+                        : (kpiCapTied > 0 ? `Capital tied ${zarShort(kpiCapTied)}` : 'Insufficient data'),
+                      warn:          (engineStockTurn ?? kpiStockTurn) != null && (engineStockTurn ?? kpiStockTurn) < 12,
+                      tooltip:       engineStockTurn != null
+                        ? `STOCK TURN (engine)\nHow many times stock turns over annually.\n\nEngine basis (SB-CC-DASH-WIRE-001 t2): Day's Cover = capital-weighted SOH / rate-of-sale over NORMAL-class lines (l2_kpi_daily.days_cover_normal_wtd); Stock Turn = 365 / Day's Cover.\nReplaces the old (Period COGS / Days * 365) / ghost-capital method that annualised a single day's COGS over the ghost-inflated base.\nTarget: 12 turns per year`
+                        : `STOCK TURN\nHow many times stock investment turns over annually.\n\nFormula: (Period COGS / Days * 365) / Capital Tied\nCOGS: SUM(today_cost) from daily_snapshots\nDays: Calendar days first to last selected date\nCapital: SUM(SOH x unit_cost) latest snapshot per store\nTarget: 12 turns per year\nDays Cover: 365 / Stock Turn`,
                     },
                     {
                       key:           'negsoh',
@@ -2914,22 +2949,22 @@ export default function Home() {
                     {
                       key:           'captied',
                       label:         'Capital Tied',
-                      value:         dualStockPairable ? zarShort(l2Agg.capital) : zarShort(kpiCapTied),
+                      value:         engineCapPairable ? zarShort(enginePurifiedCap) : zarShort(kpiCapTied),
                       sparkline:     sparklineArrays.capitalTied,
                       lyRef:         hasLY ? zarShort(lyKpiCapTied) : null,
                       lyDelta:       hasLY ? deltaInfo(kpiCapTied, lyKpiCapTied) : null,
                       lyDeltaInvert: true,
                       wowDelta:      null,
                       bench:         null,
-                      sub:           dualStockPairable
-                        ? `engine NORMAL-class capital · cover ${l2Agg.daysCover != null ? l2Agg.daysCover.toFixed(0) + 'd' : '--'}`
+                      sub:           engineCapPairable
+                        ? `engine purified capital · cover ${engineDaysCover != null ? engineDaysCover.toFixed(0) + 'd' : '--'}`
                         : 'SOH x unit cost (latest snapshot)',
                       warn:          true,
                       edge:          'amber',
-                      dual:          dualStockPairable ? {
+                      dual:          engineCapPairable ? {
                         rawLabel: zarShort(kpiCapTied),
-                        delta:    dualDelta(l2Agg.capital, kpiCapTied, 'pct'),
-                        explain:  `Headline = L2 purified capital (NORMAL class only, l2_kpi_daily.capital_normal). Raw = L1 SOH x unit_cost incl ghosts. Earned exclusions: production ${zarShort(l2Agg.capProd)}, non-stock ${zarShort(l2Agg.capNonStock)} (R21 -- surfaced, never hidden).`,
+                        delta:    dualDelta(enginePurifiedCap, kpiCapTied, 'pct'),
+                        explain:  `Headline = L2 engine purified Capital Tied (l2_classification, bucket IN HEALTHY/COUNT/AMBIGUOUS/LEAVE_COUNTED; canon §8.8). Raw = L1 SOH x unit_cost incl ghost/cost-error/dead stock. The gap is the exact ghost capital the engine strips (R21 -- earned exclusions, surfaced not hidden).`,
                       } : null,
                       tooltip:       `CAPITAL TIED\nTotal value of stock on shelf at cost price.\n\nFormula: Sum (SOH x unit_cost)\nSnapshot: Latest date in selected range\nLY: Last day of LY period (-364 days)\nTarget: <= 30 days cover (standard lines), <= 15 days cover (top-tier lines)\n\nExclusions (INTERIM — dept/sub-dept rule):\n  • Production inputs: BAKERY/BUTCHERY/HMR/DELI INGREDIENTS, CATERING, SCALE sub-depts\n  • Non-stock: EXPENSES, FRONTEND PACK, PACKAGING, CRATE, ADVERTISING sub-depts\n  • Fresh impossible-stock: perishable dept + SOH > 0 + no sale 30+ days\nGhost Stock report shows every excluded line. Totals reconcile.\nReplaced by full classifier verdict join when SQL pipeline ships (Option B).`,
                       onClick:       kpiCapTied > 0 ? () => setCapTiedModalOpen(true) : undefined,
