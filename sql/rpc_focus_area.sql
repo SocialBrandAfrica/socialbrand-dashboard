@@ -40,7 +40,19 @@ RETURNS TABLE(
     sub_dept_name text,
     period_sales  numeric
 )
-LANGUAGE sql STABLE SECURITY DEFINER AS $$
+-- plpgsql so the date array is pre-cast ONCE into a real date[] local; the
+-- predicate must never see ss.sale_date = ANY(p_dates::date[]) -- the inline
+-- ::date[] cast over a param makes the planner abandon idx_sigma_sales_store_date
+-- and seq-scan ~3.5M rows (>30s timeout). top5 is the only RPC hit because it
+-- bridges the whole store with no ean filter. #variable_conflict use_column
+-- resolves OUT-param vs column name clashes. (Apply this same pattern to
+-- rpc_top20 + mv_rate_of_sale.)
+LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
+#variable_conflict use_column
+DECLARE
+    v_dates date[] := p_dates::date[];   -- pre-cast ONCE
+BEGIN
+    RETURN QUERY
     WITH bridge AS (
         SELECT pc.ean,
                pc.store_code,
@@ -62,7 +74,7 @@ LANGUAGE sql STABLE SECURITY DEFINER AS $$
     LEFT   JOIN sigma_departments sd ON sd.store_code = a.store_code AND sd.department_nr = a.department_nr
     LEFT   JOIN sigma_subdepts sub   ON sub.store_code = a.store_code AND sub.merch_group_nr = a.merch_group_nr
     WHERE  ss.store_code  = ANY(p_store_codes)
-      AND  ss.sale_date   = ANY(p_dates::date[])          -- index-safe (Rule 4)
+      AND  ss.sale_date   = ANY(v_dates)                 -- plain date[] -> index usable
       AND  ss.period_kind = 'T' AND ss.txn_kind = 1
       AND  ss.sales_incl_vat > 0
       AND  (p_dept    IS NULL OR sd.name  = p_dept)
@@ -70,6 +82,7 @@ LANGUAGE sql STABLE SECURITY DEFINER AS $$
     GROUP  BY b.ean, ss.store_code
     ORDER  BY period_sales DESC
     LIMIT  50;
+END;
 $$;
 
 GRANT EXECUTE ON FUNCTION rpc_focus_top5(text[], text[], text, text) TO anon, authenticated;
