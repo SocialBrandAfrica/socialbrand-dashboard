@@ -7,7 +7,7 @@ Monthly DIWAAIS2 -> product_catalog loader.
 Usage:
     python load_plu_reference.py [--date YYYY-MM-DD]
 
-The script finds all DIWAAIS2_*.xls files under C:/Users/User/Desktop/DIWAAIS/
+The script finds all DIWAAIS2_*.xls files under C:/Users/User/Desktop/Daisy/
 or accepts explicit file paths via --file.  Run once after pulling the monthly
 DIWAAIS2 report; thereafter the product_catalog table drives:
 
@@ -60,7 +60,7 @@ except ImportError:
 SUPABASE_URL = "https://crklvhfwyxlisfcvqenc.supabase.co"
 ANON_KEY     = "sb_publishable__5cXLbkpdth-iLFkeqTTNA_kRUvfYgr"
 
-DIWAAIS_ROOT = r"C:\Users\User\Desktop\DIWAAIS"
+DIWAAIS_ROOT = r"C:\Users\User\Desktop\Daisy"
 
 # Map parent folder name -> Sigma store code.
 # Each store's DIWAAIS2 file sits inside its own folder under DIWAAIS_ROOT.

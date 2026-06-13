@@ -16,17 +16,17 @@ ToolSearch({
 Do not skip — these tools are deferred and fail with InputValidationError if called without loading.
 
 **Step 2 — Read RULE-BOOK:**
-`Read("C:\Users\User\Desktop\DIWAAIS\RULE-BOOK.md")`
+`Read("C:\Users\User\Desktop\Daisy\RULE-BOOK.md")`
 
 **Step 3 — Read DB-SCHEMA:**
-`Read("C:\Users\User\Desktop\DIWAAIS\DB-SCHEMA.md")`
+`Read("C:\Users\User\Desktop\Daisy\DB-SCHEMA.md")`
 
 **Step 4 — Read THE handover file (there is exactly one):**
-`Read("C:\Users\User\Desktop\DIWAAIS\HANDOVER-CURRENT.md")`
+`Read("C:\Users\User\Desktop\Daisy\HANDOVER-CURRENT.md")`
 There are NO dated handover files in root — ever. If you find one, that is a governance breach: absorb its content into HANDOVER-CURRENT.md (your own section) and move the stray to `archive/handovers/`.
 
 **Step 5 — Registry + clock gate:**
-Read `C:\Users\User\Desktop\DIWAAIS\FILE-GOVERNANCE.md` §0 (the Bible registry). Before creating ANY new file, run the §0 decision tree — if the content fits an existing canonical/log file, update that file in place. New root .md files are sanctioned ONLY as briefs (SB-XX-NNN-*) or PM-approved side-project folders. Take every date stamp from the system clock (`Get-Date` / `date`), never assumed — on 2026-06-07 two CC sessions were future-dated 06-08/06-09 and contaminated canon.
+Read `C:\Users\User\Desktop\Daisy\FILE-GOVERNANCE.md` §0 (the Bible registry). Before creating ANY new file, run the §0 decision tree — if the content fits an existing canonical/log file, update that file in place. New root .md files are sanctioned ONLY as briefs (SB-XX-NNN-*) or PM-approved side-project folders. Take every date stamp from the system clock (`Get-Date` / `date`), never assumed — on 2026-06-07 two CC sessions were future-dated 06-08/06-09 and contaminated canon.
 
 Only after all five steps: begin work.
 
@@ -36,8 +36,8 @@ Mid-session shortcut: `/autopilot` reloads all browser tool schemas if the sessi
 
 ## Standing references
 
-- `C:\Users\User\Desktop\DIWAAIS\RULE-BOOK.md` — domain vocabulary, time conventions, KPI formulas, GP% rules, mandatory SQL patterns, naming conventions. Authoritative: if a brief contradicts this, update here first, then update the brief.
-- `C:\Users\User\Desktop\DIWAAIS\DB-SCHEMA.md` — live schema, RPC function signatures, pending SQL tracker.
+- `C:\Users\User\Desktop\Daisy\RULE-BOOK.md` — domain vocabulary, time conventions, KPI formulas, GP% rules, mandatory SQL patterns, naming conventions. Authoritative: if a brief contradicts this, update here first, then update the brief.
+- `C:\Users\User\Desktop\Daisy\DB-SCHEMA.md` — live schema, RPC function signatures, pending SQL tracker.
 - **Sigma Fix Strategy (LIVING canon — read before ANY stock-cleanup / phantom-stock / TLX / Capital-Tied work):** `STOCK-TRIAGE-TOOL.md` (SB-INDEX-014) + `SIGMA-CLEANUP-WORKFLOW.md` (SB-INDEX-015). Every session develops and refines these — fold what you learn back in. CC's engine version = SB-CC-ANOM-001 Family 3 (Anomaly Radar item-outliers); the tool is the manual prototype you productionise.
 
 ---
@@ -46,8 +46,8 @@ Mid-session shortcut: `/autopilot` reloads all browser tool schemas if the sessi
 
 See memory files for full project context:
 - `memory/MEMORY.md` — index of all memory files
-- THE handover is `C:\Users\User\Desktop\DIWAAIS\HANDOVER-CURRENT.md` — the only live one; read on session start
-- No dated handover/session files in `memory/` either — session state belongs in HANDOVER-CURRENT.md; old dated memory handovers are archived in `DIWAAIS\archive\handovers\`
+- THE handover is `C:\Users\User\Desktop\Daisy\HANDOVER-CURRENT.md` — the only live one; read on session start
+- No dated handover/session files in `memory/` either — session state belongs in HANDOVER-CURRENT.md; old dated memory handovers are archived in `Daisy\archive\handovers\`
 
 ## Key rules
 
@@ -59,4 +59,4 @@ See memory files for full project context:
 
 ## Handover file rules (CORRECTED 2026-06-07 — the old "one file per calendar day" rule here was WRONG and caused duplicate handovers; FILE-GOVERNANCE wins)
 
-There is exactly ONE live handover: `C:\Users\User\Desktop\DIWAAIS\HANDOVER-CURRENT.md`. Both CC and PM write into it, each in their OWN section. Never create `HANDOVER_<date>.md`. Never use `Write` on it — always `Read` then `Edit` your own section (Write silently destroys the other author's content). Update the `Last touched:` line with name + system-clock timestamp on every edit; if it changed since you read, re-read before writing. Snapshots to `archive/handovers/` are made by PM at milestones — not by CC, not daily.
+There is exactly ONE live handover: `C:\Users\User\Desktop\Daisy\HANDOVER-CURRENT.md`. Both CC and PM write into it, each in their OWN section. Never create `HANDOVER_<date>.md`. Never use `Write` on it — always `Read` then `Edit` your own section (Write silently destroys the other author's content). Update the `Last touched:` line with name + system-clock timestamp on every edit; if it changed since you read, re-read before writing. Snapshots to `archive/handovers/` are made by PM at milestones — not by CC, not daily.

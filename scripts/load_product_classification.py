@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 # ---------------------------------------------------------------------------
 # Configuration defaults
 # ---------------------------------------------------------------------------
-DEFAULT_CSV  = r"C:\Users\User\Desktop\DIWAAIS\production_scored.csv"
+DEFAULT_CSV  = r"C:\Users\User\Desktop\Daisy\production_scored.csv"
 DEFAULT_URL  = "https://crklvhfwyxlisfcvqenc.supabase.co"
 BATCH_SIZE   = 500
 TABLE        = "product_classification"

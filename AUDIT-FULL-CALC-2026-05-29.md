@@ -529,4 +529,4 @@ No active SQL file uses DBAUms as a sales or SOH source. ✓
 ---
 
 *Report written by: Claude Code (read-only audit, no code changed)*  
-*Report file: `C:\Users\User\Desktop\DIWAAIS\socialbrand-dashboard\AUDIT-FULL-CALC-2026-05-29.md`*
+*Report file: `C:\Users\User\Desktop\Daisy\socialbrand-dashboard\AUDIT-FULL-CALC-2026-05-29.md`*
