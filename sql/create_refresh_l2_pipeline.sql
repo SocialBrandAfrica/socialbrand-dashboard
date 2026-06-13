@@ -46,6 +46,19 @@ BEGIN
   REFRESH MATERIALIZED VIEW l2_kpi_daily;
   v_result := v_result || jsonb_build_object('chain_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
 
+  -- l2_classification engine, all 5 stores (SB-CC-DASH-WIRE-001 t3). Reads
+  -- l2_stock_position (refreshed above) + v_item_ean. Idempotent (DELETE+INSERT
+  -- per store+day). Per-store guarded so it can never break the chain.
+  FOR v_store IN SELECT unnest(ARRAY['10116','21355','80175','80176','80579'])
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_classification(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('classification_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+  v_result := v_result || jsonb_build_object('classification_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+
   FOR v_store IN SELECT unnest(ARRAY['10116','21355','80175','80176','80579'])
   LOOP
     BEGIN

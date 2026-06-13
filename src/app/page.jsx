@@ -1210,6 +1210,9 @@ export default function Home() {
   //   "Clear all" resets back to isDefaultBasket = true and re-fetches the top 5.
   const [focusBasket,      setFocusBasket]      = useState([])
   const [isDefaultBasket,  setIsDefaultBasket]  = useState(true)
+  // True only while the default top-5 fetch is in flight, so FocusAreaPanel can
+  // show an honest empty-state instead of spinning forever (SB-CC-DASH-WIRE-001 t4).
+  const [focusDefaultLoading, setFocusDefaultLoading] = useState(false)
 
   // ── FEAT-1: trend date windows — promoted from loadViews so the product-trend
   //    useEffect can depend on them without re-deriving on every render.
@@ -1266,6 +1269,7 @@ export default function Home() {
 
     let cancelled = false
     setFocusBasket([])   // clear immediately so old data never lingers
+    setFocusDefaultLoading(true)
 
     supabase.rpc('rpc_focus_top5', {
       p_store_codes: storeCodes,
@@ -1274,9 +1278,8 @@ export default function Home() {
       p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
     }).then(({ data, error }) => {
       if (cancelled) return
-      if (error) { console.error('rpc_focus_top5 error', error); return }
-      if (!data?.length) return
-      const top5 = data.slice(0, 5).map(r => ({
+      if (error) { console.error('rpc_focus_top5 error', error); setFocusDefaultLoading(false); return }
+      const top5 = (data ?? []).slice(0, 5).map(r => ({
         ean:           String(r.ean),
         description:   r.description,
         store_code:    r.store_code,
@@ -1284,6 +1287,7 @@ export default function Home() {
         sub_dept_name: r.sub_dept_name,
       }))
       setFocusBasket(top5)
+      setFocusDefaultLoading(false)
     })
     return () => { cancelled = true }
   }, [isDefaultBasket, storeCodes, selectedDates, deptFilter, subDeptFilter])
@@ -3526,6 +3530,7 @@ export default function Home() {
               availableDates={availableDates}
               allStoreCodes={storeCodes}
               isDefault={isDefaultBasket}
+              defaultLoading={focusDefaultLoading}
             />
           )}
 
