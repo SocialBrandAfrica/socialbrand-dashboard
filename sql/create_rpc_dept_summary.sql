@@ -38,6 +38,14 @@
 -- Function-change protocol (RULE-BOOK §8): single overload; DROP then CREATE
 --   (return signature gains total_sales_ex_vat); reload schema. SECURITY DEFINER,
 --   anon + authenticated EXECUTE.
+--
+-- PERF (2026-06-13): converted to plpgsql, v_dates pre-cast ONCE so the date
+--   predicates keep their indexes (same gotcha that timed out rpc_focus_top5).
+--   Helps the sigma leg; whole-call 2.86s -> 2.43s on the 5-store x 14-day period
+--   view, 170ms on the single-store/date page default. The residual cost is the
+--   daily_snapshots capital_tied calc (classify_snapshot_item per row) -- that
+--   clears when capital_tied migrates in the stock-facts step. Data unchanged
+--   (whole-store total still ties to sigma_sales, delta 0.00).
 -- =============================================================================
 
 DROP FUNCTION IF EXISTS public.rpc_dept_summary(text[], text[], text, text[]);
@@ -49,8 +57,13 @@ CREATE FUNCTION public.rpc_dept_summary(
     p_eans        text[] DEFAULT NULL
 )
 RETURNS TABLE(dept_name text, total_sales numeric, total_cost numeric, total_qty numeric, total_sales_ex_vat numeric, capital_tied numeric)
-LANGUAGE sql STABLE SECURITY DEFINER
+LANGUAGE plpgsql STABLE SECURITY DEFINER
 AS $function$
+#variable_conflict use_column
+DECLARE
+    v_dates date[] := p_dates::date[];   -- pre-cast ONCE
+BEGIN
+  RETURN QUERY
   WITH sigma_dept AS (
     SELECT COALESCE(sd.name, 'UNMAPPED') AS dept_name,
            ROUND(SUM(ss.sales_incl_vat)::numeric, 2)               AS total_sales,
@@ -61,7 +74,7 @@ AS $function$
     LEFT   JOIN sigma_departments sd ON sd.store_code = a.store_code AND sd.department_nr = a.department_nr
     LEFT   JOIN sigma_subdepts sub  ON sub.store_code = a.store_code AND sub.merch_group_nr = a.merch_group_nr
     WHERE  ss.store_code = ANY(p_store_codes)
-      AND  ss.sale_date  = ANY(p_dates::date[])          -- index-safe (Rule 4)
+      AND  ss.sale_date  = ANY(v_dates)                  -- pre-cast date[] (index-safe, Rule 4)
       AND  ss.period_kind = 'T' AND ss.txn_kind = 1
       AND  (p_subdept IS NULL OR sub.name = p_subdept)
       AND  (p_eans IS NULL OR a.product_code IN (
@@ -75,7 +88,7 @@ AS $function$
   latest AS (
     SELECT store_code, MAX(snapshot_date) AS d
     FROM   daily_snapshots
-    WHERE  store_code = ANY(p_store_codes) AND snapshot_date = ANY(p_dates::date[])
+    WHERE  store_code = ANY(p_store_codes) AND snapshot_date = ANY(v_dates)
     GROUP  BY store_code
   ),
   prssale_dept AS (
@@ -92,7 +105,7 @@ AS $function$
     FROM   daily_snapshots ds
     JOIN   latest l ON l.store_code = ds.store_code
     WHERE  ds.store_code = ANY(p_store_codes)
-      AND  ds.snapshot_date = ANY(p_dates::date[])
+      AND  ds.snapshot_date = ANY(v_dates)
       AND  (p_subdept IS NULL OR ds.sub_dept_name = p_subdept)
       AND  (p_eans    IS NULL OR ds.ean = ANY(p_eans))
     GROUP  BY ds.dept_name
@@ -106,6 +119,7 @@ AS $function$
   FROM   sigma_dept s
   FULL OUTER JOIN prssale_dept p ON p.dept_name = s.dept_name
   ORDER  BY COALESCE(s.dept_name, p.dept_name);
+END;
 $function$;
 
 GRANT EXECUTE ON FUNCTION public.rpc_dept_summary(text[], text[], text, text[]) TO anon, authenticated;
