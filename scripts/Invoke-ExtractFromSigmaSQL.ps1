@@ -89,6 +89,18 @@
            at 19:40 and on 21355 at 20:03). Fix: Wait-ForSigmaDw probes the DB
            at startup and retries every 5 min (max 9 probes, ~40 min) until EOD
            releases it, instead of failing the whole chain on first contact.
+    v1.14: Self-registering 18:40 pre-EOD task. The standalone
+           Create-ExtractorScheduledTask.ps1 was never auto-deployed, so the
+           SocialBrand-ExtractDelta task existed on 0/5 servers and the pre-EOD
+           window never fired (push_log: zero 18:40 sigma_extractor rows ever).
+           Fix: Register-ExtractDeltaTask runs at startup, BEFORE any SQL, so it
+           lands even when dw220sdb is locked. Idempotent -- (re)registers only
+           when the task is missing or its trigger is not 18:40. Rides the fresh
+           nightly extractor deploy (Invoke-DeployExtractor, not version-gated),
+           so it self-heals on all 5 servers from the next push. Full-chain runs
+           only (skipped on -TableName single-table reruns). 18:40 is hardcoded
+           here to match Create-ExtractorScheduledTask.ps1 -- flagged as
+           per-store config under R25 / SOURCE-001 (must not fossilise).
     v1.13: Probe discriminator. 2026-06-11: the lock outlasted the full 45-min
            probe window on 4 stores (held 20:01 to past 21:54) and the bare
            "Cannot open database" text cannot distinguish an EOD lock from a
@@ -130,7 +142,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.13'
+$ScriptVersion  = 'v1.14'
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -177,6 +189,76 @@ $EasyDbBlockMinEnd    = 30
 # =============================================================================
 
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+
+# =============================================================================
+# SELF-REGISTERING PRE-EOD TASK (v1.14)
+# =============================================================================
+
+function Register-ExtractDeltaTask {
+    # Ensures the SocialBrand-ExtractDelta scheduled task exists and fires at
+    # 18:40 (before the 19:00 store close, clear of the ~20:00 dw220sdb lock).
+    # Idempotent: registers only when the task is missing or its trigger is not
+    # 18:40. Runs at extractor startup BEFORE any SQL, so it lands even when
+    # dw220sdb is locked. Non-fatal -- a registration failure never blocks the
+    # extract (it just retries next run). Self-heals all 5 servers via the fresh
+    # nightly extractor deploy.
+    #
+    # 18:40 is hardcoded to match Create-ExtractorScheduledTask.ps1. Per Pieter
+    # (R25 / SB-CC-SOURCE-001): pre-EOD time is per-store/per-day CONFIG, not
+    # code -- this must move to config when SOURCE-001 lands. Flagged so it does
+    # not fossilise as a hardcoding.
+    $taskName = 'SocialBrand-ExtractDelta'
+    $atTime   = '18:40'
+    try {
+        if (-not $PSCommandPath) {
+            Write-Host "  [task] Script path unknown - skipping task registration." -ForegroundColor DarkGray
+            return
+        }
+        $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        if ($existing) {
+            # Already present with an 18:40 daily trigger -> leave it alone.
+            $hasSlot = $false
+            foreach ($t in $existing.Triggers) {
+                if ($t.StartBoundary -and ($t.StartBoundary -match 'T18:40:00')) { $hasSlot = $true }
+            }
+            if ($hasSlot) {
+                Write-Host "  [task] '$taskName' already registered for $atTime." -ForegroundColor DarkGray
+                return
+            }
+            Write-Host "  [task] '$taskName' present but not at $atTime - re-registering." -ForegroundColor Yellow
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+        }
+
+        $psExe   = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $exeArgs = '-ExecutionPolicy Bypass -NonInteractive -WindowStyle Hidden -File "' + $PSCommandPath + '"'
+        $workDir = Split-Path $PSCommandPath
+        $trigger = New-ScheduledTaskTrigger -Daily -At $atTime
+        $action  = New-ScheduledTaskAction -Execute $psExe -Argument $exeArgs -WorkingDirectory $workDir
+        $settings = New-ScheduledTaskSettingsSet `
+            -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
+            -StartWhenAvailable `
+            -WakeToRun:$false
+
+        Register-ScheduledTask `
+            -TaskName $taskName `
+            -Trigger  $trigger `
+            -Action   $action `
+            -Settings $settings `
+            -RunLevel  Highest `
+            -Force | Out-Null
+        Write-Host "  [task] Registered '$taskName' -> daily $atTime." -ForegroundColor Green
+    }
+    catch {
+        # Non-fatal: needs admin/highest rights; if the run context lacks them
+        # this warns and retries next run. The extract continues regardless.
+        Write-Warning "[task] Could not register '$taskName' (non-fatal): $_"
+    }
+}
+
+# Full-chain runs only -- skip on single-table manual reruns (-TableName ...).
+if ([string]::IsNullOrEmpty($TableName)) {
+    Register-ExtractDeltaTask
+}
 
 # =============================================================================
 # SQL HELPERS
