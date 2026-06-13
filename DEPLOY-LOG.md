@@ -4,6 +4,22 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-13 ~12:45 SAST — l2_classification ENGINE live + dashboard wired to it (SB-CC-DASH-WIRE-001)
+
+**DB (LIVE via MCP, write-path enabled this session):**
+- **`l2_classification` v1.0** — the deterministic Loom L2 verdict table (canon §8 cascade), one row per in-scope article/store, precomputes bucket + artifact. Deployed by PM (migrations `create_l2_classification_v1_0` + `fix_l2_classification_missing_sig_join`); reconciles to the row ×5 (R10.0M purified Capital Tied). Repo file `sql/create_l2_classification.sql` (e779573) had a missing `LEFT JOIN sig s` — fixed `0b2bec4`, repo == live.
+- **`v_l2_capital_by_store`** (new view) — per-store purified Capital Tied (§8.8). `sql/create_v_l2_capital_by_store.sql`. anon SELECT.
+- **`refresh_l2_pipeline`** — now calls `refresh_l2_classification` ×5 after l2_stock_position (per-store guarded). Nightly via pg_cron job 15 (22:15 SAST). `sql/create_refresh_l2_pipeline.sql` updated.
+
+**Repo / not-yet-merged:**
+- **Extractor v1.14** (commit `e35b843`) — self-registers the `SocialBrand-ExtractDelta` 18:40 pre-EOD task on all 5 servers (was 0/5; rides tonight's fresh deploy).
+- **Dashboard wiring t1–t4** on branch `dash-wire-001` (`a3e7c3e`) — Capital Tied → engine (R21M→R10M), Stock Turn off purified base, Focus Area honest empty-state. **Pending PM live sign-off + merge** (not yet on main/Vercel).
+- `.mcp.json` `--read-only` removed (LOCAL/uncommitted) — CC read-write path; read-only stays repo default.
+
+**RED held:** TLX floor consumption stays RED until §8.12 sibling guard (l2_link_codes_queue) + Dice v1.1 — ticket 5.
+
+---
+
 ## 2026-06-12 12:25 SAST — P2 visual: Brand Bible v2.1 veld/sky/aurora migration
 
 **Commit:** 014bda1 (main → Vercel)
