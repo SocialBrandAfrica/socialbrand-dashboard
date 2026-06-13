@@ -195,6 +195,7 @@ BEGIN
             -- nonstock_account (s8.3): accounting lines living inside NORMAL
             ( COALESCE(sp.description,'') ~* '((^|[^0-9])14\s*%|NON.?SCAN|SALES?\s*DIFF|ROUNDING|SUSPENSE ACCOUNT)' ) AS nonstock_account
         FROM l2_stock_position sp
+        LEFT JOIN sig s ON s.product_code = sp.product_code
         LEFT JOIN v_item_ean ie
                ON ie.store_code = sp.store_code AND ie.product_code = sp.product_code
         WHERE sp.store_code = p_store
