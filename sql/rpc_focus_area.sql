@@ -4,13 +4,15 @@
 -- Two functions = TWO separate pastes in the Supabase SQL Editor.
 --
 -- SALES FACTS re-sourced onto sigma_sales (DBUMBA exact ledger, missed-EOD
---   complete). Output stays keyed by EAN, so sigma product_code is bridged back
---   to ean via product_catalog (~96.8%); the unbridged tail (~3%) cannot carry
---   an ean and is therefore not rankable here -- inherent to ean-keyed output
---   over a product_code-keyed ledger (flagged to PM; keying by product_code
---   would be a page change, out of scope).
+--   complete). Output stays keyed by EAN, bridged from sigma product_code via
+--   the SHARED v_ean_bridge view (one canonical ean per (store, product_code) --
+--   see create_v_ean_bridge.sql; prevents the product_catalog multi-ean fan-out).
+--   The unbridged ~3% tail cannot carry an ean and is not rankable here
+--   (inherent to ean-keyed output over a product_code-keyed ledger; flagged).
 -- STOCK FACT soh in rpc_focus_chart STAYS on daily_snapshots (held stock-facts
 --   thread); NULL on missed-EOD days = honestly unknown, fixed by the later step.
+-- PERF: date arrays index-safe; rpc_focus_top5 pre-casts in plpgsql (whole-store,
+--   no ean filter -- an inline ::date[] cast there seq-scans 3.5M rows).
 -- =============================================================================
 
 
@@ -22,11 +24,12 @@
 --   Optional dept / sub-dept filters resolved sigma-native (sigma_articles ->
 --   sigma_departments / sigma_subdepts.name), mirroring rpc_dept_summary.
 --   One row per ean + store_code so multi-store selections draw per-store lines.
--- DROP + CREATE (R19).
+--   plpgsql: pre-cast v_dates ONCE so ss.sale_date = ANY(v_dates) keeps the
+--   idx_sigma_sales_store_date index (inline ::date[] over a param -> seq scan
+--   -> >30s timeout = the stuck panel). #variable_conflict use_column resolves
+--   OUT-param vs column name clashes.
 -- -----------------------------------------------------------------------------
-DROP FUNCTION IF EXISTS rpc_focus_top5(text[], text[], text, text);
-
-CREATE FUNCTION rpc_focus_top5(
+CREATE OR REPLACE FUNCTION rpc_focus_top5(
     p_store_codes  text[],
     p_dates        text[],
     p_dept         text DEFAULT NULL,
@@ -40,27 +43,12 @@ RETURNS TABLE(
     sub_dept_name text,
     period_sales  numeric
 )
--- plpgsql so the date array is pre-cast ONCE into a real date[] local; the
--- predicate must never see ss.sale_date = ANY(p_dates::date[]) -- the inline
--- ::date[] cast over a param makes the planner abandon idx_sigma_sales_store_date
--- and seq-scan ~3.5M rows (>30s timeout). top5 is the only RPC hit because it
--- bridges the whole store with no ean filter. #variable_conflict use_column
--- resolves OUT-param vs column name clashes. (Apply this same pattern to
--- rpc_top20 + mv_rate_of_sale.)
 LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
 #variable_conflict use_column
 DECLARE
     v_dates date[] := p_dates::date[];   -- pre-cast ONCE
 BEGIN
     RETURN QUERY
-    WITH bridge AS (
-        SELECT pc.ean,
-               pc.store_code,
-               NULLIF(regexp_replace(pc.sigma_product_code, '\D', '', 'g'), '')::bigint AS product_code
-        FROM   product_catalog pc
-        WHERE  pc.store_code = ANY(p_store_codes)
-          AND  pc.sigma_product_code ~ '^[0-9]+$'
-    )
     SELECT
         b.ean,
         MAX(COALESCE(a.description, a.short_description)) AS description,
@@ -69,12 +57,12 @@ BEGIN
         MAX(COALESCE(sub.name, 'UNMAPPED'))               AS sub_dept_name,
         ROUND(SUM(ss.sales_incl_vat)::numeric, 2)         AS period_sales
     FROM   sigma_sales ss
-    JOIN   bridge b               ON b.store_code = ss.store_code AND b.product_code = ss.product_code
+    JOIN   v_ean_bridge b         ON b.store_code = ss.store_code AND b.product_code = ss.product_code
     LEFT   JOIN sigma_articles a  ON a.store_code = ss.store_code AND a.product_code = ss.product_code
     LEFT   JOIN sigma_departments sd ON sd.store_code = a.store_code AND sd.department_nr = a.department_nr
     LEFT   JOIN sigma_subdepts sub   ON sub.store_code = a.store_code AND sub.merch_group_nr = a.merch_group_nr
     WHERE  ss.store_code  = ANY(p_store_codes)
-      AND  ss.sale_date   = ANY(v_dates)                 -- plain date[] -> index usable
+      AND  ss.sale_date   = ANY(v_dates)
       AND  ss.period_kind = 'T' AND ss.txn_kind = 1
       AND  ss.sales_incl_vat > 0
       AND  (p_dept    IS NULL OR sd.name  = p_dept)
@@ -97,11 +85,9 @@ GRANT EXECUTE ON FUNCTION rpc_focus_top5(text[], text[], text, text) TO anon, au
 --   missed-EOD sale still draws (soh NULL that day). Labels (description/size/
 --   unit) fall back to sigma_articles / product_catalog for sigma-only rows.
 --   today_qty = SUM(qty) selling-units per the resolved qty convention.
---   DROP + CREATE (R19; return type changed from the PRSSALE version).
+--   ean-bounded -> no pre-cast needed (small scan); bridge from v_ean_bridge.
 -- -----------------------------------------------------------------------------
-DROP FUNCTION IF EXISTS rpc_focus_chart(text[], text[], text[]);
-
-CREATE FUNCTION rpc_focus_chart(
+CREATE OR REPLACE FUNCTION rpc_focus_chart(
     p_eans        text[],
     p_store_codes text[],
     p_dates       text[]
@@ -119,18 +105,12 @@ RETURNS TABLE(
 )
 LANGUAGE sql STABLE SECURITY DEFINER AS $$
     WITH bridge AS (
-        SELECT pc.ean,
-               pc.store_code,
-               NULLIF(regexp_replace(pc.sigma_product_code, '\D', '', 'g'), '')::bigint AS product_code
-        FROM   product_catalog pc
-        WHERE  pc.store_code = ANY(p_store_codes)
-          AND  pc.ean = ANY(p_eans)
-          AND  pc.sigma_product_code ~ '^[0-9]+$'
+        SELECT b.ean, b.store_code, b.product_code
+        FROM   v_ean_bridge b
+        WHERE  b.store_code = ANY(p_store_codes) AND b.ean = ANY(p_eans)
     ),
-    sigma_side AS (             -- SALES FACTS off the ledger
-        SELECT b.ean,
-               ss.store_code,
-               ss.sale_date,
+    sigma_side AS (
+        SELECT b.ean, ss.store_code, ss.sale_date,
                SUM(ss.sales_incl_vat) AS sig_sales,
                SUM(ss.qty)            AS sig_qty
         FROM   sigma_sales ss
@@ -140,14 +120,10 @@ LANGUAGE sql STABLE SECURITY DEFINER AS $$
           AND  ss.period_kind = 'T' AND ss.txn_kind = 1
         GROUP  BY b.ean, ss.store_code, ss.sale_date
     ),
-    snap_side AS (             -- STOCK FACT soh (held) + labels
-        SELECT ds.ean,
-               ds.store_code,
-               ds.snapshot_date,
+    snap_side AS (
+        SELECT ds.ean, ds.store_code, ds.snapshot_date,
                ds.description, ds.size, ds.unit,
-               ds.today_sales AS snap_sales,
-               ds.today_qty   AS snap_qty,
-               ds.soh
+               ds.today_sales AS snap_sales, ds.today_qty AS snap_qty, ds.soh
         FROM   daily_snapshots ds
         WHERE  ds.ean          = ANY(p_eans)
           AND  ds.store_code   = ANY(p_store_codes)
@@ -166,8 +142,8 @@ LANGUAGE sql STABLE SECURITY DEFINER AS $$
     FROM   sigma_side sg
     FULL   OUTER JOIN snap_side sn
            ON sn.ean = sg.ean AND sn.store_code = sg.store_code AND sn.snapshot_date = sg.sale_date
-    LEFT   JOIN bridge bb ON bb.ean = COALESCE(sg.ean, sn.ean)
-                         AND bb.store_code = COALESCE(sg.store_code, sn.store_code)
+    LEFT   JOIN v_ean_bridge bb ON bb.ean = COALESCE(sg.ean, sn.ean)
+                               AND bb.store_code = COALESCE(sg.store_code, sn.store_code)
     LEFT   JOIN sigma_articles a ON a.store_code = COALESCE(sg.store_code, sn.store_code)
                                 AND a.product_code = bb.product_code
     LEFT   JOIN product_catalog pc ON pc.store_code = COALESCE(sg.store_code, sn.store_code)

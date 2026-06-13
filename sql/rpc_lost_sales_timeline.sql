@@ -5,8 +5,9 @@
 --
 -- SB-CC-DASH-SOURCE-002 Step 4 (SB-INDEX-005 Phase 2) -- HYBRID migration.
 --   SALES FACT  sold_bool  -> sigma_sales (qty>0 that day, exact + missed-EOD
---                            complete). Bridged ean<->product_code via
---                            product_catalog (~96.8%); falls back to the
+--                            complete). Bridged ean<->product_code via the SHARED
+--                            v_ean_bridge view (one canonical ean per product --
+--                            see create_v_ean_bridge.sql); falls back to the
 --                            snapshot's today_qty for the unbridged tail.
 --   STOCK FACTS oos_bool, soh -> STAY on daily_snapshots (the held stock-facts
 --                            thread per the brief boundary -- DO NOT cross).
@@ -29,7 +30,7 @@
 --     sold (any store) > oos (any store) > neither
 --
 -- PERFORMANCE: sale_date / snapshot_date filtered as DATE ranges (never cast the
---   column, Rule 4). ~10 EANs × 5 stores × 28 days each side.
+--   column, Rule 4). ean-bounded -> small scan, no pre-cast needed.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION rpc_lost_sales_timeline(
@@ -49,13 +50,9 @@ RETURNS TABLE (
 LANGUAGE sql STABLE SECURITY DEFINER
 AS $$
   WITH bridge AS (
-    SELECT pc.ean,
-           pc.store_code,
-           NULLIF(regexp_replace(pc.sigma_product_code, '\D', '', 'g'), '')::bigint AS product_code
-    FROM   product_catalog pc
-    WHERE  pc.store_code = ANY(p_stores)
-      AND  pc.ean = ANY(p_eans)
-      AND  pc.sigma_product_code ~ '^[0-9]+$'
+    SELECT b.ean, b.store_code, b.product_code
+    FROM   v_ean_bridge b
+    WHERE  b.store_code = ANY(p_stores) AND b.ean = ANY(p_eans)
   ),
   sigma_side AS (              -- SALES FACT: did it move that day (sigma ledger)
     SELECT b.ean,
