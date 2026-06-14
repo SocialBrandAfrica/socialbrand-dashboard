@@ -1179,7 +1179,7 @@ export default function Home() {
     let cancelled = false
     Promise.all([
       supabase.from('l2_kpi_daily')
-        .select('store_code,sales_date,sales_incl_vat,sales_cost,sales_qty,gp_pct,capital_normal,capital_production,capital_non_stock,capital_receipting_break,capital_total,days_cover_normal_wtd,neg_soh_count,slow_mover_count,ghost_stock_value,positioned_at')
+        .select('store_code,sales_date,sales_incl_vat,sales_cost,sales_qty,gp_pct,capital_normal,capital_production,capital_non_stock,capital_receipting_break,capital_total,days_cover_normal_wtd,neg_soh_count,neg_soh_count_all,slow_mover_count,ghost_stock_value,positioned_at')
         .in('store_code', storeCodes),
       supabase.rpc('rpc_layer_freshness'),
       supabase.from('v_l2_capital_by_store')
@@ -2090,11 +2090,12 @@ export default function Home() {
     const capital = rows.reduce((s, r) => s + Number(r.capital_normal ?? 0), 0)
     const capProd = rows.reduce((s, r) => s + Number(r.capital_production ?? 0), 0)
     const capNonStock = rows.reduce((s, r) => s + Number(r.capital_non_stock ?? 0), 0)
-    const negSoh  = rows.reduce((s, r) => s + Number(r.neg_soh_count ?? 0), 0)
+    const negSoh    = rows.reduce((s, r) => s + Number(r.neg_soh_count ?? 0), 0)       // NORMAL-scope (Family 3B)
+    const negSohAll = rows.reduce((s, r) => s + Number(r.neg_soh_count_all ?? 0), 0)   // canon §5 KPI5 all-class
     const dcDen   = rows.reduce((s, r) => s + (r.days_cover_normal_wtd != null ? Number(r.capital_normal ?? 0) : 0), 0)
     const dcNum   = rows.reduce((s, r) => s + (r.days_cover_normal_wtd != null ? Number(r.capital_normal ?? 0) * Number(r.days_cover_normal_wtd) : 0), 0)
     const daysCover = dcDen > 0 ? dcNum / dcDen : null
-    return { rows, sales, gp, capital, capProd, capNonStock, negSoh, daysCover }
+    return { rows, sales, gp, capital, capProd, capNonStock, negSoh, negSohAll, daysCover }
   }, [l2Kpi, storeCodes])
 
   // Engine purified Capital Tied (SB-CC-DASH-WIRE-001 ticket 1): sum the
@@ -2932,23 +2933,23 @@ export default function Home() {
                     {
                       key:           'negsoh',
                       label:         'Negative SOH',
-                      value:         num(kpiNegSOH),
+                      value:         (dualStockPairable && l2Agg != null) ? num(l2Agg.negSohAll) : num(kpiNegSOH),
                       sparkline:     sparklineArrays.negSoh,
                       lyRef:         hasLY ? num(lyKpiNegSOH) : null,
                       lyDelta:       hasLY ? deltaInfo(kpiNegSOH, lyKpiNegSOH) : null,
                       lyDeltaInvert: true,
                       wowDelta:      null,
                       bench:         null,
-                      sub:           'Stock errors / shrinkage',
-                      danger:        kpiNegSOH > 0,
+                      sub:           (dualStockPairable && l2Agg != null) ? 'engine (sigma ledger) · all classes' : 'Stock errors / shrinkage',
+                      danger:        ((dualStockPairable && l2Agg != null) ? l2Agg.negSohAll : kpiNegSOH) > 0,
                       edge:          'red',
                       onClick:       () => { setDrawerOpen(true); handleReportCardClick('stock_integrity') },
-                      dual:          dualStockPairable ? {
-                        rawLabel: `engine ${num(l2Agg.negSoh)}`,
-                        delta:    dualDelta(l2Agg.negSoh, kpiNegSOH, 'pct'),
-                        explain:  'Raw headline counts ALL negative lines (L1). Engine chip = NORMAL-class negatives only (l2_kpi_daily.neg_soh_count) -- the difference is production/deposit negatives, classified and excluded with reasons (R21).',
+                      dual:          (dualStockPairable && l2Agg != null) ? {
+                        rawLabel: `${num(kpiNegSOH)}`,
+                        delta:    dualDelta(l2Agg.negSohAll, kpiNegSOH, 'pct'),
+                        explain:  'Headline = L2 engine all-class Negative SOH (l2_kpi_daily.neg_soh_count_all, sigma ledger soh<0, canon RULE-BOOK §5 KPI 5 incl. Type-A production negatives). Raw chip = L1 PRSSALE daily_snapshots all-class count. Delta = sigma ledger vs PRSSALE SOH; the ledger is the truth (R26). 14-day sparkline is the L1 daily series (stays PRSSALE until l2_soh_daily accrues history).',
                       } : null,
-                      tooltip:       `NEGATIVE SOH\nCount of all products where SOH < 0\nat the latest snapshot per store.\n\n${dualStockPairable ? 'DUAL-SOURCE: headline = L1 all-lines count; engine chip = NORMAL-class only.\nDifference = production/deposit negatives (classified, not hidden).\n\n' : ''}Source: daily_snapshots.soh\nType A: Production dept deep negatives\nType B: Retail lines that sold through without GRV`,
+                      tooltip:       `NEGATIVE SOH\nCount of all products where SOH < 0\nat the latest snapshot per store.\n\n${(dualStockPairable && l2Agg != null) ? 'DUAL-SOURCE: headline = L2 engine all-class (sigma ledger, l2_kpi_daily.neg_soh_count_all);\nraw chip = L1 all-class (daily_snapshots.soh). Delta = ledger vs PRSSALE.\nSparkline = L1 14-day series (Phase B, PRSSALE).\n\n' : 'Source: daily_snapshots.soh\n'}Type A: Production dept deep negatives\nType B: Retail lines that sold through without GRV`,
                     },
                     {
                       key:           'captied',

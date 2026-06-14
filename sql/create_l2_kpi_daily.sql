@@ -144,7 +144,13 @@ stock_agg AS (
         -- Signal counts: all signals surfaced, nothing hidden (R21)
         COUNT(*) FILTER (WHERE reorder_signal)          AS reorder_count,
         COUNT(*) FILTER (WHERE slow_mover_signal)        AS slow_mover_count,
+        -- neg_soh_count = NORMAL-scope (Family 3B integrity outliers, R21).
+        -- neg_soh_count_all = canon RULE-BOOK §5 KPI 5: ALL classes, pure soh<0
+        -- (incl. Stock-Integrity Type-A production negatives). The dashboard
+        -- Negative SOH card headline reads neg_soh_count_all (ledger truth);
+        -- neg_soh_count stays for the engine's NORMAL integrity sweep.
         COUNT(*) FILTER (WHERE neg_soh_signal)           AS neg_soh_count,
+        COUNT(*) FILTER (WHERE soh < 0)                  AS neg_soh_count_all,
         COUNT(*) FILTER (WHERE investigate_stock_flag)   AS investigate_stock_count,
         COUNT(*) FILTER (WHERE stale_ledger_flag)        AS stale_ledger_count,
         COUNT(*) FILTER (WHERE cost_sanity_flag)         AS cost_sanity_count
@@ -245,6 +251,7 @@ SELECT
     sa.reorder_count,
     sa.slow_mover_count,
     sa.neg_soh_count,
+    sa.neg_soh_count_all,
     sa.investigate_stock_count,
     sa.stale_ledger_count,
     sa.cost_sanity_count

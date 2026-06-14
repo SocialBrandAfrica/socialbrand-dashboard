@@ -199,14 +199,18 @@ SELECT
      AND COALESCE(ros.sales_qty_91d, 0) > 0
     )                      AS reorder_signal,
 
-    -- Slow mover: NORMAL + in stock + no sale in 14d + active line
-    -- 14-day window is fixed (RULE-BOOK section 5, KPI 4)
+    -- Slow mover: NORMAL + in stock + no sale in fixed 14d window + active line.
+    -- RULE-BOOK section 5, KPI 4: 14-day window fixed; ACTIVE LINE = at least one
+    -- sale in the last 364 days (NOT the 91-day ROS window). The prior
+    -- sales_qty_91d>0 active filter undercounted: it dropped lines whose last
+    -- sale was 92-364 days ago (SB-CC-DASH-SOURCE-003 Phase A signal audit,
+    -- 2026-06-14: e.g. 10116 1695 -> 2382). A never-sold line (last_sale_date
+    -- NULL) is not active, so the 364-day floor excludes it -- no IS NULL branch.
+    -- No fresh-perishable exclusion (not in canon; PM Decision 2).
     (    COALESCE(cl.class, 'NORMAL') = 'NORMAL'
      AND COALESCE(lc.soh, 0) > 0
-     AND (    lc.last_sale_date IS NULL
-           OR lc.last_sale_date < CURRENT_DATE - 14
-         )
-     AND COALESCE(ros.sales_qty_91d, 0) > 0
+     AND lc.last_sale_date <  CURRENT_DATE - 14    -- no sale in the fixed 14-day window
+     AND lc.last_sale_date >= CURRENT_DATE - 364   -- active line: sold within 364 days
     )                      AS slow_mover_signal,
 
     -- Negative SOH: NORMAL + soh < 0 (stock integrity signal, RULE-BOOK KPI 5)
