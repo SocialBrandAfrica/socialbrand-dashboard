@@ -49,7 +49,14 @@ BEGIN
   REFRESH MATERIALIZED VIEW l2_kpi_daily;
   v_result := v_result || jsonb_build_object('chain_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
 
-  -- Consignment engine (SB-CC-PMINI-WIRE-001 Gap A). Per-store guarded.
+  -- Consignment engine (SB-CC-PMINI-WIRE-001 Gap A). Reads sigma_sales x
+  -- sigma_articles; depends on L1 (refreshed pre-pipeline by the push), not on
+  -- the chain above, so order within the pipeline is not load-bearing. Placed
+  -- here so the one pipeline owns every L2 table. Per-store guarded so it can
+  -- never break the chain. Only 10116 has consignment data today (brief scope).
+  -- NOTE: standing cron jobs 13/14 also call this nightly (belt-and-braces);
+  -- idempotent (DELETE+INSERT current month) so the extra runs are harmless.
+  -- Retiring jobs 13/14 is the consolidation step pending PM sign-off.
   FOR v_store IN SELECT unnest(ARRAY['10116'])
   LOOP
     BEGIN
@@ -60,7 +67,9 @@ BEGIN
   END LOOP;
   v_result := v_result || jsonb_build_object('consignment_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
 
-  -- l2_classification engine, all 5 stores (SB-CC-DASH-WIRE-001 t3). Per-store guarded.
+  -- l2_classification engine, all 5 stores (SB-CC-DASH-WIRE-001 t3). Reads
+  -- l2_stock_position (refreshed above) + v_item_ean. Idempotent (DELETE+INSERT
+  -- per store+day). Per-store guarded so it can never break the chain.
   FOR v_store IN SELECT unnest(ARRAY['10116','21355','80175','80176','80579'])
   LOOP
     BEGIN

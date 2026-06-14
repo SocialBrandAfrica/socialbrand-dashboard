@@ -53,7 +53,7 @@ function itemLabel(item) {
   return item.store_code ? `${desc} [${item.store_code}]` : desc
 }
 
-export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, availableDates, allStoreCodes, isDefault }) {
+export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, availableDates, allStoreCodes, isDefault, defaultLoading = false }) {
   const [chartData,  setChartData]  = useState([])
   const [totals,     setTotals]     = useState([])
   const [loading,    setLoading]    = useState(false)
@@ -364,10 +364,13 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
         </>
       )}
 
-      {/* Empty basket while default items are still loading */}
+      {/* Empty basket: distinguish "still fetching" from "fetched, nothing to show"
+          so the panel fails honestly instead of spinning forever (SB-CC-DASH-WIRE-001 t4). */}
       {!loading && basket.length === 0 && (
         <p style={{ textAlign: 'center', color: 'rgba(245,245,244,0.3)', fontStyle: 'italic', fontSize: 12, padding: '24px 0' }}>
-          {isDefault ? 'Loading top 5 items…' : 'Use the + button on any search result to add items here.'}
+          {isDefault
+            ? (defaultLoading ? 'Loading top 5 items…' : 'No top-5 items for this store / date selection.')
+            : 'Use the + button on any search result to add items here.'}
         </p>
       )}
 
