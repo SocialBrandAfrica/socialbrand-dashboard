@@ -142,7 +142,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.14'
+$ScriptVersion  = 'v1.15'   # v1.15: DBARTS cBESTANDSFUE -> sigma_articles.record_stock_qty (SB-CC-L1-RECSTK-001)
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -771,6 +771,7 @@ SELECT
     cARTIKELART                 AS article_type,
     cPLU                        AS plu_flag,
     cWAG                        AS scale_flag,
+    cBESTANDSFUE                AS record_stock_qty,
     dtDATNEU                    AS created_date,
     dtDATVK                     AS price_change_date
 FROM dw220sdb.dbo.DBARTS WITH (NOLOCK)
@@ -800,6 +801,7 @@ FROM dw220sdb.dbo.DBARTS WITH (NOLOCK)
                 article_type        = Safe-Text    $row['article_type']
                 plu_flag            = Safe-Text    $row['plu_flag']
                 scale_flag          = Safe-Text    $row['scale_flag']
+                record_stock_qty    = Safe-SmallInt $row['record_stock_qty']
                 created_date        = Safe-Date    $row['created_date']
                 price_change_date   = Safe-Date    $row['price_change_date']
             }
