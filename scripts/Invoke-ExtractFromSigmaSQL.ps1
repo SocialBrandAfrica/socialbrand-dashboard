@@ -142,7 +142,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.14'
+$ScriptVersion  = 'v1.15'   # v1.15: DBARTS cBESTANDSFUE -> sigma_articles.record_stock_qty (SB-CC-L1-RECSTK-001)
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
