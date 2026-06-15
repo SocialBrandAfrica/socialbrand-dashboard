@@ -142,7 +142,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.15'   # v1.15: DBARTS cBESTANDSFUE -> sigma_articles.record_stock_qty (SB-CC-L1-RECSTK-001)
+$ScriptVersion  = 'v1.16'   # v1.16: SB-CC-EXTRACT-002 -- config-driven readiness poll + same-evening catch-up to hard_cutoff (store_extract_config), replacing the 9-probe/45-min give-up; loud TRADED-BUT-NOT-LANDED throw at cutoff. (v1.15: cBESTANDSFUE -> record_stock_qty, SB-CC-L1-RECSTK-001)
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -305,33 +305,45 @@ function Get-DwStateDiag {
 }
 
 function Wait-ForSigmaDw {
-    # v1.12 EOD-collision guard. Sigma EOD holds dw220sdb in a restricted state
-    # around 20:00 SAST ("Cannot open database ... The login failed" on a login
-    # that works minutes earlier). Probe the DB and wait until EOD releases it
-    # rather than failing the whole chain on first contact.
-    # v1.13: every failed probe logs the sys.databases state via master, and
-    # the give-up error carries the last observed state (see Get-DwStateDiag).
-    param(
-        [int]$MaxProbes     = 9,
-        [int]$WaitSeconds   = 300
-    )
-    for ($i = 1; $i -le $MaxProbes; $i++) {
+    # SB-CC-EXTRACT-002: config-driven poll + same-evening catch-up, replacing the
+    # fixed 9-probe / ~45-min give-up that let four stores miss 06-15 silently.
+    # Polls dw220sdb every ready_poll_minutes until it is reachable (the EOD lock
+    # released) OR the store-local hard_cutoff. A locked DB no longer ends the
+    # night -- the run waits THROUGH the EOD lock and catches up the same evening
+    # (tonight the lock cleared ~22:00, well inside a 23:30 cutoff). At hard_cutoff
+    # a clean throw fails the run LOUDLY with a TRADED-BUT-NOT-LANDED marker that
+    # push_log + the central feed-health watchdog key off (distinct from a closed-
+    # no-trade day). Store-local time == server-local (servers run in the store tz;
+    # config.time_zone is carried for future cross-tz portability, R25).
+    # v1.12/v1.13 EOD-collision diagnosis preserved (Get-DwStateDiag per probe).
+    $cfg       = $script:ExtractCfg
+    $pollMin   = if ($cfg -and $cfg.ready_poll_minutes) { [int]$cfg.ready_poll_minutes } else { 10 }
+    $cutoffStr = if ($cfg -and $cfg.hard_cutoff)        { [string]$cfg.hard_cutoff }      else { '23:30' }
+    $pollSecs  = [Math]::Max(60, $pollMin * 60)
+    # hard_cutoff is a local wall-clock time TODAY. If already past it on first
+    # contact (a late manual run), one failed probe throws rather than looping.
+    try   { $cutoff = [datetime]::Today.Add([timespan]::Parse($cutoffStr)) }
+    catch { $cutoff = [datetime]::Today.Add([timespan]::Parse('23:30')) }
+
+    $i = 0
+    while ($true) {
+        $i++
         try {
             $conn = New-SqlConn -Db $DwDb
             $conn.Close()
             if ($i -gt 1) {
-                Write-Host "[dw-probe] $DwDb available on probe $i -- EOD released, continuing." -ForegroundColor Green
+                Write-Host "[dw-probe] $DwDb available on probe $i -- EOD lock released, continuing." -ForegroundColor Green
             }
             return
         }
         catch {
             $msg  = $_.ToString()
             $diag = Get-DwStateDiag
-            if ($i -eq $MaxProbes) {
-                throw "dw220sdb still unavailable after $MaxProbes probes (~$([int]($MaxProbes * $WaitSeconds / 60)) min) -- giving up. Diagnosis: $diag | Last error: $msg"
+            if ((Get-Date) -ge $cutoff) {
+                throw "TRADED-BUT-NOT-LANDED: dw220sdb still locked at hard_cutoff $cutoffStr after $i probes -- a traded day did not land. Diagnosis: $diag | Last error: $msg"
             }
-            Write-Host "[dw-probe] $DwDb not available (probe $i/$MaxProbes). Diagnosis: $diag. Waiting $($WaitSeconds)s. ($msg)" -ForegroundColor Yellow
-            Start-Sleep -Seconds $WaitSeconds
+            Write-Host "[dw-probe] $DwDb not available (probe $i, polling to cutoff $cutoffStr). Diagnosis: $diag. Waiting $($pollSecs)s. ($msg)" -ForegroundColor Yellow
+            Start-Sleep -Seconds $pollSecs
         }
     }
 }
@@ -366,6 +378,47 @@ function Get-Headers {
         'Prefer'        = 'resolution=merge-duplicates,return=minimal'
         'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
     }
+}
+
+# =============================================================================
+# STORE EXTRACT CONFIG (SB-CC-EXTRACT-002) -- declarative timing, read at startup
+# =============================================================================
+function Get-StoreExtractConfig {
+    # Reads this store's row from store_extract_config (declarative timing, R25).
+    # Falls back to safe defaults if Supabase is unreachable or the row is missing
+    # -- config never blocks the pull. Timing is DATA, not code: a new customer is
+    # a new row, the runner is unchanged.
+    $fallback = @{ ready_poll_minutes = 10; hard_cutoff = '23:30'; eod_window_start = '18:40'; source = 'fallback' }
+    try {
+        $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
+        $url  = "$SupabaseUrl/rest/v1/store_extract_config" +
+                "?select=ready_poll_minutes,hard_cutoff,eod_window_start" +
+                "&store_code=eq.$StoreCode&client_id=eq.$ClientId&limit=1"
+        $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 20
+        if ($rows -and @($rows).Count -ge 1) {
+            $r = @($rows)[0]
+            return @{
+                ready_poll_minutes = $r.ready_poll_minutes
+                hard_cutoff        = $r.hard_cutoff
+                eod_window_start   = $r.eod_window_start
+                source             = 'store_extract_config'
+            }
+        }
+        Write-Host "  [cfg] no store_extract_config row for $StoreCode -- fallback (poll 10m, cutoff 23:30)." -ForegroundColor Yellow
+        return $fallback
+    }
+    catch {
+        Write-Warning "[cfg] store_extract_config fetch failed ($_) -- fallback (poll 10m, cutoff 23:30)."
+        return $fallback
+    }
+}
+
+# Fetch once on full-chain runs; Wait-ForSigmaDw + alerts read $script:ExtractCfg.
+$script:ExtractCfg = $null
+if ([string]::IsNullOrEmpty($TableName)) {
+    $script:ExtractCfg = Get-StoreExtractConfig
+    Write-Host ("  [cfg] {0} ({1}): poll {2}m, hard_cutoff {3} (source: {4})." -f `
+        $StoreName, $StoreCode, $script:ExtractCfg.ready_poll_minutes, $script:ExtractCfg.hard_cutoff, $script:ExtractCfg.source) -ForegroundColor Cyan
 }
 
 function Get-Watermark {
