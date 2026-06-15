@@ -215,7 +215,19 @@ signals AS (
         --   Treats missing ros row (LEFT JOIN miss) as never_sold = TRUE.
         (    hr.product_code IS NOT NULL
          AND COALESCE(ros.never_sold, TRUE) = TRUE
-        )                                           AS sig_received_never_sold
+        )                                           AS sig_received_never_sold,
+
+        -- B-replacement (SB-CC-DEPOSIT-001 follow-on): a stock-tracking line
+        -- (record_stock_qty=1) that SOLD AT TILL within the §5 364-day "alive"
+        -- window is real sellable stock -- presence proven by sales (Glenlivet
+        -- law / canon §8.5), overriding the dept/dim NON_STOCK heuristic. The
+        -- 1990 never-sold sentinel and NULL fail the window, so dormant/expense
+        -- junk (ACE aprons, food trays) is NOT rescued -- only genuine sellers
+        -- (carrier bags, FOMO cups, SIM cards). record_stock_qty=0 still wins (S0).
+        (    ad.record_stock_qty = 1
+         AND lc.last_sale_date IS NOT NULL
+         AND lc.last_sale_date >= CURRENT_DATE - 364
+        )                                           AS sells_real
 
     FROM article_dims ad
     LEFT JOIN lifecycle lc
@@ -241,12 +253,16 @@ SELECT
     -- S0 RECORD_STOCK_OFF: cBESTANDSFUE=0 = Sigma does NOT track this line's stock
     -- quantity (Pieter's intentional do-not-deplete flag). Authoritative NON_STOCK,
     -- above the dept/merch heuristic (SB-CC-L1-RECSTK-001 step 2). NULL = flag not
-    -- captured yet -> falls through to the heuristic. Only =0 overrides here; the
-    -- =1 "sells-so-it's-stock" rescue is a separate, sales-gated change (B-replacement).
+    -- captured yet -> falls through to the heuristic. =0 wins above everything (S0).
+    -- B-replacement: sells_real (record_stock_qty=1 AND sold-at-till in 364d) OVERRIDES
+    -- the dept (S1) and dim-orphan (S2) NON_STOCK heuristic -- a proven seller is real
+    -- stock regardless of its dept (canon §8.5, presence-by-sales). It then falls through
+    -- to the value cascade -> NORMAL (-> HEALTHY downstream). Rescues carrier bags / FOMO
+    -- cups / SIM cards (~128 lines, ~R157k); dormant/expense junk fails the 364d sale test.
     CASE
         WHEN record_stock_qty = 0                THEN 'NON_STOCK'
-        WHEN sig_non_stock_dept                  THEN 'NON_STOCK'
-        WHEN sig_dim_excluded                    THEN 'NON_STOCK'
+        WHEN sig_non_stock_dept AND NOT sells_real  THEN 'NON_STOCK'
+        WHEN sig_dim_excluded   AND NOT sells_real  THEN 'NON_STOCK'
         WHEN sig_prod_input_subdept              THEN 'PRODUCTION'
         WHEN sig_receipting_break                THEN 'RECEIPTING_BREAK'
         WHEN sig_prod_dept_never_sold            THEN 'PRODUCTION'
