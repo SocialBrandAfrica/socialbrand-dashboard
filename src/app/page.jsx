@@ -1219,7 +1219,7 @@ export default function Home() {
         .in('store_code', storeCodes),
       supabase.rpc('rpc_layer_freshness'),
       supabase.from('v_l2_capital_by_store')
-        .select('store_code,snapshot_date,capital_purified,capital_in_scope_total,rows')
+        .select('store_code,snapshot_date,capital_purified,capital_in_scope_total,rows,capital_deposits,deposit_lines')
         .in('store_code', storeCodes),
     ]).then(([l2Res, frRes, capRes]) => {
       if (cancelled) return
@@ -2165,6 +2165,15 @@ export default function Home() {
     return rows.reduce((s, r) => s + Number(r.capital_in_scope_total ?? 0), 0)
   }, [l2CapStore, storeCodes])
 
+  // Deposit/returnable float carved out of the headline Capital Tied (SB-CC-DEPOSIT-001),
+  // surfaced as its own line: pass-through liability (quart deposits, empties, crates),
+  // not velocity-movable stock investment. Point-in-time, store-selection aware.
+  const engineDeposits = useMemo(() => {
+    const rows = l2CapStore.filter(r => storeCodes.includes(r.store_code))
+    if (!rows.length) return null
+    return rows.reduce((s, r) => s + Number(r.capital_deposits ?? 0), 0)
+  }, [l2CapStore, storeCodes])
+
   const wholeStoreScope = deptFilter === 'all' && subDeptFilter === 'all' && !focusEans
 
   // Capital Tied reads the engine only at whole-store / store-selection scope
@@ -3020,7 +3029,7 @@ export default function Home() {
                       wowDelta:      null,
                       bench:         null,
                       sub:           engineCapPairable
-                        ? `engine purified capital · cover ${engineDaysCover != null ? engineDaysCover.toFixed(0) + 'd' : '--'}`
+                        ? `engine purified · cover ${engineDaysCover != null ? engineDaysCover.toFixed(0) + 'd' : '--'}${engineDeposits ? ` · + deposits ${zarShort(engineDeposits)}` : ''}`
                         : 'SOH x unit cost (latest snapshot)',
                       warn:          true,
                       edge:          'amber',
@@ -3029,7 +3038,7 @@ export default function Home() {
                         delta:    dualDelta(enginePurifiedCap, engineInScopeCap, 'pct'),
                         explain:  `Headline = L2 engine purified Capital Tied (l2_classification, bucket IN HEALTHY/COUNT/AMBIGUOUS/LEAVE_COUNTED; canon §8.8, ~R10M). Raw = engine in-scope capital BEFORE purification (NORMAL + SOH, incl. COST_ERROR pack ghosts + dead/phantom; ~R21M). The gap is the exact ghost capital the engine strips (R21 -- earned exclusions, surfaced not hidden).`,
                       } : null,
-                      tooltip:       `CAPITAL TIED\nTotal value of stock on shelf at cost price.\n\nFormula: Sum (SOH x unit_cost)\nSnapshot: Latest date in selected range\nLY: Last day of LY period (-364 days)\nTarget: <= 30 days cover (standard lines), <= 15 days cover (top-tier lines)\n\nExclusions (INTERIM — dept/sub-dept rule):\n  • Production inputs: BAKERY/BUTCHERY/HMR/DELI INGREDIENTS, CATERING, SCALE sub-depts\n  • Non-stock: EXPENSES, FRONTEND PACK, PACKAGING, CRATE, ADVERTISING sub-depts\n  • Fresh impossible-stock: perishable dept + SOH > 0 + no sale 30+ days\nGhost Stock report shows every excluded line. Totals reconcile.\nReplaced by full classifier verdict join when SQL pipeline ships (Option B).`,
+                      tooltip:       `CAPITAL TIED\nValue of sellable stock investment at cost.\n\n${engineCapPairable ? `ENGINE (purified): bucket IN HEALTHY/COUNT/AMBIGUOUS/LEAVE_COUNTED (canon §8.8).\nDeposits/returnables (quart deposits, empties, crates) are CARVED OUT into their own line${engineDeposits ? ` (${zarShort(engineDeposits)})` : ''} -- pass-through float, not stock investment (SB-CC-DEPOSIT-001).\nRaw chip = in-scope capital before purification (incl. cost-error/dead ghosts).\n\n` : ''}Target: <= 30 days cover (standard lines), <= 15 days cover (top-tier lines)`,
                       onClick:       kpiCapTied > 0 ? () => setCapTiedModalOpen(true) : undefined,
                     },
                   ]

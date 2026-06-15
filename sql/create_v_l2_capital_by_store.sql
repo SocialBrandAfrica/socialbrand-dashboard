@@ -8,10 +8,13 @@
 -- capital_purified over the selected stores (store-selection aware).
 --
 -- capital_in_scope_total = all in-scope (NORMAL, soh<>0) capital incl. the
--- excluded buckets (DEAD_ZERO/PHANTOM_ZERO/COST_ERROR/...) for reference; the
--- pre-engine raw chip on the tile still comes from v_kpi_by_date.capital_tied.
+-- excluded buckets (DEAD_ZERO/PHANTOM_ZERO/COST_ERROR/DEPOSIT/...) for reference;
+-- this is the tile's raw comparator (~R21M, SB-CC-DASH raw-chip fix).
+-- capital_deposits = deposit/returnable float carved out of the headline
+-- (SB-CC-DEPOSIT-001); surfaced as its own line, never in capital_purified.
 --
--- Deployed 2026-06-13 via Supabase MCP (additive). Anon SELECT.
+-- Deployed 2026-06-13 via Supabase MCP (additive); capital_deposits added
+-- 2026-06-15 (deposit_001_v_l2_capital_add_deposits). Anon SELECT.
 -- =============================================================================
 
 CREATE OR REPLACE VIEW public.v_l2_capital_by_store AS
@@ -26,7 +29,9 @@ SELECT c.store_code,
          WHERE c.bucket IN ('HEALTHY','COUNT','AMBIGUOUS','LEAVE_COUNTED')
        ) AS capital_purified,
        SUM(c.capital_value) AS capital_in_scope_total,
-       COUNT(*) AS rows
+       COUNT(*) AS rows,
+       SUM(c.capital_value) FILTER (WHERE c.bucket = 'DEPOSIT') AS capital_deposits,
+       COUNT(*) FILTER (WHERE c.bucket = 'DEPOSIT') AS deposit_lines
 FROM public.l2_classification c
 JOIN latest l ON l.store_code = c.store_code AND c.snapshot_date = l.d
 GROUP BY c.store_code, c.snapshot_date;
