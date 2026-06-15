@@ -118,6 +118,7 @@ article_dims AS (
         sd.name                 AS subdept_name,
         a.plu_flag,
         a.scale_flag,
+        a.record_stock_qty,
         a.description
     FROM sigma_articles a
     LEFT JOIN sigma_departments d
@@ -159,6 +160,7 @@ signals AS (
         ad.dept_name,
         ad.subdept_name,
         ad.scale_flag,
+        ad.record_stock_qty,
         ad.description,
         COALESCE(lc.soh, 0)            AS soh,
         lc.last_sale_date,
@@ -235,8 +237,14 @@ SELECT
     store_code,
     product_code,
 
-    -- Classification verdict (priority cascade: S1 > S2 > S3 > S4 > S5 > NORMAL)
+    -- Classification verdict (priority cascade: S0 > S1 > S2 > S3 > S4 > S5 > NORMAL)
+    -- S0 RECORD_STOCK_OFF: cBESTANDSFUE=0 = Sigma does NOT track this line's stock
+    -- quantity (Pieter's intentional do-not-deplete flag). Authoritative NON_STOCK,
+    -- above the dept/merch heuristic (SB-CC-L1-RECSTK-001 step 2). NULL = flag not
+    -- captured yet -> falls through to the heuristic. Only =0 overrides here; the
+    -- =1 "sells-so-it's-stock" rescue is a separate, sales-gated change (B-replacement).
     CASE
+        WHEN record_stock_qty = 0                THEN 'NON_STOCK'
         WHEN sig_non_stock_dept                  THEN 'NON_STOCK'
         WHEN sig_dim_excluded                    THEN 'NON_STOCK'
         WHEN sig_prod_input_subdept              THEN 'PRODUCTION'
@@ -247,6 +255,7 @@ SELECT
 
     -- Confidence score (0.00 to 1.00)
     CASE
+        WHEN record_stock_qty = 0                                             THEN 1.00
         WHEN sig_non_stock_dept                                               THEN 1.00
         WHEN sig_dim_excluded                                                 THEN 1.00
         WHEN sig_prod_input_subdept                                           THEN 0.95
@@ -261,6 +270,7 @@ SELECT
 
     -- Fired signals (for Gate 3 precision audit; stored as text array)
     ARRAY_REMOVE(ARRAY[
+        CASE WHEN record_stock_qty = 0     THEN 'RECORD_STOCK_OFF'     END,
         CASE WHEN sig_non_stock_dept       THEN 'NON_STOCK_DEPT'       END,
         CASE WHEN sig_dim_excluded         THEN 'DIM_EXCLUDED'         END,
         CASE WHEN sig_prod_input_subdept   THEN 'PROD_INPUT_SUBDEPT'   END,
@@ -272,6 +282,8 @@ SELECT
 
     -- Human-readable reason (feeds Reports "why flagged" column)
     CASE
+        WHEN record_stock_qty = 0
+            THEN 'Record Stock Qty OFF (cBESTANDSFUE=0) -- Sigma not tracking stock, non-deplete line'
         WHEN sig_non_stock_dept
             THEN 'Dept ' || dept_name
                  || ' -- non-stocked category, no physical inventory'
