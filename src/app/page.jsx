@@ -2154,6 +2154,17 @@ export default function Home() {
     return rows.reduce((s, r) => s + Number(r.capital_purified ?? 0), 0)
   }, [l2CapStore, storeCodes])
 
+  // Engine in-scope capital BEFORE purification (NORMAL + soh<>0, incl. the
+  // COST_ERROR pack ghosts + dead/phantom). This is the genuine ~R21M pre-engine
+  // figure -- the Capital Tied raw comparator, so the delta shows the ghost the
+  // engine strips (purified ~R10M). NOT the L1 daily_snapshots SOH*cost (which is
+  // ~R9.8M with negative-cost lines -- not the ghost number).
+  const engineInScopeCap = useMemo(() => {
+    const rows = l2CapStore.filter(r => storeCodes.includes(r.store_code))
+    if (!rows.length) return null
+    return rows.reduce((s, r) => s + Number(r.capital_in_scope_total ?? 0), 0)
+  }, [l2CapStore, storeCodes])
+
   const wholeStoreScope = deptFilter === 'all' && subDeptFilter === 'all' && !focusEans
 
   // Capital Tied reads the engine only at whole-store / store-selection scope
@@ -3014,9 +3025,9 @@ export default function Home() {
                       warn:          true,
                       edge:          'amber',
                       dual:          engineCapPairable ? {
-                        rawLabel: zarShort(kpiCapTied),
-                        delta:    dualDelta(enginePurifiedCap, kpiCapTied, 'pct'),
-                        explain:  `Headline = L2 engine purified Capital Tied (l2_classification, bucket IN HEALTHY/COUNT/AMBIGUOUS/LEAVE_COUNTED; canon §8.8). Raw = L1 SOH x unit_cost incl ghost/cost-error/dead stock. The gap is the exact ghost capital the engine strips (R21 -- earned exclusions, surfaced not hidden).`,
+                        rawLabel: zarShort(engineInScopeCap),
+                        delta:    dualDelta(enginePurifiedCap, engineInScopeCap, 'pct'),
+                        explain:  `Headline = L2 engine purified Capital Tied (l2_classification, bucket IN HEALTHY/COUNT/AMBIGUOUS/LEAVE_COUNTED; canon §8.8, ~R10M). Raw = engine in-scope capital BEFORE purification (NORMAL + SOH, incl. COST_ERROR pack ghosts + dead/phantom; ~R21M). The gap is the exact ghost capital the engine strips (R21 -- earned exclusions, surfaced not hidden).`,
                       } : null,
                       tooltip:       `CAPITAL TIED\nTotal value of stock on shelf at cost price.\n\nFormula: Sum (SOH x unit_cost)\nSnapshot: Latest date in selected range\nLY: Last day of LY period (-364 days)\nTarget: <= 30 days cover (standard lines), <= 15 days cover (top-tier lines)\n\nExclusions (INTERIM — dept/sub-dept rule):\n  • Production inputs: BAKERY/BUTCHERY/HMR/DELI INGREDIENTS, CATERING, SCALE sub-depts\n  • Non-stock: EXPENSES, FRONTEND PACK, PACKAGING, CRATE, ADVERTISING sub-depts\n  • Fresh impossible-stock: perishable dept + SOH > 0 + no sale 30+ days\nGhost Stock report shows every excluded line. Totals reconcile.\nReplaced by full classifier verdict join when SQL pipeline ships (Option B).`,
                       onClick:       kpiCapTied > 0 ? () => setCapTiedModalOpen(true) : undefined,
