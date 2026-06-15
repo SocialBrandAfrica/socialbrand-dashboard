@@ -119,7 +119,21 @@ article_dims AS (
         a.plu_flag,
         a.scale_flag,
         a.record_stock_qty,
-        a.description
+        a.description,
+        -- is_virtual (SB-CC-B-REPLACE-002): airtime / data bundle / voucher / non-scan
+        -- money-posting = NO physical item on a shelf, so sells_real must NOT rescue it
+        -- (a till-selling top-up is not stock). Authentic dept + content signals; the
+        -- GS1 barcode does NOT separate virtual from physical (verified live 2026-06-15:
+        -- airtime + sales-diff postings carry GS1, the physical FOMO cups do not).
+        --   - wholesale-virtual VAS depts: AIRTIME, ONLINE VAS/TRANSACTIONS, NON SCAN SALES
+        --   - SPAR MOBILE is MIXED: only the SIM card (description) is physical
+        --   - NON SCAN / 14% money-postings anywhere (the sales-difference dept)
+        -- Mis-deptted real confectionery in the sales-difference dept has no NON SCAN/14%
+        -- in its name, so it stays physical and IS rescued.
+        ( COALESCE(d.name,'') IN ('AIRTIME','ONLINE VAS PRODUCTS','ONLINE TRANSACTIONS','NON SCAN SALES')
+          OR (COALESCE(d.name,'') = 'SPAR MOBILE' AND COALESCE(a.description,'') !~* '\mSIM\M')
+          OR COALESCE(a.description,'') ~* '(NON.?SCAN|[^0-9]14\s*%)'
+        )                       AS is_virtual
     FROM sigma_articles a
     LEFT JOIN sigma_departments d
         ON  d.client_id     = a.client_id
@@ -217,14 +231,19 @@ signals AS (
          AND COALESCE(ros.never_sold, TRUE) = TRUE
         )                                           AS sig_received_never_sold,
 
-        -- B-replacement (SB-CC-DEPOSIT-001 follow-on): a stock-tracking line
-        -- (record_stock_qty=1) that SOLD AT TILL within the §5 364-day "alive"
-        -- window is real sellable stock -- presence proven by sales (Glenlivet
-        -- law / canon §8.5), overriding the dept/dim NON_STOCK heuristic. The
-        -- 1990 never-sold sentinel and NULL fail the window, so dormant/expense
-        -- junk (ACE aprons, food trays) is NOT rescued -- only genuine sellers
-        -- (carrier bags, FOMO cups, SIM cards). record_stock_qty=0 still wins (S0).
+        -- B-replacement (SB-CC-DEPOSIT-001 follow-on, revised SB-CC-B-REPLACE-002):
+        -- a PHYSICAL stock-tracking line (record_stock_qty=1, NOT is_virtual) that
+        -- SOLD AT TILL within the §5 364-day "alive" window is real sellable stock --
+        -- presence proven by sales (Glenlivet law / canon §8.5), overriding the
+        -- dept/dim NON_STOCK heuristic. The is_virtual guard holds airtime, data
+        -- bundles, vouchers and NON SCAN money-postings OUT even when they sell --
+        -- a till-selling top-up is not physical stock (the verdict, before any rand).
+        -- 1990 sentinel + NULL fail the window, so dormant/expense junk is not rescued.
+        -- Rescues only physical: carrier bags, FOMO cups, SIM cards, mis-deptted
+        -- confectionery. record_stock_qty=0 still wins (S0). Reconcile 2026-06-15:
+        -- 41 physical rescued, 87 virtual held, zero virtual in Capital Tied x5.
         (    ad.record_stock_qty = 1
+         AND NOT ad.is_virtual
          AND lc.last_sale_date IS NOT NULL
          AND lc.last_sale_date >= CURRENT_DATE - 364
         )                                           AS sells_real
