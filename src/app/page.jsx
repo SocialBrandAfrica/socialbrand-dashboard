@@ -3027,9 +3027,13 @@ export default function Home() {
                       lyDelta:       hasLY ? deltaInfo(kpiCapTied, lyKpiCapTied) : null,
                       lyDeltaInvert: true,
                       wowDelta:      null,
-                      bench:         null,
+                      // bench renders unconditionally (sub is suppressed when LY data is
+                      // present). Surface the carved deposit float here so it's never hidden.
+                      bench:         (engineCapPairable && engineDeposits)
+                        ? `+ deposits ${zarShort(engineDeposits)} · returnable float (carved)`
+                        : null,
                       sub:           engineCapPairable
-                        ? `engine purified · cover ${engineDaysCover != null ? engineDaysCover.toFixed(0) + 'd' : '--'}${engineDeposits ? ` · + deposits ${zarShort(engineDeposits)}` : ''}`
+                        ? `engine purified · cover ${engineDaysCover != null ? engineDaysCover.toFixed(0) + 'd' : '--'}`
                         : 'SOH x unit cost (latest snapshot)',
                       warn:          true,
                       edge:          'amber',
