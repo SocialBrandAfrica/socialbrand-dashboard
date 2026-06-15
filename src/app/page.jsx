@@ -620,6 +620,38 @@ function buildDeptMarginReport(deptSummary, lyDeptSummary) {
 // ─────────────────────────────────────────────────────────────────────────────
 // EXCEL DOWNLOAD
 // ─────────────────────────────────────────────────────────────────────────────
+// Engine-backed Slow Movers table (SB-CC-DASH-SOURCE-003 Phase A).
+// Input = rpc_stock_report_engine(...,'slowmovers') rows (l2_stock_position bridged
+// to EAN). Excludes unbridged lines (ean=null -- footnoted in the drawer), then applies
+// the same dept / sub-dept / focus filters as the L1 path. Sorted by capital tied desc.
+// No 'Status' column: l2_stock_position does not carry the PRSSALE status field.
+function buildSlowMoversEngine(rows, { deptFilter, subDeptFilter, focusEans, refDate, supplierMap }) {
+  return rows
+    .filter(r => r.ean != null)
+    .filter(r => deptFilter === 'all'    || normalizeDept(r.dept_name) === deptFilter)
+    .filter(r => subDeptFilter === 'all' || r.subdept_name === subDeptFilter)
+    .filter(r => !focusEans || focusEans.includes(r.ean))
+    .map(r => {
+      const daysSince = r.last_sale_date && refDate
+        ? Math.max(0, Math.floor((new Date(refDate) - new Date(r.last_sale_date)) / 86400000))
+        : null
+      return {
+        'EAN':             r.ean,
+        'Description':     r.description,
+        'Dept':            r.dept_name,
+        'Sub-Dept':        r.subdept_name ?? '',
+        'SOH':             Number(r.soh ?? 0),
+        'Unit Cost':       r.unit_cost != null ? Math.round(Number(r.unit_cost) * 100) / 100 : null,
+        'Capital Tied':    Math.round(Number(r.capital_value ?? 0) * 100) / 100,
+        'Days Since Sale': daysSince ?? '—',
+        'Sell Price':      Number(r.sell_price ?? 0),
+        'Supplier':        supplierMap.get(r.ean) ?? '',
+        'Last Sale':       r.last_sale_date ?? '',
+      }
+    })
+    .sort((a, b) => (b['Capital Tied'] ?? 0) - (a['Capital Tied'] ?? 0))
+}
+
 function downloadExcel(reportData, reportKey, storeName, date) {
   if (!reportData.length) return
   const ws = XLSX.utils.json_to_sheet(reportData)
@@ -1154,6 +1186,10 @@ export default function Home() {
 
   // ── report data (on-demand) ──────────────────────────────────────────────────
   const [reportRows,    setReportRows]    = useState([])
+  // SB-CC-DASH-SOURCE-003 Phase A: engine-backed stock-report rows (l2_stock_position
+  // via rpc_stock_report_engine, bridged to EAN). Slow Movers reads this; unbridged
+  // lines (ean=null) are excluded from the table and footnoted.
+  const [engineSlowRows, setEngineSlowRows] = useState([])
   const [reportLoaded,  setReportLoaded]  = useState(false)
   const [reportLoading, setReportLoading] = useState(false)
   const [ghostStockRows,     setGhostStockRows]     = useState([])   // SB-AP-004 C -- ghost_stock report
@@ -1875,7 +1911,7 @@ export default function Home() {
     if (!storeCodes.length || !selectedDates.length || reportLoading) return
     setReportLoading(true)
 
-    const [rows, rosRes, catalogRes] = await Promise.all([
+    const [rows, rosRes, catalogRes, engineSlowRes] = await Promise.all([
       fetchAllRows({ storeCodes, dates: selectedDates }),
       supabase
         .from('mv_rate_of_sale')
@@ -1891,6 +1927,12 @@ export default function Home() {
         .not('supplier_name', 'is', null)
         .then(r => r.data ?? [])
         .catch(() => []),
+      // Engine-backed Slow Movers (l2_stock_position.slow_mover_signal, §5 KPI4).
+      // Bridged to EAN; unbridged rows return ean=null (excluded + footnoted).
+      supabase
+        .rpc('rpc_stock_report_engine', { p_store_codes: storeCodes, p_signal: 'slowmovers' })
+        .then(r => r.data ?? [])
+        .catch(() => []),
     ])
 
     // Build ean → supplier_name lookup (last-write wins across stores — supplier is the same)
@@ -1902,6 +1944,7 @@ export default function Home() {
     setReportRows(rows)
     setStoreRosData(rosRes)
     setSupplierMap(suppMap)
+    setEngineSlowRows(engineSlowRes)
     setReportLoaded(true)
     setReportLoading(false)
   }, [storeCodes, selectedDates])
@@ -2021,8 +2064,12 @@ export default function Home() {
     if (currentReport === 'dept_margin') return buildDeptMarginReport(deptSummary, lyDeptSummary)
     if (currentReport === 'ghost_stock')     return ghostStockRows       // SB-AP-004 C
     if (currentReport === 'stock_integrity') return stockIntegrityRows  // SB-AP-004 C
+    // Slow Movers reads the engine (l2_stock_position.slow_mover_signal, §5 KPI4),
+    // not the L1 daily_snapshots path. SB-CC-DASH-SOURCE-003 Phase A.
+    if (currentReport === 'slowmovers')
+      return buildSlowMoversEngine(engineSlowRows, { deptFilter, subDeptFilter, focusEans, refDate, supplierMap })
     return buildReport(currentReport, filteredReportRows, moverMode, refDate, rosMap, supplierMap, daysInPeriod, focusEans)
-  }, [currentReport, filteredReportRows, moverMode, selectedDates, reportLoaded, rosMap, supplierMap, deptSummary, lyDeptSummary, focusEans, daysInPeriod, ghostStockRows])
+  }, [currentReport, filteredReportRows, moverMode, selectedDates, reportLoaded, rosMap, supplierMap, deptSummary, lyDeptSummary, focusEans, daysInPeriod, ghostStockRows, engineSlowRows, deptFilter, subDeptFilter])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DERIVED — KPIs
@@ -3701,6 +3748,8 @@ export default function Home() {
                       ? `${num(reportData.length)} rows`
                       : `Showing ${PAGE_SIZE} of ${num(reportData.length)} — download for full data`
                     }
+                    {currentReport === 'slowmovers' && engineSlowRows.filter(r => r.ean == null).length > 0 &&
+                      ` · ${num(engineSlowRows.filter(r => r.ean == null).length)} lines hidden (no EAN bridge)`}
                   </div>
                 </>
               )}
