@@ -80,9 +80,10 @@ CREATE TABLE public.l2_classification (
     ean_key              text,
     area_class           text,                   -- SERVICE / CONSUMABLE / MERCH (interim regex)
     nonstock_account     boolean     NOT NULL DEFAULT false,
+    deposit_account      boolean     NOT NULL DEFAULT false,   -- SB-CC-DEPOSIT-001: deposit/returnable float
     cost_sanity_flag     boolean     NOT NULL DEFAULT false,
     -- verdict + route
-    bucket               text        NOT NULL,   -- NON_STOCK COST_ERROR DEAD_ZERO HEALTHY COUNT
+    bucket               text        NOT NULL,   -- NON_STOCK COST_ERROR DEPOSIT DEAD_ZERO HEALTHY COUNT
                                                  -- LEAVE_COUNTED PHANTOM_ZERO AMBIGUOUS SOURCE_FIX EXPENSE_ZERO
     artifact             text        NOT NULL,   -- none tlx stockflow zero_manual ambiguous source_fix non_stock cost_error
     bucket_reason        text,
@@ -193,7 +194,15 @@ BEGIN
                 ELSE 'MERCH'
             END AS area_class,
             -- nonstock_account (s8.3): accounting lines living inside NORMAL
-            ( COALESCE(sp.description,'') ~* '((^|[^0-9])14\s*%|NON.?SCAN|SALES?\s*DIFF|ROUNDING|SUSPENSE ACCOUNT)' ) AS nonstock_account
+            ( COALESCE(sp.description,'') ~* '((^|[^0-9])14\s*%|NON.?SCAN|SALES?\s*DIFF|ROUNDING|SUSPENSE ACCOUNT)' ) AS nonstock_account,
+            -- deposit_account (SB-CC-DEPOSIT-001): deposit/returnable float -- quart
+            -- deposits, empties, crates, charge bottles. Returnable liability matched
+            -- to a float, NOT velocity-movable stock investment -> carved out of the
+            -- headline Capital Tied into a surfaced Deposits line. Description-based
+            -- (interim, R23): the S/G deposit-return channel was evaluated and
+            -- REJECTED as the identity -- at 10116 S/G also carries normal grocery
+            -- supplier-returns (milk/beans), so S/G-alone over-carves real stock.
+            ( COALESCE(sp.description,'') ~* '(\mDEP\M|\mDEPOSIT\M|EMPT(Y|IES)|RETURNABLE|\mCRATE|CHARGE BOTTLE)' ) AS deposit_account
         FROM l2_stock_position sp
         LEFT JOIN sig s ON s.product_code = sp.product_code
         LEFT JOIN v_item_ean ie
@@ -214,6 +223,14 @@ BEGIN
         CASE
             WHEN b.nonstock_account                                          THEN 'NON_STOCK'      -- 0
             WHEN b.cost_sanity_flag                                          THEN 'COST_ERROR'     -- 0b
+            -- SB-CC-DEPOSIT-001: deposit/returnable float carved here, ahead of the
+            -- UNRESOLVED guard and the value cascade. Deposits are pass-through
+            -- liability (not velocity-movable investment); they are NOT zeroed --
+            -- kept whole, surfaced as their own Deposits line, excluded only from the
+            -- headline Capital Tied include-set (s8.8). Many deposits are UNRESOLVED
+            -- (no GS1) so this must precede 0c, but DEPOSIT never zeroes so the
+            -- never-zero protection on unmapped items is preserved.
+            WHEN b.deposit_account                                           THEN 'DEPOSIT'        -- 0c-DEP
             -- s8.4 hard guard: an UNRESOLVED EAN is an error state, not a class.
             -- It pre-empts every zero/count/healthy line so an unmapped item is
             -- NEVER zeroed/expensed (the over-zeroing lesson) -- it routes to
@@ -244,14 +261,14 @@ BEGIN
         client_id, store_code, product_code, snapshot_date,
         description, dept_name, subdept_name, soh, capital_value, unit_cost,
         sold_91, sold_365, commercial_in_365, commercial_out_365, recv_91, counted_91, moved_365_any,
-        ean_status, ean_key, area_class, nonstock_account, cost_sanity_flag,
+        ean_status, ean_key, area_class, nonstock_account, deposit_account, cost_sanity_flag,
         bucket, artifact, bucket_reason, engine_version, classified_at
     )
     SELECT
         v.client_id, v.store_code, v.product_code, v_ref,
         v.description, v.dept_name, v.subdept_name, v.soh, v.capital_value, v.unit_cost,
         v.sold_91, v.sold_365, v.commercial_in_365, v.commercial_out_365, v.recv_91, v.counted_91, v.moved_365_any,
-        v.ean_status, v.ean_key, v.area_class, v.nonstock_account, v.cost_sanity_flag,
+        v.ean_status, v.ean_key, v.area_class, v.nonstock_account, v.deposit_account, v.cost_sanity_flag,
         v.bucket,
         -- ARTIFACT (s8.5 mapping). [[v1.1]] s8.12 #3 adds TLX near-certainty:
         --   tlx only when no active sibling family AND |soh|<24 (interim belt) AND
@@ -263,6 +280,7 @@ BEGIN
         CASE v.bucket
             WHEN 'NON_STOCK'   THEN 'non_stock'
             WHEN 'COST_ERROR'  THEN 'cost_error'
+            WHEN 'DEPOSIT'     THEN 'none'        -- kept whole, no fixer action; surfaced as Deposits line
             WHEN 'HEALTHY'     THEN 'none'
             WHEN 'COUNT'       THEN 'stockflow'
             WHEN 'LEAVE_COUNTED' THEN 'none'
@@ -282,6 +300,7 @@ BEGIN
         CASE v.bucket
             WHEN 'NON_STOCK'    THEN 'accounting/non-scan account line inside NORMAL'
             WHEN 'COST_ERROR'   THEN 'cost_sanity_flag: broken cost/pack -- fix Sigma cost first, capital is fiction'
+            WHEN 'DEPOSIT'      THEN 'deposit/returnable float (deposits, empties, crates) -- pass-through liability, carved from Capital Tied, surfaced separately (SB-CC-DEPOSIT-001)'
             WHEN 'DEAD_ZERO'    THEN 'no movement of ANY type in 365d = dead'
                                      || CASE WHEN v.ean_status='REAL' AND ABS(v.soh)>=24 THEN ' (big SOH -> count, not blind tlx)' ELSE '' END
             WHEN 'HEALTHY'      THEN 'sold in 91d with positive SOH and a real/two-way identity'
@@ -331,10 +350,17 @@ BEGIN
                    GROUP BY artifact) q
         ),
         'capital_tied', (
-            -- s8.8 Capital Tied include-set: HEALTHY + COUNT + AMBIGUOUS + LEAVE_COUNTED
+            -- s8.8 Capital Tied include-set: HEALTHY + COUNT + AMBIGUOUS + LEAVE_COUNTED.
+            -- DEPOSIT is now its own bucket so it is auto-excluded here (SB-CC-DEPOSIT-001).
             SELECT COALESCE(SUM(capital_value),0) FROM l2_classification
              WHERE store_code = p_store AND snapshot_date = v_ref
                AND bucket IN ('HEALTHY','COUNT','AMBIGUOUS','LEAVE_COUNTED')
+        ),
+        'capital_deposits', (
+            -- SB-CC-DEPOSIT-001: deposit/returnable float, surfaced separately (not in headline)
+            SELECT COALESCE(SUM(capital_value),0) FROM l2_classification
+             WHERE store_code = p_store AND snapshot_date = v_ref
+               AND bucket = 'DEPOSIT'
         )
     ) INTO v_summary;
 
