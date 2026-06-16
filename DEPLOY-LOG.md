@@ -4,6 +4,29 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-15/16 SAST — dashboard source-migration finish, engine cleanup engine (deposits/record-stock/B-replacement), extractor reliability, cost-error worklist
+
+Long multi-thread session. **MERGED to `main` + live on Vercel** (in order):
+- **`mv_sparkline_14d` sales → sigma_sales** (`72b2fc1`, SB-CC-DASH-SOURCE-002, last Phase-2 sales matview). Stock facts held on daily_snapshots. Reconciled to the rand ×5 vs mv_kpi_by_date.
+- **dash-wire-001 merged** (`3d7da80`) — frontend Capital Tied + Stock Turn read the engine (was pending since 06-13). Capital Tied tile R21M→**R9.95M** verified live.
+- **Phase A engine + Negative SOH card** (`137e115`, SB-CC-DASH-SOURCE-003): `l2_stock_position.slow_mover_signal` active-line window **91d→364d** (RULE-BOOK §5 KPI4); new **`l2_kpi_daily.neg_soh_count_all`** (§5 KPI5 all-class) = Neg-SOH card headline (engine ledger; raw L1 = audit chip). Keystone cascade rebuilt via MCP (item_classification→ranging_tier→stock_position→kpi_daily). PM ×5 signed.
+- **RECSTK step 1** (`1a11d2e`): extractor **v1.15** captures `cBESTANDSFUE → sigma_articles.record_stock_qty` (column added live); Pieter ran ×5, populated.
+- **RECSTK step 2A** (`12a47e3`): `record_stock_qty=0 → NON_STOCK` authoritative (S0 in l2_item_classification, above the dept heuristic). Cascade rebuilt + l2_classification refreshed ×5. Acceptance: 100% of flag-0 lines NON_STOCK, 0 leaks; bread 54983 → NON_STOCK.
+- **Slow Movers report → engine** (`543b73d`): new **`rpc_stock_report_engine(p_store_codes,p_signal)`** (l2_stock_position bridged to EAN via v_ean_bridge; unbridged excluded+footnoted). Reconciles to slow_mover_signal ×5.
+- **Capital Tied raw-chip fix** (`8d4788d`): raw comparator → `v_l2_capital_by_store.capital_in_scope_total` (~R20.95M, pre-purification) instead of narrow legacy v_kpi_by_date.capital_tied; Δ now −52/57% (ghost-stripped story). Verified live.
+- **DEPOSIT-001** (`3b96d91` + render-fix `e7d0d69`): new **DEPOSIT bucket** in l2_classification (deposit/returnable float — DEP/DEPOSIT/EMPTY/CRATE/CHARGE BOTTLE regex; S/G channel rejected as too broad), carved from the §8.8 purified set; **`v_l2_capital_by_store.capital_deposits`**; frontend Deposits line (placed in `bench`, not `sub` — sub is suppressed when LY present). Headline **R9.95M→R9.01M**, deposits **R0.96M** (80176 R1.55M→R0.62M), 35 lines 100% regex-matched, 0 false-carve. Verified live tile R9.01M.
+
+**DB-deployed via MCP but BRANCH-HELD (not merged):**
+- **`store_extract_config`** table + seed ×5 (branch `extract-002`, SB-CC-EXTRACT-002 #1) — declarative per-store extract timing (R25). LIVE + verified.
+- **`rpc_cost_error_worklist`** (branch `cost-001`, SB-CC-COST-001 #1+#3) — ratio cost-error detection + floor repair worklist. LIVE; reconciled (21355 Castle Lite R49k + Black Crown_6 R24k; GP 3.14%→15.4% ex-error).
+
+**Built, NOT deployed / NOT merged (gated):**
+- **Extractor v1.16** (`extract-002`, EXTRACT-002 #2): config-driven readiness poll + same-evening catch-up to `hard_cutoff` (replaces 9-probe/45-min give-up); loud `TRADED-BUT-NOT-LANDED` throw. Parse-clean. **Pieter deploys to 5 servers after PM verify.** #3 email + #4 morning check pending mail-API key (central Supabase watchdog approved).
+- **B-replacement** (`b-replacement`, `7ae14bf`, SB-CC-B-REPLACE-002): `sells_real` rescues PHYSICAL only (is_virtual guard: airtime/data/voucher/NON-SCAN held out; GS1 rejected as signal — dept+description used). PM-signed logic; 41 physical/87 virtual/0 leak ×5. **Held for deposit-eyeball → deploy + live ×5 → merge.**
+- **COST-001 Step 2** (engine sane-cost substitution): **SHELVED** (PM ruling — floor-repair-first via the worklist; cost_sanity_flag is supplier-cost-based and MISSES the R0-supplier sales-cost errors, so not the GP marker signal).
+
+---
+
 ## 2026-06-13 ~12:45 SAST — l2_classification ENGINE live + dashboard wired to it (SB-CC-DASH-WIRE-001)
 
 **DB (LIVE via MCP, write-path enabled this session):**
