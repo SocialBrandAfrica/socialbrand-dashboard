@@ -142,7 +142,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.16'   # v1.16: SB-CC-EXTRACT-002 -- config-driven readiness poll + same-evening catch-up to hard_cutoff (store_extract_config), replacing the 9-probe/45-min give-up; loud TRADED-BUT-NOT-LANDED throw at cutoff; ExtractDelta task ExecutionTimeLimit 4h->6h so the poll can actually reach the 23:30 cutoff. (v1.15: cBESTANDSFUE -> record_stock_qty, SB-CC-L1-RECSTK-001)
+$ScriptVersion  = 'v1.16'   # v1.16 (SB-CC-EXTRACT-002 v1.1): TRUTHFUL STATUS -- run = SUCCESS when the EOD fact tables (sigma_sales/sigma_movements/l2_soh_daily) land, even if a late non-fact table trips on a mid-run dw220sdb lock; only a missing fact table (or the cutoff poll giving up) = FAILED. Ends the false-FAILED blindness. Also: config-driven readiness poll + same-evening catch-up to hard_cutoff (store_extract_config), replacing the 9-probe/45-min give-up; ExtractDelta task ExecutionTimeLimit 4h->6h so the poll reaches the 23:30 cutoff. (v1.15: cBESTANDSFUE -> record_stock_qty, SB-CC-L1-RECSTK-001)
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -1834,15 +1834,46 @@ try {
 }
 catch {
     $fatalMsg = $_.ToString()
-    Write-Host "`nFATAL ERROR: $fatalMsg" -ForegroundColor Red
-    # Write error to a known file so Push-SigmaToSupabase v3.22+ can read it
-    # and include the actual message in push_log (Write-Host is not capturable
-    # via stream redirection in PS5.1 subprocesses).
-    try {
-        Set-Content -Path 'C:\socialbrand\extractor_last_error.txt' -Value $fatalMsg -Encoding UTF8 -Force
+    Write-Host "`nERROR during extract: $fatalMsg" -ForegroundColor Red
+
+    # SB-CC-EXTRACT-002 v1.1 req 1 -- TRUTHFUL RUN STATUS.
+    # A mid-run dw220sdb lock can trip a LATE, non-EOD table (scanrefs / promotions
+    # / departments etc.) AFTER the end-of-day FACT tables already landed. That is
+    # NOT a failed end-of-day -- but the old code exit-1'd on it, stamping the whole
+    # run FAILED. That lying status blinded monitoring (~13 false-FAILED runs in the
+    # 7 days to 06-17 while every store was actually current), so a genuinely dark
+    # store was indistinguishable from the nightly noise.
+    # The run is a GENUINE failure only if an EOD FACT table did not land:
+    #   sigma_sales / sigma_movements / l2_soh_daily.
+    # A non-fact table that tripped is already logged FAILED per-table
+    # (Send-TableLog) and the next run (catch-up poll / nightly) re-pulls it on
+    # delta. Alerts key on fact-table DATA FRESHNESS (req 2), never on this code.
+    # R28: general behaviour, set 2026-06-17 (SB-CC-EXTRACT-002 v1.1) -- not a
+    # per-store calibration; the fact-table set is the same for every store.
+    $factTables = @('sigma_sales','sigma_movements','l2_soh_daily')
+    $factLanded = $runAll
+    foreach ($ft in $factTables) { if (-not $totals.ContainsKey($ft)) { $factLanded = $false } }
+
+    if ($factLanded) {
+        # EOD data is current; a later non-fact table tripped. Report SUCCESS.
+        # No error file -> Push-SigmaToSupabase logs sigma_extractor SUCCESS (exit 0).
+        try { Remove-Item 'C:\socialbrand\extractor_last_error.txt' -Force -ErrorAction SilentlyContinue } catch {}
+        Write-Host "TRUTHFUL-STATUS: EOD fact tables (sigma_sales/sigma_movements/l2_soh_daily) landed; a later non-fact table tripped (likely a mid-run dw220sdb lock). Reporting SUCCESS -- end-of-day data is current. Tripped: $fatalMsg" -ForegroundColor Yellow
+        # fall through to the SUMMARY block and exit 0 naturally.
     }
-    catch {}
-    exit 1
+    else {
+        # Genuine end-of-day miss: an EOD fact table did not land (or the startup
+        # readiness poll hit hard_cutoff = TRADED-BUT-NOT-LANDED). Keep it LOUD so
+        # push_log + the freshness watchdog both flag it. Write the error file so
+        # Push-SigmaToSupabase surfaces the real message (PS5.1 cannot capture
+        # Write-Host via stream redirection in a subprocess).
+        try {
+            Set-Content -Path 'C:\socialbrand\extractor_last_error.txt' -Value $fatalMsg -Encoding UTF8 -Force
+        }
+        catch {}
+        Write-Host "FATAL: an EOD fact table did not land -- genuine end-of-day failure." -ForegroundColor Red
+        exit 1
+    }
 }
 
 $elapsed = (Get-Date) - $startTime
