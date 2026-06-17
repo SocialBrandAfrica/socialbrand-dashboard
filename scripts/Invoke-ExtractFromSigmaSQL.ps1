@@ -142,7 +142,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.15'   # v1.15: DBARTS cBESTANDSFUE -> sigma_articles.record_stock_qty (SB-CC-L1-RECSTK-001)
+$ScriptVersion  = 'v1.16'   # v1.16 (SB-CC-EXTRACT-002 v1.1, SIMPLIFIED 2026-06-17): TRUTHFUL STATUS -- run = SUCCESS when the EOD fact tables (sigma_sales/sigma_movements/l2_soh_daily) land, even if a late non-fact table trips on a mid-run dw220sdb lock; only a missing fact table = FAILED. Ends the false-FAILED blindness so the dashboard freshness reads honest. Lock handling = short bounded retry (3 tries / ~10 min) then fail truthfully (23:30 cutoff / long-window / email-watchdog DESCOPED: lock is rare, dashboard shows stale, manual re-run lands it). (v1.15: cBESTANDSFUE -> record_stock_qty, SB-CC-L1-RECSTK-001)
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -234,6 +234,10 @@ function Register-ExtractDeltaTask {
         $workDir = Split-Path $PSCommandPath
         $trigger = New-ScheduledTaskTrigger -Daily -At $atTime
         $action  = New-ScheduledTaskAction -Execute $psExe -Argument $exeArgs -WorkingDirectory $workDir
+        # ExecutionTimeLimit 4h is ample: a delta run is 5-10 min and the dw220sdb
+        # retry is a short bounded ~10 min. (The 23:30 poll-to-cutoff / long window
+        # were descoped 2026-06-17 -- the lock is rare; a stale store shows on the
+        # dashboard and a manual re-run lands it; no long-window task needed.)
         $settings = New-ScheduledTaskSettingsSet `
             -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
             -StartWhenAvailable `
@@ -305,33 +309,33 @@ function Get-DwStateDiag {
 }
 
 function Wait-ForSigmaDw {
-    # v1.12 EOD-collision guard. Sigma EOD holds dw220sdb in a restricted state
-    # around 20:00 SAST ("Cannot open database ... The login failed" on a login
-    # that works minutes earlier). Probe the DB and wait until EOD releases it
-    # rather than failing the whole chain on first contact.
-    # v1.13: every failed probe logs the sys.databases state via master, and
-    # the give-up error carries the last observed state (see Get-DwStateDiag).
-    param(
-        [int]$MaxProbes     = 9,
-        [int]$WaitSeconds   = 300
-    )
-    for ($i = 1; $i -le $MaxProbes; $i++) {
+    # SB-CC-EXTRACT-002 (Pieter SIMPLIFIED 2026-06-17): a SHORT BOUNDED retry, NOT a
+    # poll-to-cutoff. The dw220sdb EOD lock is RARE -- the normal night is reachable
+    # and a run just works (proven live 2026-06-17, ran straight through twice). So:
+    # probe, and on a genuine failure retry a few times over ~10 min, then stop. If
+    # it is still locked (rare), the run fails TRUTHFULLY (no fact tables land) and
+    # the store shows STALE on the dashboard layer-freshness strip -- a one-line
+    # manual re-run then lands it. No 23:30 cutoff, no long window, no email watchdog
+    # (all descoped -- the dashboard IS the freshness signal, the way PRSSALE always
+    # was). Get-DwStateDiag kept for the error line. R28: bounded-retry values are a
+    # general default, dated 2026-06-17.
+    $maxTries = 3
+    $gapSecs  = 300   # ~10 min total across the 3 tries
+    for ($i = 1; $i -le $maxTries; $i++) {
         try {
             $conn = New-SqlConn -Db $DwDb
             $conn.Close()
-            if ($i -gt 1) {
-                Write-Host "[dw-probe] $DwDb available on probe $i -- EOD released, continuing." -ForegroundColor Green
-            }
+            if ($i -gt 1) { Write-Host "[dw-probe] $DwDb reachable on try $i." -ForegroundColor Green }
             return
         }
         catch {
             $msg  = $_.ToString()
             $diag = Get-DwStateDiag
-            if ($i -eq $MaxProbes) {
-                throw "dw220sdb still unavailable after $MaxProbes probes (~$([int]($MaxProbes * $WaitSeconds / 60)) min) -- giving up. Diagnosis: $diag | Last error: $msg"
+            if ($i -ge $maxTries) {
+                throw "dw220sdb not reachable after $maxTries tries (~10 min) -- failing truthfully; the store will show STALE on the dashboard and a manual re-run will land it. Diagnosis: $diag | Last error: $msg"
             }
-            Write-Host "[dw-probe] $DwDb not available (probe $i/$MaxProbes). Diagnosis: $diag. Waiting $($WaitSeconds)s. ($msg)" -ForegroundColor Yellow
-            Start-Sleep -Seconds $WaitSeconds
+            Write-Host "[dw-probe] $DwDb not reachable (try $i/$maxTries). Diagnosis: $diag. Waiting $($gapSecs)s." -ForegroundColor Yellow
+            Start-Sleep -Seconds $gapSecs
         }
     }
 }
@@ -366,6 +370,48 @@ function Get-Headers {
         'Prefer'        = 'resolution=merge-duplicates,return=minimal'
         'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
     }
+}
+
+# =============================================================================
+# STORE EXTRACT CONFIG (SB-CC-EXTRACT-002) -- declarative timing, read at startup
+# =============================================================================
+function Get-StoreExtractConfig {
+    # Reads this store's row from store_extract_config (declarative timing, R25).
+    # Falls back to safe defaults if Supabase is unreachable or the row is missing
+    # -- config never blocks the pull. Timing is DATA, not code: a new customer is
+    # a new row, the runner is unchanged.
+    $fallback = @{ ready_poll_minutes = 10; hard_cutoff = '23:30'; eod_window_start = '18:40'; source = 'fallback' }
+    try {
+        $hdrs = @{ 'apikey' = $SupabaseKey; 'Authorization' = "Bearer $SupabaseKey" }
+        $url  = "$SupabaseUrl/rest/v1/store_extract_config" +
+                "?select=ready_poll_minutes,hard_cutoff,eod_window_start" +
+                "&store_code=eq.$StoreCode&client_id=eq.$ClientId&limit=1"
+        $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 20
+        if ($rows -and @($rows).Count -ge 1) {
+            $r = @($rows)[0]
+            return @{
+                ready_poll_minutes = $r.ready_poll_minutes
+                hard_cutoff        = $r.hard_cutoff
+                eod_window_start   = $r.eod_window_start
+                source             = 'store_extract_config'
+            }
+        }
+        Write-Host "  [cfg] no store_extract_config row for $StoreCode -- fallback (poll 10m, cutoff 23:30)." -ForegroundColor Yellow
+        return $fallback
+    }
+    catch {
+        Write-Warning "[cfg] store_extract_config fetch failed ($_) -- fallback (poll 10m, cutoff 23:30)."
+        return $fallback
+    }
+}
+
+# Fetch once on full-chain runs -- informational log of the store's config row.
+# (Wait-ForSigmaDw now uses a fixed bounded retry; the readiness poll was descoped 2026-06-17.)
+$script:ExtractCfg = $null
+if ([string]::IsNullOrEmpty($TableName)) {
+    $script:ExtractCfg = Get-StoreExtractConfig
+    Write-Host ("  [cfg] {0} ({1}): poll {2}m, hard_cutoff {3} (source: {4})." -f `
+        $StoreName, $StoreCode, $script:ExtractCfg.ready_poll_minutes, $script:ExtractCfg.hard_cutoff, $script:ExtractCfg.source) -ForegroundColor Cyan
 }
 
 function Get-Watermark {
@@ -1774,15 +1820,46 @@ try {
 }
 catch {
     $fatalMsg = $_.ToString()
-    Write-Host "`nFATAL ERROR: $fatalMsg" -ForegroundColor Red
-    # Write error to a known file so Push-SigmaToSupabase v3.22+ can read it
-    # and include the actual message in push_log (Write-Host is not capturable
-    # via stream redirection in PS5.1 subprocesses).
-    try {
-        Set-Content -Path 'C:\socialbrand\extractor_last_error.txt' -Value $fatalMsg -Encoding UTF8 -Force
+    Write-Host "`nERROR during extract: $fatalMsg" -ForegroundColor Red
+
+    # SB-CC-EXTRACT-002 v1.1 req 1 -- TRUTHFUL RUN STATUS.
+    # A mid-run dw220sdb lock can trip a LATE, non-EOD table (scanrefs / promotions
+    # / departments etc.) AFTER the end-of-day FACT tables already landed. That is
+    # NOT a failed end-of-day -- but the old code exit-1'd on it, stamping the whole
+    # run FAILED. That lying status blinded monitoring (~13 false-FAILED runs in the
+    # 7 days to 06-17 while every store was actually current), so a genuinely dark
+    # store was indistinguishable from the nightly noise.
+    # The run is a GENUINE failure only if an EOD FACT table did not land:
+    #   sigma_sales / sigma_movements / l2_soh_daily.
+    # A non-fact table that tripped is already logged FAILED per-table
+    # (Send-TableLog) and the next run (catch-up poll / nightly) re-pulls it on
+    # delta. Alerts key on fact-table DATA FRESHNESS (req 2), never on this code.
+    # R28: general behaviour, set 2026-06-17 (SB-CC-EXTRACT-002 v1.1) -- not a
+    # per-store calibration; the fact-table set is the same for every store.
+    $factTables = @('sigma_sales','sigma_movements','l2_soh_daily')
+    $factLanded = $runAll
+    foreach ($ft in $factTables) { if (-not $totals.ContainsKey($ft)) { $factLanded = $false } }
+
+    if ($factLanded) {
+        # EOD data is current; a later non-fact table tripped. Report SUCCESS.
+        # No error file -> Push-SigmaToSupabase logs sigma_extractor SUCCESS (exit 0).
+        try { Remove-Item 'C:\socialbrand\extractor_last_error.txt' -Force -ErrorAction SilentlyContinue } catch {}
+        Write-Host "TRUTHFUL-STATUS: EOD fact tables (sigma_sales/sigma_movements/l2_soh_daily) landed; a later non-fact table tripped (likely a mid-run dw220sdb lock). Reporting SUCCESS -- end-of-day data is current. Tripped: $fatalMsg" -ForegroundColor Yellow
+        # fall through to the SUMMARY block and exit 0 naturally.
     }
-    catch {}
-    exit 1
+    else {
+        # Genuine end-of-day miss: an EOD fact table did not land (or the startup
+        # readiness poll hit hard_cutoff = TRADED-BUT-NOT-LANDED). Keep it LOUD so
+        # push_log + the freshness watchdog both flag it. Write the error file so
+        # Push-SigmaToSupabase surfaces the real message (PS5.1 cannot capture
+        # Write-Host via stream redirection in a subprocess).
+        try {
+            Set-Content -Path 'C:\socialbrand\extractor_last_error.txt' -Value $fatalMsg -Encoding UTF8 -Force
+        }
+        catch {}
+        Write-Host "FATAL: an EOD fact table did not land -- genuine end-of-day failure." -ForegroundColor Red
+        exit 1
+    }
 }
 
 $elapsed = (Get-Date) - $startTime

@@ -63,6 +63,8 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
 
 $trigger = New-ScheduledTaskTrigger -Daily -At '18:40'
 $action  = New-ScheduledTaskAction -Execute $PsExePath -Argument $ExeArgs -WorkingDirectory $ScriptDir
+# ExecutionTimeLimit 4h is ample: a delta run is 5-10 min and the dw220sdb retry
+# is a short bounded ~10 min. (The 23:30 poll-to-cutoff was descoped 2026-06-17.)
 $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
     -StartWhenAvailable `
