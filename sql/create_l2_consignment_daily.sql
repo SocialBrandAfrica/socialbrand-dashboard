@@ -1,8 +1,11 @@
 -- l2_consignment_daily
 -- SB-CC-AUDIT-002 (L2 restructure, 2026-06-08)
--- 2026-06-10: function fixed for sigma_ean_master.barcode bigint->text migration
---   (text - integer operator error broke every refresh after 2026-06-09 21:45;
---   regex guard + ::bigint cast added in classified_articles CTE).
+-- 2026-06-10: function fixed for sigma_ean_master.barcode bigint->text migration.
+-- 2026-06-17 (SB-CC-PMINI-WIRE-001): item_type RE-SOURCED off the Sigma-native
+--   scan refs via v_consignment_catalog (R25). The deprecated sigma_ean_master
+--   read is GONE. See the CLASSIFICATION NOTE below.
+--   STATUS: STAGED — DO NOT RUN until PM signs the Pulse Mini close-out plan.
+--   Requires create_v_consignment_catalog.sql to be deployed FIRST.
 -- Layer 2 derived table: pre-classified HMR SUSHI consignment lines.
 -- Engine classifies once at refresh; rpc_consignment_lines reads only (no join at fetch).
 --
@@ -16,11 +19,13 @@
 -- SCOPE: store 10116 only (HMR SUSHI consignment counter). Extend p_store to other
 --   stores only when those stores have a consignment arrangement.
 --
--- CLASSIFICATION NOTE (2026-06-08): as of June 2026 all sold products classify as
---   item_type='c' (chinese/other) because the current sigma_ean_master barcode
---   assignments for the post-recycling product_codes are not in the 200000+ range
---   that the SUSHI_PLUS PLU set expects. The column is preserved; it will populate
---   correctly once barcode data is reconciled. Totals are unaffected.
+-- CLASSIFICATION NOTE (UPDATED 2026-06-17): item_type s/c is now stamped from
+--   v_consignment_catalog, which reads the Sigma-native scale PLU
+--   (sigma_scan_refs DBREFE 200000+ code minus 200000) vs the SUSHI_PLUS menu set.
+--   This REPLACES the old sigma_ean_master.barcode path, which had collapsed every
+--   line to 'c' after the product-code recycling (the 200000+ scale barcodes were
+--   no longer present in sigma_ean_master). Proven live 2026-06-17: 22 sushi /
+--   21 chinese on the 43 June-sold products (was 0 / 43). Totals are unaffected.
 --
 -- Rule 19: DROP + clean CREATE. No ALTER TABLE workarounds.
 
@@ -75,45 +80,23 @@ BEGIN
   WHERE store_code = p_store
     AND sale_date BETWEEN v_month_start AND v_month_end;
 
-  -- CTE pre-classifies all articles for this store (merch_group 610, exclusions applied).
-  -- The barcode -> PLU lookup (barcode - 200000 in SUSHI_PLUS) runs once per article,
-  -- not per sales row, keeping the aggregate fast.
+  -- Classification is pre-computed once in v_consignment_catalog (the single home
+  -- of the sushi/Chinese rule, R21) off the Sigma-native scale PLU. The refresh
+  -- just reads it -- no inline barcode lookup, no sigma_ean_master.
   INSERT INTO l2_consignment_daily (
     client_id, store_code, sale_date, product_code, description,
     item_type, sales, qty, commission, owed
   )
   WITH classified_articles AS (
     SELECT
-      a.store_code,
-      a.client_id,
-      a.product_code,
-      a.description,
-      COALESCE((
-        SELECT CASE
-          -- barcode is TEXT since 2026-06-09 migration (was bigint). Guard the
-          -- cast: non-numeric barcodes classify 'c'. text - integer has no
-          -- operator -- this broke every refresh after the migration (caught
-          -- 2026-06-10: silent Write-Warning in push chain, Pulse Mini froze).
-          WHEN em.barcode ~ '^[0-9]+$'
-           AND (em.barcode::bigint - 200000) = ANY(ARRAY[
-            653,650,895,888,863,851,846,844,843,841,835,533,831,824,818,810,792,790,
-            785,778,773,767,766,749,747,832,762,737,722,744,718,715,9677,710,700,736,
-            632,638,597,307,308,309,889,924,930,599,699,694,693,696,695,697,698,840,
-            836,897,834,809,806,803,784,771,748,753
-          ]::bigint[])
-          THEN 's' ELSE 'c' END
-        FROM sigma_ean_master em
-        WHERE em.store_code   = a.store_code
-          AND em.client_id    = a.client_id
-          AND em.product_code = a.product_code
-        LIMIT 1
-      ), 'c') AS item_type
-    FROM sigma_articles a
-    WHERE a.store_code     = p_store
-      AND a.client_id      = 'socialbrand'
-      AND a.merch_group_nr = 610
-      AND a.description NOT ILIKE 'BREAKFAST%'
-      AND a.description NOT ILIKE 'MABELA%'
+      cat.store_code,
+      cat.client_id,
+      cat.product_code,
+      cat.description,
+      cat.item_type
+    FROM v_consignment_catalog cat
+    WHERE cat.store_code = p_store
+      AND cat.client_id  = 'socialbrand'
   )
   SELECT
     'socialbrand'                                    AS client_id,

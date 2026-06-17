@@ -14,12 +14,25 @@ This is a standalone demo project. Its scope, commits, and rules are separate fr
 
 ### What it is
 
-A live-data demo served to potential StockFlow developer partners. Shows 11 locked SKUs
-from store 10116 (Delareyville) with 6-week weekly sales buckets, SOH, cost, sell price,
-and seasonal factors. Refreshes on the push schedule.
+A live-data demo for potential StockFlow developer partners. The CURRENT live page is the
+**HMR Sushi consignment counter** for SPAR Delareyville (store 10116, `merch_group_nr=610`):
+per-line per-day sales, sushi/Chinese split, a per-day feed-health strip, commission/owed split.
+**Scope = group 610 ONLY** (sushi + Chinese consignment counter); the hot KITCHEN (HMR Hot Meals,
+group 605) and the rest of the HMR department are store-owned production, **deliberately excluded** —
+"no kitchen sales" is by design, not a bug. (An earlier "11 grocery SKUs / 6-week buckets" build
+also exists at `src/app/api/dev-corner/lines/route.js` — LEGACY, not used by the live HTML.)
 
-The UI is a standalone HTML file (`StockFlow-DevCorner-Demo.html`) served at `/pulse-mini`
-behind Pulse auth. It is NOT part of the main React app.
+Live + **public** (commit 789aaf1, no longer auth-gated) at
+`https://dashboard.socialbrand.africa/StockFlow-DevCorner-Demo.html`. NOT part of the main React app.
+Go-live security = WIRE-001 Route 3 (dedicated restricted partner key); draft `sql/pmini_partner_lockdown.sql`.
+
+**Data path:** HTML → `/api/dev-corner/sigma-lines` (sales + classification + feed health) +
+`/api/dev-corner/consignment` (no-sales + price flags). Sales come from `rpc_consignment_lines`,
+which reads the **`l2_consignment_daily` matview** — a NIGHTLY snapshot refreshed by
+`refresh_l2_pipeline`. If the page looks stale/behind the live ledger, run
+`refresh_l2_consignment_daily('10116')`, NOT a page change (this was the "dates not updated" cause,
+2026-06-16). Classification (sushi='s'/Chinese='c') currently via `sigma_ean_master.barcode`-200000
+(R25-deprecated; re-source off `v_item_ean`).
 
 ---
 
@@ -27,9 +40,11 @@ behind Pulse auth. It is NOT part of the main React app.
 
 | File | Role |
 |------|------|
-| `public/StockFlow-DevCorner-Demo.html` | The demo UI (standalone HTML, not a React component) |
-| `src/app/api/dev-corner/lines/route.js` | Data endpoint — 11 fixed EANs, curated output |
-| Middleware (`src/middleware.js`) | `/pulse-mini` path is auth-protected via Pulse middleware |
+| `public/StockFlow-DevCorner-Demo.html` | The demo UI (standalone HTML) — HMR Sushi consignment |
+| `src/app/api/dev-corner/sigma-lines/route.js` | **PRIMARY** data endpoint — per-line per-day sales + classification + feed health (DBUMBA) |
+| `src/app/api/dev-corner/consignment/route.js` | Flags endpoint — no-sales lines + price mismatches |
+| `src/app/api/dev-corner/lines/route.js` | **LEGACY** — old 11-grocery-SKU endpoint, NOT called by the live HTML |
+| `src/middleware.js` | `/StockFlow-DevCorner-Demo.html` + `/api/dev-corner/*` are in `isPublic` (789aaf1) — page is public, NOT auth-gated |
 
 **Briefs (DIWAAIS root):**
 - `STOCKFLOW-DEVELOPERS-CORNER-BRIEF.md` — spec and security contract
