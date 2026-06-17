@@ -142,7 +142,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.16'   # v1.16: SB-CC-EXTRACT-002 -- config-driven readiness poll + same-evening catch-up to hard_cutoff (store_extract_config), replacing the 9-probe/45-min give-up; loud TRADED-BUT-NOT-LANDED throw at cutoff. (v1.15: cBESTANDSFUE -> record_stock_qty, SB-CC-L1-RECSTK-001)
+$ScriptVersion  = 'v1.16'   # v1.16: SB-CC-EXTRACT-002 -- config-driven readiness poll + same-evening catch-up to hard_cutoff (store_extract_config), replacing the 9-probe/45-min give-up; loud TRADED-BUT-NOT-LANDED throw at cutoff; ExtractDelta task ExecutionTimeLimit 4h->6h so the poll can actually reach the 23:30 cutoff. (v1.15: cBESTANDSFUE -> record_stock_qty, SB-CC-L1-RECSTK-001)
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -234,8 +234,15 @@ function Register-ExtractDeltaTask {
         $workDir = Split-Path $PSCommandPath
         $trigger = New-ScheduledTaskTrigger -Daily -At $atTime
         $action  = New-ScheduledTaskAction -Execute $psExe -Argument $exeArgs -WorkingDirectory $workDir
+        # ExecutionTimeLimit MUST exceed the poll window eod_window_start (18:40)
+        # -> hard_cutoff (23:30), or Windows kills the task mid-poll BEFORE the
+        # catch-up can land -- defeating Wait-ForSigmaDw. 6h (18:40 -> ~00:40)
+        # clears a 23:30 cutoff with margin. Was 4h (-> 22:40), which would have
+        # killed the poll 50 min before the cutoff it is meant to reach.
+        # R28: general default, set 2026-06-17 (SB-CC-EXTRACT-002) -- NOT a
+        # per-store calibration; any store's evening-start -> 23:30-ish cutoff fits.
         $settings = New-ScheduledTaskSettingsSet `
-            -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
+            -ExecutionTimeLimit (New-TimeSpan -Hours 6) `
             -StartWhenAvailable `
             -WakeToRun:$false
 
