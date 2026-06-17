@@ -4,6 +4,25 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-17 SAST — SB-CC-RECONCILE-001 Phase 1 (schema-as-code) MERGED + live; extractor v1.16 (truthful status + bounded retry) built, not deployed
+
+**MERGED to `main` + live on Vercel (`95ac2ca`, --no-ff merge of `pmini-wire-001`; Pieter authorised the main push):**
+- **SB-CC-RECONCILE-001 Phase 1** — schema-as-code reconstituted from LIVE: one canonical `create_<object>.sql` per live object (109: 50 tbl / 15 view / 9 mv / 35 fn; the whole `sigma_*` L1 spine + `daily_snapshots` / `push_log` had NO committed DDL before this); 73 superseded sediment files `git mv`'d to `sql/_archive/` (sql/ 161→88, zero sediment, every sole-source kept); `refresh_l2_pipeline` de-hardcoded off `stores WHERE is_active` (R25). Object inventory + Phase-1 worklist CSV in Daisy root. DB-SCHEMA.md reconciled to live. Restore-point tag **`restore-point-2026-06-17 → d11e019` (LOCAL only, not pushed)**.
+- Rode the same merge: Pulse Mini WIRE-001 dev-corner route RPC-only refactor (page still parked) + CLAUDE.md start-hardening.
+
+**LIVE DB changes applied by Pieter (CC verified to source):**
+- `refresh_l2_pipeline` de-hardcode applied — cron job 15 (`refresh-l2-pipeline`, 22:15 SAST) unchanged, fleet resolves to the 5 active stores.
+- **Orphan `l2_stock_count_plan` + `refresh_l2_stock_count_plan` DROPPED** (`sql/drop_l2_stock_count_plan_orphan.sql`; 0 dependents; never wired, superseded by `l2_classification`). Live now **107 objects** (49 tbl / 15 view / 9 mv / 34 fn).
+
+**Built, NOT deployed (branch `extract-002` @ `d8e5b7c`, SB-CC-EXTRACT-002 v1.1 SIMPLIFIED):**
+- **Extractor v1.16 — TRUTHFUL STATUS** (the root fix): run = SUCCESS when the EOD fact tables (sigma_sales / sigma_movements / l2_soh_daily) land, even if a late non-fact table trips a mid-run dw220sdb lock; only a missing fact table = FAILED. Ends the ~13-false-FAILED-in-7-days blindness so the dashboard freshness reads honest. Lock handling = short **bounded retry (3 tries / ~10 min)** then fail truthfully — a stale store shows on the dash freshness strip + a one-line manual re-run lands it. **DESCOPED + removed** (Pieter: the dashboard freshness IS the watchdog, as PRSSALE always was): the Resend email watchdog (edge fn + pg_cron), the 23:30 poll-to-cutoff, the 6h window (→4h). `Create-ExtractorScheduledTask.ps1` time-limit→4h. **Pieter deploys the one file to 5 servers (Dice first) after PM verify; nothing else (no secrets/cron).**
+- Dice 18:40 task time-limit fixed in code; why it did not FIRE on `srsdelareyt2svr` 06-17 = box-side Task Scheduler check for Pieter.
+- NOTE: this DEPLOY-LOG entry rides the `extract-002` merge (Rule 20 — CC does not push main); the RECONCILE-001 block above is already on main.
+
+**Live data state EOD 06-17:** all 5 stores current to 06-17 (Dice recovered via a manual v1.15 run on an open DB; v1.16 remains the permanent fix). Engine catches up nightly at job 15 (22:15).
+
+---
+
 ## 2026-06-15/16 SAST — dashboard source-migration finish, engine cleanup engine (deposits/record-stock/B-replacement), extractor reliability, cost-error worklist
 
 Long multi-thread session. **MERGED to `main` + live on Vercel** (in order):
