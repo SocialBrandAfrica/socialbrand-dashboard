@@ -1,34 +1,20 @@
 // src/app/api/dev-corner/sigma-lines/route.js
 // SB-CC-AUDIT-002 — per-line per-day consignment sales.
-// Source switched to sigma_sales (DBUMBA) via rpc_consignment_lines.
-// Adds rpc_feed_health_daily output so the mini app can show the completeness strip.
+// SB-CC-PMINI-WIRE-001 (2026-06-17) — RPC-ONLY. This route now reads ONLY two
+//   SECURITY DEFINER RPCs (rpc_consignment_lines + rpc_feed_health_daily) and
+//   touches NO base table. item_type (sushi 's' / Chinese 'c') comes straight off
+//   rpc_consignment_lines, where it is engine-stamped from the Sigma-native scan
+//   refs (v_consignment_catalog). The old sigma_articles + sigma_ean_master reads
+//   are gone — that is what lets the restricted partner key serve this page.
 //
 // Why DBUMBA: daily_snapshots (PRSSALE) misses any day where the store EOD/Catman
 // export did not run (e.g. 10116 2026-05-29 = R383,388 absent, never recoverable).
-// sigma_sales is the exact Sigma ledger and is always complete.
-//
-// Classification (sushi vs chinese) derives from sigma_articles.product_code
-// → sigma_ean_master.barcode → PLU = barcode-200000 → SUSHI_PLUS set.
+// sigma_sales (behind the rpc) is the exact Sigma ledger and is always complete.
 
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse }  from 'next/server'
 
-const STORE  = '10116'
-const CLIENT = 'socialbrand'
-const GROUP  = 610   // merch_group_nr — HMR SUSHI counter
-
-// PLU codes from the 64-line sushi menu — split sushi vs Chinese/other.
-// PLU = sigma_ean_master.barcode - 200000.
-const SUSHI_PLUS = new Set([
-  653,650,895,888,863,851,846,844,843,841,835,533,831,824,818,810,792,790,
-  785,778,773,767,766,749,747,832,762,737,722,744,718,715,9677,710,700,736,
-  632,638,597,307,308,309,889,924,930,599,699,694,693,696,695,697,698,840,
-  836,897,834,809,806,803,784,771,748,753,
-])
-
-function lastDayOfMonth(year, month) {
-  return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10)
-}
+const STORE = '10116'
 
 export async function GET(request) {
   const origin = request.headers.get('origin') ?? ''
@@ -57,65 +43,37 @@ export async function GET(request) {
   )
 
   try {
-    // ── 1. Parallel: consignment lines + feed health + article classification ──
-    const [linesRes, healthRes, artRes] = await Promise.all([
+    // ── 1. Two RPCs only — consignment lines (with item_type) + feed health ──
+    const [linesRes, healthRes] = await Promise.all([
       supabase.rpc('rpc_consignment_lines', { p_month: monthLabel, p_store: STORE }),
       supabase.rpc('rpc_feed_health_daily', { p_store: STORE, p_month: monthLabel }),
-      supabase
-        .from('sigma_articles')
-        .select('description, product_code')
-        .eq('store_code', STORE)
-        .eq('client_id', CLIENT)
-        .eq('merch_group_nr', GROUP),
     ])
 
     if (linesRes.error) throw linesRes.error
     if (healthRes.error) throw healthRes.error
 
-    // ── 2. Build description→type map via sigma_ean_master ───────────────────
-    const productCodes = (artRes.data ?? []).map(r => r.product_code)
-    const descToType   = {}
-
-    if (productCodes.length) {
-      const { data: eanRows } = await supabase
-        .from('sigma_ean_master')
-        .select('product_code, barcode')
-        .eq('store_code', STORE)
-        .eq('client_id', CLIENT)
-        .in('product_code', productCodes)
-
-      const eanByPCode = {}
-      for (const e of (eanRows ?? [])) eanByPCode[e.product_code] = e.barcode
-
-      for (const a of (artRes.data ?? [])) {
-        const barcode = eanByPCode[a.product_code]
-        if (barcode != null) {
-          descToType[a.description] = SUSHI_PLUS.has(barcode - 200000) ? 's' : 'c'
-        }
-      }
-    }
-
-    // ── 3. Pivot rpc_consignment_lines rows by description ───────────────────
     const rows   = linesRes.data ?? []
     const health = healthRes.data ?? []
 
-    // as_at: for DISPLAY only — last confirmed non-FUTURE day per feed health,
-    // or last day with actual sushi sales. Shown in the UI as "Data as at …".
-    // NOTE: do NOT use asAt to bound the dates array — health coverage can lag
-    // behind the calendar (e.g. Jun 8 lands NO_TRADE when nightly push hasn't run)
-    // which would drop an entire elapsed day from the charts.
+    // ── 2. Classification map straight off the rpc (engine-stamped, no base tables) ──
+    const descToType = {}
+    for (const r of rows) {
+      if (r.item_type && descToType[r.description] == null) descToType[r.description] = r.item_type
+    }
+
+    // ── 3. as_at: DISPLAY only — last confirmed non-FUTURE day, or last sushi-sales day.
+    // Do NOT use asAt to bound the dates array — health coverage can lag the calendar.
     const tradingDays  = health.filter(h => h.status !== 'FUTURE')
     const salesDateMax = rows.length
-      ? [...new Set(rows.map(r => r.sale_date))].sort().pop()
+      ? [...new Set(rows.map(r => r.sale_date).filter(Boolean))].sort().pop()
       : null
     const asAt = tradingDays.length
       ? tradingDays[tradingDays.length - 1].sale_date
       : salesDateMax
 
-    // Date range for charts: ALL elapsed calendar days from month start to today
-    // (or last day of month when viewing a past month).
-    // Zero-fill fills in days with no sushi sales — ensures every bar is present.
-    const todayISO     = new Date().toISOString().slice(0, 10)   // UTC date from API server
+    // ── 4. Date range for charts: ALL elapsed calendar days, month start to today
+    // (or last day of month for a past month). Zero-fill keeps every bar present.
+    const todayISO     = new Date().toISOString().slice(0, 10)
     const monthLastISO = `${year}-${mm}-${String(daysInMonth).padStart(2, '0')}`
     const dateCeiling  = todayISO <= monthLastISO ? todayISO : monthLastISO
 
@@ -128,12 +86,14 @@ export async function GET(request) {
       }
     }
 
+    // ── 5. Pivot rpc rows by description (sold rows only; default rpc call omits catalog) ──
     const byDesc = {}
     for (const r of rows) {
+      if (!r.sale_date) continue   // skip any catalog/no-sale marker rows defensively
       if (!byDesc[r.description]) {
         byDesc[r.description] = {
           n:      r.description,
-          t:      descToType[r.description] ?? 'c',
+          t:      r.item_type ?? descToType[r.description] ?? 'c',
           byDate: {},
         }
       }
@@ -156,7 +116,7 @@ export async function GET(request) {
       loaded_days:   dates.length,
       days_in_month: daysInMonth,
       as_at:         asAt,
-      source:        'sigma_sales',   // DBUMBA — exact Sigma ledger
+      source:        'sigma_sales',   // DBUMBA — exact Sigma ledger, via rpc
       dates,                          // actual ISO date strings (use for labels, not i+1)
       health,                         // per-day feed health for completeness strip
       lines,
