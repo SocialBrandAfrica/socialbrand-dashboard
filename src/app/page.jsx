@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import * as XLSX from 'xlsx'
-import { ProductDetailPanelConnected } from '@/components/ProductDetailPanel'
 import { FocusAreaPanel }    from '@/components/FocusAreaPanel'
 import { SalesTrendPanel }   from '@/components/SalesTrendPanel'
 import { CalendarPopover } from '@/components/CalendarPopover'
@@ -2965,20 +2964,6 @@ export default function Home() {
                       tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\n\n${dualSalesPairable ? 'DUAL-SOURCE: headline = L2 engine gp_pct (sigma_sales cost_value / dEKUmsatz);\nraw chip = L1 PRSSALE-cost GP. Large deltas = PRSSALE cost corruption, a finding.\n\n' : ''}L1 GP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nL1 Cost: SUM(today_cost) from daily_snapshots\nLY: Same filter · dates -364 days`,
                     },
                     {
-                      key:           'lostsalesvalue',
-                      label:         'Lost Sales Value',
-                      value:         lostSalesItemsFiltered.length > 0 ? zarShort(lostSalesValue) : '—',
-                      sparkline:     null,
-                      lyRef:         null,
-                      lyDelta:       null,
-                      wowDelta:      null,
-                      bench:         null,
-                      sub:           lostSalesItemsFiltered.length > 0 ? `${lostSalesItemsFiltered.length} confirmed OOS lines` : 'SOH ≤ 0, no period sales',
-                      onClick:       () => { setCurrentReport('lostsales'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
-                      danger:        lostSalesValue > 50000,
-                      tooltip:       `LOST SALES VALUE\nRand value of sales lost to confirmed stockouts.\n\nQualifies: SOH ≤ 0, no sales in period, active line (sold in 364 days)\nFormula: OOS days × Daily ROS × Sell Price\nDaily ROS: 13-week baseline from mv_rate_of_sale\nExcludes: Items still selling despite SOH ≤ 0 (see Stock Ledger Discrepancy report), Production lines`,
-                    },
-                    {
                       key:           'stockturn',
                       label:         'Stock Turn',
                       value:         (engineStockTurn != null
@@ -3567,28 +3552,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* ── PRODUCT DETAIL PANELS ─────────────────────────────────────────── */}
-          {/* Jumps above Lost Sales when a product selection is active.            */}
-          <div style={{ order: isSelectionActive ? 0 : 1 }} ref={panelRef}>
-            {activeProducts.map(p => {
-              const pEan = String(p['EAN'] ?? p.ean ?? '')
-              const pKey = `${pEan}|${p.description ?? p['Description'] ?? ''}`
-              const handleClose = selectedProduct != null
-                ? () => setSelectedProduct(null)
-                : () => removeFromFocus(p)
-              return (
-                <ProductDetailPanelConnected
-                  key={pKey}
-                  product={p}
-                  storeCodes={storeCodes}
-                  storeMap={STORE_MAP}
-                  availableDates={availableDates}
-                  onClose={handleClose}
-                  compact={activeProducts.length > 1}
-                />
-              )
-            })}
-          </div>{/* end product-detail order div */}
           </div>{/* end reorder flex wrapper */}
 
           {/* ── FOCUS AREA PANEL ──────────────────────────────────────────────── */}
