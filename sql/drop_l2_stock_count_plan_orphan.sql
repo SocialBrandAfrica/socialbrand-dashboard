@@ -1,0 +1,41 @@
+-- =============================================================================
+-- drop_l2_stock_count_plan_orphan.sql
+-- SB-CC-RECONCILE-001 Phase 1 -- remove the orphan l2_stock_count_plan engine.
+-- Authored by CC (read-only MCP) for Pieter to apply in the SQL Editor.
+-- =============================================================================
+-- WHY (orphan): l2_stock_count_plan + refresh_l2_stock_count_plan were the
+--   never-built "count plan" engine (SB-CC-FAMILY3-COUNT-ENGINE-001). They were
+--   superseded by l2_classification (CLEANUP-ENGINE-CANON 8.1: "renamed from the
+--   never-built l2_stock_count_plan -- the engine outgrew count plan; it is the
+--   KPI definition layer. Rename is free: nothing was built on the old name").
+--   The pair was deployed once on 21355 but never wired into refresh_l2_pipeline,
+--   never read by any view/RPC/frontend, and never rolled past one store.
+--
+-- SHOW-BEFORE-DROP evidence (verified live via MCP 2026-06-17, R22):
+--   * l2_stock_count_plan: 948 rows, max snapshot_date = 2026-06-09 (stale, last
+--     touched the day it was trialled; l2_classification has owned this since).
+--   * dependent views/matviews on l2_stock_count_plan: 0.
+--   * functions referencing l2_stock_count_plan: 1 -- only its own
+--     refresh_l2_stock_count_plan (dropped below). refresh_l2_pipeline does NOT
+--     call it. No other RPC/function touches it.
+--   => dropping the pair cannot break the pipeline, the dashboard, or Pulse Mini.
+--
+-- REVERSIBILITY: re-creatable from sql/create_l2_stock_count_plan.sql +
+--   sql/refresh_l2_stock_count_plan.sql (which Phase 1 archives, not deletes),
+--   and the restore-point tag restore-point-2026-06-17 anchors the whole tree.
+--
+-- VERIFY BEFORE RUNNING (optional re-confirm of the show-before-drop):
+--   SELECT count(*) FROM pg_depend d
+--     JOIN pg_rewrite r ON r.oid=d.objid JOIN pg_class v ON v.oid=r.ev_class
+--    WHERE d.refobjid='public.l2_stock_count_plan'::regclass
+--      AND v.relkind IN ('v','m') AND v.relname<>'l2_stock_count_plan';   -- expect 0
+-- =============================================================================
+
+DROP FUNCTION IF EXISTS public.refresh_l2_stock_count_plan(text);
+DROP TABLE   IF EXISTS public.l2_stock_count_plan;
+
+-- POST-CHECK (expect both 0):
+--   SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+--     WHERE n.nspname='public' AND c.relname='l2_stock_count_plan';
+--   SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+--     WHERE n.nspname='public' AND p.proname='refresh_l2_stock_count_plan';
