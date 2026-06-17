@@ -1,6 +1,7 @@
 -- =============================================================================
 -- create_refresh_l2_pipeline.sql
--- Canonical source for refresh_l2_pipeline(). Synced to LIVE 2026-06-13.
+-- Canonical source for refresh_l2_pipeline(). Synced to LIVE 2026-06-13;
+-- de-hardcoded 2026-06-17 (SB-CC-RECONCILE-001 Phase 1).
 -- =============================================================================
 -- ROOT CAUSE THIS FIXES (found 2026-06-10 dashboard evaluation):
 --   NOTHING refreshed the L2 MV chain nightly. The handover's "nightly REFRESH
@@ -11,16 +12,28 @@
 --      l2_movements_typed -> l2_rate_of_sale -> l2_item_classification
 --      -> l2_ranging_tier -> l2_stock_position -> l2_kpi_daily
 --   2. refresh_l2_consignment_daily (10116) -- SB-CC-PMINI-WIRE-001 Gap A
---   3. refresh_l2_classification x5 -- SB-CC-DASH-WIRE-001 t3
---   4. refresh_l2_anomaly_family3 x5 -- SB-CC-ANOM-001
+--   3. refresh_l2_classification x(active stores) -- SB-CC-DASH-WIRE-001 t3
+--   4. refresh_l2_anomaly_family3 x(active stores) -- SB-CC-ANOM-001
 --   5. L1 dashboard MVs: mv_kpi_by_date, mv_rate_of_sale (SB-CC-DASH-SOURCE-002)
 --      + per-store search index
 --   Every per-store / MV step is guarded so it can never abort the chain;
 --   failures are reported in the return JSONB.
 --
+-- 2026-06-17 DE-HARDCODE (SB-CC-RECONCILE-001 Phase 1, R25 config-only template):
+--   The store fleet was a hardcoded ARRAY['10116','21355','80175','80176','80579']
+--   repeated in 3 loops -- a portability breach (a new customer/store would not be
+--   picked up without a code edit). Replaced with a single v_active_stores array
+--   sourced from `stores WHERE is_active`. Behaviour-identical today: all 5 stores
+--   are is_active=true, so the array resolves to exactly the prior 5. A new active
+--   store is now picked up with zero code change.
+--   Consignment stays scoped to 10116 -- that is a real feature scope (only SPAR
+--   Delareyville runs the HMR sushi consignment), NOT a fleet hardcode. TODO(R25):
+--   drive it off a per-store consignment flag/config when a second store onboards
+--   consignment, rather than the literal '10116'.
+--
 -- 2026-06-13 SYNC NOTE: this file had drifted behind live -- the consignment +
 --   classification blocks (deployed via MCP by prior sessions) were never synced
---   to the repo. Caught up here together with the new mv_rate_of_sale refresh
+--   to the repo. Caught up then together with the mv_rate_of_sale refresh
 --   (deployed via dash_source_002_wire_mv_rate_of_sale_into_pipeline).
 --   mv_rate_of_sale uses plain REFRESH (pg_cron wraps the call in a txn, so
 --   REFRESH ... CONCURRENTLY is not usable inside the pipeline).
@@ -34,10 +47,12 @@ DROP FUNCTION IF EXISTS refresh_l2_pipeline();
 CREATE OR REPLACE FUNCTION refresh_l2_pipeline()
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
-  v_t0     timestamptz := clock_timestamp();
-  v_result jsonb := '{}'::jsonb;
-  v_store  text;
-  v_snap   date;
+  v_t0            timestamptz := clock_timestamp();
+  v_result        jsonb := '{}'::jsonb;
+  v_store         text;
+  v_snap          date;
+  -- R25: the fleet is config, not code. Single source for every per-store loop.
+  v_active_stores text[] := ARRAY(SELECT store_code FROM stores WHERE is_active ORDER BY store_code);
 BEGIN
   REFRESH MATERIALIZED VIEW l2_movements_typed;
   v_result := v_result || jsonb_build_object('movements_typed_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
@@ -53,7 +68,8 @@ BEGIN
   -- sigma_articles; depends on L1 (refreshed pre-pipeline by the push), not on
   -- the chain above, so order within the pipeline is not load-bearing. Placed
   -- here so the one pipeline owns every L2 table. Per-store guarded so it can
-  -- never break the chain. Only 10116 has consignment data today (brief scope).
+  -- never break the chain. Only 10116 runs consignment (feature scope, not a
+  -- fleet hardcode -- see header TODO(R25)).
   -- NOTE: standing cron jobs 13/14 also call this nightly (belt-and-braces);
   -- idempotent (DELETE+INSERT current month) so the extra runs are harmless.
   -- Retiring jobs 13/14 is the consolidation step pending PM sign-off.
@@ -67,10 +83,10 @@ BEGIN
   END LOOP;
   v_result := v_result || jsonb_build_object('consignment_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
 
-  -- l2_classification engine, all 5 stores (SB-CC-DASH-WIRE-001 t3). Reads
+  -- l2_classification engine, all active stores (SB-CC-DASH-WIRE-001 t3). Reads
   -- l2_stock_position (refreshed above) + v_item_ean. Idempotent (DELETE+INSERT
   -- per store+day). Per-store guarded so it can never break the chain.
-  FOR v_store IN SELECT unnest(ARRAY['10116','21355','80175','80176','80579'])
+  FOR v_store IN SELECT unnest(v_active_stores)
   LOOP
     BEGIN
       PERFORM refresh_l2_classification(v_store);
@@ -80,8 +96,8 @@ BEGIN
   END LOOP;
   v_result := v_result || jsonb_build_object('classification_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
 
-  -- Family 3 anomaly engine, all 5 stores (idempotent per store+day).
-  FOR v_store IN SELECT unnest(ARRAY['10116','21355','80175','80176','80579'])
+  -- Family 3 anomaly engine, all active stores (idempotent per store+day).
+  FOR v_store IN SELECT unnest(v_active_stores)
   LOOP
     BEGIN
       PERFORM refresh_l2_anomaly_family3(v_store);
@@ -106,7 +122,7 @@ BEGIN
     v_result := v_result || jsonb_build_object('mv_rate_of_sale_error', SQLERRM);
   END;
 
-  FOR v_store IN SELECT unnest(ARRAY['10116','21355','80175','80176','80579'])
+  FOR v_store IN SELECT unnest(v_active_stores)
   LOOP
     BEGIN
       SELECT MAX(snapshot_date) INTO v_snap FROM daily_snapshots WHERE store_code = v_store;
@@ -124,9 +140,9 @@ END;
 $$;
 
 COMMENT ON FUNCTION refresh_l2_pipeline() IS
-  'Nightly L2 engine refresh: L2 chain -> consignment(10116) -> classification x5 '
-  '-> Family 3 anomaly x5 -> mv_kpi_by_date + mv_rate_of_sale + search index. '
-  'Scheduled via pg_cron refresh-l2-pipeline (20:15 UTC).';
+  'Nightly L2 engine refresh: L2 chain -> consignment(10116) -> classification x(active) '
+  '-> Family 3 anomaly x(active) -> mv_kpi_by_date + mv_rate_of_sale + search index. '
+  'Fleet sourced from stores WHERE is_active (R25). Scheduled via pg_cron refresh-l2-pipeline (20:15 UTC).';
 
 GRANT EXECUTE ON FUNCTION refresh_l2_pipeline() TO authenticated;
 
