@@ -63,8 +63,12 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
 
 $trigger = New-ScheduledTaskTrigger -Daily -At '18:40'
 $action  = New-ScheduledTaskAction -Execute $PsExePath -Argument $ExeArgs -WorkingDirectory $ScriptDir
+# ExecutionTimeLimit must exceed eod_window_start (18:40) -> hard_cutoff (23:30)
+# or Windows kills the task mid-poll before Wait-ForSigmaDw's catch-up can land.
+# 6h (18:40 -> ~00:40) clears a 23:30 cutoff with margin. R28: general default,
+# 2026-06-17 (SB-CC-EXTRACT-002 v1.1); matches Register-ExtractDeltaTask in the extractor.
 $settings = New-ScheduledTaskSettingsSet `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 6) `
     -StartWhenAvailable `
     -WakeToRun:$false
 
