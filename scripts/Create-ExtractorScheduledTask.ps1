@@ -63,12 +63,10 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
 
 $trigger = New-ScheduledTaskTrigger -Daily -At '18:40'
 $action  = New-ScheduledTaskAction -Execute $PsExePath -Argument $ExeArgs -WorkingDirectory $ScriptDir
-# ExecutionTimeLimit must exceed eod_window_start (18:40) -> hard_cutoff (23:30)
-# or Windows kills the task mid-poll before Wait-ForSigmaDw's catch-up can land.
-# 6h (18:40 -> ~00:40) clears a 23:30 cutoff with margin. R28: general default,
-# 2026-06-17 (SB-CC-EXTRACT-002 v1.1); matches Register-ExtractDeltaTask in the extractor.
+# ExecutionTimeLimit 4h is ample: a delta run is 5-10 min and the dw220sdb retry
+# is a short bounded ~10 min. (The 23:30 poll-to-cutoff was descoped 2026-06-17.)
 $settings = New-ScheduledTaskSettingsSet `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 6) `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
     -StartWhenAvailable `
     -WakeToRun:$false
 

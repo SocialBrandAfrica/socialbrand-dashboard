@@ -142,7 +142,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.16'   # v1.16 (SB-CC-EXTRACT-002 v1.1): TRUTHFUL STATUS -- run = SUCCESS when the EOD fact tables (sigma_sales/sigma_movements/l2_soh_daily) land, even if a late non-fact table trips on a mid-run dw220sdb lock; only a missing fact table (or the cutoff poll giving up) = FAILED. Ends the false-FAILED blindness. Also: config-driven readiness poll + same-evening catch-up to hard_cutoff (store_extract_config), replacing the 9-probe/45-min give-up; ExtractDelta task ExecutionTimeLimit 4h->6h so the poll reaches the 23:30 cutoff. (v1.15: cBESTANDSFUE -> record_stock_qty, SB-CC-L1-RECSTK-001)
+$ScriptVersion  = 'v1.16'   # v1.16 (SB-CC-EXTRACT-002 v1.1, SIMPLIFIED 2026-06-17): TRUTHFUL STATUS -- run = SUCCESS when the EOD fact tables (sigma_sales/sigma_movements/l2_soh_daily) land, even if a late non-fact table trips on a mid-run dw220sdb lock; only a missing fact table = FAILED. Ends the false-FAILED blindness so the dashboard freshness reads honest. Lock handling = short bounded retry (3 tries / ~10 min) then fail truthfully (23:30 cutoff / long-window / email-watchdog DESCOPED: lock is rare, dashboard shows stale, manual re-run lands it). (v1.15: cBESTANDSFUE -> record_stock_qty, SB-CC-L1-RECSTK-001)
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -234,15 +234,12 @@ function Register-ExtractDeltaTask {
         $workDir = Split-Path $PSCommandPath
         $trigger = New-ScheduledTaskTrigger -Daily -At $atTime
         $action  = New-ScheduledTaskAction -Execute $psExe -Argument $exeArgs -WorkingDirectory $workDir
-        # ExecutionTimeLimit MUST exceed the poll window eod_window_start (18:40)
-        # -> hard_cutoff (23:30), or Windows kills the task mid-poll BEFORE the
-        # catch-up can land -- defeating Wait-ForSigmaDw. 6h (18:40 -> ~00:40)
-        # clears a 23:30 cutoff with margin. Was 4h (-> 22:40), which would have
-        # killed the poll 50 min before the cutoff it is meant to reach.
-        # R28: general default, set 2026-06-17 (SB-CC-EXTRACT-002) -- NOT a
-        # per-store calibration; any store's evening-start -> 23:30-ish cutoff fits.
+        # ExecutionTimeLimit 4h is ample: a delta run is 5-10 min and the dw220sdb
+        # retry is a short bounded ~10 min. (The 23:30 poll-to-cutoff / long window
+        # were descoped 2026-06-17 -- the lock is rare; a stale store shows on the
+        # dashboard and a manual re-run lands it; no long-window task needed.)
         $settings = New-ScheduledTaskSettingsSet `
-            -ExecutionTimeLimit (New-TimeSpan -Hours 6) `
+            -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
             -StartWhenAvailable `
             -WakeToRun:$false
 
@@ -312,45 +309,33 @@ function Get-DwStateDiag {
 }
 
 function Wait-ForSigmaDw {
-    # SB-CC-EXTRACT-002: config-driven poll + same-evening catch-up, replacing the
-    # fixed 9-probe / ~45-min give-up that let four stores miss 06-15 silently.
-    # Polls dw220sdb every ready_poll_minutes until it is reachable (the EOD lock
-    # released) OR the store-local hard_cutoff. A locked DB no longer ends the
-    # night -- the run waits THROUGH the EOD lock and catches up the same evening
-    # (tonight the lock cleared ~22:00, well inside a 23:30 cutoff). At hard_cutoff
-    # a clean throw fails the run LOUDLY with a TRADED-BUT-NOT-LANDED marker that
-    # push_log + the central feed-health watchdog key off (distinct from a closed-
-    # no-trade day). Store-local time == server-local (servers run in the store tz;
-    # config.time_zone is carried for future cross-tz portability, R25).
-    # v1.12/v1.13 EOD-collision diagnosis preserved (Get-DwStateDiag per probe).
-    $cfg       = $script:ExtractCfg
-    $pollMin   = if ($cfg -and $cfg.ready_poll_minutes) { [int]$cfg.ready_poll_minutes } else { 10 }
-    $cutoffStr = if ($cfg -and $cfg.hard_cutoff)        { [string]$cfg.hard_cutoff }      else { '23:30' }
-    $pollSecs  = [Math]::Max(60, $pollMin * 60)
-    # hard_cutoff is a local wall-clock time TODAY. If already past it on first
-    # contact (a late manual run), one failed probe throws rather than looping.
-    try   { $cutoff = [datetime]::Today.Add([timespan]::Parse($cutoffStr)) }
-    catch { $cutoff = [datetime]::Today.Add([timespan]::Parse('23:30')) }
-
-    $i = 0
-    while ($true) {
-        $i++
+    # SB-CC-EXTRACT-002 (Pieter SIMPLIFIED 2026-06-17): a SHORT BOUNDED retry, NOT a
+    # poll-to-cutoff. The dw220sdb EOD lock is RARE -- the normal night is reachable
+    # and a run just works (proven live 2026-06-17, ran straight through twice). So:
+    # probe, and on a genuine failure retry a few times over ~10 min, then stop. If
+    # it is still locked (rare), the run fails TRUTHFULLY (no fact tables land) and
+    # the store shows STALE on the dashboard layer-freshness strip -- a one-line
+    # manual re-run then lands it. No 23:30 cutoff, no long window, no email watchdog
+    # (all descoped -- the dashboard IS the freshness signal, the way PRSSALE always
+    # was). Get-DwStateDiag kept for the error line. R28: bounded-retry values are a
+    # general default, dated 2026-06-17.
+    $maxTries = 3
+    $gapSecs  = 300   # ~10 min total across the 3 tries
+    for ($i = 1; $i -le $maxTries; $i++) {
         try {
             $conn = New-SqlConn -Db $DwDb
             $conn.Close()
-            if ($i -gt 1) {
-                Write-Host "[dw-probe] $DwDb available on probe $i -- EOD lock released, continuing." -ForegroundColor Green
-            }
+            if ($i -gt 1) { Write-Host "[dw-probe] $DwDb reachable on try $i." -ForegroundColor Green }
             return
         }
         catch {
             $msg  = $_.ToString()
             $diag = Get-DwStateDiag
-            if ((Get-Date) -ge $cutoff) {
-                throw "TRADED-BUT-NOT-LANDED: dw220sdb still locked at hard_cutoff $cutoffStr after $i probes -- a traded day did not land. Diagnosis: $diag | Last error: $msg"
+            if ($i -ge $maxTries) {
+                throw "dw220sdb not reachable after $maxTries tries (~10 min) -- failing truthfully; the store will show STALE on the dashboard and a manual re-run will land it. Diagnosis: $diag | Last error: $msg"
             }
-            Write-Host "[dw-probe] $DwDb not available (probe $i, polling to cutoff $cutoffStr). Diagnosis: $diag. Waiting $($pollSecs)s. ($msg)" -ForegroundColor Yellow
-            Start-Sleep -Seconds $pollSecs
+            Write-Host "[dw-probe] $DwDb not reachable (try $i/$maxTries). Diagnosis: $diag. Waiting $($gapSecs)s." -ForegroundColor Yellow
+            Start-Sleep -Seconds $gapSecs
         }
     }
 }
@@ -420,7 +405,8 @@ function Get-StoreExtractConfig {
     }
 }
 
-# Fetch once on full-chain runs; Wait-ForSigmaDw + alerts read $script:ExtractCfg.
+# Fetch once on full-chain runs -- informational log of the store's config row.
+# (Wait-ForSigmaDw now uses a fixed bounded retry; the readiness poll was descoped 2026-06-17.)
 $script:ExtractCfg = $null
 if ([string]::IsNullOrEmpty($TableName)) {
     $script:ExtractCfg = Get-StoreExtractConfig
