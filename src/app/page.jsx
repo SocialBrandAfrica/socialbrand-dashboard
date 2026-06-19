@@ -3257,9 +3257,17 @@ export default function Home() {
               {/* Top 20 Movers / Non-Movers */}
               <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
-                  <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>
-                    {top20Activity === 'movers' ? 'Top 20 Movers' : 'Top 20 Non-Movers'}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>
+                      {top20Activity === 'movers' ? 'Top 20 Movers' : 'Top 20 Non-Movers'}
+                    </span>
+                    {top20Activity === 'movers' && moverMode === 'value' && (
+                      <span style={{ fontSize: 10, color: 'rgba(74,222,128,0.6)', fontFamily: "'Geist Mono', monospace" }}>ex-VAT</span>
+                    )}
+                    {top20Activity === 'non_movers' && moverMode === 'value' && (
+                      <span style={{ fontSize: 10, color: 'rgba(245,245,244,0.3)', fontFamily: "'Geist Mono', monospace" }}>stock value</span>
+                    )}
+                  </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <div style={{ display: 'flex', gap: 3, background: 'rgba(255,255,255,0.04)', padding: 3, borderRadius: 8 }}>
                       {['qty', 'value'].map(m => (
