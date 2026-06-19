@@ -1609,7 +1609,7 @@ export default function Home() {
         // v_kpi_by_date times out at >25 dates (live 18M-row aggregation). MV is
         // refreshed at the end of every store's nightly push so it stays current.
         supabase.from('mv_kpi_by_date')
-          .select('store_code,snapshot_date,total_sales,total_cost,total_qty')
+          .select('store_code,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty')
           .in('store_code', storeCodes)
           .in('snapshot_date', trendDates)
           .order('snapshot_date', { ascending: true }),
@@ -1617,7 +1617,7 @@ export default function Home() {
         // LY trend data — always historical, use MV
         lyTrendDates.length > 0
           ? supabase.from('mv_kpi_by_date')
-              .select('store_code,snapshot_date,total_sales')
+              .select('store_code,snapshot_date,total_sales,total_sales_ex_vat')
               .in('store_code', storeCodes)
               .in('snapshot_date', lyTrendDates)
               .order('snapshot_date', { ascending: true })
