@@ -1,6 +1,7 @@
-'use client'
+﻿'use client'
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 import * as XLSX from 'xlsx'
 import { FocusAreaPanel }    from '@/components/FocusAreaPanel'
@@ -1231,7 +1232,9 @@ export default function Home() {
     })
     return () => { cancelled = true }
   }, [storeCodes])
-  const [tooltipCard,       setTooltipCard]       = useState(null)  // key of KPI card showing tooltip
+  const [tooltipCard,       setTooltipCard]       = useState(null)
+  const [tooltipPos,        setTooltipPos]        = useState({ left: 0, top: 0 })
+  const [tooltipContent,    setTooltipContent]    = useState(null)
 
   // ── product detail panel ────────────────────────────────────────────────────
   const [selectedProduct, setSelectedProduct] = useState(null)
@@ -2941,7 +2944,13 @@ export default function Home() {
                         delta:    dualDelta(l2Agg.exVat, kpiSalesExVat, 'pct'),
                         explain:  'Headline = L2 engine (sigma_sales, ex-VAT flat 15%). Raw = L1 PRSSALE ex-VAT (total_sales_ex_vat, per-item vat_pct). Delta sources: engine-vs-PRSSALE + intraday timing.',
                       } : null,
-                      tooltip:       `TOTAL SALES\nex-VAT.\n\n${dualSalesPairable ? 'DUAL-SOURCE: headline = L2 engine (sigma_sales, ex-VAT flat 15%);\nraw chip = L1 ex-VAT (total_sales_ex_vat, per-item vat_pct).\n\n' : ''}L1 source: Sum mv_kpi_by_date.total_sales_ex_vat\nLY: Same filter · dates -364 days\nDelta: (This period - LY) / LY x 100`,
+                      tooltip: {
+                        heading: 'Total Sales',
+                        what:    'Rand value of everything sold across selected stores and period, ex-VAT.',
+                        source:  'Sigma sales ledger -- every till transaction, captured nightly.',
+                        compare: 'Same period last year, shifted back exactly 52 weeks to preserve the day of week.',
+                        signal:  'Green = up on LY. The raw chip (single-date engine view) is a PRSSALE snapshot -- a small delta is normal; a large one is unusual.',
+                      },
                     },
                     {
                       key:           'gp',
@@ -2962,7 +2971,13 @@ export default function Home() {
                         delta:    dualDelta(l2Agg.gp, kpiGP, 'pp'),
                         explain:  'Headline = L2 engine GP (sigma dEKUmsatz cost). Raw = L1 PRSSALE-cost GP. A red delta usually means PRSSALE pack_size cost corruption on this store -- the red IS the finding (R22).',
                       } : null,
-                      tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\n\n${dualSalesPairable ? 'DUAL-SOURCE: headline = L2 engine gp_pct (sigma_sales cost_value / dEKUmsatz);\nraw chip = L1 PRSSALE-cost GP. Large deltas = PRSSALE cost corruption, a finding.\n\n' : ''}L1 GP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nL1 Cost: SUM(today_cost) from daily_snapshots\nLY: Same filter · dates -364 days`,
+                      tooltip: {
+                        heading: 'Gross Profit',
+                        what:    "What's left after cost of goods, as a percentage of ex-VAT sales.",
+                        source:  "Engine uses Sigma's own recorded cost (dEKUmsatz) -- more accurate than the PRSSALE cost. The raw chip shows PRSSALE-cost GP for comparison.",
+                        compare: 'Same period last year. A large delta between raw chip and headline is a cost corruption finding, not a display bug.',
+                        signal:  'Below 18% -- watch it. A red raw-chip delta means a store has pack-size cost errors worth fixing.',
+                      },
                     },
                     {
                       key:           'stockturn',
@@ -2979,9 +2994,13 @@ export default function Home() {
                         ? `engine ROS-based · purified ${zarShort(enginePurifiedCap)}`
                         : (kpiCapTied > 0 ? `Capital tied ${zarShort(kpiCapTied)}` : 'Insufficient data'),
                       warn:          (engineStockTurn ?? kpiStockTurn) != null && (engineStockTurn ?? kpiStockTurn) < 12,
-                      tooltip:       engineStockTurn != null
-                        ? `STOCK TURN (engine)\nHow many times stock turns over annually.\n\nEngine basis (SB-CC-DASH-WIRE-001 t2): Day's Cover = capital-weighted SOH / rate-of-sale over NORMAL-class lines (l2_kpi_daily.days_cover_normal_wtd); Stock Turn = 365 / Day's Cover.\nReplaces the old (Period COGS / Days * 365) / ghost-capital method that annualised a single day's COGS over the ghost-inflated base.\nTarget: 12 turns per year`
-                        : `STOCK TURN\nHow many times stock investment turns over annually.\n\nFormula: (Period COGS / Days * 365) / Capital Tied\nCOGS: SUM(today_cost) from daily_snapshots\nDays: Calendar days first to last selected date\nCapital: SUM(SOH x unit_cost) latest snapshot per store\nTarget: 12 turns per year\nDays Cover: 365 / Stock Turn`,
+                      tooltip: {
+                        heading: 'Stock Turn',
+                        what:    'How many times the sellable stock investment cycles through in a year.',
+                        source:  'Engine -- capital-weighted 91-day rate of sale on buy-and-sell lines only. Production lines and ghost stock excluded.',
+                        compare: 'LY turns shown as reference. Target is 12 turns per year (30 days cover).',
+                        signal:  'Above 12 = capital moving well. Below 12 = stock is sitting too long. Fresh lines should turn much faster than the store average.',
+                      },
                     },
                     {
                       key:           'negsoh',
@@ -3002,7 +3021,13 @@ export default function Home() {
                         delta:    dualDelta(l2Agg.negSohAll, kpiNegSOH, 'pct'),
                         explain:  'Headline = L2 engine all-class Negative SOH (l2_kpi_daily.neg_soh_count_all, sigma ledger soh<0, canon RULE-BOOK §5 KPI 5 incl. Type-A production negatives). Raw chip = L1 PRSSALE daily_snapshots all-class count. Delta = sigma ledger vs PRSSALE SOH; the ledger is the truth (R26). 14-day sparkline is the L1 daily series (stays PRSSALE until l2_soh_daily accrues history).',
                       } : null,
-                      tooltip:       `NEGATIVE SOH\nCount of all products where SOH < 0\nat the latest snapshot per store.\n\n${(dualStockPairable && l2Agg != null) ? 'DUAL-SOURCE: headline = L2 engine all-class (sigma ledger, l2_kpi_daily.neg_soh_count_all);\nraw chip = L1 all-class (daily_snapshots.soh). Delta = ledger vs PRSSALE.\nSparkline = L1 14-day series (Phase B, PRSSALE).\n\n' : 'Source: daily_snapshots.soh\n'}Type A: Production dept deep negatives\nType B: Retail lines that sold through without GRV`,
+                      tooltip: {
+                        heading: 'Negative SOH',
+                        what:    'Count of products where the Sigma ledger shows less than zero on shelf.',
+                        source:  'Engine reads the live Sigma stock ledger directly -- more complete than the PRSSALE count, which is why it is usually higher.',
+                        compare: 'Same date last year -- a falling count means the team is fixing receiving gaps and count errors.',
+                        signal:  'Any negative is a stock integrity issue. Click to open the full list. Production lines (bread, scale items) carry structural negatives -- those need a floor fix, not a stocktake.',
+                      },
                     },
                     {
                       key:           'captied',
@@ -3028,7 +3053,14 @@ export default function Home() {
                         delta:    dualDelta(enginePurifiedCap, engineInScopeCap, 'pct'),
                         explain:  `Headline = L2 engine purified Capital Tied (l2_classification, bucket IN HEALTHY/COUNT/AMBIGUOUS/LEAVE_COUNTED; canon §8.8, ~R10M). Raw = engine in-scope capital BEFORE purification (NORMAL + SOH, incl. COST_ERROR pack ghosts + dead/phantom; ~R21M). The gap is the exact ghost capital the engine strips (R21 -- earned exclusions, surfaced not hidden).`,
                       } : null,
-                      tooltip:       `CAPITAL TIED\nValue of sellable stock investment at cost.\n\n${engineCapPairable ? `ENGINE (purified): bucket IN HEALTHY/COUNT/AMBIGUOUS/LEAVE_COUNTED (canon §8.8).\nDeposits/returnables (quart deposits, empties, crates) are CARVED OUT into their own line${engineDeposits ? ` (${zarShort(engineDeposits)})` : ''} -- pass-through float, not stock investment (SB-CC-DEPOSIT-001).\nRaw chip = in-scope capital before purification (incl. cost-error/dead ghosts).\n\n` : ''}Target: <= 30 days cover (standard lines), <= 15 days cover (top-tier lines)\n\nLY delta: PRSSALE basis (mv_kpi_by_date.capital_tied) -- no engine history for LY dates yet. Like-for-like within PRSSALE, not comparable to the engine headline.`,
+                      tooltip: {
+                        heading: 'Capital Tied',
+                        what:    'The rand value of sellable, buyable stock on shelf at cost -- your real stock investment.',
+                        source:  'Engine-purified: ghost stock, production lines, deposits and cost errors stripped out. The raw chip shows the unfiltered figure before that cleanup.',
+                        compare: 'LY reference shown as direction only -- the LY figure is a PRSSALE historical snapshot, so treat the percentage as a trend signal, not a precise comparison.',
+                        signal:  'The gap between purified and raw is capital locked in lines the engine has flagged. 30 days cover or less is the target for standard lines.',
+                        note:    'Deposits (quart bottles, crates, empties) are carved out separately -- returnable float, not stock investment.',
+                      },
                       onClick:       kpiCapTied > 0 ? () => setCapTiedModalOpen(true) : undefined,
                     },
                   ]
@@ -3039,13 +3071,17 @@ export default function Home() {
                     return (
                       <div key={k.key} className={`sb-glass sb-edge sb-unfrost ${k.edge ? `sb-edge-${k.edge}` : ''}`}
                         onClick={k.onClick}
-                        onMouseEnter={k.tooltip ? () => setTooltipCard(k.key) : undefined}
-                        onMouseLeave={k.tooltip ? () => setTooltipCard(null)  : undefined}
+                        onMouseEnter={k.tooltip ? (e) => {
+                          const rect = e.currentTarget.getBoundingClientRect()
+                          setTooltipPos({ left: rect.left, top: rect.bottom + 8 })
+                          setTooltipContent({ ...k.tooltip, edgeColor: k.edge })
+                          setTooltipCard(k.key)
+                        } : undefined}
+                        onMouseLeave={k.tooltip ? () => { setTooltipCard(null); setTooltipContent(null) } : undefined}
                         style={{
                         padding: '18px 20px',
                         cursor: k.onClick ? 'pointer' : 'default',
                         position: 'relative',
-                        zIndex: tooltipCard === k.key ? 200 : undefined,
                         '--d': `${kpiIdx * 80}ms`,
                       }}>
                         <p style={{ fontSize: 10, color: 'var(--veld-mist)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 8, fontFamily: 'var(--font-head)', fontWeight: 500 }}>{k.label}</p>
@@ -3120,29 +3156,6 @@ export default function Home() {
                           }}>
                             {k.basisNote}
                           </p>
-                        )}
-                        {/* KPI tooltip — shows on hover, no layout shift (absolute) */}
-                        {k.tooltip && tooltipCard === k.key && (
-                          <div style={{
-                            position: 'absolute', top: 'calc(100% + 8px)', left: 0,
-                            minWidth: '260px', width: 'max-content', maxWidth: '360px', zIndex: 9999,
-                            background: 'rgba(14,18,14,0.97)', border: '1px solid rgba(255,255,255,0.12)',
-                            borderRadius: 10, padding: '12px 14px',
-                            boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
-                            pointerEvents: 'none',
-                          }}>
-                            {k.tooltip.split('\n').map((line, i) => (
-                              <p key={i} style={{
-                                fontSize: i === 0 ? 10 : 10,
-                                fontFamily: "'Geist Mono', monospace",
-                                color: i === 0 ? '#f5f5f4' : line.trim() === '' ? 'transparent' : 'rgba(245,245,244,0.5)',
-                                fontWeight: i === 0 ? 700 : 400,
-                                letterSpacing: i === 0 ? '0.1em' : 'normal',
-                                marginBottom: line.trim() === '' ? 4 : 2,
-                                lineHeight: 1.5,
-                              }}>{line || ' '}</p>
-                            ))}
-                          </div>
                         )}
                       </div>
                     )
@@ -3744,6 +3757,43 @@ export default function Home() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* KPI tooltip portal -- renders to document.body, escapes all stacking contexts */}
+      {typeof document !== 'undefined' && tooltipContent && tooltipCard && createPortal(
+        <div style={{
+          position: 'fixed',
+          top: tooltipPos.top,
+          left: tooltipPos.left,
+          maxWidth: 320,
+          width: 'max-content',
+          zIndex: 99999,
+          background: 'rgba(12,16,12,0.97)',
+          border: '1px solid rgba(255,255,255,0.10)',
+          borderLeft: `2px solid ${{ green: '#4ade80', blue: '#60a5fa', amber: '#fbbf24', red: '#f87171' }[tooltipContent.edgeColor] ?? 'rgba(168,181,168,0.4)'}`,
+          borderRadius: 10,
+          padding: '14px 16px',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
+          pointerEvents: 'none',
+          animation: 'tooltipFadeIn 120ms ease both',
+        }}>
+          <p style={{ fontSize: 10, fontFamily: 'var(--font-head)', color: '#f5f5f4', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 10 }}>
+            {tooltipContent.heading}
+          </p>
+          {[
+            ['WHAT',    tooltipContent.what],
+            ['SOURCE',  tooltipContent.source],
+            ['COMPARE', tooltipContent.compare],
+            ['SIGNAL',  tooltipContent.signal],
+            tooltipContent.note ? ['NOTE', tooltipContent.note] : null,
+          ].filter(Boolean).map(([label, text]) => (
+            <div key={label} style={{ marginBottom: 9 }}>
+              <p style={{ fontSize: 9, fontFamily: 'var(--font-head)', color: 'var(--veld-mist)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 3 }}>{label}</p>
+              <p style={{ fontSize: 10.5, fontFamily: 'var(--font-head)', color: 'rgba(245,245,244,0.75)', lineHeight: 1.55, margin: 0 }}>{text}</p>
+            </div>
+          ))}
+        </div>,
+        document.body
       )}
     </div>
   )

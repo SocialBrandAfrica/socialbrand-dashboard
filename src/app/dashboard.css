@@ -175,6 +175,10 @@
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+@keyframes tooltipFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 .sb-unfrost {
   /* backwards fill: frosted during the stagger delay, class styles own the
      resting state after the melt (no persistent keyframe override) */
