@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import * as XLSX from 'xlsx'
-import { ProductDetailPanelConnected } from '@/components/ProductDetailPanel'
 import { FocusAreaPanel }    from '@/components/FocusAreaPanel'
 import { SalesTrendPanel }   from '@/components/SalesTrendPanel'
 import { CalendarPopover } from '@/components/CalendarPopover'
@@ -2355,6 +2354,7 @@ export default function Home() {
 
   const wowDeptRows = byDept(wowKpiDeptSummary)
   const wowKpiSales = filterActive ? sumField(wowDeptRows, 'total_sales') : sumField(wowKpiData, 'total_sales')
+  const wowKpiSalesExVat = filterActive ? sumField(wowDeptRows, 'total_sales_ex_vat') : sumField(wowKpiData, 'total_sales_ex_vat')
   const hasWoW      = filterActive ? wowDeptRows.length > 0 : wowKpiData.length > 0
 
   // Capital Tied: prefer dept-level capital_tied from rpc_dept_summary when a
@@ -2925,23 +2925,23 @@ export default function Home() {
                     {
                       key:           'sales',
                       label:         selectedDates.length > 1 ? `Total Sales · ${selectedDates.length} dates` : `Sales · ${selectedDates[0] ?? ''}`,
-                      value:         dualSalesPairable ? zarShort(l2Agg.sales) : zarShort(kpiSales),
+                      value:         dualSalesPairable ? zarShort(l2Agg.exVat) : zarShort(kpiSalesExVat),
                       sparkline:     sparklineArrays.sales,
-                      lyRef:         hasLY ? zarShort(lyKpiSales) : null,
-                      lyDelta:       hasLY ? deltaInfo(kpiSales, lyKpiSales) : null,
-                      wowDelta:      hasWoW ? deltaInfo(kpiSales, wowKpiSales) : null,
+                      lyRef:         hasLY ? zarShort(lyKpiSalesExVat) : null,
+                      lyDelta:       hasLY ? deltaInfo(kpiSalesExVat, lyKpiSalesExVat) : null,
+                      wowDelta:      hasWoW ? deltaInfo(kpiSalesExVat, wowKpiSalesExVat) : null,
                       bench:         sameWeekdayBenchmark ? `avg ${sameWeekdayBenchmark.dow}: ${zarShort(sameWeekdayBenchmark.avgSales)}` : null,
                       benchN:        sameWeekdayBenchmark?.n,
                       sub:           `${num(kpiQty, 0)} units`,
                       accent:        true,
                       edge:          'green',
-                      basisNote:     dualSalesPairable ? 'engine (sigma_sales) · VAT-incl' : 'VAT-inclusive',
+                      basisNote:     'ex-VAT',
                       dual:          dualSalesPairable ? {
-                        rawLabel: zarShort(kpiSales),
-                        delta:    dualDelta(l2Agg.sales, kpiSales, 'pct'),
-                        explain:  'Headline = L2 engine (sigma_sales, till channel). Raw = L1 PRSSALE TAC snapshot. Delta sources: intraday-vs-EOD cut timing.',
+                        rawLabel: zarShort(kpiSalesExVat),
+                        delta:    dualDelta(l2Agg.exVat, kpiSalesExVat, 'pct'),
+                        explain:  'Headline = L2 engine (sigma_sales, ex-VAT flat 15%). Raw = L1 PRSSALE ex-VAT (total_sales_ex_vat, per-item vat_pct). Delta sources: engine-vs-PRSSALE + intraday timing.',
                       } : null,
-                      tooltip:       `TOTAL SALES\nVAT-inclusive.\n\n${dualSalesPairable ? 'DUAL-SOURCE: headline = L2 engine (l2_kpi_daily.sales_incl_vat from sigma_sales);\nraw chip = L1 (daily_snapshots.today_sales).\n\n' : ''}L1 source: Sum daily_snapshots.today_sales\nLY: Same filter · dates -364 days\nDelta: (This period - LY) / LY x 100`,
+                      tooltip:       `TOTAL SALES\nex-VAT.\n\n${dualSalesPairable ? 'DUAL-SOURCE: headline = L2 engine (sigma_sales, ex-VAT flat 15%);\nraw chip = L1 ex-VAT (total_sales_ex_vat, per-item vat_pct).\n\n' : ''}L1 source: Sum mv_kpi_by_date.total_sales_ex_vat\nLY: Same filter · dates -364 days\nDelta: (This period - LY) / LY x 100`,
                     },
                     {
                       key:           'gp',
@@ -2963,20 +2963,6 @@ export default function Home() {
                         explain:  'Headline = L2 engine GP (sigma dEKUmsatz cost). Raw = L1 PRSSALE-cost GP. A red delta usually means PRSSALE pack_size cost corruption on this store -- the red IS the finding (R22).',
                       } : null,
                       tooltip:       `GROSS PROFIT\nCalculated excluding VAT.\n\n${dualSalesPairable ? 'DUAL-SOURCE: headline = L2 engine gp_pct (sigma_sales cost_value / dEKUmsatz);\nraw chip = L1 PRSSALE-cost GP. Large deltas = PRSSALE cost corruption, a finding.\n\n' : ''}L1 GP Rand: Sales ex-VAT - Cost of Goods Sold\nGP %: GP Rand / Sales ex-VAT x 100\nL1 Cost: SUM(today_cost) from daily_snapshots\nLY: Same filter · dates -364 days`,
-                    },
-                    {
-                      key:           'lostsalesvalue',
-                      label:         'Lost Sales Value',
-                      value:         lostSalesItemsFiltered.length > 0 ? zarShort(lostSalesValue) : '—',
-                      sparkline:     null,
-                      lyRef:         null,
-                      lyDelta:       null,
-                      wowDelta:      null,
-                      bench:         null,
-                      sub:           lostSalesItemsFiltered.length > 0 ? `${lostSalesItemsFiltered.length} confirmed OOS lines` : 'SOH ≤ 0, no period sales',
-                      onClick:       () => { setCurrentReport('lostsales'); setDrawerOpen(true); if (!reportLoaded && !reportLoading) loadReport() },
-                      danger:        lostSalesValue > 50000,
-                      tooltip:       `LOST SALES VALUE\nRand value of sales lost to confirmed stockouts.\n\nQualifies: SOH ≤ 0, no sales in period, active line (sold in 364 days)\nFormula: OOS days × Daily ROS × Sell Price\nDaily ROS: 13-week baseline from mv_rate_of_sale\nExcludes: Items still selling despite SOH ≤ 0 (see Stock Ledger Discrepancy report), Production lines`,
                     },
                     {
                       key:           'stockturn',
@@ -3042,7 +3028,7 @@ export default function Home() {
                         delta:    dualDelta(enginePurifiedCap, engineInScopeCap, 'pct'),
                         explain:  `Headline = L2 engine purified Capital Tied (l2_classification, bucket IN HEALTHY/COUNT/AMBIGUOUS/LEAVE_COUNTED; canon §8.8, ~R10M). Raw = engine in-scope capital BEFORE purification (NORMAL + SOH, incl. COST_ERROR pack ghosts + dead/phantom; ~R21M). The gap is the exact ghost capital the engine strips (R21 -- earned exclusions, surfaced not hidden).`,
                       } : null,
-                      tooltip:       `CAPITAL TIED\nValue of sellable stock investment at cost.\n\n${engineCapPairable ? `ENGINE (purified): bucket IN HEALTHY/COUNT/AMBIGUOUS/LEAVE_COUNTED (canon §8.8).\nDeposits/returnables (quart deposits, empties, crates) are CARVED OUT into their own line${engineDeposits ? ` (${zarShort(engineDeposits)})` : ''} -- pass-through float, not stock investment (SB-CC-DEPOSIT-001).\nRaw chip = in-scope capital before purification (incl. cost-error/dead ghosts).\n\n` : ''}Target: <= 30 days cover (standard lines), <= 15 days cover (top-tier lines)`,
+                      tooltip:       `CAPITAL TIED\nValue of sellable stock investment at cost.\n\n${engineCapPairable ? `ENGINE (purified): bucket IN HEALTHY/COUNT/AMBIGUOUS/LEAVE_COUNTED (canon §8.8).\nDeposits/returnables (quart deposits, empties, crates) are CARVED OUT into their own line${engineDeposits ? ` (${zarShort(engineDeposits)})` : ''} -- pass-through float, not stock investment (SB-CC-DEPOSIT-001).\nRaw chip = in-scope capital before purification (incl. cost-error/dead ghosts).\n\n` : ''}Target: <= 30 days cover (standard lines), <= 15 days cover (top-tier lines)\n\nLY delta: PRSSALE basis (mv_kpi_by_date.capital_tied) -- no engine history for LY dates yet. Like-for-like within PRSSALE, not comparable to the engine headline.`,
                       onClick:       kpiCapTied > 0 ? () => setCapTiedModalOpen(true) : undefined,
                     },
                   ]
@@ -3139,7 +3125,7 @@ export default function Home() {
                         {k.tooltip && tooltipCard === k.key && (
                           <div style={{
                             position: 'absolute', top: 'calc(100% + 8px)', left: 0,
-                            width: '100%', zIndex: 9999,
+                            minWidth: '260px', width: 'max-content', maxWidth: '360px', zIndex: 9999,
                             background: 'rgba(14,18,14,0.97)', border: '1px solid rgba(255,255,255,0.12)',
                             borderRadius: 10, padding: '12px 14px',
                             boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
@@ -3567,28 +3553,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* ── PRODUCT DETAIL PANELS ─────────────────────────────────────────── */}
-          {/* Jumps above Lost Sales when a product selection is active.            */}
-          <div style={{ order: isSelectionActive ? 0 : 1 }} ref={panelRef}>
-            {activeProducts.map(p => {
-              const pEan = String(p['EAN'] ?? p.ean ?? '')
-              const pKey = `${pEan}|${p.description ?? p['Description'] ?? ''}`
-              const handleClose = selectedProduct != null
-                ? () => setSelectedProduct(null)
-                : () => removeFromFocus(p)
-              return (
-                <ProductDetailPanelConnected
-                  key={pKey}
-                  product={p}
-                  storeCodes={storeCodes}
-                  storeMap={STORE_MAP}
-                  availableDates={availableDates}
-                  onClose={handleClose}
-                  compact={activeProducts.length > 1}
-                />
-              )
-            })}
-          </div>{/* end product-detail order div */}
           </div>{/* end reorder flex wrapper */}
 
           {/* ── FOCUS AREA PANEL ──────────────────────────────────────────────── */}
