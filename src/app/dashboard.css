@@ -88,6 +88,11 @@
   --sb-bevel: var(--glass-shadow), var(--sb-inset);
   --sb-green: var(--data-pos); --sb-red: var(--data-neg);
   --sb-amber: var(--data-warn); --sb-blue: var(--data-neutral);
+
+  /* CD-SPEC-001 -- mechanical controls */
+  --well-shadow:  inset 0 2px 6px rgba(0,0,0,0.50), inset 0 -1px 0 rgba(255,255,255,0.06);
+  --key-shadow:   0 1px 0 rgba(255,255,255,0.18), 0 2px 6px rgba(0,0,0,0.45);
+  --knob-shadow:  0 1px 0 rgba(255,255,255,0.20), 0 3px 8px rgba(0,0,0,0.55);
 }
 
 /* ── Liquid glass at rest (§7): growth tint over a resting frost, light
@@ -136,10 +141,11 @@
 .sb-edge-blue  { box-shadow: var(--glass-shadow), var(--sb-inset); }
 .sb-edge-amber { box-shadow: var(--glass-shadow), var(--sb-inset); }
 
-/* KPI hero numerals: 32px Roboto Bold tabular (§6), Daisy White unless the
+/* KPI hero numerals: 32px Fraunces cockpit-dial identity (CD-SPEC-001 ruling), Daisy White unless the
    number itself carries data semantics (warn/danger set inline). */
 .sb-kpi-num {
-  font-family: var(--font-data);
+  font-family: 'Fraunces', Georgia, serif;
+  font-optical-sizing: auto;
   font-size: var(--kpi-number-size);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -202,6 +208,88 @@
   backdrop-filter: blur(var(--glass-blur-loading));
   -webkit-backdrop-filter: blur(var(--glass-blur-loading));
 }
+
+/* CD-SPEC-001 -- frost-reveal loading */
+.sb-reveal-content {
+  opacity: 0;
+  transition: opacity var(--unfrost-duration) var(--unfrost-ease);
+}
+.sb-reveal-content[data-loaded="true"] {
+  opacity: 1;
+}
+
+.sb-frost-veil {
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  background-color: var(--glass-tint-frosted);
+  transition:
+    backdrop-filter var(--unfrost-duration) var(--unfrost-ease),
+    background-color var(--unfrost-duration) var(--unfrost-ease);
+}
+.sb-frost-veil[data-loading="false"] {
+  backdrop-filter: blur(var(--glass-blur-rest));
+  -webkit-backdrop-filter: blur(var(--glass-blur-rest));
+  background-color: var(--glass-tint-rest);
+}
+
+@media (max-width: 767px) {
+  .sb-frost-veil,
+  .sb-frost-veil[data-loading="false"] {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-reveal-content,
+  .sb-frost-veil {
+    transition-duration: 150ms;
+  }
+}
+
+/* CD-SPEC-001 -- daisy CTA button (ONE per view, the only yellow surface) */
+.sb-btn-daisy {
+  font-family: 'Geist', sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--charcoal-veld);
+  background: var(--core-yellow);
+  border: none;
+  border-radius: var(--radius-chip);
+  padding: 9px 18px;
+  cursor: pointer;
+  box-shadow: var(--key-shadow);
+  transition: transform 150ms ease, box-shadow 150ms ease;
+  touch-action: manipulation;
+  min-height: 44px;
+}
+.sb-btn-daisy:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--key-shadow), 0 0 10px rgba(255,209,0,0.30);
+}
+.sb-btn-daisy:active {
+  transform: translateY(0);
+  box-shadow: var(--well-shadow);
+}
+
+/* CD-SPEC-001 -- VerdictBadge */
+.sb-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+.sb-verdict--phantom { color: var(--data-warn);    background: rgba(255,179,0,0.12);   border: 1px solid rgba(255,179,0,0.25); }
+.sb-verdict--dead    { color: var(--data-neg);     background: rgba(239,83,80,0.12);   border: 1px solid rgba(239,83,80,0.25); }
+.sb-verdict--count   { color: #60A5FA;             background: rgba(96,165,250,0.10);  border: 1px solid rgba(96,165,250,0.22); }
+.sb-verdict--slow    { color: var(--data-neutral); background: rgba(158,158,158,0.10); border: 1px solid rgba(158,158,158,0.20); }
+.sb-verdict--clean   { color: var(--data-pos);     background: rgba(102,187,106,0.10); border: 1px solid rgba(102,187,106,0.22); }
 
 /* Tabular figures for ALL numbers (brief §4 type rule) */
 .sb-num, .sb-table td.r, .sb-table td.mono,

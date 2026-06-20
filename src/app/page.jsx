@@ -1159,6 +1159,16 @@ export default function Home() {
   const [deptNormMap,    setDeptNormMap]    = useState(new Map())
   const [viewsLoading,   setViewsLoading]   = useState(false)
   const [top20Loading,   setTop20Loading]   = useState(false)
+  const [refreshKey,     setRefreshKey]     = useState(0)
+
+  function handleReload() {
+    viewsCache.current.clear()
+    deptCache.current.clear()
+    top20Cache.current.clear()
+    setViewsLoading(true)
+    setTop20Loading(true)
+    setRefreshKey(k => k + 1)
+  }
 
   // ── historical comparison data (Phase 3.2) ──────────────────────────────────
   const [sparklineData,    setSparklineData]    = useState([])   // mv_sparkline_14d — fetched once on mount
@@ -1649,7 +1659,7 @@ export default function Home() {
 
     loadViews()
     return () => { cancelled = true }
-  }, [storeCodes, selectedDates])
+  }, [storeCodes, selectedDates, refreshKey])
 
   // ── re-fetch KPI aggregates when sub-dept filter changes (Bug 4) ──────────────
   // Lighter than loadViews — only updates deptSummary and deptSohCounts.
@@ -1736,7 +1746,7 @@ export default function Home() {
     })
 
     return () => { cancelled = true }
-  }, [storeCodes, selectedDates, subDeptFilter, focusEans])
+  }, [storeCodes, selectedDates, subDeptFilter, focusEans, refreshKey])
 
   // ── dept-level Sales Trend — re-runs when dept filter or trend window changes ─
   useEffect(() => {
@@ -1817,7 +1827,7 @@ export default function Home() {
 
     loadTop20()
     return () => { cancelled = true }
-  }, [storeCodes, selectedDates, deptFilter, subDeptFilter, top20Activity, includeParents, focusEans])
+  }, [storeCodes, selectedDates, deptFilter, subDeptFilter, top20Activity, includeParents, focusEans, refreshKey])
 
   // ── search index — one row per EAN; loaded per dept/store combo ───────────
   // When any dept is selected, OR when a subset of stores is selected,
@@ -2751,6 +2761,10 @@ export default function Home() {
                   )}
                 </div>
                 <div style={{ flex: 1 }} />
+                {/* Reload data — primary CTA (CD-SPEC-001 sb-btn-daisy) */}
+                <button className="sb-btn-daisy" onClick={handleReload}>
+                  Reload data
+                </button>
                 <button
                   onClick={() => setDrawerOpen(true)}
                   style={{
@@ -2768,7 +2782,7 @@ export default function Home() {
             )}
           </div>
 
-          {/* Mobile row 1b — date picker always visible, not buried in the chip scroll */}
+          {/* Mobile row 1b — date picker + Reload CTA always visible, not buried in the chip scroll */}
           {isMobile && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <div style={{ position: 'relative' }}>
@@ -2799,6 +2813,10 @@ export default function Home() {
                   />
                 )}
               </div>
+              {/* Reload data — primary CTA (CD-SPEC-001 sb-btn-daisy) */}
+              <button className="sb-btn-daisy" onClick={handleReload}>
+                Reload data
+              </button>
             </div>
           )}
 
@@ -2848,9 +2866,6 @@ export default function Home() {
               emptyMsg="No sub-depts available"
             />
 
-            {(viewsLoading || top20Loading) && (
-              <span style={{ fontSize: 10, color: 'rgba(74,222,128,0.6)', fontFamily: 'Geist Mono, monospace', marginLeft: 4, animation: 'pulse 1.5s infinite' }}>loading…</span>
-            )}
 
             {/* Product search — Rule D: below dept/sub-dept chips */}
             <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.08)', flexShrink: 0, margin: '0 2px' }} />
@@ -2948,13 +2963,8 @@ export default function Home() {
           {/* ── KPI STRIP ─────────────────────────────────────────────────────── */}
           <div className="sb-kpi-strip">
             {viewsLoading
-              ? Array.from({ length: 6 }, (_, i) => (
-                  <div key={i} className="sb-glass sb-frosted" style={{ padding: '18px 20px' }}>
-                    <Skeleton h={10} w={80} r={4} mb={12} />
-                    <Skeleton h={30} w={120} r={6} mb={8} />
-                    <Skeleton h={28} w="100%" r={4} mb={8} />
-                    <Skeleton h={10} w={140} r={4} />
-                  </div>
+              ? Array.from({ length: 5 }, (_, i) => (
+                  <div key={i} className="sb-glass sb-edge sb-frost-veil" data-loading="true" style={{ padding: '18px 20px', '--d': `${i * 80}ms` }} />
                 ))
               : (() => {
                   const kpiCards = [
@@ -3102,7 +3112,8 @@ export default function Home() {
                     const lyGood = k.lyDeltaInvert ? !lyUp : lyUp
                     const wowUp  = k.wowDelta?.positive
                     return (
-                      <div key={k.key} className={`sb-glass sb-edge sb-unfrost ${k.edge ? `sb-edge-${k.edge}` : ''}`}
+                      <div key={k.key} className={`sb-glass sb-edge sb-unfrost sb-frost-veil ${k.edge ? `sb-edge-${k.edge}` : ''}`}
+                        data-loading="false"
                         onClick={k.onClick}
                         onMouseEnter={k.tooltip ? (e) => {
                           const rect = e.currentTarget.getBoundingClientRect()
@@ -3226,14 +3237,9 @@ export default function Home() {
           )}
 
           {/* ── SALES TREND ──────────────────────────────────────────────────── */}
-          {/* Guard: show skeleton during pre-init (no stores yet) and during data load */}
+          {/* Guard: show frosted placeholder during pre-init (no stores yet) and during data load */}
           {(viewsLoading || !storeCodes.length)
-            ? <div className="sb-glass" style={{ padding: '20px 22px', minHeight: 160, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <div style={{ width: '100%' }}>
-                  <Skeleton h={10} w={120} r={4} mb={16} />
-                  <Skeleton h={110} w="100%" r={6} />
-                </div>
-              </div>
+            ? <div className="sb-glass sb-frost-veil" data-loading="true" style={{ minHeight: 160, borderRadius: 'var(--radius-card)' }} />
             : <SalesTrendPanel
                 trendData={effectiveTrendData}
                 lyTrendData={effectiveLyTrendData}
@@ -3251,9 +3257,17 @@ export default function Home() {
               {/* Top 20 Movers / Non-Movers */}
               <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
-                  <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>
-                    {top20Activity === 'movers' ? 'Top 20 Movers' : 'Top 20 Non-Movers'}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>
+                      {top20Activity === 'movers' ? 'Top 20 Movers' : 'Top 20 Non-Movers'}
+                    </span>
+                    {top20Activity === 'movers' && moverMode === 'value' && (
+                      <span style={{ fontSize: 10, color: 'rgba(74,222,128,0.6)', fontFamily: "'Geist Mono', monospace" }}>ex-VAT</span>
+                    )}
+                    {top20Activity === 'non_movers' && moverMode === 'value' && (
+                      <span style={{ fontSize: 10, color: 'rgba(245,245,244,0.3)', fontFamily: "'Geist Mono', monospace" }}>stock value</span>
+                    )}
+                  </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <div style={{ display: 'flex', gap: 3, background: 'rgba(255,255,255,0.04)', padding: 3, borderRadius: 8 }}>
                       {['qty', 'value'].map(m => (
@@ -3273,7 +3287,7 @@ export default function Home() {
                   </div>
                 </div>
                 {(viewsLoading || top20Loading || !storeCodes.length)
-                  ? <div>{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} h={40} r={8} mb={6} />)}</div>
+                  ? <div className="sb-frost-veil" data-loading="true" style={{ minHeight: 320, borderRadius: 8 }} />
                   : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
                       {top20.length > 0 && (
@@ -3354,7 +3368,7 @@ export default function Home() {
                   )}
                 </div>
                 {viewsLoading
-                  ? <div>{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} h={28} r={4} mb={5} />)}</div>
+                  ? <div className="sb-frost-veil" data-loading="true" style={{ minHeight: 280, borderRadius: 8 }} />
                   : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 0, maxHeight: 360, overflowY: 'auto' }}>
                       {deptChart.length === 0 && <p style={{ color: 'rgba(245,245,244,0.3)', fontSize: 13, padding: '20px 0', textAlign: 'center', fontStyle: 'italic' }}>No sales data</p>}

@@ -8,16 +8,18 @@
 -- TWO MODES, split on p_activity:
 --
 --   'movers' (default) -- SALES FACTS -> sigma_sales (DBUMBA exact ledger,
---     missed-EOD complete). total_sales = SUM(sales_incl_vat), total_qty =
---     SUM(qty) selling-units. Output keyed by EAN via the SHARED v_ean_bridge
---     view (one canonical ean per (store, product_code) -- no fan-out; see
---     create_v_ean_bridge.sql). dept/sub-dept resolved sigma-native
---     (sigma_articles -> sigma_departments / sigma_subdepts.name), size/unit
---     from product_catalog / sigma_articles. Returns top-20-by-sales UNION
---     top-20-by-qty. plpgsql pre-cast v_dates so ss.sale_date = ANY(v_dates)
---     keeps idx_sigma_sales_store_date (whole-store, no ean filter = the same
---     seq-scan trap that timed out rpc_focus_top5). p_parents has NO sigma
---     equivalent (the ledger has no placeholder rows) -> no-op in this branch.
+--     missed-EOD complete). total_sales = SUM(sales_incl_vat - vat_value) ex-VAT
+--     (same formula as mv_kpi_by_date.total_sales_ex_vat -- reconciles with the
+--     KPI strip and Sales Trend on Panel 1/2). total_qty = SUM(qty) selling-units.
+--     Output keyed by EAN via the SHARED v_ean_bridge view (one canonical ean per
+--     (store, product_code) -- no fan-out; see create_v_ean_bridge.sql).
+--     dept/sub-dept resolved sigma-native (sigma_articles -> sigma_departments /
+--     sigma_subdepts.name), size/unit from product_catalog / sigma_articles.
+--     Returns top-20-by-sales UNION top-20-by-qty. plpgsql pre-cast v_dates so
+--     ss.sale_date = ANY(v_dates) keeps idx_sigma_sales_store_date (whole-store,
+--     no ean filter = the same seq-scan trap that timed out rpc_focus_top5).
+--     p_parents has NO sigma equivalent (the ledger has no placeholder rows) ->
+--     no-op in this branch.
 --
 --   'non_movers' -- STOCK FACTS, HELD on daily_snapshots (soh>0 + period_qty=0
 --     + classify_snapshot_item + fresh-perishable guard; total_sales =
@@ -28,6 +30,8 @@
 -- Verified live (2026-06-13): movers fan-out delta 0.00 vs once-per-product_code
 --   truth (5 stores x 14d, R4,712,543.70); 1.43s; top sellers correct;
 --   non_movers unchanged (40 rows). Data unchanged on the held branch.
+-- Updated 2026-06-20: movers total_sales -> ex-VAT (Panel 3 R22 -- reconcile
+--   with mv_kpi_by_date.total_sales_ex_vat). ON PIETER to apply to live.
 -- =============================================================================
 
 CREATE OR REPLACE FUNCTION public.rpc_top20(
@@ -91,8 +95,8 @@ BEGIN
               MAX(COALESCE(sub.name, 'UNMAPPED'))              AS sub_dept_name,
               MAX(pc.size_label)                               AS size,
               MAX(COALESCE(a.unit, pc.detail_unit))            AS unit,
-              ROUND(SUM(ss.sales_incl_vat)::numeric, 2)        AS total_sales,
-              SUM(ss.qty)::numeric                             AS total_qty
+              ROUND(SUM(ss.sales_incl_vat - COALESCE(ss.vat_value, 0))::numeric, 2) AS total_sales,
+              SUM(ss.qty)::numeric                                               AS total_qty
           FROM sigma_sales ss
           JOIN   v_ean_bridge b         ON b.store_code = ss.store_code AND b.product_code = ss.product_code
           LEFT   JOIN sigma_articles a  ON a.store_code = ss.store_code AND a.product_code = ss.product_code
