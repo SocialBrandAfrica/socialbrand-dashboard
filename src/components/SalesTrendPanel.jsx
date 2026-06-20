@@ -115,11 +115,17 @@ function getRhythmWindows(weeklyPoints, profiles) {
 }
 
 export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProfiles = [], contextLabel = null, selectionEndDate = null }) {
+    // Use ex-VAT when available (whole-store path via mv_kpi_by_date).
+    // Dept and product-selection paths supply total_sales only (PRSSALE/sigma incl-VAT);
+    // the fallback keeps those paths rendering until a sigma-native dept-trend view lands.
+    const useExVat = trendData.some(r => r.total_sales_ex_vat != null)
+    const pick = r => r.total_sales_ex_vat ?? r.total_sales ?? 0
+
     const aggregate = rows => {
         const byDate = {}
         for (const r of rows) {
             if (!storeCodes.includes(r.store_code)) continue
-            byDate[r.snapshot_date] = (byDate[r.snapshot_date] ?? 0) + (r.total_sales ?? 0)
+            byDate[r.snapshot_date] = (byDate[r.snapshot_date] ?? 0) + pick(r)
         }
         return byDate
     }
@@ -180,6 +186,10 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
                   {firstDataDate && lastDataDate && (
                     <div style={{ fontSize: 9, color: 'rgba(245,245,244,0.3)', fontFamily: "'Geist Mono', monospace", marginTop: 2, letterSpacing: '0.04em' }}>
                       {labelDate(firstDataDate)} – {labelDate(lastDataDate)}
+                      {' · '}
+                      <span style={{ color: useExVat ? 'rgba(74,222,128,0.45)' : 'rgba(245,245,244,0.2)' }}>
+                        {useExVat ? 'ex-VAT' : 'incl. VAT'}
+                      </span>
                     </div>
                   )}
                 </div>
