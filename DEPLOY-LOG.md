@@ -4,6 +4,29 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-20 SAST -- dash-accuracy-001 + dash-accuracy-002 MERGED to main (485f876)
+
+**MERGED to `main` + pushed to origin (Pieter authorised; production confirmed healthy before merge):**
+
+- **`dash-accuracy-001` -- CD cosmetic pass** (`47e1721`, merge `ccf93dc`):
+  `dashboard.css` aurora stripped from edge shadows, mobile safe-area + touch-action + 430px breakpoint, KPI numeral size.
+  `layout.jsx` viewport-fit=cover + Android PWA meta tags.
+  `page.jsx` date-picker row own line on mobile (`isMobile`), store separator hidden on mobile.
+  `CalendarPopover.jsx` mobile `position:fixed` + centered (off-screen bleed fix).
+
+- **`dash-accuracy-002` -- Panel 2 Sales Trend ex-VAT basis** (`9e34437`, merge `485f876`, SB-CC-DASH-ACCURACY-001):
+  `SalesTrendPanel.jsx` trend fetches `total_sales_ex_vat` from `mv_kpi_by_date` (TY + LY); fallback `total_sales` for dept/product paths.
+  `page.jsx` basis note in subheader: green "ex-VAT" (whole-store), dim "incl. VAT" (fallback paths).
+  R22 reconciled Jun 1-17 2026 ×5: TY ex-VAT R5,483,507.51; LY ex-VAT R6,432,082.35.
+
+**Vercel auto-redeploys dashboard.socialbrand.africa off new main.**
+
+**ON PIETER (still open from prior sessions):**
+- Apply `sql/create_rpc_top20.sql` to live Supabase (makes Top 20 movers ex-VAT). Until applied, movers value shows incl-VAT.
+- Two DDL gaps (Panel 2 fallback paths): `v_dept_by_date.dept_sales` (incl-VAT); `rpc_focus_chart.today_sales` (incl-VAT). Fallbacks labelled; no breakage.
+
+---
+
 ## 2026-06-17 SAST — SB-CC-RECONCILE-001 Phase 1 (schema-as-code) MERGED + live; extractor v1.16 (truthful status + bounded retry) built, not deployed
 
 **MERGED to `main` + live on Vercel (`95ac2ca`, --no-ff merge of `pmini-wire-001`; Pieter authorised the main push):**

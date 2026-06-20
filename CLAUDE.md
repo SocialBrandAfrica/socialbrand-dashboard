@@ -54,6 +54,29 @@ See memory files for full project context:
 - THE handover is `C:\Users\User\Desktop\Daisy\HANDOVER-CURRENT.md` — the only live one; read on session start
 - No dated handover/session files in `memory/` either — session state belongs in HANDOVER-CURRENT.md; old dated memory handovers are archived in `Daisy\archive\handovers\`
 
+## Team structure & design boundary (added 2026-06-19)
+
+Three roles — know your lane:
+
+| Role | Tool | Lane |
+|---|---|---|
+| **PM** | Cowork | Product decisions, briefs, R22 reconcile, approvals, this CLAUDE.md |
+| **CC** | Claude Code (you) | All code commits, SQL, engine logic, performance — the heavy lifting |
+| **CD** | Claude Design | CSS polish, visual refinements, component specs — design-system sandbox only |
+
+**CD → CC handoff:** CD produces a spec (token names, behaviour notes, NEW-token labels). PM approves. CC implements from the spec. CC never touches CD's design-system project files. CD never edits live code in this repo.
+
+**Priority order — non-negotiable:**
+1. Data integrity (L1 sacred, R22 auditable, no silent skips)
+2. Performance (server-friendly, fast loads, no seq-scan RPCs)
+3. Design (CD's work yields if it costs performance or data accuracy)
+
+If a design spec conflicts with performance or correctness, CC flags it to PM. Design waits. This is explicit and CD has been informed of the same.
+
+**CD's GitHub snapshot:** CD reads this repo as read-only ground truth. It loaded from whatever was on `main` at setup time. When cosmetic branches are merged, CD should re-sync. CC does not need to do anything for this — it happens automatically on CD's next session.
+
+---
+
 ## Key rules
 
 - No Unicode in `.ps1` files — store servers are Windows-1252
