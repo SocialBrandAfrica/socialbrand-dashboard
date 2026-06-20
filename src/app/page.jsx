@@ -2144,7 +2144,7 @@ export default function Home() {
     const dcDen   = rows.reduce((s, r) => s + (r.days_cover_normal_wtd != null ? Number(r.capital_normal ?? 0) : 0), 0)
     const dcNum   = rows.reduce((s, r) => s + (r.days_cover_normal_wtd != null ? Number(r.capital_normal ?? 0) * Number(r.days_cover_normal_wtd) : 0), 0)
     const daysCover = dcDen > 0 ? dcNum / dcDen : null
-    return { rows, sales, gp, capital, capProd, capNonStock, negSoh, negSohAll, daysCover }
+    return { rows, sales, exVat, gp, capital, capProd, capNonStock, negSoh, negSohAll, daysCover }
   }, [l2Kpi, storeCodes])
 
   // Engine purified Capital Tied (SB-CC-DASH-WIRE-001 ticket 1): sum the
@@ -2294,7 +2294,7 @@ export default function Home() {
     const map = new Map()
     for (const r of deptSummary) {
       const k = normalizeDept(r.dept_name)
-      map.set(k, (map.get(k) ?? 0) + (r.total_sales ?? 0))
+      map.set(k, (map.get(k) ?? 0) + (r.total_sales_ex_vat ?? 0))
     }
     const sorted = [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
     const max = sorted[0]?.[1] ?? 1
@@ -2418,7 +2418,7 @@ export default function Home() {
     }
     const sorted = Object.entries(byDate).sort(([a], [b]) => a.localeCompare(b))
     return {
-      sales:       sorted.map(([, v]) => v.sales),
+      sales:       sorted.map(([, v]) => v.salesExVat),
       gpPct:       sorted.map(([, v]) => v.salesExVat > 0 ? gpPct(v.salesExVat, v.cost) : 0),
       negSoh:      sorted.map(([, v]) => v.neg_soh),
       slowMovers:  sorted.map(([, v]) => v.slow_movers),
@@ -2430,7 +2430,7 @@ export default function Home() {
     const m = new Map()
     for (const r of lyDeptSummary) {
       const k = normalizeDept(r.dept_name)
-      m.set(k, (m.get(k) ?? 0) + (r.total_sales ?? 0))
+      m.set(k, (m.get(k) ?? 0) + (r.total_sales_ex_vat ?? 0))
     }
     return m
   }, [lyDeptSummary])
@@ -3348,7 +3348,7 @@ export default function Home() {
               {/* Sales by Dept */}
               <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
-                  <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>Sales by Department</p>
+                  <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>Sales by Department<span style={{ marginLeft: 8, fontSize: 9, color: 'rgba(74,222,128,0.6)', fontFamily: "'Geist Mono', monospace", fontWeight: 400, textTransform: 'uppercase', letterSpacing: '0.08em', verticalAlign: 'middle' }}>ex-VAT</span></p>
                   {showLYDept && (
                     <span style={{ fontSize: 10, color: 'rgba(74,222,128,0.5)', fontFamily: "'Geist Mono', monospace" }}>vs LY shown</span>
                   )}
