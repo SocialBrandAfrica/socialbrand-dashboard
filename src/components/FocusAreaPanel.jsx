@@ -101,7 +101,7 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
             const matchRows = item.store_code
               ? rows.filter(r => String(r.ean) === String(item.ean) && r.store_code === item.store_code && r.snapshot_date === date)
               : rows.filter(r => String(r.ean) === String(item.ean) && r.snapshot_date === date)
-            obj[itemLabel(item)] = matchRows.reduce((s, r) => s + Number(r.today_sales ?? 0), 0)
+            obj[itemLabel(item)] = matchRows.reduce((s, r) => s + Number(r.today_sales_ex_vat ?? r.today_sales ?? 0), 0)
           }
           return obj
         })
@@ -113,7 +113,7 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
           const itemRows    = item.store_code
             ? rows.filter(r => String(r.ean) === String(item.ean) && r.store_code === item.store_code)
             : rows.filter(r => String(r.ean) === String(item.ean))
-          const periodSales = itemRows.reduce((s, r) => s + Number(r.today_sales ?? 0), 0)
+          const periodSales = itemRows.reduce((s, r) => s + Number(r.today_sales_ex_vat ?? r.today_sales ?? 0), 0)
           const periodQty   = itemRows.reduce((s, r) => s + Number(r.today_qty   ?? 0), 0)
           const sellingDays = itemRows.filter(r => Number(r.today_qty ?? 0) > 0).length
           const totalDays   = itemRows.length
@@ -157,7 +157,7 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
             fontFamily: 'Fraunces, Georgia, serif',
             fontSize: 16, fontWeight: 600, margin: 0, color: '#f5f5f4',
           }}>
-            Focus Area
+            Focus Area<span style={{ marginLeft: 8, fontSize: 9, color: 'rgba(74,222,128,0.6)', fontFamily: "'Geist Mono', monospace", fontWeight: 400, textTransform: 'uppercase', letterSpacing: '0.08em', verticalAlign: 'middle' }}>ex-VAT</span>
           </p>
           <p style={{
             fontSize: 10, color: 'rgba(245,245,244,0.35)',
