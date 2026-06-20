@@ -4,6 +4,23 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-20 16:14 SAST -- dash-accuracy-003 + cd-design-001 MERGED to main (32296f7) — PM APPROVED
+
+**MERGED to `main` + pushed to origin. Vercel auto-redeploys dashboard.socialbrand.africa.**
+
+- **`dash-accuracy-003`** (merge `98b5b22`, SB-CC-VAT-AUDIT-001 + SB-CC-VAT-GAP1-001):
+  Full incl-VAT sweep — `deptChart`, `lyDeptMap`, `sparklineArrays.sales` switched to ex-VAT fields from `rpc_dept_summary`/`mv_sparkline_14d`. Panel 4 "Sales by Department" + Panel 5 "Focus Area" headers get "ex-VAT" basis notes. `rpc_focus_chart` UI switches to `today_sales_ex_vat` (fallback-safe until Pieter applies SQL). `l2Agg.exVat` return fix. `sql/fix_rpc_focus_chart_exvat.sql` + updated canonical `create_rpc_focus_chart.sql` authored. CLAUDE.md team-structure section committed.
+
+- **`cd-design-001`** (merge `32296f7`, CD-SPEC-001):
+  Frost-reveal loading pattern (`sb-frost-veil`/`sb-reveal-content`), mechanical tokens (`--well-shadow`/`--key-shadow`/`--knob-shadow`), daisy CTA (`sb-btn-daisy` — "Reload data" button, desktop + mobile filter bar), VerdictBadge (5 variant classes), Fraunces KPI hero numerals. Panel 3 Top 20 ex-VAT basis notes. Panel 4 ex-VAT commit dropped (already on main via dash-accuracy-003). `sql/create_rpc_top20.sql` updated with basis-note comment.
+
+**ON PIETER (still open):**
+- Apply `sql/fix_rpc_focus_chart_exvat.sql` to live Supabase (Panel 5 Focus Area shows ex-VAT; fallback to incl-VAT until applied)
+- Apply `sql/create_rpc_top20.sql` to live Supabase (Top 20 movers show incl-VAT until applied)
+- DDL gaps remaining: `v_dept_by_date.dept_sales` (incl-VAT, Panel 2 dept-filtered trend); `l2_kpi_daily` flat-1.15 in engine badge only
+
+---
+
 ## 2026-06-20 SAST -- dash-accuracy-001 + dash-accuracy-002 MERGED to main (485f876)
 
 **MERGED to `main` + pushed to origin (Pieter authorised; production confirmed healthy before merge):**
