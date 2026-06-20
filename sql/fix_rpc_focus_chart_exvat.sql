@@ -1,15 +1,27 @@
 -- =============================================================================
--- create_rpc_focus_chart.sql
--- SB-CC-RECONCILE-001 Phase 1 -- canonical source-of-record for rpc_focus_chart.
--- DDL previously lived in rpc_focus_area.sql + fix_rpc_product_detail_pricing.sql
--- (sediment). Extracted verbatim from LIVE 2026-06-17. Hybrid: sigma_sales (today
--- sales/qty via v_ean_bridge) + daily_snapshots (SOH), per SB-CC-DASH-SOURCE-002.
--- SB-CC-VAT-GAP1-001 (2026-06-20): added today_sales_ex_vat.
---   sigma path  -> SUM(sales_incl_vat - COALESCE(vat_value, 0))  (native per-line VAT)
+-- fix_rpc_focus_chart_exvat.sql
+-- SB-CC-VAT-GAP1-001 -- add today_sales_ex_vat to rpc_focus_chart.
+--
+-- Gap confirmed live 2026-06-20: return type had no ex-VAT column.
+--   today_sales = COALESCE(sigma sig_sales, daily_snapshots snap_sales) = incl-VAT.
+--
+-- Fix: add today_sales_ex_vat beside today_sales (today_sales kept for compat).
+--   sigma path  -> SUM(sales_incl_vat - COALESCE(vat_value, 0))   (native per-line VAT,
+--                  same formula as mv_kpi_by_date.total_sales_ex_vat)
 --   snap fallback -> snap_sales * 100 / (100 + COALESCE(vat_pct, 15))
+--                  (daily_snapshots has vat_pct but not vat_value; 15% default
+--                  mirrors prior FocusAreaPanel /1.15 hardcode)
+--
+-- No other incl-VAT sales fields exist in this RPC return (today_qty / soh are units).
+--
+-- APPLY ORDER: run this file, then reload schema (pg_notify line at end).
+-- Returns TABLE change requires DROP -- per Function Change Protocol (DB-SCHEMA.md).
 -- =============================================================================
+
+-- 1. Drop all overloads (DB-SCHEMA.md Function Change Protocol)
 DROP FUNCTION IF EXISTS public.rpc_focus_chart(text[], text[], text[]) CASCADE;
 
+-- 2. Recreate with today_sales_ex_vat added
 CREATE OR REPLACE FUNCTION public.rpc_focus_chart(p_eans text[], p_store_codes text[], p_dates text[])
  RETURNS TABLE(
    ean                text,
@@ -84,3 +96,6 @@ AS $function$
 $function$;
 
 GRANT EXECUTE ON FUNCTION public.rpc_focus_chart(text[], text[], text[]) TO anon, authenticated;
+
+-- Reload PostgREST schema cache
+SELECT pg_notify('pgrst', 'reload schema');

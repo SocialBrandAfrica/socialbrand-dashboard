@@ -2585,11 +2585,11 @@ export default function Home() {
         : Promise.resolve({ data: [] }),
     ]).then(([tRes, lyRes]) => {
       if (cancelled) return
-      // rpc_focus_chart returns today_sales; SalesTrendPanel expects total_sales
+      // rpc_focus_chart returns today_sales_ex_vat (post-GAP1 fix) with today_sales fallback
       const norm = rows => (rows ?? []).map(r => ({
         store_code:    r.store_code,
         snapshot_date: r.snapshot_date,
-        total_sales:   r.today_sales ?? 0,
+        total_sales:   r.today_sales_ex_vat ?? r.today_sales ?? 0,
       }))
       setProductTrendData(norm(tRes.data))
       setProductLyTrendData(norm(lyRes.data ?? []))
