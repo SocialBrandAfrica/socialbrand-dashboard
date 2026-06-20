@@ -3113,7 +3113,7 @@ export default function Home() {
                       value:         engineCapPairable ? zarShort(enginePurifiedCap) : zarShort(kpiCapTied),
                       sparkline:     sparklineArrays.capitalTied,
                       lyRef:         hasLY ? zarShort(lyKpiCapTied) : null,
-                      lyDelta:       hasLY ? deltaInfo(kpiCapTied, lyKpiCapTied) : null,
+                      lyDelta:       hasLY ? deltaInfo(engineCapPairable ? enginePurifiedCap : kpiCapTied, lyKpiCapTied) : null,
                       lyDeltaInvert: true,
                       wowDelta:      null,
                       // bench renders unconditionally (sub is suppressed when LY data is

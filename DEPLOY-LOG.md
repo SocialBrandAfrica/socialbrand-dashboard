@@ -4,6 +4,15 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-20 16:48 SAST -- verdict-wall-001 MERGED to main (72b6d01) — PM APPROVED
+
+**MERGED to `main` + pushed to origin. Vercel auto-redeploys dashboard.socialbrand.africa.**
+
+- **`verdict-wall-001`** (merge `ba981f3`, SB-CC-VERDICT-001):
+  KPI numeral colour per tone band — `tone` prop wired to VerdictBadge colour tokens on all 5 KPI hero numerals. pos=`--sb-pos`/green, neutral=`--sb-neutral`/white, warn=`--sb-warn`/amber, neg=`--sb-neg`/red. Implemented in `src/app/page.jsx` (+44 lines).
+
+---
+
 ## 2026-06-20 16:14 SAST -- dash-accuracy-003 + cd-design-001 MERGED to main (32296f7) — PM APPROVED
 
 **MERGED to `main` + pushed to origin. Vercel auto-redeploys dashboard.socialbrand.africa.**
