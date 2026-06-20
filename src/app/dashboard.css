@@ -132,9 +132,9 @@
   background: var(--kpi-rail);
 }
 .sb-edge-green::before { background: var(--kpi-rail-focus); }
-.sb-edge-green { box-shadow: var(--glass-shadow), 0 8px 28px var(--aurora-gold),  var(--sb-inset); }
-.sb-edge-blue  { box-shadow: var(--glass-shadow), 0 8px 28px var(--aurora-green), var(--sb-inset); }
-.sb-edge-amber { box-shadow: var(--glass-shadow), 0 8px 28px var(--aurora-sky),   var(--sb-inset); }
+.sb-edge-green { box-shadow: var(--glass-shadow), var(--sb-inset); }
+.sb-edge-blue  { box-shadow: var(--glass-shadow), var(--sb-inset); }
+.sb-edge-amber { box-shadow: var(--glass-shadow), var(--sb-inset); }
 
 /* KPI hero numerals: 32px Roboto Bold tabular (§6), Daisy White unless the
    number itself carries data semantics (warn/danger set inline). */
@@ -473,7 +473,12 @@
 @media (max-width: 767px) {
 
   .sb-page-pad   { padding-left: 16px; padding-right: 16px; }
-  .sb-filter-pad { padding: 10px 16px; }
+  /* Safe-area insets for Android notch / bottom nav bar */
+  .sb-filter-pad {
+    padding: 10px 16px;
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+  }
 
   /* Stack 2-column grids */
   .sb-two-col { grid-template-columns: 1fr; }
@@ -481,8 +486,10 @@
   /* Stack report cards */
   .sb-report-grid { grid-template-columns: 1fr; }
 
-  /* KPI — 2 per row on mobile */
-  .sb-kpi-strip { grid-template-columns: repeat(2, 1fr); }
+  /* KPI — 2 per row on mobile; smaller numeral so R 7.47M fits comfortably */
+  .sb-kpi-strip { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .sb-kpi-strip .sb-glass { padding: 14px 14px !important; }
+  :root { --kpi-number-size: 26px; }
 
   /* Store chips — horizontal scroll, no wrap */
   .sb-store-row {
@@ -494,7 +501,7 @@
   }
   .sb-store-row::-webkit-scrollbar { display: none; }
 
-  /* Filter row 2 — allow wrap */
+  /* Filter row 2 — wrap tightly, let search bar take full remaining width */
   .sb-filter-row2 { gap: 6px; }
 
   /* Hide the long context string in the header — too wide for mobile */
@@ -505,6 +512,7 @@
     width: 100%;
     border-left: none;
     border-top: 1px solid rgba(255,255,255,0.1);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
   /* Push strip — scrollable on mobile */
@@ -517,12 +525,14 @@
   }
   .sb-push-strip-inner::-webkit-scrollbar { display: none; }
 
-  /* Minimum touch target — 44px per WCAG / Apple HIG */
+  /* Minimum touch target — 44px per WCAG / Material Design */
   .sb-chip, .sb-tab, .sb-date-btn, .sb-filter-btn {
     min-height: 44px;
     display: flex;
     align-items: center;
   }
+  /* Prevent double-tap zoom on all interactive elements */
+  button, a, [role="button"] { touch-action: manipulation; }
 
   /* Sign-out button — larger touch target + more visible on mobile */
   .sb-signout-btn {
@@ -546,4 +556,11 @@
   }
   .sb-glass.sb-edge { background: #0E120E; } /* deep-glass solid equivalent */
   .sb-unfrost { animation-name: sb-content-in, sb-daisy-pulse; }
+}
+
+/* ── NARROW ANDROID (≤ 430px) ───────────────────────────────────────────── */
+@media (max-width: 430px) {
+  /* 1-column KPI strip on very small phones */
+  .sb-kpi-strip { grid-template-columns: 1fr 1fr; }
+  :root { --kpi-number-size: 24px; }
 }

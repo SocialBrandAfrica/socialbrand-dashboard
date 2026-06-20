@@ -84,7 +84,22 @@ export function CalendarPopover({ availableDates, selectedDates, onChange, onClo
 
   return (
     <div ref={popRef} style={{
-      position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 200,
+      position: typeof window !== 'undefined' && window.innerWidth < 768
+        ? 'fixed'
+        : 'absolute',
+      top: typeof window !== 'undefined' && window.innerWidth < 768
+        ? '50%'
+        : 'calc(100% + 8px)',
+      left: typeof window !== 'undefined' && window.innerWidth < 768
+        ? '50%'
+        : 'auto',
+      right: typeof window !== 'undefined' && window.innerWidth < 768
+        ? 'auto'
+        : 0,
+      transform: typeof window !== 'undefined' && window.innerWidth < 768
+        ? 'translate(-50%, -50%)'
+        : 'none',
+      zIndex: 600,
       background: 'rgba(10,14,26,0.98)', border: '1px solid rgba(255,255,255,0.13)',
       borderRadius: 14, padding: 16, width: 272,
       boxShadow: '0 24px 64px rgba(0,0,0,0.65)',

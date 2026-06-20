@@ -2698,8 +2698,8 @@ export default function Home() {
       }}>
         <div style={{ width: 'min(100%, 1800px)', margin: '0 auto' }} className="sb-filter-pad">
 
-          {/* Row 1 — stores + date + reports button */}
-          <div className="sb-store-row" style={{ marginBottom: 8 }}>
+          {/* Row 1 — store chips (horizontal scroll) + date/reports (own row on mobile) */}
+          <div className="sb-store-row" style={{ marginBottom: isMobile ? 4 : 8 }}>
 
             {/* Store selector — hidden for managers (locked to their one store) */}
             {!isManagerLocked && (
@@ -2715,59 +2715,92 @@ export default function Home() {
                     {s.name}
                   </button>
                 ))}
-                <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.1)', flexShrink: 0, margin: '0 2px' }} />
+                {!isMobile && <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.1)', flexShrink: 0, margin: '0 2px' }} />}
               </>
             )}
 
-            {/* Date picker trigger */}
-            <div style={{ position: 'relative' }}>
-              <div style={{ fontSize: 9, color: 'rgba(245,245,244,0.3)', marginBottom: 2, fontFamily: 'Geist Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{displayDate}</div>
-              <button
-                ref={calAnchorRef}
-                onClick={() => setCalOpen(o => !o)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '5px 12px',
-                  background: calOpen ? 'rgba(74,222,128,0.12)' : 'rgba(255,255,255,0.05)',
-                  border: `1px solid ${calOpen ? 'rgba(74,222,128,0.35)' : 'rgba(255,255,255,0.1)'}`,
-                  borderRadius: 8, cursor: 'pointer',
-                  color: calOpen ? '#4ade80' : 'rgba(245,245,244,0.6)',
-                  fontFamily: 'Geist, sans-serif', fontSize: 11,
-                  transition: 'all 0.15s',
-                }}
-              >
-                📅 Change dates
-              </button>
-              {calOpen && (
-                <CalendarPopover
-                  availableDates={availableDates}
-                  selectedDates={selectedDates}
-                  onChange={setSelectedDates}
-                  onClose={() => setCalOpen(false)}
-                  anchorRef={calAnchorRef}
-                />
-              )}
-            </div>
-
-            <div style={{ flex: 1 }} />
-
-            {/* Reports drawer toggle — desktop only */}
+            {/* Date picker — desktop: in the store row. Mobile: rendered below in its own row. */}
             {!isMobile && (
-              <button
-                onClick={() => setDrawerOpen(true)}
-                style={{
-                  padding: '6px 14px', fontSize: 12, fontWeight: 600,
-                  background: 'rgba(74,107,83,0.18)',
-                  border: '1px solid rgba(74,107,83,0.55)',
-                  borderRadius: 8, cursor: 'pointer', color: '#F9FBF7',
-                  fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', flexShrink: 0,
-                  transition: 'all 0.15s',
-                }}
-              >
-                Reports & Downloads ›
-              </button>
+              <>
+                <div style={{ position: 'relative' }}>
+                  <div style={{ fontSize: 9, color: 'rgba(245,245,244,0.3)', marginBottom: 2, fontFamily: 'Geist Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{displayDate}</div>
+                  <button
+                    ref={calAnchorRef}
+                    onClick={() => setCalOpen(o => !o)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      padding: '5px 12px',
+                      background: calOpen ? 'rgba(74,222,128,0.12)' : 'rgba(255,255,255,0.05)',
+                      border: `1px solid ${calOpen ? 'rgba(74,222,128,0.35)' : 'rgba(255,255,255,0.1)'}`,
+                      borderRadius: 8, cursor: 'pointer',
+                      color: calOpen ? '#4ade80' : 'rgba(245,245,244,0.6)',
+                      fontFamily: 'Geist, sans-serif', fontSize: 11,
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    📅 Change dates
+                  </button>
+                  {calOpen && (
+                    <CalendarPopover
+                      availableDates={availableDates}
+                      selectedDates={selectedDates}
+                      onChange={setSelectedDates}
+                      onClose={() => setCalOpen(false)}
+                      anchorRef={calAnchorRef}
+                    />
+                  )}
+                </div>
+                <div style={{ flex: 1 }} />
+                <button
+                  onClick={() => setDrawerOpen(true)}
+                  style={{
+                    padding: '6px 14px', fontSize: 12, fontWeight: 600,
+                    background: 'rgba(74,107,83,0.18)',
+                    border: '1px solid rgba(74,107,83,0.55)',
+                    borderRadius: 8, cursor: 'pointer', color: '#F9FBF7',
+                    fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', flexShrink: 0,
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  Reports & Downloads ›
+                </button>
+              </>
             )}
           </div>
+
+          {/* Mobile row 1b — date picker always visible, not buried in the chip scroll */}
+          {isMobile && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ position: 'relative' }}>
+                <div style={{ fontSize: 9, color: 'rgba(245,245,244,0.3)', marginBottom: 2, fontFamily: 'Geist Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{displayDate}</div>
+                <button
+                  ref={calAnchorRef}
+                  onClick={() => setCalOpen(o => !o)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '7px 14px',
+                    background: calOpen ? 'rgba(74,222,128,0.12)' : 'rgba(255,255,255,0.05)',
+                    border: `1px solid ${calOpen ? 'rgba(74,222,128,0.35)' : 'rgba(255,255,255,0.1)'}`,
+                    borderRadius: 8, cursor: 'pointer',
+                    color: calOpen ? '#4ade80' : 'rgba(245,245,244,0.6)',
+                    fontFamily: 'Geist, sans-serif', fontSize: 12,
+                    transition: 'all 0.15s', minHeight: 44,
+                  }}
+                >
+                  📅 Change dates
+                </button>
+                {calOpen && (
+                  <CalendarPopover
+                    availableDates={availableDates}
+                    selectedDates={selectedDates}
+                    onChange={setSelectedDates}
+                    onClose={() => setCalOpen(false)}
+                    anchorRef={calAnchorRef}
+                  />
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Row 2 — compact filter dropdowns */}
           <div className="sb-filter-row2">
