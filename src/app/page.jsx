@@ -2980,6 +2980,15 @@ export default function Home() {
                       benchN:        sameWeekdayBenchmark?.n,
                       sub:           `${num(kpiQty, 0)} units`,
                       accent:        true,
+                      tone:          (() => {
+                        if (!hasLY || !lyKpiSalesExVat) return 'neutral'
+                        const cur = dualSalesPairable ? l2Agg.exVat : kpiSalesExVat
+                        const d   = (cur - lyKpiSalesExVat) / lyKpiSalesExVat * 100
+                        if (d >  2) return 'pos'
+                        if (d >= -2) return 'neutral'
+                        if (d >= -8) return 'warn'
+                        return 'neg'
+                      })(),
                       edge:          'green',
                       basisNote:     'ex-VAT',
                       dual:          dualSalesPairable ? {
@@ -3007,6 +3016,15 @@ export default function Home() {
                       sub:           `Cost ${zarShort(kpiCost)}`,
                       warn:          (dualSalesPairable && l2Agg.gp != null ? l2Agg.gp : kpiGP) < 20,
                       danger:        (dualSalesPairable && l2Agg.gp != null ? l2Agg.gp : kpiGP) < 10,
+                      tone:          (() => {
+                        if (!hasLY || lyKpiGP == null) return 'neutral'
+                        const cur = dualSalesPairable && l2Agg.gp != null ? l2Agg.gp : kpiGP
+                        const pp  = cur - lyKpiGP
+                        if (pp >  0.5) return 'pos'
+                        if (pp >= -0.5) return 'neutral'
+                        if (pp >= -1.5) return 'warn'
+                        return 'neg'
+                      })(),
                       edge:          'blue',
                       basisNote:     dualSalesPairable && l2Agg.gp != null ? 'engine (dEKUmsatz cost) · ex-VAT' : `${zarShort(kpiGPRand)} · ex-VAT`,
                       dual:          dualSalesPairable && l2Agg.gp != null ? {
@@ -3037,6 +3055,14 @@ export default function Home() {
                         ? `engine ROS-based · purified ${zarShort(enginePurifiedCap)}`
                         : (kpiCapTied > 0 ? `Capital tied ${zarShort(kpiCapTied)}` : 'Insufficient data'),
                       warn:          (engineStockTurn ?? kpiStockTurn) != null && (engineStockTurn ?? kpiStockTurn) < 12,
+                      tone:          (() => {
+                        const t = engineStockTurn ?? kpiStockTurn
+                        if (t == null) return 'neutral'
+                        if (t >= 12.5)  return 'pos'
+                        if (t >= 11.25) return 'neutral'
+                        if (t >= 9)     return 'warn'
+                        return 'neg'
+                      })(),
                       tooltip: {
                         heading: 'Stock Turn',
                         what:    'How many times the sellable stock investment cycles through in a year.',
@@ -3057,6 +3083,15 @@ export default function Home() {
                       bench:         null,
                       sub:           (dualStockPairable && l2Agg != null) ? 'engine (sigma ledger) · all classes' : 'Stock errors / shrinkage',
                       danger:        ((dualStockPairable && l2Agg != null) ? l2Agg.negSohAll : kpiNegSOH) > 0,
+                      tone:          (() => {
+                        if (!hasLY || !lyKpiNegSOH) return 'neutral'
+                        const cur = (dualStockPairable && l2Agg != null) ? l2Agg.negSohAll : kpiNegSOH
+                        const d   = (cur - lyKpiNegSOH) / lyKpiNegSOH * 100
+                        if (d <= -20) return 'pos'
+                        if (d <=  20) return 'neutral'
+                        if (d <=  50) return 'warn'
+                        return 'neg'
+                      })(),
                       edge:          'red',
                       onClick:       () => { setDrawerOpen(true); handleReportCardClick('stock_integrity') },
                       dual:          (dualStockPairable && l2Agg != null) ? {
@@ -3090,6 +3125,14 @@ export default function Home() {
                         ? `engine purified · cover ${engineDaysCover != null ? engineDaysCover.toFixed(0) + 'd' : '--'}`
                         : 'SOH x unit cost (latest snapshot)',
                       warn:          true,
+                      tone:          (() => {
+                        if (!hasLY || !lyKpiCapTied) return 'neutral'
+                        const cur = engineCapPairable ? enginePurifiedCap : kpiCapTied
+                        const d   = (cur - lyKpiCapTied) / lyKpiCapTied * 100
+                        if (d <= 20) return 'neutral'
+                        if (d <= 50) return 'warn'
+                        return 'neg'
+                      })(),
                       edge:          'amber',
                       dual:          engineCapPairable ? {
                         rawLabel: zarShort(engineInScopeCap),
@@ -3130,7 +3173,7 @@ export default function Home() {
                       }}>
                         <p style={{ fontSize: 10, color: 'var(--veld-mist)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 8, fontFamily: 'var(--font-head)', fontWeight: 500 }}>{k.label}</p>
                         <p className="sb-kpi-num" style={{
-                          color: k.danger && k.value !== '0' ? 'var(--data-neg)' : k.warn ? 'var(--data-warn)' : undefined }}>
+                          color: k.tone === 'neg' ? 'var(--data-neg)' : k.tone === 'warn' ? 'var(--data-warn)' : k.tone === 'pos' ? 'var(--data-pos)' : k.tone === 'neutral' ? undefined : k.danger && k.value !== '0' ? 'var(--data-neg)' : k.warn ? 'var(--data-warn)' : undefined }}>
                           {k.value}
                         </p>
 
