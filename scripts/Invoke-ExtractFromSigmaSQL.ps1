@@ -142,7 +142,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.16'   # v1.16 (SB-CC-EXTRACT-002 v1.1, SIMPLIFIED 2026-06-17): TRUTHFUL STATUS -- run = SUCCESS when the EOD fact tables (sigma_sales/sigma_movements/l2_soh_daily) land, even if a late non-fact table trips on a mid-run dw220sdb lock; only a missing fact table = FAILED. Ends the false-FAILED blindness so the dashboard freshness reads honest. Lock handling = short bounded retry (3 tries / ~10 min) then fail truthfully (23:30 cutoff / long-window / email-watchdog DESCOPED: lock is rare, dashboard shows stale, manual re-run lands it). (v1.15: cBESTANDSFUE -> record_stock_qty, SB-CC-L1-RECSTK-001)
+$ScriptVersion  = 'v1.17'   # v1.17 (SB-CC-DICE-REPAIR-001, 2026-06-21): Self-healing dw220sdb user mapping repair. When Wait-ForSigmaDw detects ONLINE+MULTI_USER failure (permission problem, not EOD lock), attempts to restore the db_datareader mapping from a master connection before giving up. (v1.16: truthful status, bounded retry)
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -308,19 +308,63 @@ function Get-DwStateDiag {
     }
 }
 
+function Repair-DwAccess {
+    # SB-CC-DICE-REPAIR-001 (2026-06-21): When dw220sdb is ONLINE+MULTI_USER but the
+    # machine account's database user mapping is missing, attempt to restore it from a
+    # master connection. Works if the Windows login has ALTER ANY DATABASE or sysadmin.
+    # Fails gracefully if permissions are insufficient -- error is logged and we fall
+    # through to the normal failure path. Never throws.
+    param([string]$LoginName, [string]$UserName)
+    Write-Host "[dw-repair] Attempting to restore dw220sdb user mapping for $LoginName ..." -ForegroundColor Yellow
+    try {
+        $m = New-SqlConn -Db 'master'
+        try {
+            # Ensure the server-level login exists
+            $ensureLogin = @"
+IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'$LoginName')
+    CREATE LOGIN [$LoginName] FROM WINDOWS;
+"@
+            $cmd = New-Object System.Data.SqlClient.SqlCommand($ensureLogin, $m)
+            $cmd.ExecuteNonQuery() | Out-Null
+
+            # Restore the database user and db_datareader role in dw220sdb.
+            # Uses sp_executesql to switch database context -- requires ALTER ANY DATABASE
+            # or sysadmin at the server level.
+            $repairSql = @"
+EXEC sp_executesql N'
+    USE [$DwDb];
+    IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N''$UserName'')
+        CREATE USER [$UserName] FOR LOGIN [$LoginName];
+    IF IS_ROLEMEMBER(''db_datareader'', N''$UserName'') = 0
+        EXEC sp_addrolemember ''db_datareader'', N''$UserName'';
+';
+"@
+            $cmd2 = New-Object System.Data.SqlClient.SqlCommand($repairSql, $m)
+            $cmd2.ExecuteNonQuery() | Out-Null
+            Write-Host "[dw-repair] User mapping restored. Retrying dw220sdb connection..." -ForegroundColor Green
+            return $true
+        }
+        finally { $m.Close() }
+    }
+    catch {
+        Write-Host "[dw-repair] Repair failed (insufficient SQL Server privileges): $($_.ToString().Trim())" -ForegroundColor Yellow
+        Write-Host "[dw-repair] Manual fix required: connect to localhost\SIGMA on SRSDELAREYT2SVR, run Scripts 1+2 from SB-CC-DICE-REPAIR-001." -ForegroundColor Yellow
+        return $false
+    }
+}
+
 function Wait-ForSigmaDw {
-    # SB-CC-EXTRACT-002 (Pieter SIMPLIFIED 2026-06-17): a SHORT BOUNDED retry, NOT a
-    # poll-to-cutoff. The dw220sdb EOD lock is RARE -- the normal night is reachable
-    # and a run just works (proven live 2026-06-17, ran straight through twice). So:
-    # probe, and on a genuine failure retry a few times over ~10 min, then stop. If
-    # it is still locked (rare), the run fails TRUTHFULLY (no fact tables land) and
-    # the store shows STALE on the dashboard layer-freshness strip -- a one-line
-    # manual re-run then lands it. No 23:30 cutoff, no long window, no email watchdog
-    # (all descoped -- the dashboard IS the freshness signal, the way PRSSALE always
-    # was). Get-DwStateDiag kept for the error line. R28: bounded-retry values are a
-    # general default, dated 2026-06-17.
-    $maxTries = 3
-    $gapSecs  = 300   # ~10 min total across the 3 tries
+    # SB-CC-EXTRACT-002 (Pieter SIMPLIFIED 2026-06-17): bounded retry, not poll-to-cutoff.
+    # SB-CC-DICE-REPAIR-001 (2026-06-21): on ONLINE+MULTI_USER failure (permission mapping
+    # lost, not an EOD lock), attempt self-repair from master before giving up.
+    $maxTries    = 3
+    $gapSecs     = 300   # ~10 min total across the 3 tries
+    $repairTried = $false
+
+    # Derive Windows login + DB user name from the current machine identity.
+    $loginName = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name  # e.g. SRSDELAREYT2\SRSDELAREYT2SVR$
+    $userName  = $loginName.Split('\')[-1]                                         # e.g. SRSDELAREYT2SVR$
+
     for ($i = 1; $i -le $maxTries; $i++) {
         try {
             $conn = New-SqlConn -Db $DwDb
@@ -331,6 +375,18 @@ function Wait-ForSigmaDw {
         catch {
             $msg  = $_.ToString()
             $diag = Get-DwStateDiag
+
+            # Detect ONLINE+MULTI_USER = permission/mapping problem, NOT an EOD lock.
+            # On first encounter, attempt self-repair then retry immediately (don't wait).
+            if ($diag -match 'ONLINE.*MULTI_USER' -and -not $repairTried) {
+                $repairTried = $true
+                $repaired = Repair-DwAccess -LoginName $loginName -UserName $userName
+                if ($repaired) {
+                    continue   # retry the connection immediately, no sleep
+                }
+                # Repair failed -- fall through to normal fail path below
+            }
+
             if ($i -ge $maxTries) {
                 throw "dw220sdb not reachable after $maxTries tries (~10 min) -- failing truthfully; the store will show STALE on the dashboard and a manual re-run will land it. Diagnosis: $diag | Last error: $msg"
             }
