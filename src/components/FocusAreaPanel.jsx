@@ -1,7 +1,7 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
   ResponsiveContainer,
 } from 'recharts'
 import { supabase } from '@/lib/supabase'
@@ -141,6 +141,17 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
   const combinedTotal = totals.reduce((s, t) => s + t.periodSales, 0)
   const combinedQty   = totals.reduce((s, t) => s + t.periodQty,   0)
 
+  const lineAnnotations = useMemo(() => {
+    return basket.map((item, i) => {
+      const key  = itemLabel(item)
+      const vals = chartData.map(d => d[key] ?? 0).filter(v => v > 0)
+      if (!vals.length) return null
+      const peak = Math.max(...vals)
+      const avg  = vals.reduce((s, v) => s + v, 0) / vals.length
+      return { key, peak, avg, color: FOCUS_COLORS[i % FOCUS_COLORS.length] }
+    }).filter(Boolean)
+  }, [basket, chartData])
+
   return (
     <div style={{
       background: 'rgba(255,255,255,0.02)',
@@ -215,26 +226,40 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
 
       {/* ── Loading state ─────────────────────────────────────────────────── */}
       {loading && (
-        <div style={{ textAlign: 'center', padding: 40, color: 'rgba(245,245,244,0.3)', fontStyle: 'italic', fontSize: 12 }}>
-          Loading Focus Area data…
-        </div>
+        <div style={{ height: 260, borderRadius: 10, backdropFilter: 'blur(28px)', WebkitBackdropFilter: 'blur(28px)', background: 'rgba(12,16,12,0.30)' }} />
       )}
 
       {/* ── Chart ─────────────────────────────────────────────────────────── */}
       {!loading && chartData.length > 0 && (
         <>
-          <div style={{ height: 220, marginBottom: 22 }}>
-            <ResponsiveContainer width="100%" height="100%">
+          <div style={{
+            marginBottom: 22,
+            background: 'rgba(0,0,0,0.18)',
+            borderRadius: 10,
+            border: '1px solid rgba(255,255,255,0.06)',
+            boxShadow: 'var(--well-shadow)',
+            padding: '12px 4px 8px',
+          }}>
+            <ResponsiveContainer width="100%" height={200}>
               <LineChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
-                <CartesianGrid stroke="rgba(255,255,255,0.05)" />
+                <CartesianGrid
+                  strokeDasharray="none"
+                  horizontal={true}
+                  vertical={false}
+                  stroke="rgba(255,255,255,0.07)"
+                />
                 <XAxis
                   dataKey="label"
-                  tick={{ fontSize: 10, fill: 'rgba(245,245,244,0.4)' }}
+                  axisLine={{ stroke: 'rgba(255,255,255,0.10)' }}
+                  tickLine={false}
+                  tick={{ fontSize: 9, fill: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace" }}
                 />
                 <YAxis
-                  tick={{ fontSize: 10, fill: 'rgba(245,245,244,0.4)' }}
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fontSize: 9, fill: 'rgba(245,245,244,0.35)', fontFamily: "'Geist Mono', monospace" }}
                   tickFormatter={v => v >= 1000 ? `R${(v / 1000).toFixed(1)}k` : `R${v.toFixed(0)}`}
-                  width={56}
+                  width={52}
                 />
                 <Tooltip
                   contentStyle={{
@@ -245,21 +270,68 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
                   }}
                   formatter={(v, name) => [`R ${Number(v).toFixed(2)}`, name]}
                 />
-                <Legend wrapperStyle={{ fontSize: 10, fontFamily: 'Geist, sans-serif', paddingTop: 8 }} />
                 {basket.map((item, i) => (
                   <Line
                     key={itemLabel(item)}
                     type="monotone"
                     dataKey={itemLabel(item)}
                     stroke={FOCUS_COLORS[i % FOCUS_COLORS.length]}
-                    strokeWidth={2}
+                    strokeWidth={2.5}
                     dot={{ r: 3, fill: FOCUS_COLORS[i % FOCUS_COLORS.length] }}
                     activeDot={{ r: 5 }}
                     connectNulls
                   />
                 ))}
+                {lineAnnotations.map(({ key, peak, avg, color }) => [
+                  <ReferenceLine
+                    key={`peak-${key}`}
+                    y={peak}
+                    stroke={color}
+                    strokeDasharray="3 4"
+                    strokeOpacity={0.25}
+                    strokeWidth={1}
+                  />,
+                  <ReferenceLine
+                    key={`avg-${key}`}
+                    y={avg}
+                    stroke={color}
+                    strokeDasharray="6 3"
+                    strokeOpacity={0.18}
+                    strokeWidth={1}
+                    label={basket.length === 1
+                      ? { value: `avg ${zarFmt(avg)}`, position: 'insideTopRight', fontSize: 9, fill: 'rgba(245,245,244,0.35)' }
+                      : undefined}
+                  />,
+                ])}
               </LineChart>
             </ResponsiveContainer>
+            {/* Custom ChartLegend — stroke swatch + truncated name + period total */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '6px 8px 0' }}>
+              {basket.map((item, i) => {
+                const tot = totals.find(t => String(t.ean) === String(item.ean) && t.store_code === item.store_code)
+                return (
+                  <div key={itemLabel(item)} style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    fontSize: 10, fontFamily: "'Geist Mono', monospace",
+                    color: 'rgba(245,245,244,0.55)',
+                  }}>
+                    <span style={{
+                      display: 'inline-block', width: 10, height: 2,
+                      background: FOCUS_COLORS[i % FOCUS_COLORS.length],
+                      borderRadius: 1, flexShrink: 0,
+                    }} />
+                    <span style={{ color: 'rgba(245,245,244,0.7)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {itemLabel(item)}
+                    </span>
+                    {tot && (
+                      <span style={{ color: FOCUS_COLORS[i % FOCUS_COLORS.length], opacity: 0.8 }}>
+                        R {Number(tot.periodSales).toFixed(0)}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           </div>
 
           {/* ── Summary table ─────────────────────────────────────────────── */}
