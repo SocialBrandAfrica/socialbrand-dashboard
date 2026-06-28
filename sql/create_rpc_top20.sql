@@ -50,6 +50,7 @@ AS $function$
 DECLARE
     v_dates date[] := p_dates::date[];   -- pre-cast ONCE (index-safe)
 BEGIN
+    SET LOCAL statement_timeout = '60s';
 
   IF COALESCE(p_activity, 'movers') = 'non_movers' THEN
     -- STOCK FACTS (held): soh / period_qty=0 / classification stay on daily_snapshots.

@@ -63,6 +63,7 @@ AS $function$
 DECLARE
     v_dates date[] := p_dates::date[];   -- pre-cast ONCE
 BEGIN
+    SET LOCAL statement_timeout = '60s';
   RETURN QUERY
   WITH sigma_dept AS (
     SELECT COALESCE(sd.name, 'UNMAPPED') AS dept_name,

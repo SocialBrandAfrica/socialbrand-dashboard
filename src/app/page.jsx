@@ -1326,7 +1326,7 @@ export default function Home() {
       p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
     }).then(({ data, error }) => {
       if (cancelled) return
-      if (error) { console.error('rpc_focus_top5 error', error); setFocusDefaultLoading(false); return }
+      if (error) { console.error('rpc_focus_top5 error', error.message); setFocusDefaultLoading(false); return }
       const top5 = (data ?? []).slice(0, 5).map(r => ({
         ean:           String(r.ean),
         description:   r.description,

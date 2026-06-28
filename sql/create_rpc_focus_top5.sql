@@ -14,6 +14,7 @@ AS $function$
 DECLARE
     v_dates date[] := p_dates::date[];
 BEGIN
+    SET LOCAL statement_timeout = '60s';
     RETURN QUERY
     SELECT
         b.ean,

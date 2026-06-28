@@ -7,9 +7,15 @@
 -- =============================================================================
 CREATE OR REPLACE FUNCTION public.rpc_kpi_dept_counts(p_store_codes text[], p_dates text[], p_subdept text DEFAULT NULL::text, p_eans text[] DEFAULT NULL::text[])
  RETURNS TABLE(dept_name text, neg_soh_count bigint, slow_mover_count bigint)
- LANGUAGE sql
+ LANGUAGE plpgsql
  STABLE SECURITY DEFINER
 AS $function$
+#variable_conflict use_column
+DECLARE
+    v_dates date[] := p_dates::date[];   -- pre-cast ONCE (index-safe, Rule 4)
+BEGIN
+    SET LOCAL statement_timeout = '60s';
+    RETURN QUERY
     SELECT
         ds.dept_name,
         COUNT(*) FILTER (WHERE ds.soh < 0)                                   AS neg_soh_count,
@@ -27,11 +33,12 @@ AS $function$
         )                                                                     AS slow_mover_count
     FROM  daily_snapshots ds
     WHERE ds.store_code    = ANY(p_store_codes)
-      AND ds.snapshot_date = ANY(p_dates::date[])
+      AND ds.snapshot_date = ANY(v_dates)
       AND (p_subdept IS NULL OR ds.sub_dept_name = p_subdept)
       AND (p_eans    IS NULL OR ds.ean            = ANY(p_eans))
     GROUP BY ds.dept_name
     ORDER BY ds.dept_name;
+END;
 $function$;
 
 GRANT EXECUTE ON FUNCTION public.rpc_kpi_dept_counts(text[], text[], text, text[]) TO anon, authenticated;
