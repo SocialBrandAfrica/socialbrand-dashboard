@@ -3,140 +3,188 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pulse Mini — HMR Sushi</title>
+<title>Pulse Mini — Counter</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
-  :root{
-    --blue:#2F6196;--blue-d:#244E79;--gold:#C9882A;--gold-d:#A8701F;
-    --ink:#1E2A37;--slate:#46586B;--pos:#2E7D32;
-    --glass-b:rgba(255,255,255,.7);--hair:rgba(36,78,121,.15);
-  }
-  *{box-sizing:border-box}
-  body{margin:0;color:var(--ink);font-family:Roboto,system-ui,sans-serif;font-size:14px;line-height:1.4;
-       background:linear-gradient(135deg,#cfe0f2 0%,#e8eef6 55%,#dde9f4 100%);-webkit-font-smoothing:antialiased}
-  .wrap{max-width:1180px;margin:0 auto;padding:16px 16px 28px}
-  h1,h2,.lab{font-family:Inter,sans-serif}
-  .num{font-variant-numeric:tabular-nums}
-  .glass{background:linear-gradient(180deg,rgba(255,255,255,.74),rgba(255,255,255,.48));
-         backdrop-filter:blur(16px) saturate(135%);-webkit-backdrop-filter:blur(16px) saturate(135%);
-         border:1px solid rgba(255,255,255,.8);border-radius:14px;
-         box-shadow:inset 0 1px 0 rgba(255,255,255,.95),inset 0 -1px 2px rgba(36,78,121,.06),0 8px 24px rgba(30,60,100,.13),0 2px 4px rgba(30,60,100,.07)}
-  .head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;color:#fff;border-radius:14px;
-        background:linear-gradient(180deg,rgba(54,108,164,.92),rgba(33,72,113,.86));border:1px solid rgba(255,255,255,.28);
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 8px 26px rgba(20,45,80,.28)}
-  .head h1{margin:0;font-size:19px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.18)}
-  .head .sub{margin:2px 0 0;font-size:12.5px;color:#d6e4f3}
-  .live{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.2);padding:6px 12px;border-radius:999px;font:700 11px Inter;letter-spacing:.6px}
-  .live .dot{width:8px;height:8px;border-radius:50%;background:#FFD24A;box-shadow:0 0 6px #FFD24A;animation:p 2s infinite}
-  @keyframes p{0%{box-shadow:0 0 0 0 rgba(255,210,74,.6)}70%{box-shadow:0 0 0 7px rgba(255,210,74,0)}100%{box-shadow:0 0 0 0 rgba(255,210,74,0)}}
-  .wxbar{display:flex;align-items:center;justify-content:space-between;margin:12px 2px 6px;color:var(--slate);font-size:11.5px}
-  .wxbar b{color:var(--blue-d);font:700 12px Inter}
-  .wxstrip{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:6px}
-  .wd{padding:9px 6px;text-align:center}
-  .wd.today{border:1.5px solid var(--blue)}
-  .wd .dn{font:700 11px Inter;color:var(--blue-d)}.wd .dd{font-size:10px;color:var(--slate);margin-bottom:4px}
-  .wd svg{width:22px;height:22px;margin:2px 0}
-  .wd .hi{font:700 14px Roboto}.wd .lo{font:12px Roboto;color:var(--slate)}
-  .wd .rn{font-size:10px;color:var(--blue);margin-top:3px}
-  .meta{display:flex;gap:18px;flex-wrap:wrap;margin:10px 2px;color:var(--slate);font-size:11.5px}
-  .meta b{color:var(--ink)}
-  .controls{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:12px 0;font-size:12px;color:var(--slate)}
-  .controls label{font:700 12px Inter;margin-right:6px}
-  .controls input,.controls select{font:13px Roboto;padding:6px 9px;border:1px solid var(--glass-b);border-radius:8px;background:rgba(255,255,255,.6)}
-  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-  .kpi{padding:12px 14px;border-top:3px solid #cdd9e8}
-  .kpi .lab{font:700 10px Inter;letter-spacing:.5px;color:var(--slate);text-transform:uppercase}
-  .kpi .val{font:700 22px Roboto;margin:5px 0 1px}
-  .kpi .hint{font-size:11px;color:var(--slate)}
-  .k1{border-top-color:var(--blue)}.k2{border-top-color:var(--blue-d)}
-  .k3{border-top-color:var(--pos)}.k3 .val{color:var(--pos)}
-  .k4{border-top-color:var(--gold)}.k4 .val{color:var(--gold-d)}
-  .grid{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:12px;margin-top:12px}
-  .panel{padding:14px 16px;min-width:0}
-  .panel h2{margin:0 0 2px;font-size:12.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:var(--blue-d)}
-  .panel .cap{font-size:11px;color:var(--slate);margin:0 0 11px}
-  .cum{display:flex;align-items:flex-end;gap:5px;height:128px;padding-top:8px;border-bottom:1px solid var(--hair);overflow:hidden}
-  .cum .col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;cursor:default}
-  .cum .bar{width:100%;max-width:36px;background:linear-gradient(180deg,#3a72ad,#2c5b8c);border-radius:5px 5px 0 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 2px 5px rgba(30,60,100,.18)}
-  .cum .v{font:700 9px Roboto;color:var(--slate);margin-bottom:3px;white-space:nowrap;overflow:hidden;max-width:100%}
-  .cum .d{font:9.5px Roboto;color:var(--slate);margin-top:5px}
-  .closing{margin-top:11px;background:rgba(47,97,150,.08);border:1px solid rgba(47,97,150,.15);border-radius:8px;padding:10px 12px}
-  .closing .pl{font:700 10.5px Inter;letter-spacing:.3px;color:var(--slate);text-transform:uppercase}
-  .closing .pv{font:700 20px Roboto;color:var(--blue-d);margin-top:1px}
-  .closing .pn{font-size:11px;color:var(--slate);margin-top:2px}
-  .splitbar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:rgba(36,78,121,.12)}
-  .splitbar i{display:block;height:100%}
-  .splitleg{display:flex;gap:18px;margin-top:8px;font-size:11.5px;color:var(--slate)}
-  .splitleg b{color:var(--ink)}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-  .tops{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:13px}
-  .toph{font:700 10.5px Inter;letter-spacing:.5px;text-transform:uppercase;padding-bottom:5px;border-bottom:2px solid;margin-bottom:2px}
-  .row,.mrow{cursor:pointer;border-radius:6px}
-  .row{display:grid;grid-template-columns:18px 1fr auto;gap:8px;align-items:center;padding:7px 6px}
-  .row:hover,.mrow:hover{background:rgba(47,97,150,.08)}
-  .row.sel,.mrow.sel{background:rgba(47,97,150,.14);box-shadow:inset 0 0 0 1px var(--blue)}
-  .row .rk{font:700 11px Roboto;color:var(--slate);text-align:right}
-  .row .nm{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .row .am{font:700 13px Roboto}
-  .row.zero .nm{color:var(--slate)}.row.zero .am{color:var(--slate);font-weight:400}
-  .divider{margin:16px 0 10px;border:0;border-top:1px solid rgba(36,78,121,.18)}
-  .mh{font:700 10.5px Inter;letter-spacing:.5px;text-transform:uppercase;color:var(--slate);display:flex;justify-content:space-between;margin-bottom:8px}
-  .moregrid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px 16px}
-  .mrow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:baseline;padding:5px 7px;border-bottom:1px solid rgba(36,78,121,.08)}
-  .mrow .nm{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .mrow .nm .tag{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:1px}
-  .mrow .am{font:700 12px Roboto;color:var(--slate)}
-  .mrow.zero .am{color:rgba(70,88,107,.45);font-weight:400}
-  .detail .dh{display:flex;justify-content:space-between;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:3px}
-  .detail h2 span{color:var(--slate);font-weight:400;font-size:12px;text-transform:none;letter-spacing:0}
-  .stats{display:flex;gap:18px;font-size:11.5px;color:var(--slate)}
-  .stats b{color:var(--ink);font:700 14px Roboto}
-  .daycap{font-size:11px;color:var(--slate);margin:2px 0 11px}
-  .days{display:flex;align-items:flex-end;gap:0;height:118px;border-bottom:1px solid var(--hair);overflow:hidden}
-  .days .day{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;padding:0 1px}
-  .days .db{width:100%;background:linear-gradient(180deg,#3a72ad,#2c5b8c);border-radius:2px 2px 0 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.3)}
-  .days .db.empty{background:rgba(47,97,150,.06);border:1px dashed rgba(47,97,150,.22);border-bottom:none}
-  .dayx{display:flex;margin-top:5px}
-  .dayx .dl{flex:1 1 0;min-width:0;text-align:center;font:9px Roboto;color:#758799}
-  .flag{margin-top:12px;background:rgba(201,136,42,.12);border:1px solid rgba(201,136,42,.3);border-left:4px solid var(--gold);
-        border-radius:0 8px 8px 0;padding:11px 15px;display:flex;align-items:center;gap:10px}
-  .flag .ft{font:700 10px Inter;letter-spacing:.5px;text-transform:uppercase;color:#8a6420}
-  .flag .fn{font:700 14px Roboto;margin-top:1px}
-  .nodata{padding:28px 0;text-align:center;color:var(--slate);font-size:12.5px}
-  .nodata b{display:block;font:700 15px Inter;color:var(--blue-d);margin-bottom:6px}
-  footer{margin-top:16px;text-align:center;color:var(--slate);font-size:11px;line-height:1.6}
-  @media(max-width:880px){.kpis{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.moregrid{grid-template-columns:repeat(3,1fr)}.tops{grid-template-columns:1fr}}
-  @media(max-width:560px){.moregrid{grid-template-columns:repeat(2,1fr)}.wxstrip{grid-template-columns:repeat(4,1fr)}}
+:root{
+  --blue:#2F6196;--blue-d:#244E79;--gold:#C9882A;--gold-d:#A8701F;
+  --ink:#1E2A37;--slate:#46586B;--pos:#2E7D32;--neg:#C62828;
+  --hair:rgba(36,78,121,.15);
+  --groove-bg:rgba(36,78,121,.10);
+  --groove-shadow:inset 0 2px 5px rgba(30,60,100,.22),inset 0 -1px 0 rgba(255,255,255,.7);
+  --unfrost:800ms ease-in-out;
+}
+*{box-sizing:border-box}
+body{margin:0;color:var(--ink);font-family:Roboto,system-ui,sans-serif;font-size:14px;line-height:1.4;
+     background:linear-gradient(135deg,#cfe0f2 0%,#e8eef6 55%,#dde9f4 100%);min-height:100vh;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:16px 16px 28px}
+h1,h2,.lab{font-family:Inter,sans-serif}
+.num{font-variant-numeric:tabular-nums}
+
+/* liquid glass + unfrost */
+.glass{position:relative;border:1px solid rgba(255,255,255,.8);border-radius:14px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.95),inset 0 -1px 2px rgba(36,78,121,.06),
+             0 8px 24px rgba(30,60,100,.13),0 2px 4px rgba(30,60,100,.07);
+  transition:backdrop-filter var(--unfrost),-webkit-backdrop-filter var(--unfrost),background-color var(--unfrost),
+             transform 150ms ease,box-shadow 150ms ease}
+.glass:hover{transform:translateY(-2px)}
+.glass::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:linear-gradient(135deg,rgba(255,255,255,.95),rgba(255,255,255,.25) 35%,rgba(255,255,255,.08) 60%,rgba(47,97,150,.25));
+  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;
+  mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);mask-composite:exclude;pointer-events:none}
+.glass::after{content:'';position:absolute;top:0;left:8%;right:45%;height:2px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.95),transparent);filter:blur(.5px);pointer-events:none}
+.glass.loading{background:rgba(255,255,255,.55);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px)}
+.glass.ready{background:linear-gradient(180deg,rgba(255,255,255,.74),rgba(255,255,255,.48));
+  backdrop-filter:blur(10px) saturate(135%);-webkit-backdrop-filter:blur(10px) saturate(135%)}
+.cc{opacity:0;transition:opacity var(--unfrost)}
+.glass.ready .cc{opacity:1}
+@media(prefers-reduced-motion:reduce){.glass,.cc{transition-duration:150ms!important}
+  .glass.loading,.glass.ready{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}}
+@media(max-width:768px){.glass.loading,.glass.ready{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:rgba(255,255,255,.86)}}
+
+/* header */
+.head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:14px 18px;color:#fff;border-radius:14px;
+  background:linear-gradient(180deg,rgba(54,108,164,.92),rgba(33,72,113,.86));border:1px solid rgba(255,255,255,.28);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 12px 34px rgba(20,45,80,.30)}
+.head h1{margin:0;font-size:19px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.18)}
+.head .sub{margin:2px 0 0;font-size:12.5px;color:#d6e4f3}
+.live{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.2);padding:6px 12px;border-radius:999px;font:700 11px Inter;letter-spacing:.6px}
+.live .dot{width:8px;height:8px;border-radius:50%;background:#FFD24A;box-shadow:0 0 6px #FFD24A;animation:p 2s infinite}
+@keyframes p{0%{box-shadow:0 0 0 0 rgba(255,210,74,.6)}70%{box-shadow:0 0 0 7px rgba(255,210,74,0)}100%{box-shadow:0 0 0 0 rgba(255,210,74,0)}}
+
+/* weather */
+.wxbar{display:flex;align-items:center;justify-content:space-between;margin:12px 2px 6px;color:var(--slate);font-size:11.5px}
+.wxbar b{color:var(--blue-d);font:700 12px Inter}
+.wxstrip{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:6px}
+.wd{padding:9px 6px;text-align:center}
+.wd.today{outline:1.5px solid var(--blue);outline-offset:-1.5px}
+.wd .dn{font:700 11px Inter;color:var(--blue-d)}.wd .dd{font-size:10px;color:var(--slate);margin-bottom:4px}
+.wd svg{width:22px;height:22px;margin:2px 0}
+.wd .hi{font:700 14px Roboto}.wd .lo{font:12px Roboto;color:var(--slate)}
+.wd .rn{font-size:10px;color:var(--blue);margin-top:3px}
+
+.meta{display:flex;gap:18px;flex-wrap:wrap;margin:10px 2px;color:var(--slate);font-size:11.5px}
+.meta b{color:var(--ink)}
+
+/* skeuo controls */
+.controls{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:12px 0;font-size:12px;color:var(--slate)}
+.controls label{font:700 12px Inter;margin-right:6px}
+.controls input,.controls select{font:13px Roboto;padding:7px 10px;border:1px solid rgba(36,78,121,.15);border-radius:9px;
+  background:var(--groove-bg);box-shadow:var(--groove-shadow);color:var(--ink);outline:none}
+.controls input:focus,.controls select:focus{border-color:var(--blue)}
+
+/* KPI cards */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
+.kpi{padding:13px 15px;border-top:3px solid #cdd9e8}
+.kpi .lab{font:700 10px Inter;letter-spacing:.5px;color:var(--slate);text-transform:uppercase}
+.kpi .val{font:700 23px Roboto;margin:5px 0 1px}
+.kpi .hint{font-size:11px;color:var(--slate)}
+.k1{border-top-color:var(--blue);box-shadow:inset 0 1px 0 rgba(255,255,255,.95),0 10px 26px rgba(47,97,150,.22),0 2px 4px rgba(30,60,100,.07)}
+.k2{border-top-color:var(--blue-d);box-shadow:inset 0 1px 0 rgba(255,255,255,.95),0 10px 26px rgba(36,78,121,.26),0 2px 4px rgba(30,60,100,.07)}
+.k3{border-top-color:var(--pos);box-shadow:inset 0 1px 0 rgba(255,255,255,.95),0 10px 26px rgba(46,125,50,.22),0 2px 4px rgba(30,60,100,.07)}
+.k3 .val{color:var(--pos)}
+.k4{border-top-color:var(--gold);box-shadow:inset 0 1px 0 rgba(255,255,255,.95),0 10px 26px rgba(201,136,42,.25),0 2px 4px rgba(30,60,100,.07)}
+.k4 .val{color:var(--gold-d)}
+
+/* feed health */
+.health-wrap{margin:12px 0 4px}
+.health-title{font:700 10px Inter;letter-spacing:.4px;text-transform:uppercase;color:var(--slate);margin-bottom:6px}
+.health-strip{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px}
+.health-leg{display:flex;gap:14px;font-size:10px;color:var(--slate)}
+.hleg-dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:1px}
+
+.grid{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:12px;margin-top:12px}
+.panel{padding:14px 16px;min-width:0}
+.panel h2{margin:0 0 2px;font-size:12.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:var(--blue-d)}
+.panel .cap{font-size:11px;color:var(--slate);margin:0 0 11px}
+.panel-div{border:0;border-top:1px solid var(--hair);margin:13px 0 11px}
+
+/* cumulative bars (day-number labels only) */
+.cum{display:flex;align-items:flex-end;gap:5px;height:128px;padding-top:8px;border-bottom:1px solid var(--hair);overflow:hidden}
+.cum .col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;cursor:default}
+.cum .bar{width:100%;max-width:36px;background:linear-gradient(180deg,#3a72ad,#2c5b8c);border-radius:5px 5px 0 0;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 2px 5px rgba(30,60,100,.18)}
+.cum .v{font:700 9px Roboto;color:var(--slate);margin-bottom:3px;white-space:nowrap;overflow:hidden;max-width:100%}
+.cum .d{font:9.5px Roboto;color:var(--slate);margin-top:5px}
+
+.closing{margin-top:11px;background:var(--groove-bg);border:1px solid rgba(47,97,150,.15);border-radius:9px;padding:10px 12px;
+  box-shadow:var(--groove-shadow)}
+.closing .pl{font:700 10.5px Inter;letter-spacing:.3px;color:var(--slate);text-transform:uppercase}
+.closing .pv{font:700 20px Roboto;color:var(--blue-d);margin-top:1px}
+.closing .pn{font-size:11px;color:var(--slate);margin-top:2px}
+
+.splitbar{display:flex;height:16px;border-radius:8px;overflow:hidden;background:var(--groove-bg);box-shadow:var(--groove-shadow)}
+.splitbar i{display:block;height:100%;box-shadow:inset 0 1px 0 rgba(255,255,255,.35)}
+.splitleg{display:flex;gap:18px;margin-top:8px;font-size:11.5px;color:var(--slate)}
+.splitleg b{color:var(--ink)}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.tops{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:13px}
+.toph{font:700 10.5px Inter;letter-spacing:.5px;text-transform:uppercase;padding-bottom:5px;border-bottom:2px solid;margin-bottom:2px}
+.row,.mrow{cursor:pointer;border-radius:6px}
+.row{display:grid;grid-template-columns:18px 1fr auto;gap:8px;align-items:center;padding:7px 6px}
+.row:hover,.mrow:hover{background:rgba(47,97,150,.08)}
+.row.sel,.mrow.sel{background:rgba(47,97,150,.14);box-shadow:inset 0 0 0 1px var(--blue),inset 0 2px 4px rgba(30,60,100,.12)}
+.row .rk{font:700 11px Roboto;color:var(--slate);text-align:right}
+.row .nm{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .am{font:700 13px Roboto}
+.row.zero .nm,.row.zero .am{color:var(--slate);font-weight:400}
+.divider{margin:16px 0 10px;border:0;border-top:1px solid rgba(36,78,121,.18)}
+.mh{font:700 10.5px Inter;letter-spacing:.5px;text-transform:uppercase;color:var(--slate);display:flex;justify-content:space-between;margin-bottom:8px}
+.moregrid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px 16px}
+.mrow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:baseline;padding:5px 7px;border-bottom:1px solid rgba(36,78,121,.08)}
+.mrow .nm{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow .nm .tag{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:1px}
+.mrow .am{font:700 12px Roboto;color:var(--slate)}
+.mrow.zero .am{color:rgba(70,88,107,.45);font-weight:400}
+
+/* detail chart */
+.detail .dh{display:flex;justify-content:space-between;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:3px}
+.detail h2 span{color:var(--slate);font-weight:400;font-size:12px;text-transform:none;letter-spacing:0}
+.stats{display:flex;gap:18px;font-size:11.5px;color:var(--slate)}
+.stats b{color:var(--ink);font:700 14px Roboto}
+.daycap{font-size:11px;color:var(--slate);margin:2px 0 11px}
+.days{display:flex;align-items:flex-end;gap:0;height:118px;border-bottom:1px solid var(--hair)}
+.days .day{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;padding:0 1px}
+.days .db{width:100%;background:linear-gradient(180deg,#3a72ad,#2c5b8c);border-radius:2px 2px 0 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.3)}
+.dayx{display:flex;margin-top:5px}
+.dayx .dl{flex:1 1 0;min-width:0;text-align:center;font:9px Roboto;color:#758799}
+
+.flag{margin-top:12px;background:rgba(201,136,42,.12);border:1px solid rgba(201,136,42,.3);border-left:4px solid var(--gold);
+  border-radius:0 8px 8px 0;padding:11px 15px;box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
+.flag .ft{font:700 10px Inter;letter-spacing:.5px;text-transform:uppercase;color:#8a6420}
+.flag .fn{font:700 14px Roboto;margin-top:1px}
+.nodata{padding:28px 0;text-align:center;color:var(--slate);font-size:12.5px}
+.nodata b{display:block;font:700 15px Inter;color:var(--blue-d);margin-bottom:6px}
+
+footer{margin-top:16px;text-align:center;color:var(--slate);font-size:11px;line-height:1.6}
+
+@media(max-width:880px){.kpis{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.moregrid{grid-template-columns:repeat(3,1fr)}.tops{grid-template-columns:1fr}}
+@media(max-width:560px){.moregrid{grid-template-columns:repeat(2,1fr)}.wxstrip{grid-template-columns:repeat(4,1fr)}}
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <div class="head">
-    <div><h1>Pulse Mini · HMR Sushi</h1><div class="sub">SPAR Delareyville — HMR Sushi counter · What sells, When</div></div>
+    <div><h1>Pulse Mini &middot; Counter</h1><div class="sub">SPAR Delareyville &mdash; HMR Sushi counter &middot; What sells when</div></div>
     <div class="live"><span class="dot"></span>LIVE</div>
   </div>
 
-  <div class="wxbar"><b>7-day forecast</b><span id="wx-status">Delareyville · live</span></div>
+  <div class="wxbar"><b>7-day forecast</b><span id="wx-status">Delareyville &middot; loading</span></div>
   <div class="wxstrip" id="wxstrip"></div>
 
   <div class="meta">
     <span>Data as at <b id="meta-asat">loading</b></span>
-    <span id="meta-month">HMR Sushi · June</span>
-    <span>Source <b id="meta-src">sigma_sales (DBUMBA) · nightly</b></span>
+    <span id="meta-month">HMR Sushi</span>
+    <span>Source <b id="meta-src">loading</b></span>
   </div>
 
-  <!-- Combo-launch boundary note (shown for months before June 2026) -->
+  <!-- Combo-launch boundary note (months before June 2026) -->
   <div id="boundary-note" style="display:none;margin:8px 0;background:rgba(201,136,42,.10);border:1px solid rgba(201,136,42,.30);border-left:4px solid #C9882A;border-radius:0 8px 8px 0;padding:10px 14px">
-    <div style="font:700 10px Inter;letter-spacing:.4px;text-transform:uppercase;color:#8a6420">Combo PLU boundary — figures understated</div>
-    <div style="font:13px Roboto;margin-top:2px;color:#1E2A37">Combo PLUs launched 1 June 2026. Pre-June sushi figures are structurally understated — do not compare across this date as if continuous.</div>
-  </div>
-
-  <!-- EOD missing / divergent banner (shown when any day is flagged) -->
-  <div id="eod-banner" style="display:none;margin:8px 0;background:rgba(220,38,38,.10);border:1px solid rgba(220,38,38,.30);border-left:4px solid #dc2626;border-radius:0 8px 8px 0;padding:10px 14px">
-    <div style="font:700 10px Inter;letter-spacing:.4px;text-transform:uppercase;color:#dc2626">Missing end-of-day export</div>
-    <div id="eod-banner-text" style="font:13px Roboto;margin-top:2px;color:#1E2A37"></div>
+    <div style="font:700 10px Inter;letter-spacing:.4px;text-transform:uppercase;color:#8a6420">Combo PLU boundary &mdash; figures understated</div>
+    <div style="font:13px Roboto;margin-top:2px;color:#1E2A37">Combo PLUs launched 1 June 2026. Pre-June sushi figures are structurally understated &mdash; do not compare across this date as if continuous.</div>
   </div>
 
   <div class="controls">
@@ -151,63 +199,66 @@
   </div>
 
   <div class="kpis">
-    <div class="kpi glass k1"><div class="lab">Cash taken</div><div class="val num" id="k-cash">&mdash;</div><div class="hint">counter sales, month so far</div></div>
-    <div class="kpi glass k4"><div class="lab">Units sold</div><div class="val num" id="k-units">&mdash;</div><div class="hint">items across all lines</div></div>
-    <div class="kpi glass k3"><div class="lab">Your commission</div><div class="val num" id="k-comm">&mdash;</div><div class="hint" id="k-comm-hint">10% — what you keep</div></div>
-    <div class="kpi glass k2"><div class="lab">Owed to supplier</div><div class="val num" id="k-owe">&mdash;</div><div class="hint">supplier's share</div></div>
+    <div class="kpi glass loading k1"><div class="cc"><div class="lab">Cash taken</div><div class="val num" id="k-cash">&mdash;</div><div class="hint">counter sales, month so far</div></div></div>
+    <div class="kpi glass loading k4"><div class="cc"><div class="lab">Units sold</div><div class="val num" id="k-units">&mdash;</div><div class="hint">items across all lines</div></div></div>
+    <div class="kpi glass loading k3"><div class="cc"><div class="lab">Your commission</div><div class="val num" id="k-comm">&mdash;</div><div class="hint" id="k-comm-hint">10% &mdash; what you keep</div></div></div>
+    <div class="kpi glass loading k2"><div class="cc"><div class="lab">Owed to supplier</div><div class="val num" id="k-owe">&mdash;</div><div class="hint">supplier's share</div></div></div>
   </div>
 
-  <!-- Completeness strip (per-day feed health) — hidden until data loads -->
-  <div id="completeness-area" style="display:none;margin:10px 0 4px">
-    <div style="font:700 10px Inter;letter-spacing:.4px;text-transform:uppercase;color:var(--slate);margin-bottom:6px">Feed health — each square = one day</div>
-    <div id="health-strip" style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px"></div>
-    <div style="display:flex;gap:14px;font-size:10px;color:var(--slate)">
-      <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#22c55e;margin-right:4px;vertical-align:1px"></span>Complete</span>
-      <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#ef4444;margin-right:4px;vertical-align:1px"></span>EOD missing</span>
-      <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#f59e0b;margin-right:4px;vertical-align:1px"></span>Divergent</span>
-      <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#94a3b8;margin-right:4px;vertical-align:1px"></span>No trade</span>
+  <!-- Sales-based daily health grid -->
+  <div class="health-wrap" id="health-area" style="display:none">
+    <div class="health-title">Sales health &mdash; each square = one day</div>
+    <div class="health-strip" id="health-strip"></div>
+    <div class="health-leg">
+      <span><span class="hleg-dot" style="background:#22c55e"></span>Has sales</span>
+      <span><span class="hleg-dot" style="background:#94a3b8"></span>No sales recorded</span>
+      <span><span class="hleg-dot" style="background:#e2e8f0"></span>Future</span>
     </div>
   </div>
 
   <div class="grid">
-    <!-- Left panel: daily + cumulative -->
-    <div class="panel glass">
-      <h2>Daily sales</h2>
-      <p class="cap">Rand taken each day — loaded days only, no projections.</p>
-      <div class="cum" id="daily-bars"></div>
+    <!-- Left: daily + cumulative -->
+    <div class="panel glass loading">
+      <div class="cc">
+        <h2>Daily sales</h2>
+        <p class="cap">Rand taken each day &mdash; loaded days only, no projections.</p>
+        <div id="daily-bars" style="display:flex;align-items:stretch;gap:3px;height:154px;border-bottom:1px solid var(--hair);overflow:hidden"></div>
 
-      <hr style="border:0;border-top:1px solid var(--hair);margin:14px 0 12px">
+        <hr class="panel-div">
 
-      <h2>Cumulative cash held</h2>
-      <p class="cap">Running total of counter cash, day 1 onward.</p>
-      <div class="cum" id="cum"></div>
-      <div class="closing">
-        <div class="pl">Ballpark month pace</div>
-        <div class="pv num" id="proj">&mdash;</div>
-        <div class="pn" id="projn"></div>
+        <h2>Cumulative cash held</h2>
+        <p class="cap">Running total of counter cash, day 1 onward.</p>
+        <div class="cum" id="cum"></div>
+        <div class="closing">
+          <div class="pl">Ballpark month pace</div>
+          <div class="pv num" id="proj">&mdash;</div>
+          <div class="pn" id="projn"></div>
+        </div>
       </div>
     </div>
 
-    <!-- Right panel: all ranked lines -->
-    <div class="panel glass">
-      <h2>Lines ranked — tap any line for its daily sales</h2>
-      <p class="cap">All HMR Sushi counter lines. Sushi and Chinese share one counter.</p>
-      <div class="splitbar"><i id="sps" style="background:var(--blue)"></i><i id="spc" style="background:var(--gold)"></i></div>
-      <div class="splitleg">
-        <span><span class="sw" style="background:var(--blue)"></span>Sushi <b class="num" id="lgs"></b></span>
-        <span><span class="sw" style="background:var(--gold)"></span>Chinese <b class="num" id="lgc"></b></span>
+    <!-- Right: lines ranked -->
+    <div class="panel glass loading">
+      <div class="cc">
+        <h2>Lines ranked &mdash; tap any line for its daily sales</h2>
+        <p class="cap">All HMR Sushi counter lines. Sushi and Chinese share one counter.</p>
+        <div class="splitbar"><i id="sps" style="background:linear-gradient(180deg,#3a72ad,#2c5b8c)"></i><i id="spc" style="background:linear-gradient(180deg,#d49a3a,#b07a22)"></i></div>
+        <div class="splitleg">
+          <span><span class="sw" style="background:var(--blue)"></span>Sushi <b class="num" id="lgs"></b></span>
+          <span><span class="sw" style="background:var(--gold)"></span>Chinese <b class="num" id="lgc"></b></span>
+        </div>
+        <div class="tops">
+          <div><div class="toph" style="color:var(--blue);border-color:var(--blue)">Top 5 sushi</div><div id="tops"></div></div>
+          <div><div class="toph" style="color:var(--gold);border-color:var(--gold)">Top 5 Chinese</div><div id="topc"></div></div>
+        </div>
+        <hr class="divider">
+        <div class="mh"><span id="moreh">All other lines</span><span>units &middot; rand</span></div>
+        <div class="moregrid" id="more"></div>
       </div>
-      <div class="tops">
-        <div><div class="toph" style="color:var(--blue);border-color:var(--blue)">Top 5 sushi</div><div id="tops"></div></div>
-        <div><div class="toph" style="color:var(--gold);border-color:var(--gold)">Top 5 Chinese</div><div id="topc"></div></div>
-      </div>
-      <hr class="divider">
-      <div class="mh"><span id="moreh">All other lines</span><span>units &middot; rand</span></div>
-      <div class="moregrid" id="more"></div>
     </div>
   </div>
 
-  <!-- Detail chart — populated when any line is tapped -->
+  <!-- Detail chart — populated when a line is tapped -->
   <div class="panel glass detail" id="detail-body" style="margin-top:12px;display:none">
     <div class="dh">
       <h2 id="dtitle"></h2>
@@ -217,21 +268,19 @@
         <span>Best day <b id="dbest"></b></span>
       </div>
     </div>
-    <p class="daycap" id="daycap">Actual daily sales — hover a bar for rand and units.</p>
+    <p class="daycap" id="daycap">Actual daily sales &mdash; hover a bar for rand and units.</p>
     <div class="days" id="days"></div>
     <div class="dayx" id="dayx"></div>
   </div>
 
-  <!-- Flags: no-sales lines + price mismatches — generated from live consignment API -->
   <div id="flags-area"></div>
 
-  <footer>Read only. Sales are real recorded counter takings. Ledger stock is not reliable on these lines — ordering is driven by sales, not stock.</footer>
+  <footer>Read only. Sales are real recorded counter takings. Ledger stock is not reliable on these lines &mdash; ordering is driven by sales, not stock.</footer>
 </div>
 
 <script>
-/* === Fallback: Jun 1-4 2026 real sigma_sales (store 10116, group 610).
-   Used ONLY on genuine API failure (503 / network error).
-   Empty months show a no-data state — not this fallback. === */
+/* Fallback: Jun 1-4 2026 real sigma_sales (store 10116, group 610).
+   Used ONLY on genuine API failure. Empty months show no-data state. */
 var L_FB=[
 {n:"AVALANCHE PRAWNS/SALMON",t:"s",s:[0,0,105,0],q:[0,0,1,0]},
 {n:"CHOW MEIN NOODLES CHICKEN",t:"c",s:[105,105,0,105],q:[1,1,0,1]},
@@ -270,26 +319,78 @@ var L_FB=[
 {n:"SWEET & SOUR PORK",t:"c",s:[220,0,0,0],q:[2,0,0,0]}
 ];
 
-/* === Helpers === */
-var R  = function(n){ return "R "+Math.round(n).toLocaleString('en-ZA'); };
-var $  = function(id){ return document.getElementById(id); };
-var MON= ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-function fmtDate(iso){
-  if(!iso)return'—';
-  var d=new Date(iso+'T00:00:00');
-  return String(d.getDate()).padStart(2,'0')+' '+MON[d.getMonth()]+' '+d.getFullYear();
+var R=function(n){return"R "+Math.round(n).toLocaleString('en-ZA');};
+var $=function(id){return document.getElementById(id);};
+var MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fmtDate(iso){if(!iso)return'—';var d=new Date(iso+'T00:00:00');return String(d.getDate()).padStart(2,'0')+' '+MON[d.getMonth()]+' '+d.getFullYear();}
+
+var G_L=[],G_LOADED=0,G_DIM=30,G_RATE=0.10,G_MON_SHORT='Jun',G_DATES=[];
+
+/* ===== daily bars with vertical rand labels above each bar ===== */
+function dailyBarsHtml(vals){
+  if(!vals||!vals.length)return'<div style="color:#8a6420;font-size:12px;padding:14px 2px">no data yet</div>';
+  var mx=Math.max.apply(null,vals.concat([1]));
+  return vals.map(function(c,i){
+    var lbl=String(i+1).padStart(2,'0');
+    var pct=c>0?Math.max(c/mx*100,3):0;
+    var val=c>0?R(c):'';
+    return '<div style="flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;height:100%" title="Day '+lbl+': '+(c>0?R(c):'no sales')+'">'
+      +'<div style="flex-shrink:0;height:42px;display:flex;align-items:flex-end;justify-content:center;overflow:hidden">'
+      +'<span style="writing-mode:vertical-rl;transform:rotate(180deg);font:700 8px Roboto;color:var(--slate);white-space:nowrap;overflow:hidden;max-height:40px;font-variant-numeric:tabular-nums">'+val+'</span>'
+      +'</div>'
+      +'<div style="flex:1;display:flex;align-items:flex-end;width:100%;padding:0 1px">'
+      +'<div style="width:100%;max-width:36px;background:linear-gradient(180deg,#3a72ad,#2c5b8c);border-radius:5px 5px 0 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 2px 5px rgba(30,60,100,.18);height:'+pct+'%"></div>'
+      +'</div>'
+      +'<div style="font:9.5px Roboto;color:var(--slate);margin-top:3px;flex-shrink:0">'+lbl+'</div>'
+      +'</div>';
+  }).join('');
 }
 
-/* === State === */
-var G_L=[], G_LOADED=0, G_DIM=30, G_RATE=0.10, G_MON_SHORT='Jun';
-var G_DATES=[];   // actual ISO date strings from sigma-lines response (e.g. ["2026-06-01","2026-06-02",...])
-var G_HEALTH=[];  // per-day feed health rows from rpc_feed_health_daily
+/* ===== cumulative bars ===== */
+function cumBarsHtml(cum){
+  if(!cum||!cum.length)return'<div style="color:#8a6420;font-size:12px;padding:14px 2px">no data yet</div>';
+  var mx=Math.max.apply(null,cum.concat([1])),h='';
+  cum.forEach(function(c,i){
+    var lbl=G_DATES.length>i?parseInt(G_DATES[i].slice(-2)):(i+1);
+    var tip=G_MON_SHORT+' '+lbl+' cumul: '+R(c);
+    h+='<div class="col" title="'+tip+'">'
+      +'<div class="v num">'+(c>0?R(c):'')+'</div>'
+      +'<div class="bar" style="height:'+Math.round(c/mx*100)+'%"></div>'
+      +'<div class="d num">'+String(lbl).padStart(2,'0')+'</div></div>';
+  });
+  return h;
+}
 
-/* === Main render === */
-function render(L, LOADED, DIM, dates, health){
-  G_L=L; G_LOADED=LOADED; G_DIM=DIM;
-  if(dates&&dates.length) G_DATES=dates; else G_DATES=[];
-  if(health&&health.length) G_HEALTH=health; else G_HEALTH=[];
+/* ===== sales-based health grid — derived purely from sigma_sales ===== */
+function computeHealth(L,LOADED,DIM,dates){
+  var h=[];
+  for(var i=0;i<DIM;i++){
+    var hasSales=L.some(function(l){return(l.s[i]||0)>0;});
+    var status=i>=LOADED?'FUTURE':hasSales?'HAS_SALES':'NO_SALES';
+    var dayNum=dates.length>i?parseInt(dates[i].slice(-2)):(i+1);
+    var dateStr=dates.length>i?dates[i]:null;
+    h.push({day:dayNum,date:dateStr,status:status});
+  }
+  return h;
+}
+function renderHealth(health){
+  var strip=$('health-strip'),area=$('health-area');
+  if(!strip||!area||!health.length){if(area)area.style.display='none';return;}
+  var h='';
+  health.forEach(function(row){
+    var col=row.status==='HAS_SALES'?'#22c55e':row.status==='NO_SALES'?'#94a3b8':'#e2e8f0';
+    var op=row.status==='FUTURE'?'0.35':'1';
+    var tip=(row.date||'Day '+row.day)+' — '+(row.status==='HAS_SALES'?'Has sales':row.status==='NO_SALES'?'No sales recorded':'Future');
+    h+='<div title="'+tip+'" style="width:22px;height:22px;border-radius:4px;background:'+col+';opacity:'+op
+      +';display:flex;align-items:center;justify-content:center;font:700 8px Roboto;color:#fff;cursor:default">'+row.day+'</div>';
+  });
+  strip.innerHTML=h;
+  area.style.display='';
+}
+
+/* ===== main render ===== */
+function render(L,LOADED,DIM,dates){
+  G_L=L;G_LOADED=LOADED;G_DIM=DIM;G_DATES=dates||[];
   L.forEach(function(l){
     l.sales=l.s.reduce(function(a,b){return a+b;},0);
     l.qty  =l.q.reduce(function(a,b){return a+b;},0);
@@ -297,118 +398,71 @@ function render(L, LOADED, DIM, dates, health){
   L.sort(function(a,b){return b.sales-a.sales;});
   L.forEach(function(l,i){l.rank=i+1;});
 
-  /* KPI totals — only selling lines count toward cash/units */
-  var cash =L.reduce(function(a,l){return a+l.sales;},0);
+  var cash=L.reduce(function(a,l){return a+l.sales;},0);
   var units=L.reduce(function(a,l){return a+l.qty;},0);
   var sushi=L.filter(function(l){return l.t==='s';}).reduce(function(a,l){return a+l.sales;},0);
-  var chin =cash-sushi;
+  var chin=cash-sushi;
 
-  $('k-cash').textContent=R(cash); $('k-units').textContent=units;
-  $('k-comm').textContent=R(cash*G_RATE); $('k-owe').textContent=R(cash*(1-G_RATE));
+  $('k-cash').textContent=R(cash);$('k-units').textContent=units;
+  $('k-comm').textContent=R(cash*G_RATE);$('k-owe').textContent=R(cash*(1-G_RATE));
   var pct=(G_RATE*100).toLocaleString('en-ZA',{maximumFractionDigits:1});
-  var hint=$('k-comm-hint'); if(hint)hint.textContent=pct+'% — what you keep';
+  var hint=$('k-comm-hint');if(hint)hint.textContent=pct+'% — what you keep';
 
-  /* Daycap */
   var dc=$('daycap');
-  if(dc)dc.textContent='Days 1–'+LOADED+' of '+G_MON_SHORT+'. Hover a bar for rand and units. Faint bars = no sushi sales that day. Nightly push adds the next day.';
+  if(dc)dc.textContent='Days 1–'+LOADED+' of '+G_MON_SHORT+'. Hover a bar for rand and units. Nightly push adds the next day.';
 
-  /* Daily sums across all lines for the two bar charts */
+  /* daily sums */
   var daySums=new Array(LOADED).fill(0);
   L.forEach(function(l){l.s.forEach(function(v,i){if(i<LOADED)daySums[i]+=v;});});
+
+  /* daily bars with vertical rand labels */
+  $('daily-bars').innerHTML=dailyBarsHtml(daySums);
+
+  /* cumulative bars */
   var cumArr=[],run=0;
   daySums.forEach(function(d){run+=d;cumArr.push(run);});
+  $('cum').innerHTML=cumBarsHtml(cumArr);
 
-  /* Dynamic gap: tighter when more bars so they always fit the card */
-  var barGap = LOADED > 25 ? 1 : LOADED > 18 ? 2 : LOADED > 12 ? 3 : 5;
-  if($('daily-bars')) $('daily-bars').style.gap = barGap+'px';
-  if($('cum'))        $('cum').style.gap        = barGap+'px';
-
-  /* Daily bars — loaded days only, no projection */
-  (function(){
-    var mx=Math.max.apply(null,daySums.concat([1])),h='';
-    daySums.forEach(function(v,i){
-      var dayNum=G_DATES.length>i?parseInt(G_DATES[i].slice(-2)):(i+1);
-      var tip=G_MON_SHORT+' '+dayNum+(v>0?': '+R(v):': no sales');
-      h+='<div class="col" title="'+tip+'">'+
-         '<div class="v num">'+(v>0?R(v):'')+'</div>'+
-         '<div class="bar" style="height:'+Math.round(v/mx*100)+'%"></div>'+
-         '<div class="d num">'+String(dayNum).padStart(2,'0')+'</div></div>';
-    });
-    $('daily-bars').innerHTML=h;
-  })();
-
-  /* Cumulative bars */
-  (function(){
-    var mx=Math.max.apply(null,cumArr.concat([1])),h='';
-    cumArr.forEach(function(c,i){
-      var dayNum=G_DATES.length>i?parseInt(G_DATES[i].slice(-2)):(i+1);
-      var tip=G_MON_SHORT+' '+dayNum+' cumul: '+R(c);
-      h+='<div class="col" title="'+tip+'">'+
-         '<div class="v num">'+(c>0?R(c):'')+'</div>'+
-         '<div class="bar" style="height:'+Math.round(c/mx*100)+'%"></div>'+
-         '<div class="d num">'+String(dayNum).padStart(2,'0')+'</div></div>';
-    });
-    $('cum').innerHTML=h;
-  })();
+  /* health grid — from sales only */
+  renderHealth(computeHealth(L,LOADED,DIM,G_DATES));
 
   var avg=cash/Math.max(LOADED,1);
-  $('proj').textContent='≈ '+R(avg*DIM);
-  $('projn').textContent='Rough guide — '+R(cash)+' earned in '+LOADED+' of '+DIM+' days. Not a commitment.';
+  $('proj').textContent='approx '+R(avg*DIM);
+  $('projn').textContent='Rough guide — '+R(avg)+'/day over '+LOADED+' day'+(LOADED!==1?'s':'')+' loaded, stretched to '+DIM+' days. Not a commitment.';
 
-  /* Split bar — based on selling lines only */
   $('sps').style.width=Math.round(sushi/Math.max(cash,1)*100)+'%';
-  $('spc').style.width=Math.round(chin /Math.max(cash,1)*100)+'%';
-  $('lgs').textContent=R(sushi); $('lgc').textContent=R(chin);
+  $('spc').style.width=Math.round(chin/Math.max(cash,1)*100)+'%';
+  $('lgs').textContent=R(sushi);$('lgc').textContent=R(chin);
 
-  /* Row builders */
-  function topRow(l){
-    var z=l.sales===0;
-    return '<div class="row'+(z?' zero':'')+'" data-r="'+l.rank+'">'+
-      '<span class="rk num">'+l.rank+'</span>'+
-      '<span class="nm">'+l.n+'</span>'+
-      '<span class="am num">'+(z?'—':l.qty+'&nbsp;&middot;&nbsp;'+R(l.sales))+'</span>'+
-    '</div>';
-  }
-  function moreRow(l){
-    var z=l.sales===0;
-    return '<div class="mrow'+(z?' zero':'')+'" data-r="'+l.rank+'">'+
-      '<span class="nm"><span class="tag" style="background:'+(l.t==='s'?'var(--blue)':'var(--gold)')+'"></span>'+l.n+'</span>'+
-      '<span class="am num">'+(z?'—':l.qty+'&nbsp;&middot;&nbsp;'+R(l.sales))+'</span>'+
-    '</div>';
-  }
+  function topRow(l){var z=l.sales===0;return'<div class="row'+(z?' zero':'')+'" data-r="'+l.rank+'"><span class="rk num">'+l.rank+'</span><span class="nm">'+l.n+'</span><span class="am num">'+(z?'—':l.qty+'&nbsp;&middot;&nbsp;'+R(l.sales))+'</span></div>';}
+  function moreRow(l){var z=l.sales===0;return'<div class="mrow'+(z?' zero':'')+'" data-r="'+l.rank+'"><span class="nm"><span class="tag" style="background:'+(l.t==='s'?'var(--blue)':'var(--gold)')+'"></span>'+l.n+'</span><span class="am num">'+(z?'—':l.qty+'&nbsp;&middot;&nbsp;'+R(l.sales))+'</span></div>';}
 
-  /* Top 5 per type (only lines with sales) */
   var tS=L.filter(function(l){return l.t==='s'&&l.sales>0;}).slice(0,5);
   var tC=L.filter(function(l){return l.t==='c'&&l.sales>0;}).slice(0,5);
   $('tops').innerHTML=tS.map(topRow).join('');
   $('topc').innerHTML=tC.map(topRow).join('');
-
-  /* All other lines — includes zero-sales lines at the bottom */
   var inTop=new Set([].concat(tS,tC).map(function(l){return l.rank;}));
-  var rest=L.filter(function(l){return !inTop.has(l.rank);});
+  var rest=L.filter(function(l){return!inTop.has(l.rank);});
   $('moreh').textContent='All other lines ('+rest.length+')';
   $('more').innerHTML=rest.map(moreRow).join('');
 
   sel(1);
 }
 
-/* === Detail chart (shared) === */
+/* ===== detail chart ===== */
 function sel(r){
-  var l=G_L.find(function(x){return x.rank===r;}); if(!l)return;
-  var db=$('detail-body'); if(db)db.style.display='';
+  var l=G_L.find(function(x){return x.rank===r;});if(!l)return;
+  var db=$('detail-body');if(db)db.style.display='';
   document.querySelectorAll('[data-r]').forEach(function(e){e.classList.toggle('sel',+e.dataset.r===r);});
   $('dtitle').innerHTML=l.n+' <span>&middot; daily sales</span>';
-  $('dtot').textContent=R(l.sales); $('duni').textContent=l.qty;
+  $('dtot').textContent=R(l.sales);$('duni').textContent=l.qty;
   var mx=Math.max.apply(null,l.s.concat([1]));
   var bIdx=l.s.indexOf(Math.max.apply(null,l.s));
-  var bestDateStr=G_DATES.length>bIdx?G_DATES[bIdx]:null;
-  var bestDayNum=bestDateStr?parseInt(bestDateStr.slice(-2)):(bIdx+1);
+  var bestDayNum=G_DATES.length>bIdx?parseInt(G_DATES[bIdx].slice(-2)):(bIdx+1);
   $('dbest').textContent=l.s[bIdx]>0?G_MON_SHORT+' '+bestDayNum:'—';
   var bars='',labs='';
-  /* Loop only over loaded days — no future dashed bars overflowing the right side.
-     Zero-sales days get a 2% stub bar (faint) so the calendar day is visibly present. */
   for(var i=0;i<G_LOADED;i++){
-    var v=l.s[i]||0, u=l.q[i]||0;
+    var v=l.s[i]||0,u=l.q[i]||0;
     var dayNum=G_DATES.length>i?parseInt(G_DATES[i].slice(-2)):(i+1);
     var tip=G_MON_SHORT+' '+dayNum+(v>0?': '+R(v)+' · '+u+' units':': no sales');
     var ht=v>0?Math.max(Math.round(v/mx*100),3):2;
@@ -416,37 +470,32 @@ function sel(r){
     bars+='<div class="day" title="'+tip+'"><div class="db" style="height:'+ht+'%;'+op+'"></div></div>';
     labs+='<div class="dl">'+dayNum+'</div>';
   }
-  $('days').innerHTML=bars; $('dayx').innerHTML=labs;
+  $('days').innerHTML=bars;$('dayx').innerHTML=labs;
 }
+document.addEventListener('click',function(e){var r=e.target.closest('[data-r]');if(r)sel(+r.dataset.r);});
 
-document.addEventListener('click',function(e){
-  var r=e.target.closest('[data-r]'); if(r)sel(+r.dataset.r);
-});
-
-/* === No-data state (empty month — clean message, never fallback snapshot) === */
+/* ===== no-data state ===== */
 function showNoData(month){
-  G_L=[]; G_LOADED=0; G_DATES=[]; G_HEALTH=[];
+  G_L=[];G_LOADED=0;G_DATES=[];
   var parts=month.split('-');
   var label=(MON[parseInt(parts[1],10)-1]||'?')+' '+parts[0];
   if($('meta-asat'))$('meta-asat').textContent='—';
   if($('meta-src'))$('meta-src').textContent='no data for '+label;
-  if($('completeness-area'))$('completeness-area').style.display='none';
-  if($('eod-banner'))$('eod-banner').style.display='none';
-  if($('boundary-note'))$('boundary-note').style.display='none';
+  if($('health-area'))$('health-area').style.display='none';
   var msg='<div class="nodata"><b>No data for '+label+'</b>No HMR Sushi sales recorded for this month.</div>';
   ['k-cash','k-comm','k-owe'].forEach(function(id){if($(id))$(id).textContent='R 0';});
   if($('k-units'))$('k-units').textContent='0';
-  if($('proj'))$('proj').textContent='—'; if($('projn'))$('projn').textContent='';
+  if($('proj'))$('proj').textContent='—';if($('projn'))$('projn').textContent='';
   if($('daily-bars'))$('daily-bars').innerHTML=msg;
   if($('cum'))$('cum').innerHTML=msg;
   ['tops','topc','more','flags-area'].forEach(function(id){if($(id))$(id).innerHTML='';});
-  if($('sps'))$('sps').style.width='0%'; if($('spc'))$('spc').style.width='0%';
-  if($('lgs'))$('lgs').textContent='R 0'; if($('lgc'))$('lgc').textContent='R 0';
-  if($('days'))$('days').innerHTML=''; if($('dayx'))$('dayx').innerHTML='';
+  if($('sps'))$('sps').style.width='0%';if($('spc'))$('spc').style.width='0%';
+  if($('lgs'))$('lgs').textContent='R 0';if($('lgc'))$('lgc').textContent='R 0';
+  if($('days'))$('days').innerHTML='';if($('dayx'))$('dayx').innerHTML='';
   if($('detail-body'))$('detail-body').style.display='none';
 }
 
-/* === Commission change — live recalc, no reload === */
+/* ===== commission live recalc ===== */
 $('comm-select').addEventListener('change',function(){
   G_RATE=parseFloat(this.value);
   if(!G_L.length)return;
@@ -454,107 +503,50 @@ $('comm-select').addEventListener('change',function(){
   $('k-comm').textContent=R(cash*G_RATE);
   $('k-owe').textContent=R(cash*(1-G_RATE));
   var pct=(G_RATE*100).toLocaleString('en-ZA',{maximumFractionDigits:1});
-  var hint=$('k-comm-hint'); if(hint)hint.textContent=pct+'% — what you keep';
+  var hint=$('k-comm-hint');if(hint)hint.textContent=pct+'% — what you keep';
 });
 
-/* === Month change — full reload === */
-$('month-input').addEventListener('change',loadAndRender);
-
-/* === Flags from live consignment endpoint (no-sales + price mismatches) === */
-function renderFlags(noSales,priceFlags){
-  var fa=$('flags-area'); if(!fa)return;
+/* ===== flags (no-sales lines) ===== */
+function renderFlags(noSales){
+  var fa=$('flags-area');if(!fa)return;
   var h='';
   if(noSales&&noSales.length){
     var names=noSales.map(function(l){return l.desc;}).join(' &middot; ');
-    h+='<div class="flag"><div>'+
-       '<div class="ft">No sales this month &mdash; '+noSales.length+' line'+(noSales.length!==1?'s':'')+'</div>'+
-       '<div class="fn">'+names+'</div>'+
-       '</div></div>';
-  }
-  if(priceFlags&&priceFlags.length){
-    priceFlags.forEach(function(f){
-      h+='<div class="flag"><div>'+
-         '<div class="ft">Price update pending</div>'+
-         '<div class="fn">'+f.desc+' &mdash; Sigma R '+parseFloat(f.sigma_price).toFixed(2)+', DB R '+parseFloat(f.db_price).toFixed(2)+'</div>'+
-         '</div></div>';
-    });
+    h+='<div class="flag"><div><div class="ft">No sales this month &mdash; '+noSales.length+' line'+(noSales.length!==1?'s':'')+'</div><div class="fn">'+names+'</div></div></div>';
   }
   fa.innerHTML=h;
 }
 
-/* === Completeness strip renderer === */
-function renderHealth(health){
-  var area=$('completeness-area'), strip=$('health-strip');
-  if(!area||!strip)return;
-  if(!health||!health.length){area.style.display='none';return;}
-  var STATUS_COL={COMPLETE:'#22c55e',EOD_MISSING:'#ef4444',DIVERGENT:'#f59e0b',NO_TRADE:'#94a3b8',FUTURE:'#cbd5e1'};
-  var STATUS_LBL={COMPLETE:'Complete',EOD_MISSING:'EOD missing',DIVERGENT:'Divergent',NO_TRADE:'No trade',FUTURE:'Future'};
-  var h='';
-  health.forEach(function(row){
-    var col=STATUS_COL[row.status]||'#cbd5e1';
-    var lbl=STATUS_LBL[row.status]||row.status;
-    var day=parseInt((row.sale_date||'').slice(-2));
-    var tip=row.sale_date+(row.day_name?' ('+row.day_name+')':'')+' — '+lbl+(row.variance_pct!=null?' · '+row.variance_pct+'%':'');
-    var op=row.status==='FUTURE'?'0.3':'1';
-    h+='<div title="'+tip+'" style="width:22px;height:22px;border-radius:4px;background:'+col+';opacity:'+op+
-       ';display:flex;align-items:center;justify-content:center;font:700 8px Roboto;color:#fff;cursor:default">'+day+'</div>';
-  });
-  strip.innerHTML=h;
-  area.style.display='';
-}
+/* ===== unfrost ===== */
+var allCards=[].slice.call(document.querySelectorAll('.glass'));
+function unfrostAll(){allCards.forEach(function(c,i){setTimeout(function(){c.classList.remove('loading');c.classList.add('ready');},i*80);});}
+function refrostAll(){allCards.forEach(function(c){c.classList.remove('ready');c.classList.add('loading');});}
 
-/* === Bootstrap — source: sigma_sales (DBUMBA) via rpc_consignment_lines + rpc_feed_health_daily === */
+/* ===== load and render ===== */
+$('month-input').addEventListener('change',loadAndRender);
 async function loadAndRender(){
   var monthEl=$('month-input');
   var month=monthEl?monthEl.value:'2026-06';
   var parts=month.split('-');
-  var monthYear=parts[0]+'-'+parts[1];
   G_MON_SHORT=MON[parseInt(parts[1],10)-1]||'Jun';
-
-  var mm=$('meta-month'); if(mm)mm.textContent='HMR Sushi · '+G_MON_SHORT+' '+parts[0];
-  var commEl=$('comm-select'); if(commEl)G_RATE=parseFloat(commEl.value);
+  var mm=$('meta-month');if(mm)mm.textContent='HMR Sushi &middot; '+G_MON_SHORT+' '+parts[0];
+  var commEl=$('comm-select');if(commEl)G_RATE=parseFloat(commEl.value);
   var pct=(G_RATE*100).toLocaleString('en-ZA',{maximumFractionDigits:1});
-  var hint=$('k-comm-hint'); if(hint)hint.textContent=pct+'% — what you keep';
-
-  /* Boundary note: pre-June 2026 sushi is structurally understated (no combo PLUs) */
-  var bn=$('boundary-note');
-  if(bn)bn.style.display=(monthYear<'2026-06')?'':'none';
-
-  /* Reset EOD banner and completeness strip while loading */
-  var eod=$('eod-banner'); if(eod)eod.style.display='none';
-  if($('completeness-area'))$('completeness-area').style.display='none';
+  var hint=$('k-comm-hint');if(hint)hint.textContent=pct+'% — what you keep';
+  var bn=$('boundary-note');if(bn)bn.style.display=(month<'2026-06')?'':'none';
+  if($('health-area'))$('health-area').style.display='none';
+  refrostAll();
 
   var apiOk=false;
   try{
-    var resp=await fetch('/api/dev-corner/sigma-lines?month='+encodeURIComponent(month),
-      {headers:{Accept:'application/json'}});
+    var resp=await fetch('/api/dev-corner/sigma-lines?month='+encodeURIComponent(month),{headers:{Accept:'application/json'}});
     if(resp.ok){
       var d=await resp.json();
       apiOk=true;
       if(d.lines&&d.lines.length){
         if($('meta-asat')&&d.as_at)$('meta-asat').textContent=fmtDate(d.as_at);
-        if($('meta-src'))$('meta-src').textContent='sigma_sales (DBUMBA) · nightly';
-        render(d.lines, d.loaded_days, d.days_in_month||30, d.dates||[], d.health||[]);
-
-        /* Completeness strip */
-        renderHealth(d.health);
-
-        /* EOD / divergent banner */
-        var flagged=(d.health||[]).filter(function(h){return h.is_flagged;});
-        var eodMissing=flagged.filter(function(h){return h.status==='EOD_MISSING';});
-        var divergent=flagged.filter(function(h){return h.status==='DIVERGENT';});
-        if(eodMissing.length&&$('eod-banner')&&$('eod-banner-text')){
-          var names=eodMissing.map(function(h){return h.sale_date+' ('+h.day_name+')'}).join(', ');
-          $('eod-banner-text').textContent=eodMissing.length+' day'+(eodMissing.length!==1?'s':'')+' with no EOD export: '+names+'. Figures for those days are from Sigma ledger only — store must regenerate end-of-day.';
-          $('eod-banner').style.display='';
-        } else if(divergent.length&&$('eod-banner')&&$('eod-banner-text')){
-          $('eod-banner').style.background='rgba(245,158,11,.10)';
-          $('eod-banner').style.borderColor='rgba(245,158,11,.30)';
-          $('eod-banner').style.borderLeftColor='#f59e0b';
-          $('eod-banner').firstElementChild.style.color='#b45309';
-          $('eod-banner-text').textContent=divergent.length+' day'+(divergent.length!==1?'s':'')+' with >3% DBUMBA/PRSSALE variance — investigate.';
-          $('eod-banner').style.display='';
-        }
+        if($('meta-src'))$('meta-src').textContent='sigma_sales · nightly';
+        render(d.lines,d.loaded_days,d.days_in_month||30,d.dates||[]);
       } else {
         showNoData(month);
       }
@@ -562,57 +554,40 @@ async function loadAndRender(){
   }catch(e){}
 
   if(!apiOk){
-    /* Genuine API failure only — show Jun 1-4 snapshot with clear label */
     if($('meta-asat'))$('meta-asat').textContent='04 Jun 2026 (snapshot)';
     if($('meta-src'))$('meta-src').textContent='fallback — API unavailable';
     G_MON_SHORT='Jun';
-    var mm2=$('meta-month'); if(mm2)mm2.textContent='HMR Sushi · Jun 2026';
-    render(L_FB.map(function(l){return{n:l.n,t:l.t,s:l.s.slice(),q:l.q.slice()};}),4,30,[],[]);
+    var mm2=$('meta-month');if(mm2)mm2.textContent='HMR Sushi &middot; Jun 2026';
+    render(L_FB.map(function(l){return{n:l.n,t:l.t,s:l.s.slice(),q:l.q.slice()};}),4,30,[]);
   }
 
-  /* Secondary: no-sales + price flags from consignment endpoint */
+  unfrostAll();
+
   try{
-    var cr=await fetch('/api/dev-corner/consignment?month='+encodeURIComponent(month)+'&rate='+G_RATE,
-      {headers:{Accept:'application/json'}});
-    if(cr.ok){var cd=await cr.json(); renderFlags(cd.no_sales,cd.price_flags);}
+    var cr=await fetch('/api/dev-corner/consignment?month='+encodeURIComponent(month)+'&rate='+G_RATE,{headers:{Accept:'application/json'}});
+    if(cr.ok){var cd=await cr.json();renderFlags(cd.no_sales);}
   }catch(e){}
 }
 
 loadAndRender();
 
-/* === Weather: live Open-Meteo, fallback on error === */
-/* Fallback weather dates are generated dynamically from today so they stay correct every week */
-var WX_FB=(function(){
-  var now=new Date(),t=[],i;
-  for(i=0;i<7;i++){var d=new Date(now.getTime()+i*86400000);t.push(d.toISOString().slice(0,10));}
-  return{time:t,weather_code:[3,1,3,2,0,3,3],temperature_2m_max:[15.4,18.2,20.3,19.9,19.9,19.7,20.9],temperature_2m_min:[0.6,1.3,4.0,4.3,3.8,8.5,9.2],precipitation_probability_max:[0,0,0,0,0,0,0]};
-})();
+/* ===== weather ===== */
+var WX_FB=(function(){var now=new Date(),t=[],i;for(i=0;i<7;i++){var d=new Date(now.getTime()+i*86400000);t.push(d.toISOString().slice(0,10));}return{time:t,weather_code:[3,1,3,2,0,3,3],temperature_2m_max:[15.4,18.2,20.3,19.9,19.9,19.7,20.9],temperature_2m_min:[0.6,1.3,4.0,4.3,3.8,8.5,9.2],precipitation_probability_max:[0,0,0,0,0,0,0]};})();
 var DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-function icon(c,r){
-  if(r>=40)return'<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 16a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 16z"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="13" y1="20" x2="13" y2="22"/></svg>';
-  if(c<=1)return'<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><line x1="12" y1="3" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="21"/><line x1="3" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="21" y2="12"/><line x1="5.5" y1="5.5" x2="6.9" y2="6.9"/><line x1="17.1" y1="17.1" x2="18.5" y2="18.5"/><line x1="5.5" y1="18.5" x2="6.9" y2="17.1"/><line x1="17.1" y1="6.9" x2="18.5" y2="5.5"/></svg>';
-  if(c===2)return'<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="9" r="3"/><path d="M11 18a4 4 0 010-8 5 5 0 019.6 1A3.2 3.2 0 0119 18z" stroke="#5b7da3"/></svg>';
-  return'<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 18a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 18z"/></svg>';
-}
+function icon(c,r){if(r>=40)return'<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 16a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 16z"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="13" y1="20" x2="13" y2="22"/></svg>';if(c<=1)return'<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><line x1="12" y1="3" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="21"/><line x1="3" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="21" y2="12"/><line x1="5.5" y1="5.5" x2="6.9" y2="6.9"/><line x1="17.1" y1="17.1" x2="18.5" y2="18.5"/><line x1="5.5" y1="18.5" x2="6.9" y2="17.1"/><line x1="17.1" y1="6.9" x2="18.5" y2="5.5"/></svg>';if(c===2)return'<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="9" r="3"/><path d="M11 18a4 4 0 010-8 5 5 0 019.6 1A3.2 3.2 0 0119 18z" stroke="#5b7da3"/></svg>';return'<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 18a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 18z"/></svg>';}
 function renderWx(d,live){
   var todayStr=new Date().toISOString().slice(0,10);
   var h='';
   for(var i=0;i<d.time.length;i++){
     var dt=new Date(d.time[i]+'T00:00:00');
-    var isToday=(d.time[i]===todayStr);
-    h+='<div class="wd glass'+(isToday?' today':'')+'">'+
-       '<div class="dn">'+DOW[dt.getDay()]+'</div>'+
-       '<div class="dd">'+dt.getDate()+' '+MON[dt.getMonth()]+'</div>'+
-       icon(d.weather_code[i],d.precipitation_probability_max[i])+
-       '<div class="hi">'+Math.round(d.temperature_2m_max[i])+'&deg;</div>'+
-       '<div class="lo">'+Math.round(d.temperature_2m_min[i])+'&deg;</div>'+
-       '<div class="rn">'+d.precipitation_probability_max[i]+'%</div></div>';
+    var isToday=d.time[i]===todayStr;
+    h+='<div class="wd glass ready'+(isToday?' today':'')+'"><div class="cc" style="opacity:1"><div class="dn">'+DOW[dt.getDay()]+'</div><div class="dd">'+dt.getDate()+' '+dt.toLocaleString('en-ZA',{month:'short'})+'</div>'+icon(d.weather_code[i],d.precipitation_probability_max[i])+'<div class="hi">'+Math.round(d.temperature_2m_max[i])+'&deg;</div><div class="lo">'+Math.round(d.temperature_2m_min[i])+'&deg;</div><div class="rn">'+d.precipitation_probability_max[i]+'%</div></div></div>';
   }
   $('wxstrip').innerHTML=h;
-  $('wx-status').textContent='Delareyville · '+(live?'live':'last snapshot');
+  $('wx-status').textContent='Delareyville &middot; '+(live?'live':'unavailable');
 }
 fetch("https://api.open-meteo.com/v1/forecast?latitude=-26.68&longitude=25.45&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Africa/Johannesburg&forecast_days=7")
-  .then(function(r){return r.json();}).then(function(j){renderWx(j.daily,true);}).catch(function(){renderWx(WX_FB,false);});
+  .then(function(r){return r.json();}).then(function(j){renderWx(j.daily,true);}).catch(function(){renderWx(WX_FB,false);$('wx-status').textContent='Delareyville &middot; weather unavailable';});
 </script>
 </body>
 </html>
