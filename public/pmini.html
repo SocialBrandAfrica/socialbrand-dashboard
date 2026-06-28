@@ -170,10 +170,6 @@ h1,h2,h3,.lab{font-family:Inter,sans-serif}
 .litwrap{position:relative}
 .tline{position:absolute;left:0;right:0;border-top:2px dashed var(--gold);pointer-events:none}
 .tline span{position:absolute;right:2px;top:-15px;font:700 9.5px Inter;color:var(--gold-d)}
-.dots{display:flex;gap:4px;margin:8px 0 2px;flex-wrap:wrap}
-.dot2{width:10px;height:10px;border-radius:50%;background:#cfd9e4;box-shadow:inset 0 1px 2px rgba(30,60,100,.3)}
-.dot2.ok{background:var(--pos)} .dot2.miss{background:var(--neg)}
-.dot2.today{outline:2px solid var(--blue);outline-offset:1px}
 .days .db.dim{opacity:.30}
 .comp{font-size:11px;color:var(--slate);margin-top:8px}
 .comp b{color:var(--ink)}
@@ -612,11 +608,6 @@ function renderKitchen(){
       lbars+='<div class="day" title="Day '+(i+1)+(el?(': '+v.toFixed(2)+'L · '+R(x.rand[i])+' · profit '+R(x.prof[i])+(isToday?' (today, still trading)':'')):' — to come')+'"><div class="db '+(el?'':'empty')+' '+(gold?'gold':'')+'" style="height:'+(el?(v>0?Math.max(v/mxL*100,3):0):100)+'%"></div></div>';
       labs+='<div class="dl">'+(i+1)+'</div>';
     }
-    let dots='';
-    for(let d=x.winStart;d<=x.dim;d++){
-      const cls=d<=x.done?(x.lit[d-1]>0?'ok':'miss'):(x.today===d?'today '+(x.lit[d-1]>0?'ok':''):'');
-      dots+='<span class="dot2 '+cls+'" title="Day '+d+': '+(d<=x.done?(x.lit[d-1]>0?x.lit[d-1].toFixed(2)+'L':'NOT MADE / no sales'):(x.today===d?'today':'to come'))+'"></span>';
-    }
     let kcum=[],run=0;for(let i=0;i<x.lastIdx;i++){run+=x.rand[i];kcum.push(run);}
     let cumR=0,cumP=0,trs='';
     for(let i=x.winStart-1;i<x.lastIdx;i++){
@@ -635,7 +626,6 @@ function renderKitchen(){
       +'<div class="days litwrap" style="height:104px">'+lbars+'<div class="tline" style="bottom:'+TARGET_L/mxL*100+'%"><span>'+TARGET_L+'L</span></div></div>'
       +'<div class="dayx">'+labs+'</div>'
       +tempRow(x.dim)
-      +'<div class="dots">'+dots+'</div>'
       +'</div></div>'
       +'<div class="panel glass ready"><div class="cc" style="opacity:1">'
       +'<h2>Cumulative project cash · '+st.short+'</h2>'
