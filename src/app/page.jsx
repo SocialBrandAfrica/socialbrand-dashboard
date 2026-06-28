@@ -1436,55 +1436,23 @@ export default function Home() {
       })
   }, [])
 
-  // ── Lost Sales: negative SOH items OOS on the last 2 snapshot dates ─────────
-  // Requires soh < 0 on BOTH the latest and previous date to filter one-day
-  // blips. Falls back to single-date if only one date is available.
+  // ── Lost Sales: OOS items from l2_stock_position (SB-CC-PRSSALE-RETIRE-001) ──
+  // soh <= 0 + sales_qty_91d > 0 = active-line OOS. class filter excludes ghost stock.
+  // Always-latest sigma-native position; two-date dedup no longer needed.
   useEffect(() => {
-    if (!storeCodes.length || !availableDates.length) return
+    if (!storeCodes.length) return
     let cancelled = false
-    const latestDate = availableDates[0]  // sorted newest-first
-    const prevDate   = availableDates[1] ?? null
-    const dates      = prevDate ? [latestDate, prevDate] : [latestDate]
 
-    // Active-line filter: must have sold in last 364 days (replaces the old 3-day hard cutoff)
-    const activeLineCutoff = new Date()
-    activeLineCutoff.setDate(activeLineCutoff.getDate() - ACTIVE_LINE_LOOKBACK)
-    const cutoff = activeLineCutoff.toISOString().slice(0, 10)
-
-    // True OOS only: period_qty = 0 excludes Signal B (SOH<=0 but still selling = Ledger Discrepancy)
     supabase
-      .from('daily_snapshots')
-      .select('ean,description,dept_name,sub_dept_name,soh,sell_price,last_sales_date_iso,store_name,store_code,snapshot_date,period_qty,unit_cost')
-      .in('store_code', storeCodes)
-      .in('snapshot_date', dates)
-      .lte('soh', 0)
-      .or('period_qty.is.null,period_qty.eq.0')
-      .gte('last_sales_date_iso', cutoff)
-      .eq('is_placeholder', false)
-      .order('soh', { ascending: true })
-      .limit(200)
+      .rpc('rpc_lost_sales_oos', { p_store_codes: storeCodes })
       .then(({ data, error }) => {
         if (cancelled) return
         if (error) { console.error('[lostSales]', error.message); return }
-        const rows = data ?? []
-        let items
-        if (prevDate) {
-          // Keep only EAN+store combos that are OOS on both dates
-          const oosCount = {}
-          for (const r of rows) {
-            const key = `${r.ean}|${r.store_code}`
-            oosCount[key] = (oosCount[key] ?? 0) + 1
-          }
-          const twoDayOos = new Set(Object.keys(oosCount).filter(k => oosCount[k] >= 2))
-          items = rows.filter(r => r.snapshot_date === latestDate && twoDayOos.has(`${r.ean}|${r.store_code}`))
-        } else {
-          items = rows
-        }
-        setLostSalesItems(items)
+        setLostSalesItems(data ?? [])
       })
 
     return () => { cancelled = true }
-  }, [storeCodes, availableDates])
+  }, [storeCodes])
 
   // ── Lost Sales Timeline: fetch 28-day sold/OOS bars once items are known ────
   useEffect(() => {

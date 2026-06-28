@@ -53,36 +53,30 @@ BEGIN
     SET LOCAL statement_timeout = '60s';
 
   IF COALESCE(p_activity, 'movers') = 'non_movers' THEN
-    -- STOCK FACTS (held): soh / period_qty=0 / classification stay on daily_snapshots.
+    -- STOCK FACTS: migrated to l2_stock_position (SB-CC-PRSSALE-RETIRE-001).
+    -- Always-latest sigma-native position; p_dates is a no-op in this branch.
     RETURN QUERY
-      SELECT latest.ean, latest.description, latest.dept_name,
-             latest.sub_dept_name, latest.size, latest.unit,
-             latest.total_sales, latest.total_qty
-      FROM (
-          SELECT DISTINCT ON (s.ean)
-              s.ean, s.description, s.dept_name, s.sub_dept_name,
-              s.size, s.unit,
-              ROUND((s.soh * COALESCE(s.sell_price, 0))::numeric, 2) AS total_sales,
-              s.soh::numeric                                          AS total_qty
-          FROM daily_snapshots s
-          WHERE s.store_code    = ANY(p_store_codes)
-            AND s.snapshot_date  = ANY(v_dates)
-            AND s.soh             > 0
-            AND s.period_qty      = 0
-            AND (p_parents OR NOT s.is_placeholder)
-            AND (p_dept    IS NULL OR TRIM(replace(s.dept_name, '.', '')) = TRIM(replace(p_dept, '.', '')))
-            AND (p_subdept IS NULL OR s.sub_dept_name = p_subdept)
-            AND (p_eans    IS NULL OR s.ean            = ANY(p_eans))
-            AND classify_snapshot_item(s.dept_name, s.sub_dept_name,
-                                       s.soh, s.last_sales_date_iso) IS NULL
-            AND NOT (
-                is_fresh_perishable(s.dept_name, s.sub_dept_name)
-                AND (s.last_sales_date_iso IS NULL
-                     OR s.last_sales_date_iso < CURRENT_DATE - INTERVAL '30 days')
-            )
-          ORDER BY s.ean, s.snapshot_date DESC
-      ) latest
-      ORDER BY latest.total_sales DESC
+      SELECT
+          b.ean::text,
+          COALESCE(sp.description, a.description, a.short_description)  AS description,
+          COALESCE(sp.dept_name, 'UNMAPPED')                            AS dept_name,
+          COALESCE(sp.subdept_name, 'UNMAPPED')                         AS sub_dept_name,
+          pc.size_label                                                  AS size,
+          COALESCE(a.unit, pc.detail_unit)                              AS unit,
+          ROUND((sp.soh * COALESCE(sp.unit_cost, 0))::numeric, 2)       AS total_sales,
+          sp.soh::numeric                                                AS total_qty
+      FROM l2_stock_position sp
+      JOIN   v_ean_bridge b         ON b.store_code = sp.store_code AND b.product_code = sp.product_code
+      LEFT   JOIN sigma_articles a  ON a.store_code = sp.store_code AND a.product_code = sp.product_code
+      LEFT   JOIN product_catalog pc ON pc.store_code = sp.store_code AND pc.ean = b.ean
+      WHERE sp.store_code      = ANY(p_store_codes)
+        AND sp.slow_mover_signal = TRUE
+        AND sp.soh               > 0
+        AND (p_parents OR sp.class NOT IN ('PRODUCTION', 'NON_STOCK'))
+        AND (p_dept    IS NULL OR TRIM(replace(sp.dept_name, '.', '')) = TRIM(replace(p_dept, '.', '')))
+        AND (p_subdept IS NULL OR sp.subdept_name = p_subdept)
+        AND (p_eans    IS NULL OR b.ean = ANY(p_eans))
+      ORDER BY total_sales DESC
       LIMIT 40;
 
   ELSE
