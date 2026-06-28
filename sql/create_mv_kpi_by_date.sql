@@ -41,26 +41,28 @@ SET statement_timeout = '10min';
 
 DROP MATERIALIZED VIEW IF EXISTS public.mv_kpi_by_date;
 
+-- SB-CC-PRSSALE-RETIRE-001: stock CTE migrated from daily_snapshots to
+-- l2_soh_daily (historical SOH by date) + l2_stock_position (class signals).
+-- total_qty dropped (PRSSALE ~20% divergence from Sigma; NULL for backward compat).
+-- store_name sourced from stores LEFT JOIN in main SELECT (was ds.store_name).
+-- LY stock will be NULL for dates pre-dating l2_soh_daily ingestion -- R22: surface not hide.
 CREATE MATERIALIZED VIEW public.mv_kpi_by_date AS
 WITH stock AS (
   SELECT
-    ds.store_code,
-    ds.store_name,
-    ds.snapshot_date,
-    sum(ds.today_qty) AS total_qty,
-    count(*) FILTER (WHERE ds.soh < 0::numeric) AS neg_soh_count,
-    count(*) FILTER (WHERE ds.period_qty = 0::numeric AND ds.soh > 0::numeric AND ds.is_placeholder = false
-        AND classify_snapshot_item(ds.dept_name, ds.sub_dept_name, ds.soh, ds.last_sales_date_iso) IS NULL) AS slow_mover_count,
-    round(sum(
-        CASE WHEN ds.period_qty = 0::numeric AND ds.soh > 0::numeric AND ds.is_placeholder = false
-              AND classify_snapshot_item(ds.dept_name, ds.sub_dept_name, ds.soh, ds.last_sales_date_iso) IS NULL
-             THEN ds.soh * COALESCE(ds.unit_cost, 0::numeric) ELSE 0::numeric END), 2) AS capital_tied,
-    round(sum(
-        CASE WHEN ds.period_qty = 0::numeric AND ds.soh > 0::numeric AND ds.is_placeholder = false
-              AND (classify_snapshot_item(ds.dept_name, ds.sub_dept_name, ds.soh, ds.last_sales_date_iso) = ANY (ARRAY['PRODUCTION'::text, 'NON_STOCK'::text]))
-             THEN ds.soh * COALESCE(ds.unit_cost, 0::numeric) ELSE 0::numeric END), 2) AS ghost_stock_value
-  FROM daily_snapshots ds
-  GROUP BY ds.store_code, ds.store_name, ds.snapshot_date
+    ls.store_code,
+    ls.snapshot_date,
+    SUM(CASE WHEN ls.soh < 0 THEN 1 ELSE 0 END)::bigint             AS neg_soh_count,
+    SUM(CASE WHEN sp.slow_mover_signal THEN 1 ELSE 0 END)::bigint   AS slow_mover_count,
+    COALESCE(ROUND(SUM(
+      CASE WHEN sp.class = 'NORMAL' AND ls.soh > 0
+      THEN ls.soh * COALESCE(sp.unit_cost, 0) END)::numeric, 2), 0) AS capital_tied,
+    COALESCE(ROUND(SUM(
+      CASE WHEN sp.class IN ('PRODUCTION', 'NON_STOCK') AND ls.soh > 0
+      THEN ls.soh * COALESCE(sp.unit_cost, 0) END)::numeric, 2), 0) AS ghost_stock_value
+  FROM l2_soh_daily ls
+  JOIN l2_stock_position sp
+    ON sp.store_code = ls.store_code AND sp.product_code = ls.product_code
+  GROUP BY ls.store_code, ls.snapshot_date
 ),
 sales AS (
   SELECT
@@ -74,13 +76,13 @@ sales AS (
   GROUP BY ss.store_code, ss.sale_date
 )
 SELECT
-  COALESCE(st.store_code, sa.store_code) AS store_code,
-  COALESCE(st.store_name, s.store_name) AS store_name,
-  COALESCE(st.snapshot_date, sa.sale_date) AS snapshot_date,
+  COALESCE(st.store_code, sa.store_code)     AS store_code,
+  s.store_name,
+  COALESCE(st.snapshot_date, sa.sale_date)   AS snapshot_date,
   sa.total_sales,
   sa.total_sales_ex_vat,
   sa.total_cost,
-  st.total_qty,
+  NULL::numeric                               AS total_qty,
   st.neg_soh_count,
   st.slow_mover_count,
   st.capital_tied,

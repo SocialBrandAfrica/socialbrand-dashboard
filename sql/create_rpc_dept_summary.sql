@@ -86,40 +86,33 @@ BEGIN
                 AND  pc.sigma_product_code ~ '^[0-9]+$'))
     GROUP  BY COALESCE(sd.name, 'UNMAPPED')
   ),
-  latest AS (
-    SELECT store_code, MAX(snapshot_date) AS d
-    FROM   daily_snapshots
-    WHERE  store_code = ANY(p_store_codes) AND snapshot_date = ANY(v_dates)
-    GROUP  BY store_code
-  ),
-  prssale_dept AS (
-    SELECT ds.dept_name,
-           SUM(ds.today_qty)::numeric AS total_qty,
-           ROUND(SUM(
-               CASE WHEN ds.snapshot_date = l.d
-                     AND ds.period_qty = 0 AND ds.soh > 0 AND ds.is_placeholder = FALSE
-                     AND classify_snapshot_item(ds.dept_name, ds.sub_dept_name, ds.soh, ds.last_sales_date_iso) IS NULL
-                     AND NOT (is_fresh_perishable(ds.dept_name, ds.sub_dept_name)
-                              AND (ds.last_sales_date_iso IS NULL OR ds.last_sales_date_iso < CURRENT_DATE - INTERVAL '30 days'))
-                    THEN ds.soh * COALESCE(ds.unit_cost, 0) ELSE 0 END
-           )::numeric, 2) AS capital_tied
-    FROM   daily_snapshots ds
-    JOIN   latest l ON l.store_code = ds.store_code
-    WHERE  ds.store_code = ANY(p_store_codes)
-      AND  ds.snapshot_date = ANY(v_dates)
-      AND  (p_subdept IS NULL OR ds.sub_dept_name = p_subdept)
-      AND  (p_eans    IS NULL OR ds.ean = ANY(p_eans))
-    GROUP  BY ds.dept_name
+  -- SB-CC-PRSSALE-RETIRE-001: capital_tied migrated to l2_stock_position.
+  -- Always-latest sigma-native position; no date scan on daily_snapshots.
+  -- total_qty was SUM(today_qty) from PRSSALE (~20% Sigma divergence) -- dropped.
+  sigma_cap AS (
+    SELECT
+      COALESCE(sp.dept_name, 'UNMAPPED') AS dept_name,
+      ROUND(SUM(
+        CASE WHEN sp.class = 'NORMAL' AND sp.soh > 0
+        THEN sp.soh * COALESCE(sp.unit_cost, 0) END)::numeric, 2) AS capital_tied
+    FROM l2_stock_position sp
+    WHERE sp.store_code = ANY(p_store_codes)
+      AND (p_subdept IS NULL OR sp.subdept_name = p_subdept)
+      AND (p_eans    IS NULL OR sp.product_code IN (
+            SELECT b.product_code FROM v_ean_bridge b
+            WHERE b.store_code = ANY(p_store_codes) AND b.ean = ANY(p_eans)
+          ))
+    GROUP BY sp.dept_name
   )
-  SELECT COALESCE(s.dept_name, p.dept_name) AS dept_name,
+  SELECT COALESCE(s.dept_name, c.dept_name) AS dept_name,
          s.total_sales,
          s.total_cost,
-         p.total_qty,
+         NULL::numeric                       AS total_qty,
          s.total_sales_ex_vat,
-         p.capital_tied
+         c.capital_tied
   FROM   sigma_dept s
-  FULL OUTER JOIN prssale_dept p ON p.dept_name = s.dept_name
-  ORDER  BY COALESCE(s.dept_name, p.dept_name);
+  FULL OUTER JOIN sigma_cap c ON c.dept_name = s.dept_name
+  ORDER  BY COALESCE(s.dept_name, c.dept_name);
 END;
 $function$;
 
