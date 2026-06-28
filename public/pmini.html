@@ -338,7 +338,7 @@ const KCFG=[
   soup:[{c:810141,n:"Veggie Soup 350ml Cup",lit:.35,cost:6.95},
         {c:842194,n:"Veggie Soup 1L",lit:1,cost:18.82},
         {c:842668,n:"Veggie Soup 1L Frozen",lit:1,cost:18.82}],
-  bwors:{c:819888,n:"Boerewors Roll",relaunch:true}}
+  bwors:{c:819888,n:"Boerewors Roll"}}
 ];
 
 async function sbRest(path){const r=await fetch(SB_URL+'/rest/v1/'+path,{headers:HDRS});if(!r.ok)throw new Error(path.split('?')[0]+' '+r.status);return r.json();}
@@ -656,11 +656,9 @@ function renderKitchen(){
     const fsHit=fsList.filter(f=>f.sold).length;
     const bwUu=x.bw.q.slice(0,x.lastIdx).reduce((a,b)=>a+b,0),bwRr=x.bw.s.slice(0,x.lastIdx).reduce((a,b)=>a+b,0);
     const offDay=x.bw.s.some((v,i)=>{const dw=dowOf(month,i+1);return v>0&&dw!==5&&dw!==6;});
-    const relNote=x.bw.relaunch?'<div class="kfs">Relaunch pending — sold Feb 2025 to Feb 2026, dark since. Honest zeros until the counter starts.</div>':'';
     return '<div class="panel glass ready"><div class="cc" style="opacity:1">'
       +'<h2>'+st.short+' — Boerewors</h2>'
       +'<p class="cap">MTD <b class="num">'+bwUu+' units · '+R(bwRr)+'</b> · Fri/Sat covered <b>'+fsHit+'/'+fsList.length+'</b>'+(offDay?' · &amp;#9888; off-day sales — check the till':'')+'</p>'
-      +relNote
       +'<div class="days" style="height:84px">'+bbars+'</div><div class="dayx">'+blabs+'</div>'
       +tempRow(x.dim)
       +'</div></div>';
