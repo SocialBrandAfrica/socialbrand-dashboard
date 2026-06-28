@@ -70,11 +70,11 @@ function monthLabel(ym) {
 // STATUS CONFIG  (identical to ConsignmentPanel.jsx)
 // ─────────────────────────────────────────────────────────────────────────────
 const STATUS_CFG = {
-  COMPLETE:    { bg: '#22c55e', title: 'Complete'    },
-  EOD_MISSING: { bg: '#ef4444', title: 'EOD missing' },
-  DIVERGENT:   { bg: '#f59e0b', title: 'Divergent'  },
-  NO_TRADE:    { bg: '#334155', title: 'No trade'   },
-  FUTURE:      { bg: '#1e293b', title: 'Future'     },
+  COMPLETE:    { bg: '#22c55e', title: 'Complete'              },
+  EOD_MISSING: { bg: '#f59e0b', title: 'Sigma OK · PRSSALE gap' },
+  DIVERGENT:   { bg: '#ef4444', title: 'Divergent'             },
+  NO_TRADE:    { bg: '#334155', title: 'No trade'              },
+  FUTURE:      { bg: '#1e293b', title: 'Future'                },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -169,24 +169,6 @@ export default function PminiPage() {
   const owed        = totalSales * 0.90
   const commission  = totalSales * 0.10
 
-  // ── no-sales list  (same logic as dev-corner/consignment/route.js) ─────────
-  const noSales = useMemo(() => {
-    const soldDescs = new Set(soldLines.map(r => r.description))
-    const result = []
-    const seen   = new Set()
-    for (const r of lines) {
-      if (r.sale_date) continue
-      if (soldDescs.has(r.description)) continue
-      if (seen.has(r.description)) continue
-      seen.add(r.description)
-      result.push({ desc: r.description, type: r.item_type ?? 'c' })
-    }
-    return result
-  }, [lines, soldLines])
-
-  const sushiNoSales   = noSales.filter(r => r.type === 's')
-  const chineseNoSales = noSales.filter(r => r.type === 'c')
-
   // ── feed health ────────────────────────────────────────────────────────────
   const missingDays = health.filter(h => h.status === 'EOD_MISSING')
 
@@ -202,6 +184,10 @@ export default function PminiPage() {
       flexDirection: 'column',
       gap: 16,
     }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,700;1,9..144,400&family=Geist+Mono:wght@400;600;700&display=swap');
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
 
       {/* ── Header ── */}
       <div style={{ paddingBottom: 4 }}>
@@ -272,9 +258,9 @@ export default function PminiPage() {
       {/* ── Data quality banner ── */}
       {missingDays.length > 0 && (
         <AlertBanner>
-          <strong>{missingDays.length} day{missingDays.length > 1 ? 's' : ''} incomplete</strong>
-          {' — figures may be understated. Missing:{' '}
-          {missingDays.map(d => d.sale_date).join(', ')}.
+          <strong>PRSSALE export missing for {missingDays.length} day{missingDays.length > 1 ? 's' : ''}:</strong>{' '}
+          {missingDays.map(d => d.sale_date).join(', ')}.{' '}
+          Consignment figures are complete — sourced directly from the Sigma ledger.
         </AlertBanner>
       )}
 
@@ -398,7 +384,7 @@ export default function PminiPage() {
                 })}
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 8, fontSize: 10, color: 'rgba(245,245,244,0.35)' }}>
-                {[['#22c55e','Complete'],['#ef4444','EOD missing'],['#334155','No trade'],['#1e293b','Future']].map(([c, l]) => (
+                {[['#22c55e','Complete'],['#f59e0b','PRSSALE gap'],['#ef4444','Divergent'],['#334155','No trade']].map(([c, l]) => (
                   <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span style={{ width: 8, height: 8, borderRadius: 2, background: c, display: 'inline-block' }} />
                     {l}
@@ -408,65 +394,6 @@ export default function PminiPage() {
             </div>
           )}
 
-          {/* ── No-sales collapsible ── */}
-          {noSales.length > 0 && (
-            <details style={{
-              background: '#16213E',
-              border: '1px solid #0F3460',
-              borderRadius: 10,
-              padding: '12px 14px',
-            }}>
-              <summary style={{
-                cursor: 'pointer',
-                fontSize: 12,
-                color: 'rgba(245,245,244,0.55)',
-                listStyle: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                userSelect: 'none',
-              }}>
-                <span style={{
-                  display: 'inline-block', width: 16, height: 16,
-                  background: 'rgba(245,158,11,0.15)',
-                  border: '1px solid rgba(245,158,11,0.3)',
-                  borderRadius: 4,
-                  textAlign: 'center', lineHeight: '14px',
-                  fontSize: 10, color: '#fcd34d',
-                }}>
-                  {noSales.length}
-                </span>
-                items in your counter had no sales this month
-              </summary>
-
-              <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {sushiNoSales.length > 0 && (
-                  <div>
-                    <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'rgba(245,245,244,0.3)', marginBottom: 6 }}>
-                      Sushi ({sushiNoSales.length})
-                    </p>
-                    {sushiNoSales.map(r => (
-                      <p key={r.desc} style={{ fontSize: 11, color: 'rgba(245,245,244,0.55)', padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                        {r.desc}
-                      </p>
-                    ))}
-                  </div>
-                )}
-                {chineseNoSales.length > 0 && (
-                  <div>
-                    <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'rgba(245,245,244,0.3)', marginBottom: 6 }}>
-                      Chinese / other ({chineseNoSales.length})
-                    </p>
-                    {chineseNoSales.map(r => (
-                      <p key={r.desc} style={{ fontSize: 11, color: 'rgba(245,245,244,0.55)', padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                        {r.desc}
-                      </p>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </details>
-          )}
         </>
       )}
 

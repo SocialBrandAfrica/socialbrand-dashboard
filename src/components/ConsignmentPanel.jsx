@@ -56,11 +56,11 @@ function monthLabel(ym) {
 // STATUS COLOURS (completeness strip)
 // ─────────────────────────────────────────────────────────────────────────────
 const STATUS_CFG = {
-  COMPLETE:    { bg: '#22c55e', title: 'Complete'    },
-  EOD_MISSING: { bg: '#ef4444', title: 'EOD missing' },
-  DIVERGENT:   { bg: '#f59e0b', title: 'Divergent'  },
-  NO_TRADE:    { bg: '#334155', title: 'No trade'   },
-  FUTURE:      { bg: '#1e293b', title: 'Future'     },
+  COMPLETE:    { bg: '#22c55e', title: 'Complete'              },
+  EOD_MISSING: { bg: '#f59e0b', title: 'Sigma OK · PRSSALE gap' },
+  DIVERGENT:   { bg: '#ef4444', title: 'Divergent'             },
+  NO_TRADE:    { bg: '#334155', title: 'No trade'              },
+  FUTURE:      { bg: '#1e293b', title: 'Future'                },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -203,10 +203,10 @@ export default function ConsignmentPanel({ store = CONSIGNMENT_STORE, commission
 
       {/* EOD / divergence warnings */}
       {missingDays.length > 0 && (
-        <AlertBanner colour="red">
-          <strong>{missingDays.length} day{missingDays.length > 1 ? 's' : ''} with missing EOD export:</strong>{' '}
+        <AlertBanner colour="amber">
+          <strong>PRSSALE export missing for {missingDays.length} day{missingDays.length > 1 ? 's' : ''}:</strong>{' '}
           {missingDays.map(d => d.sale_date + ' (' + d.day_name + ')').join(', ')}.{' '}
-          Figures are incomplete — store must regenerate end-of-day in Sigma for {missingDays.length > 1 ? 'these dates' : 'this date'}.
+          Consignment figures are complete — sourced directly from the Sigma ledger (DBUMBA) and are not affected by the PRSSALE export.
         </AlertBanner>
       )}
       {divergentDays.length > 0 && (
@@ -263,7 +263,7 @@ export default function ConsignmentPanel({ store = CONSIGNMENT_STORE, commission
                 })}
               </div>
               <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 10, color: 'rgba(245,245,244,0.35)' }}>
-                {[['#22c55e','Complete'],['#ef4444','EOD missing'],['#f59e0b','Divergent'],['#334155','No trade']].map(([c,l]) => (
+                {[['#22c55e','Complete'],['#f59e0b','PRSSALE gap'],['#ef4444','Divergent'],['#334155','No trade']].map(([c,l]) => (
                   <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span style={{ width: 8, height: 8, borderRadius: 2, background: c, display: 'inline-block' }} />
                     {l}
@@ -288,40 +288,62 @@ export default function ConsignmentPanel({ store = CONSIGNMENT_STORE, commission
             </div>
           )}
 
-          {/* Daily breakdown */}
-          {byDay.length > 0 && (
-            <div>
-              <p style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'rgba(245,245,244,0.35)', marginBottom: 8 }}>
-                Daily breakdown
-              </p>
-              <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ color: 'rgba(245,245,244,0.35)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-                    <th style={{ textAlign: 'left',  padding: '3px 8px 3px 0', fontWeight: 400 }}>Date</th>
-                    <th style={{ textAlign: 'right', padding: '3px 8px', fontWeight: 400 }}>Sales</th>
-                    <th style={{ textAlign: 'right', padding: '3px 0 3px 8px', fontWeight: 400 }}>Qty</th>
-                    <th style={{ textAlign: 'left',  padding: '3px 0 3px 12px', fontWeight: 400 }}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
+          {/* Daily sales bar chart */}
+          {byDay.length > 0 && (() => {
+            const maxSales  = Math.max(...byDay.map(([, d]) => d.sales), 1)
+            const CHART_H   = 100
+            const cumTotal  = byDay.reduce((s, [, d]) => s + d.sales, 0)
+            return (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+                  <p style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'rgba(245,245,244,0.35)' }}>
+                    Daily sales
+                  </p>
+                  <span style={{ fontSize: 10, color: 'rgba(245,245,244,0.45)', fontFamily: "'Geist Mono', monospace" }}>
+                    Cumulative {Rsh(cumTotal)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2 }}>
                   {byDay.map(([date, d]) => {
-                    const h = health.find(x => x.sale_date === date)
-                    const flagged = h?.is_flagged
+                    const h      = health.find(x => x.sale_date === date)
+                    const flagged = h?.status === 'EOD_MISSING' || h?.status === 'DIVERGENT'
+                    const barH   = Math.max(4, Math.round((d.sales / maxSales) * CHART_H))
+                    const day    = parseInt(date.slice(8), 10)
+                    const lbl    = d.sales >= 1000
+                      ? (d.sales / 1000).toFixed(1) + 'k'
+                      : Math.round(d.sales).toString()
                     return (
-                      <tr key={date} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', color: flagged ? '#fca5a5' : 'rgba(245,245,244,0.7)' }}>
-                        <td style={{ padding: '4px 8px 4px 0', fontFamily: "'Geist Mono', monospace", fontSize: 10 }}>{date}</td>
-                        <td style={{ textAlign: 'right', padding: '4px 8px', fontFamily: "'Geist Mono', monospace" }}>{R(d.sales)}</td>
-                        <td style={{ textAlign: 'right', padding: '4px 0 4px 8px', fontFamily: "'Geist Mono', monospace" }}>{Math.round(d.qty)}</td>
-                        <td style={{ padding: '4px 0 4px 12px', fontSize: 9, color: h?.status === 'EOD_MISSING' ? '#fca5a5' : h?.status === 'DIVERGENT' ? '#fcd34d' : 'rgba(245,245,244,0.3)' }}>
-                          {h?.status ?? ''}
-                        </td>
-                      </tr>
+                      <div
+                        key={date}
+                        title={`${date} (${h?.day_name ?? ''}) · ${R(d.sales)} · ${Math.round(d.qty)} units`}
+                        style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: '1 1 0', minWidth: 0 }}>
+                        <span style={{
+                          fontSize: 7, lineHeight: 1, marginBottom: 2,
+                          fontFamily: "'Geist Mono', monospace",
+                          color: flagged ? '#fcd34d' : 'rgba(245,245,244,0.5)',
+                        }}>
+                          {lbl}
+                        </span>
+                        <div style={{
+                          width: '100%',
+                          height: barH,
+                          background: flagged ? '#f59e0b' : '#16a34a',
+                          borderRadius: '2px 2px 0 0',
+                        }} />
+                        <span style={{
+                          fontSize: 7, marginTop: 3,
+                          fontFamily: "'Geist Mono', monospace",
+                          color: 'rgba(245,245,244,0.3)',
+                        }}>
+                          {day}
+                        </span>
+                      </div>
                     )
                   })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                </div>
+              </div>
+            )
+          })()}
 
           {lines.length === 0 && (
             <p style={{ color: 'rgba(245,245,244,0.3)', fontFamily: 'Fraunces, Georgia, serif', fontStyle: 'italic', fontSize: 13, textAlign: 'center', padding: 24 }}>
