@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
   ResponsiveContainer,
@@ -26,7 +26,8 @@ const FOCUS_COLORS = [
   '#fb923c', // orange
 ]
 
-const zarFmt = v => v == null || isNaN(v) ? '—' : 'R ' + Number(v).toFixed(2)
+const zarFmt    = v => v == null || isNaN(v) ? '—' : 'R ' + Number(v).toFixed(2)
+const zarFmtInt = v => v == null || isNaN(v) ? '—' : 'R ' + Number(v).toLocaleString('en-ZA', { maximumFractionDigits: 0 })
 
 function shortDay(iso) {
   return iso ? iso.slice(8) : ''
@@ -57,6 +58,8 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
   const [chartData,  setChartData]  = useState([])
   const [totals,     setTotals]     = useState([])
   const [loading,    setLoading]    = useState(false)
+  const [active,     setActive]     = useState(() => basket.map(() => true))
+  const [dataReady,  setDataReady]  = useState(false)
 
   // ── Fetch data for all basket items whenever basket or dates change ──────
   useEffect(() => {
@@ -138,6 +141,38 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
       })
   }, [basket, selectedDates, allStoreCodes])
 
+  // Reset series visibility when basket composition changes
+  const basketKey = basket.map(b => `${b.ean}-${b.store_code}`).join(',')
+  useEffect(() => {
+    setActive(basket.map(() => true))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [basketKey])
+
+  // Unfrost: blur(28px) → blur(0) transition 800ms ease-in-out when chart data arrives
+  const chartVisible = !loading && chartData.length > 0
+  useEffect(() => {
+    if (chartVisible) {
+      setDataReady(false)
+      const raf = requestAnimationFrame(() => setDataReady(true))
+      return () => cancelAnimationFrame(raf)
+    }
+    setDataReady(false)
+  }, [chartVisible])
+
+  // Toggle a series on/off in the legend; guard: never hide the last visible series
+  const toggleSeries = useCallback((i) => {
+    setActive(prev => {
+      const next = [...prev]
+      next[i] = !next[i]
+      return next.every(x => !x) ? prev : next
+    })
+  }, [])
+
+  // Derive single-item isolation state; guard against stale active length
+  const effectiveActive = active.length === basket.length ? active : basket.map(() => true)
+  const shownIdx = effectiveActive.map((v, i) => v ? i : -1).filter(i => i >= 0)
+  const single   = shownIdx.length === 1
+
   const combinedTotal = totals.reduce((s, t) => s + t.periodSales, 0)
   const combinedQty   = totals.reduce((s, t) => s + t.periodQty,   0)
 
@@ -148,7 +183,7 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
       if (!vals.length) return null
       const peak = Math.max(...vals)
       const avg  = vals.reduce((s, v) => s + v, 0) / vals.length
-      return { key, peak, avg, color: FOCUS_COLORS[i % FOCUS_COLORS.length] }
+      return { key, peak, avg, color: FOCUS_COLORS[i % FOCUS_COLORS.length], idx: i }
     }).filter(Boolean)
   }, [basket, chartData])
 
@@ -174,19 +209,19 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
             fontSize: 10, color: 'rgba(245,245,244,0.35)',
             fontFamily: "'Geist Mono', monospace", margin: '3px 0 0',
           }}>
-            {isDefault ? 'top 5 by value · ' : ''}{basket.length} item{basket.length !== 1 ? 's' : ''} · daily sales comparison{basket.length > 0 ? ` · combined R ${zarFmt(combinedTotal).replace('R ', '')}` : ''}
+            {isDefault ? 'top 5 by value · ' : ''}{basket.length} item{basket.length !== 1 ? 's' : ''} · daily sales{basket.length > 0 ? ' · combined ' + zarFmtInt(combinedTotal) : ''}
           </p>
         </div>
         <button
           onClick={onClear}
-          title={isDefault ? 'Reset to top 5' : 'Clear all and reset to top 5'}
+          title="Reset to top 5"
           style={{
             fontSize: 10, color: 'rgba(245,245,244,0.4)',
             background: 'none', border: '1px solid rgba(255,255,255,0.1)',
             borderRadius: 6, padding: '4px 10px', cursor: 'pointer',
             fontFamily: 'Geist, sans-serif',
           }}
-        >{isDefault ? 'Reset' : 'Clear all'}</button>
+        >Reset to top 5</button>
       </div>
 
       {/* ── Basket chips ───────────────────────────────────────────────────── */}
@@ -224,18 +259,18 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
         ))}
       </div>
 
-      {/* ── Loading state ─────────────────────────────────────────────────── */}
+      {/* ── Loading placeholder (frost) ────────────────────────────────────── */}
       {loading && (
-        <div style={{ height: 260, borderRadius: 10, backdropFilter: 'blur(28px)', WebkitBackdropFilter: 'blur(28px)', background: 'rgba(12,16,12,0.30)' }} />
+        <div style={{ height: 260, borderRadius: 10, background: 'rgba(12,16,12,0.30)', border: '1px solid rgba(255,255,255,0.05)' }} />
       )}
 
-      {/* ── Chart ─────────────────────────────────────────────────────────── */}
-      {!loading && chartData.length > 0 && (
-        <>
+      {/* ── Chart (unfrost: blur 28px→0 over 800ms when data arrives) ──────── */}
+      {chartVisible && (
+        <div style={{ filter: dataReady ? 'blur(0px)' : 'blur(28px)', transition: 'filter 800ms ease-in-out' }}>
           <div style={{
             marginBottom: 22,
-            background: 'rgba(0,0,0,0.18)',
-            borderRadius: 10,
+            background: 'rgba(0,0,0,0.22)',
+            borderRadius: 12,
             border: '1px solid rgba(255,255,255,0.06)',
             boxShadow: 'var(--well-shadow)',
             padding: '12px 4px 8px',
@@ -246,7 +281,7 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
                   strokeDasharray="none"
                   horizontal={true}
                   vertical={false}
-                  stroke="rgba(255,255,255,0.07)"
+                  stroke="rgba(255,255,255,0.06)"
                 />
                 <XAxis
                   dataKey="label"
@@ -280,52 +315,68 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
                     dot={{ r: 3, fill: FOCUS_COLORS[i % FOCUS_COLORS.length] }}
                     activeDot={{ r: 5 }}
                     connectNulls
+                    hide={!effectiveActive[i]}
                   />
                 ))}
-                {lineAnnotations.map(({ key, peak, avg, color }) => [
+                {lineAnnotations
+                  .filter(({ idx }) => effectiveActive[idx] !== false)
+                  .map(({ key, peak, avg, color }) => [
                   <ReferenceLine
                     key={`peak-${key}`}
                     y={peak}
                     stroke={color}
                     strokeDasharray="3 4"
-                    strokeOpacity={0.25}
+                    strokeOpacity={single ? 0.5 : 0.25}
                     strokeWidth={1}
+                    label={single
+                      ? { value: 'peak ' + zarFmtInt(peak), position: 'insideTopLeft', fontSize: 9, fill: color, fillOpacity: 0.75 }
+                      : undefined}
                   />,
                   <ReferenceLine
                     key={`avg-${key}`}
                     y={avg}
                     stroke={color}
                     strokeDasharray="6 3"
-                    strokeOpacity={0.18}
+                    strokeOpacity={single ? 0.4 : 0.18}
                     strokeWidth={1}
-                    label={basket.length === 1
-                      ? { value: `avg ${zarFmt(avg)}`, position: 'insideTopRight', fontSize: 9, fill: 'rgba(245,245,244,0.35)' }
+                    label={single
+                      ? { value: 'avg ' + zarFmtInt(avg), position: 'insideTopRight', fontSize: 9, fill: 'rgba(245,245,244,0.5)' }
                       : undefined}
                   />,
                 ])}
               </LineChart>
             </ResponsiveContainer>
-            {/* Custom ChartLegend — stroke swatch + truncated name + period total */}
+
+            {/* Custom ChartLegend — stroke swatch + truncated name + period total; click to toggle */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '6px 8px 0' }}>
               {basket.map((item, i) => {
-                const tot = totals.find(t => String(t.ean) === String(item.ean) && t.store_code === item.store_code)
+                const tot      = totals.find(t => String(t.ean) === String(item.ean) && t.store_code === item.store_code)
+                const isActive = effectiveActive[i] !== false
                 return (
-                  <div key={itemLabel(item)} style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 5,
-                    fontSize: 10, fontFamily: "'Geist Mono', monospace",
-                    color: 'rgba(245,245,244,0.55)',
-                  }}>
+                  <div
+                    key={itemLabel(item)}
+                    onClick={() => toggleSeries(i)}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      fontSize: 10, fontFamily: "'Geist Mono', monospace",
+                      color: 'rgba(245,245,244,0.55)',
+                      cursor: 'pointer',
+                      opacity: isActive ? 1 : 0.35,
+                      transition: 'opacity 200ms ease',
+                      userSelect: 'none',
+                    }}
+                  >
                     <span style={{
                       display: 'inline-block', width: 10, height: 2,
                       background: FOCUS_COLORS[i % FOCUS_COLORS.length],
                       borderRadius: 1, flexShrink: 0,
                     }} />
-                    <span style={{ color: 'rgba(245,245,244,0.7)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span style={{ color: 'rgba(245,245,244,0.7)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {itemLabel(item)}
                     </span>
                     {tot && (
-                      <span style={{ color: FOCUS_COLORS[i % FOCUS_COLORS.length], opacity: 0.8 }}>
-                        R {Number(tot.periodSales).toFixed(0)}
+                      <span style={{ color: FOCUS_COLORS[i % FOCUS_COLORS.length], opacity: isActive ? 0.8 : 0.4 }}>
+                        {zarFmtInt(tot.periodSales)}
                       </span>
                     )}
                   </div>
@@ -427,13 +478,13 @@ export function FocusAreaPanel({ basket, onRemove, onClear, selectedDates, avail
             </table>
           </div>
 
-          {/* Service dept note */}
-          {totals.some(t => ['HMR', 'BUTCHERY', 'DELI', 'BAKERY'].some(d => (t.dept_name ?? '').toUpperCase().includes(d))) && (
-            <p style={{ marginTop: 14, fontSize: 10, color: 'rgba(245,245,244,0.25)', fontStyle: 'italic', fontFamily: 'Geist, sans-serif' }}>
-              ℹ Service dept and high-velocity items — SOH may be negative or zero by design. Sales velocity (Avg/Day) is the meaningful metric here.
-            </p>
-          )}
-        </>
+          {/* Help note: two variants — multi vs single-isolated */}
+          <p style={{ marginTop: 14, fontSize: 10, color: 'rgba(245,245,244,0.25)', fontStyle: 'italic', fontFamily: 'Geist, sans-serif' }}>
+            {single
+              ? 'ℹ Single-item view — peak and average are labelled. Service-dept items (HMR, Butchery) may show negative SOH by design.'
+              : 'ℹ Service-dept items (HMR, Butchery) — SOH may be negative by design; Avg/Day is the meaningful metric.'}
+          </p>
+        </div>
       )}
 
       {/* Empty basket: distinguish "still fetching" from "fetched, nothing to show"
