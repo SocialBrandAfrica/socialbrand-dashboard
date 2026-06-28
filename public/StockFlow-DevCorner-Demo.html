@@ -8,25 +8,28 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
+/* Pulse Mini v3 — daylight palette kept (host-blend, no branding).
+   Liquid glass + skeuomorph: one light source, real grooves, no textures.
+   v3: 3-way tab (owner Kitchen+Store view), proportional cumulative area charts, print-to-PDF split. */
 :root{
-  --blue:#2F6196;--blue-d:#244E79;--gold:#C9882A;--gold-d:#A8701F;
-  --ink:#1E2A37;--slate:#46586B;--pos:#2E7D32;--neg:#C62828;
+  --blue:#2F6196; --blue-d:#244E79; --gold:#C9882A; --gold-d:#A8701F;
+  --ink:#1E2A37; --slate:#46586B; --pos:#2E7D32; --neg:#C62828;
   --hair:rgba(36,78,121,.15);
   --groove-bg:rgba(36,78,121,.10);
-  --groove-shadow:inset 0 2px 5px rgba(30,60,100,.22),inset 0 -1px 0 rgba(255,255,255,.7);
+  --groove-shadow:inset 0 2px 5px rgba(30,60,100,.22), inset 0 -1px 0 rgba(255,255,255,.7);
   --unfrost:800ms ease-in-out;
 }
 *{box-sizing:border-box}
 body{margin:0;color:var(--ink);font-family:Roboto,system-ui,sans-serif;font-size:14px;line-height:1.4;
      background:linear-gradient(135deg,#cfe0f2 0%,#e8eef6 55%,#dde9f4 100%);min-height:100vh;-webkit-font-smoothing:antialiased}
 .wrap{max-width:1180px;margin:0 auto;padding:16px 16px 28px}
-h1,h2,.lab{font-family:Inter,sans-serif}
+h1,h2,h3,.lab{font-family:Inter,sans-serif}
 .num{font-variant-numeric:tabular-nums}
 
-/* liquid glass + unfrost */
+/* liquid glass + unfrost (light mode) */
 .glass{position:relative;border:1px solid rgba(255,255,255,.8);border-radius:14px;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.95),inset 0 -1px 2px rgba(36,78,121,.06),
-             0 8px 24px rgba(30,60,100,.13),0 2px 4px rgba(30,60,100,.07);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 2px rgba(36,78,121,.06),
+             0 8px 24px rgba(30,60,100,.13), 0 2px 4px rgba(30,60,100,.07);
   transition:backdrop-filter var(--unfrost),-webkit-backdrop-filter var(--unfrost),background-color var(--unfrost),
              transform 150ms ease,box-shadow 150ms ease}
 .glass:hover{transform:translateY(-2px)}
@@ -41,19 +44,24 @@ h1,h2,.lab{font-family:Inter,sans-serif}
   backdrop-filter:blur(10px) saturate(135%);-webkit-backdrop-filter:blur(10px) saturate(135%)}
 .cc{opacity:0;transition:opacity var(--unfrost)}
 .glass.ready .cc{opacity:1}
-@media(prefers-reduced-motion:reduce){.glass,.cc{transition-duration:150ms!important}
-  .glass.loading,.glass.ready{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}}
-@media(max-width:768px){.glass.loading,.glass.ready{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:rgba(255,255,255,.86)}}
+@media (prefers-reduced-motion:reduce){.glass,.cc{transition-duration:150ms!important}
+ .glass.loading,.glass.ready{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}}
+@media (max-width:768px){.glass.loading,.glass.ready{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:rgba(255,255,255,.86)}}
 
 /* header */
 .head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:14px 18px;color:#fff;border-radius:14px;
   background:linear-gradient(180deg,rgba(54,108,164,.92),rgba(33,72,113,.86));border:1px solid rgba(255,255,255,.28);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 12px 34px rgba(20,45,80,.30)}
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4), 0 12px 34px rgba(20,45,80,.30)}
 .head h1{margin:0;font-size:19px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.18)}
 .head .sub{margin:2px 0 0;font-size:12.5px;color:#d6e4f3}
+.hright{display:flex;align-items:center;gap:10px}
 .live{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.2);padding:6px 12px;border-radius:999px;font:700 11px Inter;letter-spacing:.6px}
 .live .dot{width:8px;height:8px;border-radius:50%;background:#FFD24A;box-shadow:0 0 6px #FFD24A;animation:p 2s infinite}
 @keyframes p{0%{box-shadow:0 0 0 0 rgba(255,210,74,.6)}70%{box-shadow:0 0 0 7px rgba(255,210,74,0)}100%{box-shadow:0 0 0 0 rgba(255,210,74,0)}}
+.btn-pdf{font:700 12px Inter;color:var(--blue-d);background:rgba(255,255,255,.92);border:1px solid rgba(255,255,255,.9);
+  border-radius:9px;padding:8px 14px;cursor:pointer;box-shadow:0 3px 9px rgba(20,45,80,.25), inset 0 1px 0 #fff;
+  transition:transform 150ms}
+.btn-pdf:hover{transform:translateY(-1px)}
 
 /* weather */
 .wxbar{display:flex;align-items:center;justify-content:space-between;margin:12px 2px 6px;color:var(--slate);font-size:11.5px}
@@ -61,22 +69,33 @@ h1,h2,.lab{font-family:Inter,sans-serif}
 .wxstrip{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:6px}
 .wd{padding:9px 6px;text-align:center}
 .wd.today{outline:1.5px solid var(--blue);outline-offset:-1.5px}
-.wd .dn{font:700 11px Inter;color:var(--blue-d)}.wd .dd{font-size:10px;color:var(--slate);margin-bottom:4px}
+.wd .dn{font:700 11px Inter;color:var(--blue-d)} .wd .dd{font-size:10px;color:var(--slate);margin-bottom:4px}
 .wd svg{width:22px;height:22px;margin:2px 0}
-.wd .hi{font:700 14px Roboto}.wd .lo{font:12px Roboto;color:var(--slate)}
+.wd .hi{font:700 14px Roboto} .wd .lo{font:12px Roboto;color:var(--slate)}
 .wd .rn{font-size:10px;color:var(--blue);margin-top:3px}
 
 .meta{display:flex;gap:18px;flex-wrap:wrap;margin:10px 2px;color:var(--slate);font-size:11.5px}
 .meta b{color:var(--ink)}
 
-/* skeuo controls */
-.controls{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:12px 0;font-size:12px;color:var(--slate)}
+/* 3-way segmented + skeuo controls */
+.segrow{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:12px 0}
+.seg{position:relative;display:grid;grid-template-columns:repeat(3,1fr);width:380px;max-width:100%;
+  background:var(--groove-bg);border:1px solid rgba(36,78,121,.12);border-radius:999px;padding:4px;
+  box-shadow:var(--groove-shadow)}
+.seg-opt{position:relative;z-index:1;background:none;border:none;cursor:pointer;font:700 12px Inter;
+  color:var(--slate);padding:8px 0;transition:color 250ms ease-out;border-radius:999px;white-space:nowrap}
+.seg-opt.active{color:#fff}
+.seg-thumb{position:absolute;top:4px;bottom:4px;left:4px;width:calc((100% - 8px)/3);border-radius:999px;
+  background:linear-gradient(180deg,#3a72ad,#2c5b8c);border:1px solid rgba(255,255,255,.35);
+  box-shadow:0 3px 9px rgba(30,60,100,.35), inset 0 1px 0 rgba(255,255,255,.4);
+  transition:left 250ms ease-out}
+.controls{display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--slate)}
 .controls label{font:700 12px Inter;margin-right:6px}
 .controls input,.controls select{font:13px Roboto;padding:7px 10px;border:1px solid rgba(36,78,121,.15);border-radius:9px;
   background:var(--groove-bg);box-shadow:var(--groove-shadow);color:var(--ink);outline:none}
 .controls input:focus,.controls select:focus{border-color:var(--blue)}
 
-/* KPI cards */
+/* KPI porcelain cards */
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
 .kpi{padding:13px 15px;border-top:3px solid #cdd9e8}
 .kpi .lab{font:700 10px Inter;letter-spacing:.5px;color:var(--slate);text-transform:uppercase}
@@ -89,47 +108,42 @@ h1,h2,.lab{font-family:Inter,sans-serif}
 .k4{border-top-color:var(--gold);box-shadow:inset 0 1px 0 rgba(255,255,255,.95),0 10px 26px rgba(201,136,42,.25),0 2px 4px rgba(30,60,100,.07)}
 .k4 .val{color:var(--gold-d)}
 
-/* feed health */
-.health-wrap{margin:12px 0 4px}
-.health-title{font:700 10px Inter;letter-spacing:.4px;text-transform:uppercase;color:var(--slate);margin-bottom:6px}
-.health-strip{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px}
-.health-leg{display:flex;gap:14px;font-size:10px;color:var(--slate)}
-.hleg-dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:1px}
-
 .grid{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:12px;margin-top:12px}
 .panel{padding:14px 16px;min-width:0}
 .panel h2{margin:0 0 2px;font-size:12.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:var(--blue-d)}
 .panel .cap{font-size:11px;color:var(--slate);margin:0 0 11px}
-.panel-div{border:0;border-top:1px solid var(--hair);margin:13px 0 11px}
 
-/* cumulative bars (day-number labels only) */
+/* cumulative BARS — the sushi pattern, Pieter ruling 2026-06-12: bars, not lines */
 .cum{display:flex;align-items:flex-end;gap:5px;height:128px;padding-top:8px;border-bottom:1px solid var(--hair);overflow:hidden}
-.cum .col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;cursor:default}
+.cum .col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
 .cum .bar{width:100%;max-width:36px;background:linear-gradient(180deg,#3a72ad,#2c5b8c);border-radius:5px 5px 0 0;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 2px 5px rgba(30,60,100,.18)}
-.cum .v{font:700 9px Roboto;color:var(--slate);margin-bottom:3px;white-space:nowrap;overflow:hidden;max-width:100%}
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4), inset -1px 0 1px rgba(0,0,0,.08), 0 2px 5px rgba(30,60,100,.18)}
+.cum .bar.gold{background:linear-gradient(180deg,#d49a3a,#b07a22)}
+.cum .v{font:700 9px Roboto;color:var(--slate);margin-bottom:3px;white-space:nowrap}
 .cum .d{font:9.5px Roboto;color:var(--slate);margin-top:5px}
-
 .closing{margin-top:11px;background:var(--groove-bg);border:1px solid rgba(47,97,150,.15);border-radius:9px;padding:10px 12px;
   box-shadow:var(--groove-shadow)}
 .closing .pl{font:700 10.5px Inter;letter-spacing:.3px;color:var(--slate);text-transform:uppercase}
 .closing .pv{font:700 20px Roboto;color:var(--blue-d);margin-top:1px}
 .closing .pn{font-size:11px;color:var(--slate);margin-top:2px}
 
+/* panel divider (between daily and cumulative) */
+.panel-div{border:0;border-top:1px solid var(--hair);margin:13px 0 11px}
+
+/* split + ranked lists (sushi) */
 .splitbar{display:flex;height:16px;border-radius:8px;overflow:hidden;background:var(--groove-bg);box-shadow:var(--groove-shadow)}
 .splitbar i{display:block;height:100%;box-shadow:inset 0 1px 0 rgba(255,255,255,.35)}
 .splitleg{display:flex;gap:18px;margin-top:8px;font-size:11.5px;color:var(--slate)}
-.splitleg b{color:var(--ink)}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.splitleg b{color:var(--ink)} .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
 .tops{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:13px}
 .toph{font:700 10.5px Inter;letter-spacing:.5px;text-transform:uppercase;padding-bottom:5px;border-bottom:2px solid;margin-bottom:2px}
 .row,.mrow{cursor:pointer;border-radius:6px}
 .row{display:grid;grid-template-columns:18px 1fr auto;gap:8px;align-items:center;padding:7px 6px}
 .row:hover,.mrow:hover{background:rgba(47,97,150,.08)}
-.row.sel,.mrow.sel{background:rgba(47,97,150,.14);box-shadow:inset 0 0 0 1px var(--blue),inset 0 2px 4px rgba(30,60,100,.12)}
+.row.sel,.mrow.sel{background:rgba(47,97,150,.14);box-shadow:inset 0 0 0 1px var(--blue), inset 0 2px 4px rgba(30,60,100,.12)}
 .row .rk{font:700 11px Roboto;color:var(--slate);text-align:right}
 .row .nm{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .am{font:700 13px Roboto}
-.row.zero .nm,.row.zero .am{color:var(--slate);font-weight:400}
 .divider{margin:16px 0 10px;border:0;border-top:1px solid rgba(36,78,121,.18)}
 .mh{font:700 10.5px Inter;letter-spacing:.5px;text-transform:uppercase;color:var(--slate);display:flex;justify-content:space-between;margin-bottom:8px}
 .moregrid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px 16px}
@@ -137,9 +151,8 @@ h1,h2,.lab{font-family:Inter,sans-serif}
 .mrow .nm{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mrow .nm .tag{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:1px}
 .mrow .am{font:700 12px Roboto;color:var(--slate)}
-.mrow.zero .am{color:rgba(70,88,107,.45);font-weight:400}
 
-/* detail chart */
+/* daily detail */
 .detail .dh{display:flex;justify-content:space-between;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:3px}
 .detail h2 span{color:var(--slate);font-weight:400;font-size:12px;text-transform:none;letter-spacing:0}
 .stats{display:flex;gap:18px;font-size:11.5px;color:var(--slate)}
@@ -148,188 +161,212 @@ h1,h2,.lab{font-family:Inter,sans-serif}
 .days{display:flex;align-items:flex-end;gap:0;height:118px;border-bottom:1px solid var(--hair)}
 .days .day{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;padding:0 1px}
 .days .db{width:100%;background:linear-gradient(180deg,#3a72ad,#2c5b8c);border-radius:2px 2px 0 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.3)}
+.days .db.empty{background:rgba(47,97,150,.06);border:1px dashed rgba(47,97,150,.22);border-bottom:none}
+.days .db.gold{background:linear-gradient(180deg,#d49a3a,#b07a22)}
 .dayx{display:flex;margin-top:5px}
 .dayx .dl{flex:1 1 0;min-width:0;text-align:center;font:9px Roboto;color:#758799}
+
+/* kitchen compliance instruments */
+.litwrap{position:relative}
+.tline{position:absolute;left:0;right:0;border-top:2px dashed var(--gold);pointer-events:none}
+.tline span{position:absolute;right:2px;top:-15px;font:700 9.5px Inter;color:var(--gold-d)}
+.dots{display:flex;gap:4px;margin:8px 0 2px;flex-wrap:wrap}
+.dot2{width:10px;height:10px;border-radius:50%;background:#cfd9e4;box-shadow:inset 0 1px 2px rgba(30,60,100,.3)}
+.dot2.ok{background:var(--pos)} .dot2.miss{background:var(--neg)}
+.dot2.today{outline:2px solid var(--blue);outline-offset:1px}
+.days .db.dim{opacity:.30}
+.comp{font-size:11px;color:var(--slate);margin-top:8px}
+.comp b{color:var(--ink)}
+.tempx{display:flex;margin-top:1px}
+.tempx .tt{flex:1 1 0;min-width:0;text-align:center;font:700 8.5px Roboto}
+.kfs{background:rgba(201,136,42,.10);border:1px solid rgba(201,136,42,.25);border-radius:8px;padding:8px 10px;font-size:11px;color:#8a6420;margin:4px 0 8px}
 
 .flag{margin-top:12px;background:rgba(201,136,42,.12);border:1px solid rgba(201,136,42,.3);border-left:4px solid var(--gold);
   border-radius:0 8px 8px 0;padding:11px 15px;box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
 .flag .ft{font:700 10px Inter;letter-spacing:.5px;text-transform:uppercase;color:#8a6420}
 .flag .fn{font:700 14px Roboto;margin-top:1px}
-.nodata{padding:28px 0;text-align:center;color:var(--slate);font-size:12.5px}
-.nodata b{display:block;font:700 15px Inter;color:var(--blue-d);margin-bottom:6px}
-
 footer{margin-top:16px;text-align:center;color:var(--slate);font-size:11px;line-height:1.6}
 
-@media(max-width:880px){.kpis{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.moregrid{grid-template-columns:repeat(3,1fr)}.tops{grid-template-columns:1fr}}
-@media(max-width:560px){.moregrid{grid-template-columns:repeat(2,1fr)}.wxstrip{grid-template-columns:repeat(4,1fr)}}
+/* ===== KITCHEN + STORE (owner view) ===== */
+.kstore{margin-top:12px}
+.kstore h2.storeh{font:700 14px Inter;color:var(--blue-d);margin:14px 2px 8px}
+.kline-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.kline{padding:11px 13px;cursor:pointer;border-top:3px solid var(--blue)}
+.kline.sel{box-shadow:inset 0 0 0 1.5px var(--blue), inset 0 1px 0 rgba(255,255,255,.95), 0 8px 22px rgba(30,60,100,.16)}
+.kline .lab{font:700 9.5px Inter;letter-spacing:.4px;color:var(--slate);text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kline .val{font:700 19px Roboto;margin:4px 0 1px}
+.kline .hint{font-size:10.5px;color:var(--slate)}
+.kgrid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:12px;margin-top:10px}
+@media(max-width:880px){.kline-grid{grid-template-columns:repeat(2,1fr)}.kgrid{grid-template-columns:1fr}}
+table.dayt{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-numeric:tabular-nums}
+table.dayt th{font:700 9.5px Inter;letter-spacing:.5px;text-transform:uppercase;color:var(--slate);text-align:right;padding:0 7px 6px;border-bottom:1px solid var(--hair)}
+table.dayt th:first-child,table.dayt td:first-child{text-align:left}
+table.dayt td{text-align:right;padding:3px 7px;border-bottom:1px solid rgba(36,78,121,.07)}
+table.dayt tr.tot td{font-weight:700;border-top:2px solid rgba(36,78,121,.25);border-bottom:none}
+table.dayt td.gpneg{color:var(--neg)}
+
+/* ===== PRINT: the daily PDF — sushi pages, then kitchen pages ===== */
+#print-head{display:none}
+@media print{
+  body{background:#fff}
+  .glass,.glass.loading,.glass.ready{background:#fff!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+    box-shadow:none!important;border:1px solid #c8d2dd!important}
+  .glass::before,.glass::after{display:none}
+  .cc{opacity:1!important}
+  .wxbar,.wxstrip,.segrow,.btn-pdf,.live{display:none!important}
+  #view-consign,#view-kitchen{display:block!important}
+  #view-kitchen{page-break-before:always}
+  #print-head{display:block;font:700 16px Inter;margin:0 0 10px}
+  #print-head small{display:block;font:400 11px Roboto;color:#555;margin-top:3px}
+  .head{color:#1E2A37;background:#fff;border:1px solid #c8d2dd;box-shadow:none}
+  .head .sub{color:#555}
+  .kstore{page-break-inside:avoid}
+}
 </style>
 </head>
 <body>
 <div class="wrap">
 
+  <div id="print-head">Pulse Mini — Daily Snapshot<small id="print-sub"></small></div>
+
   <div class="head">
-    <div><h1>Pulse Mini &middot; Counter</h1><div class="sub">SPAR Delareyville &mdash; HMR Sushi counter &middot; What sells when</div></div>
-    <div class="live"><span class="dot"></span>LIVE</div>
+    <div><h1>Pulse Mini · Counter</h1><div class="sub" id="head-sub">SPAR Delareyville — HMR Sushi counter · What sells when</div></div>
+    <div class="hright">
+      <button class="btn-pdf" id="pdfbtn" title="Sushi and Kitchen print as separate sections (pages)">Download PDF</button>
+      <div class="live"><span class="dot"></span><span id="live-lbl">LIVE</span></div>
+    </div>
   </div>
 
-  <div class="wxbar"><b>7-day forecast</b><span id="wx-status">Delareyville &middot; loading</span></div>
+  <div class="wxbar"><b>7-day forecast</b><span id="wx-status">Delareyville · loading</span></div>
   <div class="wxstrip" id="wxstrip"></div>
 
-  <div class="meta">
-    <span>Data as at <b id="meta-asat">loading</b></span>
-    <span id="meta-month">HMR Sushi</span>
-    <span>Source <b id="meta-src">loading</b></span>
-  </div>
+  <div class="meta"><span>Data as at <b id="meta-asat">loading</b></span><span id="meta-scope">HMR Sushi counter</span><span>Source <b id="meta-src">loading</b></span></div>
 
-  <!-- Combo-launch boundary note (months before June 2026) -->
-  <div id="boundary-note" style="display:none;margin:8px 0;background:rgba(201,136,42,.10);border:1px solid rgba(201,136,42,.30);border-left:4px solid #C9882A;border-radius:0 8px 8px 0;padding:10px 14px">
-    <div style="font:700 10px Inter;letter-spacing:.4px;text-transform:uppercase;color:#8a6420">Combo PLU boundary &mdash; figures understated</div>
-    <div style="font:13px Roboto;margin-top:2px;color:#1E2A37">Combo PLUs launched 1 June 2026. Pre-June sushi figures are structurally understated &mdash; do not compare across this date as if continuous.</div>
-  </div>
-
-  <div class="controls">
-    <span><label>Month</label><input type="month" id="month-input" value="2026-06"></span>
-    <span><label>Commission</label>
-      <select id="comm-select">
-        <option value="0.10">10%</option>
-        <option value="0.09">9%</option>
-        <option value="0.125">12.5%</option>
-      </select>
-    </span>
-  </div>
-
-  <div class="kpis">
-    <div class="kpi glass loading k1"><div class="cc"><div class="lab">Cash taken</div><div class="val num" id="k-cash">&mdash;</div><div class="hint">counter sales, month so far</div></div></div>
-    <div class="kpi glass loading k4"><div class="cc"><div class="lab">Units sold</div><div class="val num" id="k-units">&mdash;</div><div class="hint">items across all lines</div></div></div>
-    <div class="kpi glass loading k3"><div class="cc"><div class="lab">Your commission</div><div class="val num" id="k-comm">&mdash;</div><div class="hint" id="k-comm-hint">10% &mdash; what you keep</div></div></div>
-    <div class="kpi glass loading k2"><div class="cc"><div class="lab">Owed to supplier</div><div class="val num" id="k-owe">&mdash;</div><div class="hint">supplier's share</div></div></div>
-  </div>
-
-  <!-- Sales-based daily health grid -->
-  <div class="health-wrap" id="health-area" style="display:none">
-    <div class="health-title">Sales health &mdash; each square = one day</div>
-    <div class="health-strip" id="health-strip"></div>
-    <div class="health-leg">
-      <span><span class="hleg-dot" style="background:#22c55e"></span>Has sales</span>
-      <span><span class="hleg-dot" style="background:#94a3b8"></span>No sales recorded</span>
-      <span><span class="hleg-dot" style="background:#e2e8f0"></span>Future</span>
+  <div class="segrow">
+    <div class="seg" id="tabseg" style="grid-template-columns:repeat(2,1fr);width:300px">
+      <div class="seg-thumb" id="tabthumb" style="width:calc((100% - 8px)/2);left:4px"></div>
+      <button class="seg-opt active" data-i="0">Consignment</button>
+      <button class="seg-opt" data-i="1">Kitchen Projects</button>
+    </div>
+    <div class="controls">
+      <span><label>Month</label><input type="month" id="monthsel" value="2026-06"></span>
+      <span id="commwrap"><label>Commission</label><select id="commsel"><option value="0.10">10%</option><option value="0.09">9%</option><option value="0.125">12.5%</option></select></span>
     </div>
   </div>
 
-  <div class="grid">
-    <!-- Left: daily + cumulative -->
-    <div class="panel glass loading">
+  <!-- ============ VIEW 1: CONSIGNMENT (partner view) ============ -->
+  <div id="view-consign">
+    <div class="kpis">
+      <div class="kpi glass loading k1"><div class="cc"><div class="lab">Cash taken</div><div class="val num" id="k-cash">—</div><div class="hint">counter sales, month so far</div></div></div>
+      <div class="kpi glass loading k4"><div class="cc"><div class="lab">Units sold</div><div class="val num" id="k-units">—</div><div class="hint">items across all lines</div></div></div>
+      <div class="kpi glass loading k3"><div class="cc"><div class="lab">Your commission</div><div class="val num" id="k-comm">—</div><div class="hint" id="k-comm-h">10% — what you keep</div></div></div>
+      <div class="kpi glass loading k2"><div class="cc"><div class="lab">Owed to supplier</div><div class="val num" id="k-owe">—</div><div class="hint" id="k-owe-h">90% — supplier's share</div></div></div>
+    </div>
+
+    <div class="grid">
+      <!-- LEFT: daily sales + cumulative -->
+      <div class="panel glass loading">
+        <div class="cc">
+          <h2>Daily sales</h2>
+          <p class="cap">Rand taken each day — loaded days only, no projections.</p>
+          <div class="cum" id="daily" style="height:154px;align-items:stretch;gap:3px"></div>
+          <hr class="panel-div">
+          <h2>Cumulative cash held</h2>
+          <p class="cap">Running total of counter cash, day 1 onward.</p>
+          <div class="cum" id="cum"></div>
+          <div class="closing"><div class="pl">Ballpark month pace</div><div class="pv num" id="proj">—</div><div class="pn" id="projn"></div></div>
+        </div>
+      </div>
+      <!-- RIGHT: lines ranked -->
+      <div class="panel glass loading">
+        <div class="cc">
+          <h2>Lines ranked — tap any line for its daily sales</h2>
+          <p class="cap">Sushi and Chinese share one counter.</p>
+          <div class="splitbar"><i id="sps" style="background:linear-gradient(180deg,#3a72ad,#2c5b8c)"></i><i id="spc" style="background:linear-gradient(180deg,#d49a3a,#b07a22)"></i></div>
+          <div class="splitleg"><span><span class="sw" style="background:var(--blue)"></span>Sushi <b class="num" id="lgs"></b></span><span><span class="sw" style="background:var(--gold)"></span>Chinese <b class="num" id="lgc"></b></span></div>
+          <div class="tops">
+            <div><div class="toph" style="color:var(--blue);border-color:var(--blue)">Top 5 sushi</div><div id="tops"></div></div>
+            <div><div class="toph" style="color:var(--gold);border-color:var(--gold)">Top 5 Chinese</div><div id="topc"></div></div>
+          </div>
+          <hr class="divider">
+          <div class="mh"><span id="moreh">Remaining lines</span><span>units · rand</span></div>
+          <div class="moregrid" id="more"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel glass loading detail" style="margin-top:12px">
       <div class="cc">
-        <h2>Daily sales</h2>
-        <p class="cap">Rand taken each day &mdash; loaded days only, no projections.</p>
-        <div id="daily-bars" style="display:flex;align-items:stretch;gap:3px;height:154px;border-bottom:1px solid var(--hair);overflow:hidden"></div>
-
-        <hr class="panel-div">
-
-        <h2>Cumulative cash held</h2>
-        <p class="cap">Running total of counter cash, day 1 onward.</p>
-        <div class="cum" id="cum"></div>
-        <div class="closing">
-          <div class="pl">Ballpark month pace</div>
-          <div class="pv num" id="proj">&mdash;</div>
-          <div class="pn" id="projn"></div>
-        </div>
+        <div class="dh"><h2 id="dtitle"></h2><div class="stats"><span>Month total <b class="num" id="dtot"></b></span><span>Units <b class="num" id="duni"></b></span><span>Best day <b id="dbest"></b></span></div></div>
+        <p class="daycap" id="daycap">Actual daily sales — hover a bar for rand and units.</p>
+        <div class="days" id="days"></div>
+        <div class="dayx" id="dayx"></div>
       </div>
     </div>
 
-    <!-- Right: lines ranked -->
-    <div class="panel glass loading">
-      <div class="cc">
-        <h2>Lines ranked &mdash; tap any line for its daily sales</h2>
-        <p class="cap">All HMR Sushi counter lines. Sushi and Chinese share one counter.</p>
-        <div class="splitbar"><i id="sps" style="background:linear-gradient(180deg,#3a72ad,#2c5b8c)"></i><i id="spc" style="background:linear-gradient(180deg,#d49a3a,#b07a22)"></i></div>
-        <div class="splitleg">
-          <span><span class="sw" style="background:var(--blue)"></span>Sushi <b class="num" id="lgs"></b></span>
-          <span><span class="sw" style="background:var(--gold)"></span>Chinese <b class="num" id="lgc"></b></span>
-        </div>
-        <div class="tops">
-          <div><div class="toph" style="color:var(--blue);border-color:var(--blue)">Top 5 sushi</div><div id="tops"></div></div>
-          <div><div class="toph" style="color:var(--gold);border-color:var(--gold)">Top 5 Chinese</div><div id="topc"></div></div>
-        </div>
-        <hr class="divider">
-        <div class="mh"><span id="moreh">All other lines</span><span>units &middot; rand</span></div>
-        <div class="moregrid" id="more"></div>
-      </div>
-    </div>
+    <div class="flag" id="quietflag" style="display:none"><div class="ft" id="qf-t"></div><div class="fn" id="qf-n"></div></div>
   </div>
 
-  <!-- Detail chart — populated when a line is tapped -->
-  <div class="panel glass detail" id="detail-body" style="margin-top:12px;display:none">
-    <div class="dh">
-      <h2 id="dtitle"></h2>
-      <div class="stats">
-        <span>Month total <b class="num" id="dtot"></b></span>
-        <span>Units <b class="num" id="duni"></b></span>
-        <span>Best day <b id="dbest"></b></span>
-      </div>
-    </div>
-    <p class="daycap" id="daycap">Actual daily sales &mdash; hover a bar for rand and units.</p>
-    <div class="days" id="days"></div>
-    <div class="dayx" id="dayx"></div>
+  <!-- ============ VIEW 2: KITCHEN + STORE (owner view) ============ -->
+  <div id="view-kitchen" style="display:none">
+    <div id="kitchen-root"></div>
   </div>
 
-  <div id="flags-area"></div>
-
-  <footer>Read only. Sales are real recorded counter takings. Ledger stock is not reliable on these lines &mdash; ordering is driven by sales, not stock.</footer>
+  <footer>Read only. Sales are real recorded counter takings. Ledger stock is not reliable on these lines, so ordering is driven by sales, not stock.</footer>
 </div>
 
 <script>
-/* Fallback: Jun 1-4 2026 real sigma_sales (store 10116, group 610).
-   Used ONLY on genuine API failure. Empty months show no-data state. */
-var L_FB=[
-{n:"AVALANCHE PRAWNS/SALMON",t:"s",s:[0,0,105,0],q:[0,0,1,0]},
-{n:"CHOW MEIN NOODLES CHICKEN",t:"c",s:[105,105,0,105],q:[1,1,0,1]},
-{n:"CHOW MEIN NOODLES MIXED",t:"c",s:[230,0,115,0],q:[2,0,1,0]},
-{n:"CHOW MEIN NOODLES PORK",t:"c",s:[630,105,0,0],q:[6,1,0,0]},
-{n:"CHOW MEIN NOODLES PRAWN",t:"c",s:[0,115,115,0],q:[0,1,1,0]},
-{n:"COMBO 1",t:"s",s:[480,240,420,300],q:[8,4,7,5]},
-{n:"COMBO 10",t:"s",s:[123,0,0,0],q:[1,0,0,0]},
-{n:"COMBO 11",t:"s",s:[246,0,0,0],q:[2,0,0,0]},
-{n:"COMBO 13",t:"s",s:[690,0,138,0],q:[5,0,1,0]},
-{n:"COMBO 14",t:"s",s:[690,138,0,0],q:[5,1,0,0]},
-{n:"COMBO 17",t:"s",s:[0,0,270,0],q:[0,0,2,0]},
-{n:"COMBO 18",t:"s",s:[0,552,552,414],q:[0,4,4,3]},
-{n:"COMBO 2",t:"s",s:[1050,280,350,140],q:[15,4,5,2]},
-{n:"COMBO 21",t:"s",s:[355,0,0,0],q:[1,0,0,0]},
-{n:"COMBO 22",t:"s",s:[0,0,385,0],q:[0,0,1,0]},
-{n:"COMBO 3",t:"s",s:[450,450,300,300],q:[6,6,4,4]},
-{n:"COMBO 5",t:"s",s:[360,180,360,0],q:[4,2,4,0]},
-{n:"COMBO 6",t:"s",s:[345,690,0,0],q:[3,6,0,0]},
-{n:"COMBO 7",t:"s",s:[500,125,500,250],q:[4,1,4,2]},
-{n:"COMBO 8",t:"s",s:[560,560,560,0],q:[4,4,4,0]},
-{n:"COMBO 9",t:"s",s:[325,325,260,260],q:[5,5,4,4]},
-{n:"DUMPLING CHICKEN",t:"c",s:[292,146,146,0],q:[4,2,2,0]},
-{n:"DUMPLING PORK",t:"c",s:[73,0,73,73],q:[1,0,1,1]},
-{n:"FASHION SANDWICHES VEG/CRAB",t:"s",s:[50,0,0,50],q:[1,0,0,1]},
-{n:"FRIED RICE CHICKECN",t:"c",s:[105,0,0,0],q:[1,0,0,0]},
-{n:"FRIED RICE MIXED",t:"c",s:[115,0,0,0],q:[1,0,0,0]},
-{n:"FRIED RICE SEAFOOD MIXED",t:"c",s:[0,0,0,118],q:[0,0,0,1]},
-{n:"MIKI ROLL PRAWN/SALMON",t:"s",s:[50,0,0,100],q:[1,0,0,2]},
-{n:"SASHIMI SALMON",t:"s",s:[0,0,300,0],q:[0,0,2,0]},
-{n:"SORING ROLLS BEEF",t:"c",s:[44,0,0,22],q:[2,0,0,1]},
-{n:"SORING ROLLS CHICKEN",t:"c",s:[0,0,44,22],q:[0,0,2,1]},
-{n:"SORING ROLLS PORK",t:"c",s:[22,0,0,0],q:[1,0,0,0]},
-{n:"SORING ROLLS PRAWN",t:"c",s:[0,0,100,25],q:[0,0,4,1]},
-{n:"SWEET & SOUR CHICKEN",t:"c",s:[0,108,0,0],q:[0,1,0,0]},
-{n:"SWEET & SOUR PORK",t:"c",s:[220,0,0,0],q:[2,0,0,0]}
+/* ===== live data: host API first (consignment), direct Layer 1/2 otherwise. Never fabricates. ===== */
+const SB_URL="https://crklvhfwyxlisfcvqenc.supabase.co";
+const SB_KEY="sb_publishable__5cXLbkpdth-iLFkeqTTNA_kRUvfYgr";
+const HDRS={apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':'application/json'};
+const CHINESE=/CHOW MEIN|FRIED RICE|DUMPLING|SWEET & SOUR|SORING ROLLS|SPRING ROLLS/i;
+const R=n=>"R "+Math.round(n).toLocaleString('en-ZA').replace(/,/g,' ');
+const $=id=>document.getElementById(id);
+let G_L=[],G_LOADED=0,G_DIM=30,G_COMM=0.10,G_MONTH='2026-06';
+
+/* kitchen config (verified against sigma_articles + sales history 2026-06-12).
+   Soup = FIXED costings per Pieter's sheet: 350ml R6.95, 1L R18.82, frozen 1L = same GP as 1L.
+   Soup project launched 2026-05-06; data fetched from PROJECT_START.
+   Boerewors roll = separate Fri+Sat project, costings not tracked for now.
+   80175 roll 819888 = RELAUNCH (sold Feb 2025 to Feb 2026, dark since). */
+const PROJECT_START='2026-05-01';
+const TARGET_L=6; /* litres yield per store per day */
+const KCFG=[
+ {store:"10116",name:"SPAR Delareyville",short:"Delareyville",
+  soup:[{c:6969,n:"Veggie Soup 350ml Cup",lit:.35,cost:6.95},
+        {c:6970,n:"Veggie Soup 1L",lit:1,cost:18.82},
+        {c:7149,n:"Veggie Soup 1L Frozen",lit:1,cost:18.82}],
+  bwors:{c:3650,n:"Boerewors Roll"}},
+ {store:"80175",name:"SPAR Roosville",short:"Roosville",
+  soup:[{c:810141,n:"Veggie Soup 350ml Cup",lit:.35,cost:6.95},
+        {c:842194,n:"Veggie Soup 1L",lit:1,cost:18.82},
+        {c:842668,n:"Veggie Soup 1L Frozen",lit:1,cost:18.82}],
+  bwors:{c:819888,n:"Boerewors Roll",relaunch:true}}
 ];
 
-var R=function(n){return"R "+Math.round(n).toLocaleString('en-ZA');};
-var $=function(id){return document.getElementById(id);};
-var MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-function fmtDate(iso){if(!iso)return'—';var d=new Date(iso+'T00:00:00');return String(d.getDate()).padStart(2,'0')+' '+MON[d.getMonth()]+' '+d.getFullYear();}
+async function sbRest(path){const r=await fetch(SB_URL+'/rest/v1/'+path,{headers:HDRS});if(!r.ok)throw new Error(path.split('?')[0]+' '+r.status);return r.json();}
 
-var G_L=[],G_LOADED=0,G_DIM=30,G_RATE=0.10,G_MON_SHORT='Jun',G_DATES=[];
+/* unfrost */
+const cards=[...document.querySelectorAll('.glass')];
+function unfrostAll(){cards.forEach((c,i)=>setTimeout(()=>{c.classList.remove('loading');c.classList.add('ready');},i*80));}
+function refrostAll(){cards.forEach(c=>{c.classList.remove('ready');c.classList.add('loading');});}
+function daysInMonth(m){const[y,mo]=m.split('-').map(Number);return new Date(y,mo,0).getDate();}
 
-/* ===== daily bars with vertical rand labels above each bar ===== */
+/* ===== cumulative BARS — sushi pattern, shared by all panels (Pieter: bars, not lines) ===== */
+function cumBars(cum,gold,fmt){
+  fmt=fmt||R;
+  if(!cum.length)return'<div style="color:#8a6420;font-size:12px;padding:14px 2px">no data yet</div>';
+  const mx=Math.max(...cum,1);let h='';
+  cum.forEach((c,i)=>{const lbl=String(i+1).padStart(2,'0');
+    h+='<div class="col" title="Day '+lbl+': '+fmt(c)+'"><div class="bar '+(gold?'gold':'')+'" style="height:'+c/mx*100+'%"></div><div class="d num">'+lbl+'</div></div>';});
+  return h;
+}
+
+/* ===== daily bars with vertical rand labels (SB-CC-PMINI-DAILY-001) ===== */
 function dailyBarsHtml(vals){
   if(!vals||!vals.length)return'<div style="color:#8a6420;font-size:12px;padding:14px 2px">no data yet</div>';
-  var mx=Math.max.apply(null,vals.concat([1]));
+  const mx=Math.max.apply(null,vals.concat([1]));
   return vals.map(function(c,i){
     var lbl=String(i+1).padStart(2,'0');
     var pct=c>0?Math.max(c/mx*100,3):0;
@@ -346,248 +383,361 @@ function dailyBarsHtml(vals){
   }).join('');
 }
 
-/* ===== cumulative bars ===== */
-function cumBarsHtml(cum){
-  if(!cum||!cum.length)return'<div style="color:#8a6420;font-size:12px;padding:14px 2px">no data yet</div>';
-  var mx=Math.max.apply(null,cum.concat([1])),h='';
-  cum.forEach(function(c,i){
-    var lbl=G_DATES.length>i?parseInt(G_DATES[i].slice(-2)):(i+1);
-    var tip=G_MON_SHORT+' '+lbl+' cumul: '+R(c);
-    h+='<div class="col" title="'+tip+'">'
-      +'<div class="v num">'+(c>0?R(c):'')+'</div>'
-      +'<div class="bar" style="height:'+Math.round(c/mx*100)+'%"></div>'
-      +'<div class="d num">'+String(lbl).padStart(2,'0')+'</div></div>';
+/* ===== consignment (unchanged logic, area chart cumulative) ===== */
+function shape(rows,month){
+  const dim=daysInMonth(month),map={};let maxDay=0;
+  rows.forEach(r=>{
+    if(/BREAKFAST/i.test(r.description))return;
+    const day=parseInt(r.sale_date.slice(8),10);
+    if(day>maxDay)maxDay=day;
+    const k=r.description;
+    if(!map[k])map[k]={n:k,t:CHINESE.test(k)?'c':'s',s:Array(dim).fill(0),q:Array(dim).fill(0)};
+    map[k].s[day-1]+=Number(r.sales)||0;map[k].q[day-1]+=Number(r.qty)||0;
   });
-  return h;
+  return{L:Object.values(map),LOADED:maxDay,DIM:dim};
 }
-
-/* ===== sales-based health grid — derived purely from sigma_sales ===== */
-function computeHealth(L,LOADED,DIM,dates){
-  var h=[];
-  for(var i=0;i<DIM;i++){
-    var hasSales=L.some(function(l){return(l.s[i]||0)>0;});
-    var status=i>=LOADED?'FUTURE':hasSales?'HAS_SALES':'NO_SALES';
-    var dayNum=dates.length>i?parseInt(dates[i].slice(-2)):(i+1);
-    var dateStr=dates.length>i?dates[i]:null;
-    h.push({day:dayNum,date:dateStr,status:status});
-  }
-  return h;
+async function fetchConsign(month){
+  try{
+    const r=await fetch('/api/dev-corner/sigma-lines?month='+encodeURIComponent(month),{headers:{Accept:'application/json'}});
+    if(r.ok){const d=await r.json();
+      if(d.lines&&d.lines.length)return{L:d.lines,LOADED:d.loaded_days,DIM:d.days_in_month||daysInMonth(month),src:'host API · Layer 2',asat:d.as_at||'live'};}
+  }catch(e){}
+  const resp=await fetch(SB_URL+'/rest/v1/rpc/rpc_consignment_lines',{method:'POST',headers:HDRS,
+    body:JSON.stringify({p_month:month,p_store:'10116',p_group:610,p_client:'socialbrand'})});
+  if(!resp.ok)throw new Error('rpc_consignment_lines '+resp.status);
+  const rows=await resp.json();
+  if(!rows.length)throw new Error('no rows for '+month);
+  const sh=shape(rows,month);
+  const asat=rows.reduce((a,r)=>r.sale_date>a?r.sale_date:a,'');
+  return{...sh,src:'l2_consignment_daily · live',asat};
 }
-function renderHealth(health){
-  var strip=$('health-strip'),area=$('health-area');
-  if(!strip||!area||!health.length){if(area)area.style.display='none';return;}
-  var h='';
-  health.forEach(function(row){
-    var col=row.status==='HAS_SALES'?'#22c55e':row.status==='NO_SALES'?'#94a3b8':'#e2e8f0';
-    var op=row.status==='FUTURE'?'0.35':'1';
-    var tip=(row.date||'Day '+row.day)+' — '+(row.status==='HAS_SALES'?'Has sales':row.status==='NO_SALES'?'No sales recorded':'Future');
-    h+='<div title="'+tip+'" style="width:22px;height:22px;border-radius:4px;background:'+col+';opacity:'+op
-      +';display:flex;align-items:center;justify-content:center;font:700 8px Roboto;color:#fff;cursor:default">'+row.day+'</div>';
-  });
-  strip.innerHTML=h;
-  area.style.display='';
-}
-
-/* ===== main render ===== */
-function render(L,LOADED,DIM,dates){
-  G_L=L;G_LOADED=LOADED;G_DIM=DIM;G_DATES=dates||[];
-  L.forEach(function(l){
-    l.sales=l.s.reduce(function(a,b){return a+b;},0);
-    l.qty  =l.q.reduce(function(a,b){return a+b;},0);
-  });
-  L.sort(function(a,b){return b.sales-a.sales;});
-  L.forEach(function(l,i){l.rank=i+1;});
-
-  var cash=L.reduce(function(a,l){return a+l.sales;},0);
-  var units=L.reduce(function(a,l){return a+l.qty;},0);
-  var sushi=L.filter(function(l){return l.t==='s';}).reduce(function(a,l){return a+l.sales;},0);
-  var chin=cash-sushi;
-
+function render(L,LOADED,DIM){
+  G_L=L;G_LOADED=LOADED;G_DIM=DIM;
+  L.forEach(l=>{l.sales=l.s.reduce((a,b)=>a+b,0);l.qty=l.q.reduce((a,b)=>a+b,0);});
+  L.sort((a,b)=>b.sales-a.sales);L.forEach((l,i)=>l.rank=i+1);
+  const cash=L.reduce((a,l)=>a+l.sales,0),units=L.reduce((a,l)=>a+l.qty,0);
+  const sushi=L.filter(l=>l.t==='s').reduce((a,l)=>a+l.sales,0),chin=cash-sushi;
   $('k-cash').textContent=R(cash);$('k-units').textContent=units;
-  $('k-comm').textContent=R(cash*G_RATE);$('k-owe').textContent=R(cash*(1-G_RATE));
-  var pct=(G_RATE*100).toLocaleString('en-ZA',{maximumFractionDigits:1});
-  var hint=$('k-comm-hint');if(hint)hint.textContent=pct+'% — what you keep';
-
-  var dc=$('daycap');
-  if(dc)dc.textContent='Days 1–'+LOADED+' of '+G_MON_SHORT+'. Hover a bar for rand and units. Nightly push adds the next day.';
-
-  /* daily sums */
-  var daySums=new Array(LOADED).fill(0);
-  L.forEach(function(l){l.s.forEach(function(v,i){if(i<LOADED)daySums[i]+=v;});});
-
-  /* daily bars with vertical rand labels */
-  $('daily-bars').innerHTML=dailyBarsHtml(daySums);
-
+  $('k-comm').textContent=R(cash*G_COMM);$('k-owe').textContent=R(cash*(1-G_COMM));
+  $('k-comm-h').textContent=(G_COMM*100).toLocaleString('en-ZA')+'% — what you keep';
+  $('k-owe-h').textContent=((1-G_COMM)*100).toLocaleString('en-ZA')+"% — supplier's share";
+  /* daily totals */
+  const days=Array(LOADED).fill(0);
+  L.forEach(l=>l.s.forEach((v,i)=>{if(i<LOADED)days[i]+=v;}));
+  /* daily sales bars with rand labels */
+  $('daily').innerHTML=dailyBarsHtml(days);
   /* cumulative bars */
-  var cumArr=[],run=0;
-  daySums.forEach(function(d){run+=d;cumArr.push(run);});
-  $('cum').innerHTML=cumBarsHtml(cumArr);
-
-  /* health grid — from sales only */
-  renderHealth(computeHealth(L,LOADED,DIM,G_DATES));
-
-  var avg=cash/Math.max(LOADED,1);
-  $('proj').textContent='approx '+R(avg*DIM);
-  $('projn').textContent='Rough guide — '+R(avg)+'/day over '+LOADED+' day'+(LOADED!==1?'s':'')+' loaded, stretched to '+DIM+' days. Not a commitment.';
-
-  $('sps').style.width=Math.round(sushi/Math.max(cash,1)*100)+'%';
-  $('spc').style.width=Math.round(chin/Math.max(cash,1)*100)+'%';
+  let cum=[],run=0;days.forEach(d=>{run+=d;cum.push(run);});
+  $('cum').innerHTML=cumBars(cum,false);
+  const avg=cash/Math.max(LOADED,1),pace=avg*DIM;
+  $('proj').textContent="approx "+R(pace);
+  $('projn').textContent="Rough guide — "+R(avg)+"/day over "+LOADED+" day"+(LOADED!==1?"s":"")+" loaded, stretched to "+DIM+" days. Not a commitment.";
+  $('sps').style.width=sushi/Math.max(cash,1)*100+'%';$('spc').style.width=chin/Math.max(cash,1)*100+'%';
   $('lgs').textContent=R(sushi);$('lgc').textContent=R(chin);
-
-  function topRow(l){var z=l.sales===0;return'<div class="row'+(z?' zero':'')+'" data-r="'+l.rank+'"><span class="rk num">'+l.rank+'</span><span class="nm">'+l.n+'</span><span class="am num">'+(z?'—':l.qty+'&nbsp;&middot;&nbsp;'+R(l.sales))+'</span></div>';}
-  function moreRow(l){var z=l.sales===0;return'<div class="mrow'+(z?' zero':'')+'" data-r="'+l.rank+'"><span class="nm"><span class="tag" style="background:'+(l.t==='s'?'var(--blue)':'var(--gold)')+'"></span>'+l.n+'</span><span class="am num">'+(z?'—':l.qty+'&nbsp;&middot;&nbsp;'+R(l.sales))+'</span></div>';}
-
-  var tS=L.filter(function(l){return l.t==='s'&&l.sales>0;}).slice(0,5);
-  var tC=L.filter(function(l){return l.t==='c'&&l.sales>0;}).slice(0,5);
-  $('tops').innerHTML=tS.map(topRow).join('');
-  $('topc').innerHTML=tC.map(topRow).join('');
-  var inTop=new Set([].concat(tS,tC).map(function(l){return l.rank;}));
-  var rest=L.filter(function(l){return!inTop.has(l.rank);});
-  $('moreh').textContent='All other lines ('+rest.length+')';
-  $('more').innerHTML=rest.map(moreRow).join('');
-
+  function rowM(l,c){return '<div class="'+c+'" data-r="'+l.rank+'">'+(c==='row'?'<span class="rk num">'+l.rank+'</span><span class="nm">'+l.n+'</span><span class="am num">'+l.qty+' &middot; '+R(l.sales)+'</span>':'<span class="nm"><span class="tag" style="background:'+(l.t==='s'?'var(--blue)':'var(--gold)')+'"></span>'+l.n+'</span><span class="am num">'+l.qty+' &middot; '+R(l.sales)+'</span>')+'</div>';}
+  const tS=L.filter(l=>l.t==='s').slice(0,5),tC=L.filter(l=>l.t==='c').slice(0,5);
+  $('tops').innerHTML=tS.map(l=>rowM(l,'row')).join('');
+  $('topc').innerHTML=tC.map(l=>rowM(l,'row')).join('');
+  const inTop=new Set([...tS,...tC].map(l=>l.rank));
+  const rest=L.filter(l=>!inTop.has(l.rank));
+  $('moreh').textContent='Remaining lines ('+rest.length+')';
+  $('more').innerHTML=rest.map(l=>rowM(l,'mrow')).join('');
+  const quiet=L.filter(l=>l.sales>0&&l.s.slice(Math.max(0,LOADED-7),LOADED).every(v=>v===0)).map(l=>l.n);
+  if(quiet.length&&LOADED>7){$('quietflag').style.display='block';
+    $('qf-t').textContent='Gone quiet — sold this month, nothing in the last 7 days ('+quiet.length+' line'+(quiet.length>1?'s':'')+')';
+    $('qf-n').textContent=quiet.slice(0,4).join(' · ')+(quiet.length>4?' · +'+(quiet.length-4)+' more':'');
+  } else $('quietflag').style.display='none';
   sel(1);
 }
-
-/* ===== detail chart ===== */
 function sel(r){
-  var l=G_L.find(function(x){return x.rank===r;});if(!l)return;
-  var db=$('detail-body');if(db)db.style.display='';
-  document.querySelectorAll('[data-r]').forEach(function(e){e.classList.toggle('sel',+e.dataset.r===r);});
-  $('dtitle').innerHTML=l.n+' <span>&middot; daily sales</span>';
+  const L=G_L,LOADED=G_LOADED,DIM=G_DIM,l=L.find(x=>x.rank===r);if(!l)return;
+  document.querySelectorAll('#view-consign [data-r]').forEach(e=>e.classList.toggle('sel',+e.dataset.r===r));
+  $('dtitle').innerHTML=l.n+' <span>· daily sales</span>';
   $('dtot').textContent=R(l.sales);$('duni').textContent=l.qty;
-  var mx=Math.max.apply(null,l.s.concat([1]));
-  var bIdx=l.s.indexOf(Math.max.apply(null,l.s));
-  var bestDayNum=G_DATES.length>bIdx?parseInt(G_DATES[bIdx].slice(-2)):(bIdx+1);
-  $('dbest').textContent=l.s[bIdx]>0?G_MON_SHORT+' '+bestDayNum:'—';
-  var bars='',labs='';
-  for(var i=0;i<G_LOADED;i++){
-    var v=l.s[i]||0,u=l.q[i]||0;
-    var dayNum=G_DATES.length>i?parseInt(G_DATES[i].slice(-2)):(i+1);
-    var tip=G_MON_SHORT+' '+dayNum+(v>0?': '+R(v)+' · '+u+' units':': no sales');
-    var ht=v>0?Math.max(Math.round(v/mx*100),3):2;
-    var op=v>0?'':'opacity:0.18;';
-    bars+='<div class="day" title="'+tip+'"><div class="db" style="height:'+ht+'%;'+op+'"></div></div>';
-    labs+='<div class="dl">'+dayNum+'</div>';
+  const mx=Math.max(...l.s,1),b=l.s.indexOf(Math.max(...l.s));
+  $('dbest').textContent=l.s[b]>0?G_MONTH.slice(5)+'/'+(b+1):'—';
+  let bars='',labs='';
+  for(let i=0;i<DIM;i++){
+    const el=i<LOADED,v=el?l.s[i]:0,u=el?l.q[i]:0;
+    bars+='<div class="day" title="Day '+(i+1)+(el?(v>0?': '+R(v)+' · '+u+' units':': no sales'):' — to come')+'"><div class="db '+(el?'':'empty')+'" style="height:'+(el?(v>0?Math.max(v/mx*100,3):0):100)+'%"></div></div>';
+    labs+='<div class="dl">'+(i+1)+'</div>';
   }
   $('days').innerHTML=bars;$('dayx').innerHTML=labs;
+  $('daycap').textContent='Actual daily sales — hover a bar for rand and units. Loaded through day '+LOADED+'; later days fill in nightly.';
 }
-document.addEventListener('click',function(e){var r=e.target.closest('[data-r]');if(r)sel(+r.dataset.r);});
+document.addEventListener('click',e=>{const r=e.target.closest('#view-consign [data-r]');if(r)sel(+r.dataset.r);});
 
-/* ===== no-data state ===== */
-function showNoData(month){
-  G_L=[];G_LOADED=0;G_DATES=[];
-  var parts=month.split('-');
-  var label=(MON[parseInt(parts[1],10)-1]||'?')+' '+parts[0];
-  if($('meta-asat'))$('meta-asat').textContent='—';
-  if($('meta-src'))$('meta-src').textContent='no data for '+label;
-  if($('health-area'))$('health-area').style.display='none';
-  var msg='<div class="nodata"><b>No data for '+label+'</b>No HMR Sushi sales recorded for this month.</div>';
-  ['k-cash','k-comm','k-owe'].forEach(function(id){if($(id))$(id).textContent='R 0';});
-  if($('k-units'))$('k-units').textContent='0';
-  if($('proj'))$('proj').textContent='—';if($('projn'))$('projn').textContent='';
-  if($('daily-bars'))$('daily-bars').innerHTML=msg;
-  if($('cum'))$('cum').innerHTML=msg;
-  ['tops','topc','more','flags-area'].forEach(function(id){if($(id))$(id).innerHTML='';});
-  if($('sps'))$('sps').style.width='0%';if($('spc'))$('spc').style.width='0%';
-  if($('lgs'))$('lgs').textContent='R 0';if($('lgc'))$('lgc').textContent='R 0';
-  if($('days'))$('days').innerHTML='';if($('dayx'))$('dayx').innerHTML='';
-  if($('detail-body'))$('detail-body').style.display='none';
+/* ===== KITCHEN + STORE (owner view) ===== */
+let KDATA=null,KSEL={};
+async function fetchKitchen(){
+  const out=[];
+  for(const cfg of KCFG){
+    const codes=cfg.soup.map(l=>l.c).concat([cfg.bwors.c]).join(',');
+    const rows=await sbRest('sigma_sales?select=sale_date,product_code,sales_incl_vat,qty&store_code=eq.'+cfg.store+'&product_code=in.('+codes+')&sale_date=gte.'+PROJECT_START+'&order=sale_date.asc');
+    const moves=await sbRest('sigma_movements?select=product_code,movement_type,movement_process,movement_date,qty,new_soh&store_code=eq.'+cfg.store+'&product_code=in.('+codes+')&movement_date=gte.'+PROJECT_START+'&movement_type=neq.K&order=movement_date.asc');
+    out.push({...cfg,rows,moves});
+  }
+  return out;
 }
+function profitR(sales,cost){return sales/1.15-cost;}
+function monthShape(rows,codes,month){
+  const dim=daysInMonth(month);
+  const map={};codes.forEach(c=>map[c]={s:Array(dim).fill(0),q:Array(dim).fill(0)});
+  rows.forEach(r=>{
+    if(!r.sale_date.startsWith(month))return;
+    const m=map[r.product_code];if(!m)return;
+    const d=parseInt(r.sale_date.slice(8),10);
+    m.s[d-1]+=+r.sales_incl_vat||0;m.q[d-1]+=+r.qty||0;
+  });
+  return{map,dim};
+}
+function elapsedDays(month,dim){
+  const now=new Date(),cur=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  if(month<cur)return{done:dim,today:0};
+  if(month>cur)return{done:0,today:0};
+  return{done:now.getDate()-1,today:now.getDate()<=dim?now.getDate():0};
+}
+function dowOf(month,day){return new Date(month+'-'+String(day).padStart(2,'0')+'T00:00:00').getDay();}
 
-/* ===== commission live recalc ===== */
-$('comm-select').addEventListener('change',function(){
-  G_RATE=parseFloat(this.value);
-  if(!G_L.length)return;
-  var cash=G_L.reduce(function(a,l){return a+l.sales;},0);
-  $('k-comm').textContent=R(cash*G_RATE);
-  $('k-owe').textContent=R(cash*(1-G_RATE));
-  var pct=(G_RATE*100).toLocaleString('en-ZA',{maximumFractionDigits:1});
-  var hint=$('k-comm-hint');if(hint)hint.textContent=pct+'% — what you keep';
+/* ===== weather history — the demand signal (cold = soup, hot = boerewors). Regional, Delareyville coords. ===== */
+let WXH=null;
+async function fetchWxHist(month){
+  try{
+    const dim=daysInMonth(month);
+    const now=new Date(),cur=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+    const url=month===cur
+      ?'https://api.open-meteo.com/v1/forecast?latitude=-26.68&longitude=25.45&daily=temperature_2m_max&timezone=Africa/Johannesburg&past_days='+Math.min(now.getDate(),92)+'&forecast_days=1'
+      :'https://archive-api.open-meteo.com/v1/archive?latitude=-26.68&longitude=25.45&start_date='+month+'-01&end_date='+month+'-'+String(dim).padStart(2,'0')+'&daily=temperature_2m_max&timezone=Africa/Johannesburg';
+    const j=await(await fetch(url)).json();
+    WXH={};(j.daily&&j.daily.time||[]).forEach((d,i)=>WXH[d]=j.daily.temperature_2m_max[i]);
+  }catch(e){WXH=null;}
+}
+function wxTemp(month,day){if(!WXH)return null;const t=WXH[month+'-'+String(day).padStart(2,'0')];return t===undefined?null:t;}
+function tempRow(dim){
+  if(!WXH)return'';
+  let h='';
+  for(let d=1;d<=dim;d++){
+    const t=wxTemp(G_MONTH,d);
+    const col=t==null?'#b6c2ce':t<=18?'#2F6196':t<=24?'#7a8a99':'#b3641f';
+    h+='<div class="tt" style="color:'+col+'">'+(t==null?'':Math.round(t)+'°')+'</div>';
+  }
+  return '<div class="tempx" title="Max temperature per day — regional (Delareyville). Cold sells soup, heat sells boerewors.">'+h+'</div>';
+}
+function wxLine(x){
+  if(!WXH)return'';
+  const cold=[],warm=[];
+  for(let d=x.winStart;d<=x.done;d++){const t=wxTemp(G_MONTH,d);if(t==null)continue;(t<=18?cold:warm).push(x.lit[d-1]);}
+  if(!cold.length||!warm.length)return'';
+  const avg=a=>a.reduce((m,n)=>m+n,0)/a.length;
+  return ' · cold days (&le;18&deg;) sell <b>'+avg(cold).toFixed(2)+'L</b> vs <b>'+avg(warm).toFixed(2)+'L</b> warmer';
+}
+function renderKitchen(){
+  if(!KDATA){$('kitchen-root').innerHTML='<div class="panel glass ready"><div class="cc" style="opacity:1">loading&hellip;</div></div>';return;}
+  const month=G_MONTH;
+  const S=KDATA.map(st=>{
+    const codes=st.soup.map(l=>l.c).concat([st.bwors.c]);
+    const{map,dim}=monthShape(st.rows,codes,month);
+    const{done,today}=elapsedDays(month,dim);
+    const soup=st.soup.map(l=>({...l,...map[l.c]}));
+    const bw={...st.bwors,...map[st.bwors.c]};
+    const lit=Array(dim).fill(0),rand=Array(dim).fill(0),prof=Array(dim).fill(0);
+    soup.forEach(l=>l.q.forEach((q,i)=>{lit[i]+=q*l.lit;rand[i]+=l.s[i];prof[i]+=profitR(l.s[i],q*l.cost);}));
+    const firstSoup=st.rows.filter(r=>st.soup.some(l=>l.c===r.product_code)).map(r=>r.sale_date).sort()[0]||null;
+    let winStart=1;
+    if(firstSoup&&firstSoup.startsWith(month))winStart=parseInt(firstSoup.slice(8),10);
+    if(firstSoup&&firstSoup>month+'-31')winStart=dim+1;
+    const missed=[];let madeDays=0;
+    for(let d=winStart;d<=done;d++){if(lit[d-1]>0)madeDays++;else missed.push(d);}
+    const windowDays=Math.max(done-winStart+1,0);
+    const avgL=windowDays>0?lit.slice(winStart-1,done).reduce((a,b)=>a+b,0)/windowDays:0;
+    let slR=0,slU=0,slP=0,slL=0;
+    st.rows.forEach(r=>{const l=st.soup.find(x=>x.c===r.product_code);if(!l)return;
+      slR+=+r.sales_incl_vat;slU+=+r.qty;slP+=profitR(+r.sales_incl_vat,(+r.qty)*l.cost);slL+=(+r.qty)*l.lit;});
+    return{st,soup,bw,dim,done,today,lit,rand,prof,winStart,missed,madeDays,windowDays,avgL,slR,slU,slP,slL};
+  });
+  S.forEach(x=>x.lastIdx=x.done+(x.today?1:0));
+  const dim=S[0].dim,lastIdx=Math.max(...S.map(x=>x.lastIdx),0);
+  const cLit=Array(dim).fill(0),cRand=Array(dim).fill(0),cProf=Array(dim).fill(0);
+  S.forEach(x=>{for(let i=0;i<dim;i++){cLit[i]+=x.lit[i];cRand[i]+=x.rand[i];cProf[i]+=x.prof[i];}});
+  let cumLit=[],cumCash=[],rl=0,rc=0;
+  for(let i=0;i<lastIdx;i++){rl+=cLit[i];cumLit.push(rl);rc+=cRand[i];cumCash.push(rc);}
+  const totLit=cLit.slice(0,lastIdx).reduce((a,b)=>a+b,0);
+  const totCash=cRand.slice(0,lastIdx).reduce((a,b)=>a+b,0);
+  const totProf=cProf.slice(0,lastIdx).reduce((a,b)=>a+b,0);
+  const totUnits=S.reduce((a,x)=>a+x.soup.reduce((m,l)=>m+l.q.reduce((p,q)=>p+q,0),0),0);
+  const CT=TARGET_L*S.length,avgLc=totLit/Math.max(lastIdx,1),pct=avgLc/CT*100;
+  const Lf=n=>n.toFixed(1)+'L';
+  const bwU=S.reduce((a,x)=>a+x.bw.q.slice(0,x.lastIdx).reduce((m,q)=>m+q,0),0);
+  const bwR=S.reduce((a,x)=>a+x.bw.s.slice(0,x.lastIdx).reduce((m,v)=>m+v,0),0);
+  const months=[...new Set(KDATA.flatMap(st=>st.rows.map(r=>r.sale_date.slice(0,7))))].sort();
+  const MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monLabel=ym=>{const p=ym.split('-');return MN[+p[1]-1]+" '"+p[0].slice(2);};
+  const msales=(st,code,ym)=>st.rows.filter(r=>r.product_code===code&&r.sale_date.slice(0,7)===ym).reduce((a,r)=>a+(+r.sales_incl_vat||0),0);
+  let cmpHead='<tr><th>Product</th>';
+  KDATA.forEach(st=>months.forEach(ym=>cmpHead+='<th>'+st.short.slice(0,4)+' '+monLabel(ym)+'</th>'));
+  cmpHead+='</tr>';
+  let cmpBody='';
+  [['350ml Cup',0],['1L',1],['1L Frozen',2]].forEach(ld=>{
+    cmpBody+='<tr><td>'+ld[0]+'</td>';
+    KDATA.forEach(st=>months.forEach(ym=>{cmpBody+='<td>'+R(msales(st,st.soup[ld[1]].c,ym))+'</td>';}));
+    cmpBody+='</tr>';
+  });
+  cmpBody+='<tr class="tot"><td>Soup total</td>';
+  KDATA.forEach(st=>months.forEach(ym=>{cmpBody+='<td>'+R(st.soup.reduce((a,l)=>a+msales(st,l.c,ym),0))+'</td>';}));
+  cmpBody+='</tr><tr><td>Boerewors</td>';
+  KDATA.forEach(st=>months.forEach(ym=>cmpBody+='<td>'+R(msales(st,st.bwors.c,ym))+'</td>'));
+  cmpBody+='</tr>';
+  const head='<div class="kpis" style="margin-top:0">'
+    +'<div class="kpi glass ready k1"><div class="cc" style="opacity:1"><div class="lab">Soup litres · both stores</div><div class="val num">'+totLit.toFixed(1)+'L</div><div class="hint">month to date · '+totUnits+' units</div></div></div>'
+    +'<div class="kpi glass ready k2"><div class="cc" style="opacity:1"><div class="lab">Soup cash · both stores</div><div class="val num">'+R(totCash)+'</div><div class="hint">counter sales MTD</div></div></div>'
+    +'<div class="kpi glass ready k3"><div class="cc" style="opacity:1"><div class="lab">Soup profit · both stores</div><div class="val num">'+R(totProf)+'</div><div class="hint">ex-VAT, fixed costings</div></div></div>'
+    +'<div class="kpi glass ready k4"><div class="cc" style="opacity:1"><div class="lab">Capture vs '+CT+'L/day yield</div><div class="val num">'+pct.toFixed(0)+'%</div><div class="hint">avg '+avgLc.toFixed(1)+'L/day of '+CT+'L ('+TARGET_L+'L &times; '+S.length+')</div></div></div>'
+    +'</div>'
+    +'<div class="kgrid" style="margin-top:12px">'
+    +'<div class="panel glass ready"><div class="cc" style="opacity:1"><h2>Cumulative soup litres · both stores · '+month+'</h2><p class="cap">Running total of litres sold, day 1 onward. Month to date <b class="num">'+totLit.toFixed(1)+'L</b>.</p><div class="cum" style="height:120px">'+cumBars(cumLit,false,Lf)+'</div></div></div>'
+    +'<div class="panel glass ready"><div class="cc" style="opacity:1"><h2>Cumulative project cash · both stores · '+month+'</h2><p class="cap">Running total of counter cash, both stores. Month to date <b class="num">'+R(totCash)+'</b>.</p><div class="cum" style="height:120px">'+cumBars(cumCash,false)+'</div></div></div>'
+    +'</div>'
+    +'<div class="panel glass ready" style="margin-top:12px"><div class="cc" style="opacity:1"><h2>Total sales by product, by month, per store</h2><p class="cap">Apples to apples — same product across both stores and months. Sales incl VAT.</p><div style="overflow-x:auto"><table class="dayt"><thead>'+cmpHead+'</thead><tbody>'+cmpBody+'</tbody></table></div></div></div>';
+  const perstore=S.map((x,si)=>{
+    const st=x.st,gold=si===1;
+    const cardsHtml=x.soup.map(l=>{
+      const sales=l.s.reduce((a,b)=>a+b,0),units=l.q.reduce((a,b)=>a+b,0),p=profitR(sales,units*l.cost);
+      const gp=sales>0?(p/(sales/1.15)*100).toFixed(0)+'%':'—';
+      return '<div class="kline glass ready" title="'+l.n+' · code '+l.c+' · fixed cost R'+l.cost.toFixed(2)+'"><div class="cc" style="opacity:1"><div class="lab">'+l.n+'</div><div class="val num">'+R(sales)+'</div><div class="hint num">'+units+' units · GP '+gp+' · profit '+R(p)+'</div></div></div>';
+    }).join('');
+    const mxL=Math.max(TARGET_L*1.25,...x.lit);
+    let lbars='',labs='';
+    for(let i=0;i<x.dim;i++){
+      const isToday=x.today&&i===x.today-1,el=i<x.lastIdx,v=x.lit[i];
+      lbars+='<div class="day" title="Day '+(i+1)+(el?(': '+v.toFixed(2)+'L · '+R(x.rand[i])+' · profit '+R(x.prof[i])+(isToday?' (today, still trading)':'')):' — to come')+'"><div class="db '+(el?'':'empty')+' '+(gold?'gold':'')+'" style="height:'+(el?(v>0?Math.max(v/mxL*100,3):0):100)+'%"></div></div>';
+      labs+='<div class="dl">'+(i+1)+'</div>';
+    }
+    let dots='';
+    for(let d=x.winStart;d<=x.dim;d++){
+      const cls=d<=x.done?(x.lit[d-1]>0?'ok':'miss'):(x.today===d?'today '+(x.lit[d-1]>0?'ok':''):'');
+      dots+='<span class="dot2 '+cls+'" title="Day '+d+': '+(d<=x.done?(x.lit[d-1]>0?x.lit[d-1].toFixed(2)+'L':'NOT MADE / no sales'):(x.today===d?'today':'to come'))+'"></span>';
+    }
+    let kcum=[],run=0;for(let i=0;i<x.lastIdx;i++){run+=x.rand[i];kcum.push(run);}
+    let cumR=0,cumP=0,trs='';
+    for(let i=x.winStart-1;i<x.lastIdx;i++){
+      const u3=x.soup.map(ln=>ln.q[i]),r=x.rand[i],p=x.prof[i],lt=x.lit[i],md=lt===0&&i<x.done;
+      cumR+=r;cumP+=p;
+      trs+='<tr><td class="'+(md?'gpneg':'')+'">'+(i+1)+(md?' &times;':'')+'</td><td>'+(u3[0]||0)+'</td><td>'+(u3[1]||0)+'</td><td>'+(u3[2]||0)+'</td><td>'+lt.toFixed(2)+'</td><td>'+R(r)+'</td><td class="'+(p<0?'gpneg':'')+'">'+R(p)+'</td><td>'+R(cumR)+'</td><td>'+R(cumP)+'</td></tr>';
+    }
+    trs+='<tr class="tot"><td>MTD</td><td>'+x.soup[0].q.reduce((a,b)=>a+b,0)+'</td><td>'+x.soup[1].q.reduce((a,b)=>a+b,0)+'</td><td>'+x.soup[2].q.reduce((a,b)=>a+b,0)+'</td><td>'+x.lit.reduce((a,b)=>a+b,0).toFixed(2)+'</td><td>'+R(x.rand.reduce((a,b)=>a+b,0))+'</td><td>'+R(x.prof.reduce((a,b)=>a+b,0))+'</td><td></td><td></td></tr>';
+    return '<div class="kstore">'
+      +'<h2 class="storeh">'+st.name+' · '+st.store+' — Veggie Soup</h2>'
+      +'<div class="kline-grid" style="grid-template-columns:repeat(3,1fr)">'+cardsHtml+'</div>'
+      +'<div class="kgrid">'
+      +'<div class="panel glass ready"><div class="cc" style="opacity:1">'
+      +'<h2>Litres sold per day vs the '+TARGET_L+'L yield</h2>'
+      +'<p class="cap">Made daily: <b>'+x.madeDays+'/'+x.windowDays+'</b> days'+(x.missed.length?' · missed: '+x.missed.join(', '):'')+' · avg <b>'+x.avgL.toFixed(2)+'L/day</b> = <b>'+(x.avgL/TARGET_L*100).toFixed(0)+'%</b> of yield'+wxLine(x)+'</p>'
+      +'<div class="days litwrap" style="height:104px">'+lbars+'<div class="tline" style="bottom:'+TARGET_L/mxL*100+'%"><span>'+TARGET_L+'L</span></div></div>'
+      +'<div class="dayx">'+labs+'</div>'
+      +tempRow(x.dim)
+      +'<div class="dots">'+dots+'</div>'
+      +'</div></div>'
+      +'<div class="panel glass ready"><div class="cc" style="opacity:1">'
+      +'<h2>Cumulative project cash · '+st.short+'</h2>'
+      +'<p class="cap">Soup only. Month to date <b class="num">'+R(x.rand.reduce((a,b)=>a+b,0))+'</b>.</p>'
+      +'<div class="cum" style="height:104px">'+cumBars(kcum,gold)+'</div>'
+      +'<hr class="divider">'
+      +'<h2>Day by day</h2>'
+      +'<div style="overflow-x:auto"><table class="dayt"><thead><tr><th>D</th><th>Cup</th><th>1L</th><th>Frz</th><th>Litres</th><th>Rand</th><th>Profit</th><th>Cum R</th><th>Cum P</th></tr></thead><tbody>'+trs+'</tbody></table></div>'
+      +'</div></div>'
+      +'</div></div>';
+  }).join('');
+  const ppl=totLit>0?totProf/totLit:0;
+  const scale='<div class="kfs" style="background:rgba(46,125,50,.10);border-color:rgba(46,125,50,.25);color:#1E5128;margin-top:12px"><b>The scale story:</b> every litre sold earns &approx;<b>'+R(ppl)+'</b> profit (actuals, fixed costings). At the full '+CT+'L a day across both stores that is &approx;<b>'+R(ppl*CT)+'/day</b> &approx; <b>'+R(ppl*CT*30)+'/month</b> — currently capturing <b>'+pct.toFixed(0)+'%</b>. The line has legs; the discipline pays.</div><div class="kfs"><b>Next disciplines:</b> book the morning production in, and book leftovers to 1L floor stock or waste at close — the page only sees what sells (floor stock reads zero). Unsold balance is NOT assumed thrown away; only recorded waste counts. Recording it closes the loop.</div>';
+  const bwHead='<h2 class="storeh" style="margin-top:16px">Boerewors Roll Project · both stores · Fri + Sat</h2>'
+    +'<div class="kpis" style="grid-template-columns:repeat(3,1fr)">'
+    +'<div class="kpi glass ready k4"><div class="cc" style="opacity:1"><div class="lab">Units · both stores</div><div class="val num">'+bwU+'</div><div class="hint">month to date</div></div></div>'
+    +'<div class="kpi glass ready k1"><div class="cc" style="opacity:1"><div class="lab">Cash · both stores</div><div class="val num">'+R(bwR)+'</div><div class="hint">counter sales MTD</div></div></div>'
+    +'<div class="kpi glass ready k2"><div class="cc" style="opacity:1"><div class="lab">Cadence</div><div class="val num" style="font-size:16px">Fri &amp; Sat</div><div class="hint">heat sells boerewors</div></div></div>'
+    +'</div>';
+  const bwBody=S.map(x=>{
+    const st=x.st,mxB=Math.max(...x.bw.s,1);let bbars='',blabs='',fsList=[];
+    for(let i=0;i<x.dim;i++){
+      const dow=dowOf(month,i+1),isFS=dow===5||dow===6,el=i<x.lastIdx,v=x.bw.s[i],u=x.bw.q[i];
+      if(isFS&&i<x.done)fsList.push({sold:v>0});
+      bbars+='<div class="day" title="Day '+(i+1)+' ('+(["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][dow])+')'+(el?(v>0?': '+u+' units · '+R(v):': no sales'):' — to come')+'"><div class="db '+(el?'':'empty')+' '+(isFS?'gold':'dim')+'" style="height:'+(el?(v>0?Math.max(v/mxB*100,3):0):100)+'%"></div></div>';
+      blabs+='<div class="dl" style="'+(isFS?'font-weight:700;color:#A8701F':'')+'">'+(i+1)+'</div>';
+    }
+    const fsHit=fsList.filter(f=>f.sold).length;
+    const bwUu=x.bw.q.slice(0,x.lastIdx).reduce((a,b)=>a+b,0),bwRr=x.bw.s.slice(0,x.lastIdx).reduce((a,b)=>a+b,0);
+    const offDay=x.bw.s.some((v,i)=>{const dw=dowOf(month,i+1);return v>0&&dw!==5&&dw!==6;});
+    const relNote=x.bw.relaunch?'<div class="kfs">Relaunch pending — sold Feb 2025 to Feb 2026, dark since. Honest zeros until the counter starts.</div>':'';
+    return '<div class="panel glass ready"><div class="cc" style="opacity:1">'
+      +'<h2>'+st.short+' — Boerewors</h2>'
+      +'<p class="cap">MTD <b class="num">'+bwUu+' units · '+R(bwRr)+'</b> · Fri/Sat covered <b>'+fsHit+'/'+fsList.length+'</b>'+(offDay?' · &amp;#9888; off-day sales — check the till':'')+'</p>'
+      +relNote
+      +'<div class="days" style="height:84px">'+bbars+'</div><div class="dayx">'+blabs+'</div>'
+      +tempRow(x.dim)
+      +'</div></div>';
+  }).join('');
+  $('kitchen-root').innerHTML=head+perstore+scale+bwHead+'<div class="kgrid" style="margin-top:10px">'+bwBody+'</div>';
+}
+document.addEventListener('click',e=>{
+  const k=e.target.closest('[data-ks]');
+  if(k){KSEL[k.dataset.ks]=+k.dataset.ki;renderKitchen();}
 });
 
-/* ===== flags (no-sales lines) ===== */
-function renderFlags(noSales){
-  var fa=$('flags-area');if(!fa)return;
-  var h='';
-  if(noSales&&noSales.length){
-    var names=noSales.map(function(l){return l.desc;}).join(' &middot; ');
-    h+='<div class="flag"><div><div class="ft">No sales this month &mdash; '+noSales.length+' line'+(noSales.length!==1?'s':'')+'</div><div class="fn">'+names+'</div></div></div>';
-  }
-  fa.innerHTML=h;
-}
-
-/* ===== unfrost ===== */
-var allCards=[].slice.call(document.querySelectorAll('.glass'));
-function unfrostAll(){allCards.forEach(function(c,i){setTimeout(function(){c.classList.remove('loading');c.classList.add('ready');},i*80);});}
-function refrostAll(){allCards.forEach(function(c){c.classList.remove('ready');c.classList.add('loading');});}
-
-/* ===== load and render ===== */
-$('month-input').addEventListener('change',loadAndRender);
-async function loadAndRender(){
-  var monthEl=$('month-input');
-  var month=monthEl?monthEl.value:'2026-06';
-  var parts=month.split('-');
-  G_MON_SHORT=MON[parseInt(parts[1],10)-1]||'Jun';
-  var mm=$('meta-month');if(mm)mm.textContent='HMR Sushi &middot; '+G_MON_SHORT+' '+parts[0];
-  var commEl=$('comm-select');if(commEl)G_RATE=parseFloat(commEl.value);
-  var pct=(G_RATE*100).toLocaleString('en-ZA',{maximumFractionDigits:1});
-  var hint=$('k-comm-hint');if(hint)hint.textContent=pct+'% — what you keep';
-  var bn=$('boundary-note');if(bn)bn.style.display=(month<'2026-06')?'':'none';
-  if($('health-area'))$('health-area').style.display='none';
+/* ===== boot + controls ===== */
+async function boot(month){
   refrostAll();
-
-  var apiOk=false;
   try{
-    var resp=await fetch('/api/dev-corner/sigma-lines?month='+encodeURIComponent(month),{headers:{Accept:'application/json'}});
-    if(resp.ok){
-      var d=await resp.json();
-      apiOk=true;
-      if(d.lines&&d.lines.length){
-        if($('meta-asat')&&d.as_at)$('meta-asat').textContent=fmtDate(d.as_at);
-        if($('meta-src'))$('meta-src').textContent='sigma_sales · nightly';
-        render(d.lines,d.loaded_days,d.days_in_month||30,d.dates||[]);
-      } else {
-        showNoData(month);
-      }
-    }
-  }catch(e){}
-
-  if(!apiOk){
-    if($('meta-asat'))$('meta-asat').textContent='04 Jun 2026 (snapshot)';
-    if($('meta-src'))$('meta-src').textContent='fallback — API unavailable';
-    G_MON_SHORT='Jun';
-    var mm2=$('meta-month');if(mm2)mm2.textContent='HMR Sushi &middot; Jun 2026';
-    render(L_FB.map(function(l){return{n:l.n,t:l.t,s:l.s.slice(),q:l.q.slice()};}),4,30,[]);
+    const d=await fetchConsign(month);
+    $('meta-asat').textContent=d.asat;$('meta-src').textContent=d.src;$('live-lbl').textContent='LIVE';
+    render(d.L,d.LOADED,d.DIM);
+  }catch(e){
+    $('meta-asat').textContent='—';$('meta-src').textContent='unavailable';$('live-lbl').textContent='OFFLINE';
+    $('k-cash').textContent='—';$('k-units').textContent='—';$('k-comm').textContent='—';$('k-owe').textContent='—';
+    $('cum').innerHTML='<div style="color:#A8701F;font-size:12px;padding:20px 4px">Live query failed — '+e.message+'. No snapshot shown: this panel never fakes a number.</div>';
+    $('daily').innerHTML='';
+    ['tops','topc','more','days','dayx'].forEach(id=>$(id).innerHTML='');
+    $('proj').textContent='—';$('projn').textContent='';
   }
-
+  try{
+    if(!KDATA)KDATA=await fetchKitchen();
+    await fetchWxHist(month);
+    renderKitchen();
+  }catch(e){KDATA=null;$('kitchen-root').innerHTML='<div class="panel glass ready"><div class="cc" style="opacity:1;color:#A8701F">Kitchen query failed — '+e.message+'</div></div>';}
+  $('print-sub').textContent='Month '+month+' · generated '+new Date().toLocaleString('en-ZA')+' · Section 1: Sushi consignment · Section 2: Kitchen projects (soup + boerewors roll)';
   unfrostAll();
-
-  try{
-    var cr=await fetch('/api/dev-corner/consignment?month='+encodeURIComponent(month)+'&rate='+G_RATE,{headers:{Accept:'application/json'}});
-    if(cr.ok){var cd=await cr.json();renderFlags(cd.no_sales);}
-  }catch(e){}
 }
+$('monthsel').addEventListener('change',e=>{G_MONTH=e.target.value;boot(G_MONTH);});
+$('commsel').addEventListener('change',e=>{G_COMM=parseFloat(e.target.value);if(G_L.length)render(G_L,G_LOADED,G_DIM);});
+$('pdfbtn').addEventListener('click',()=>window.print());
+(function init(){
+  const now=new Date(),m=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  G_MONTH=m;$('monthsel').value=m;boot(m);
+})();
 
-loadAndRender();
+/* 2-way tab */
+const tOpts=[...document.querySelectorAll('#tabseg .seg-opt')];
+tOpts.forEach(o=>o.addEventListener('click',()=>{
+  tOpts.forEach(x=>x.classList.remove('active'));o.classList.add('active');
+  const i=+o.dataset.i;
+  $('tabthumb').style.left='calc(4px + '+i+' * (100% - 8px) / 2)';
+  $('view-consign').style.display=i===0?'':'none';
+  $('view-kitchen').style.display=i===1?'':'none';
+  $('commwrap').style.display=i===0?'':'none';
+  $('meta-scope').textContent=i===1?'Kitchen projects · owner view':'HMR Sushi counter';
+  $('head-sub').textContent=i===1?'SPAR Delareyville + SPAR Roosville — soup and boerewors-roll projects'
+                                  :'SPAR Delareyville — HMR Sushi counter · What sells when';
+}));
 
-/* ===== weather ===== */
-var WX_FB=(function(){var now=new Date(),t=[],i;for(i=0;i<7;i++){var d=new Date(now.getTime()+i*86400000);t.push(d.toISOString().slice(0,10));}return{time:t,weather_code:[3,1,3,2,0,3,3],temperature_2m_max:[15.4,18.2,20.3,19.9,19.9,19.7,20.9],temperature_2m_min:[0.6,1.3,4.0,4.3,3.8,8.5,9.2],precipitation_probability_max:[0,0,0,0,0,0,0]};})();
-var DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-function icon(c,r){if(r>=40)return'<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 16a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 16z"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="13" y1="20" x2="13" y2="22"/></svg>';if(c<=1)return'<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><line x1="12" y1="3" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="21"/><line x1="3" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="21" y2="12"/><line x1="5.5" y1="5.5" x2="6.9" y2="6.9"/><line x1="17.1" y1="17.1" x2="18.5" y2="18.5"/><line x1="5.5" y1="18.5" x2="6.9" y2="17.1"/><line x1="17.1" y1="6.9" x2="18.5" y2="5.5"/></svg>';if(c===2)return'<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="9" r="3"/><path d="M11 18a4 4 0 010-8 5 5 0 019.6 1A3.2 3.2 0 0119 18z" stroke="#5b7da3"/></svg>';return'<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 18a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 18z"/></svg>';}
-function renderWx(d,live){
-  var todayStr=new Date().toISOString().slice(0,10);
-  var h='';
-  for(var i=0;i<d.time.length;i++){
-    var dt=new Date(d.time[i]+'T00:00:00');
-    var isToday=d.time[i]===todayStr;
-    h+='<div class="wd glass ready'+(isToday?' today':'')+'"><div class="cc" style="opacity:1"><div class="dn">'+DOW[dt.getDay()]+'</div><div class="dd">'+dt.getDate()+' '+dt.toLocaleString('en-ZA',{month:'short'})+'</div>'+icon(d.weather_code[i],d.precipitation_probability_max[i])+'<div class="hi">'+Math.round(d.temperature_2m_max[i])+'&deg;</div><div class="lo">'+Math.round(d.temperature_2m_min[i])+'&deg;</div><div class="rn">'+d.precipitation_probability_max[i]+'%</div></div></div>';
-  }
-  $('wxstrip').innerHTML=h;
-  $('wx-status').textContent='Delareyville &middot; '+(live?'live':'unavailable');
-}
+/* weather — live Open-Meteo */
+const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function icon(c,r){if(r>=40)return '<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 16a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 16z"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="13" y1="20" x2="13" y2="22"/></svg>';
+  if(c<=1)return '<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><line x1="12" y1="3" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="21"/><line x1="3" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="21" y2="12"/><line x1="5.5" y1="5.5" x2="6.9" y2="6.9"/><line x1="17.1" y1="17.1" x2="18.5" y2="18.5"/><line x1="5.5" y1="18.5" x2="6.9" y2="17.1"/><line x1="17.1" y1="6.9" x2="18.5" y2="5.5"/></svg>';
+  if(c===2)return '<svg viewBox="0 0 24 24" fill="none" stroke="#E0A21B" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="9" r="3"/><path d="M11 18a4 4 0 010-8 5 5 0 019.6 1A3.2 3.2 0 0119 18z" stroke="#5b7da3"/></svg>';
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="#5b7da3" stroke-width="2" stroke-linecap="round"><path d="M7 18a4 4 0 010-8 5 5 0 019.6-1A3.5 3.5 0 0117 18z"/></svg>';}
+function renderWx(d,live){let h='';for(let i=0;i<d.time.length;i++){const dt=new Date(d.time[i]+'T00:00:00');
+  h+='<div class="wd glass ready'+(i===0?' today':'')+'"><div class="cc" style="opacity:1"><div class="dn">'+DOW[dt.getDay()]+'</div><div class="dd">'+dt.getDate()+' '+dt.toLocaleString('en-ZA',{month:'short'})+'</div>'+icon(d.weather_code[i],d.precipitation_probability_max[i])+'<div class="hi">'+Math.round(d.temperature_2m_max[i])+'&deg;</div><div class="lo">'+Math.round(d.temperature_2m_min[i])+'&deg;</div><div class="rn">'+d.precipitation_probability_max[i]+'%</div></div></div>';}
+  $('wxstrip').innerHTML=h;$('wx-status').textContent='Delareyville · '+(live?'live':'unavailable');}
 fetch("https://api.open-meteo.com/v1/forecast?latitude=-26.68&longitude=25.45&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Africa/Johannesburg&forecast_days=7")
-  .then(function(r){return r.json();}).then(function(j){renderWx(j.daily,true);}).catch(function(){renderWx(WX_FB,false);$('wx-status').textContent='Delareyville &middot; weather unavailable';});
+ .then(r=>r.json()).then(j=>renderWx(j.daily,true)).catch(()=>{$('wx-status').textContent='Delareyville · weather unavailable';});
 </script>
 </body>
 </html>
