@@ -47,6 +47,7 @@
   --glass-bevel-shadow:var(--glass-shadow),var(--glass-inset);
   --well-shadow:inset 0 2px 4px rgba(0,0,0,0.55),inset 0 -1px 0 rgba(255,255,255,0.06);
   --knob-shadow:0 2px 5px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.55),inset 0 -2px 3px rgba(0,0,0,0.22);
+  --lamp-bezel:inset 0 1px 2px rgba(0,0,0,0.6),inset 0 -1px 0 rgba(255,255,255,0.06);
   --hover-duration:150ms; --unfrost-duration:800ms; --unfrost-ease:ease-in-out;
 }
 *{box-sizing:border-box;}
@@ -201,9 +202,9 @@ html,body{margin:0;padding:0;background:var(--backdrop);background-attachment:fi
 .wirebar .txt b{color:var(--daisy-white);}
 .wirebar .txt code{color:var(--daisy-white);background:rgba(0,0,0,0.25);padding:1px 5px;border-radius:4px;}
 
-.hero-cols{grid-template-columns:26px 1fr 220px 78px;}
+.hero-cols{grid-template-columns:26px 1fr 240px 78px;}
 .av-lamp{width:18px;height:18px;border-radius:50%;justify-self:center;position:relative;
-  background:rgba(0,0,0,0.45);box-shadow:inset 0 1px 2px rgba(0,0,0,0.6);}
+  background:rgba(0,0,0,0.45);box-shadow:var(--lamp-bezel);}
 .av-lamp::after{content:'';position:absolute;inset:4px;border-radius:50%;}
 .av-lamp.out::after{background:radial-gradient(circle at 38% 32%,#ff8a87,var(--data-neg));box-shadow:0 0 7px rgba(239,83,80,0.85);}
 .av-lamp.short::after{background:radial-gradient(circle at 38% 32%,#ffd98a,var(--data-warn));box-shadow:0 0 7px rgba(255,179,0,0.8);}
@@ -508,15 +509,18 @@ table.exp-cat tr.etotal td:first-child{font-family:var(--font-mono),monospace;te
 
   <!-- ====== TAB 2: HEROES ====== -->
   <div class="tab-panel" id="tab-heroes">
-    <div class="glass-panel">
+    <div class="glass-panel" id="av-panel" data-loading="true">
       <div class="glass-panel-h">
         <span class="glass-panel-t">Heroes</span>
-        <span class="glass-panel-m" id="av-count">7 heroes &middot; 4 OUT &middot; 3 SHORT &middot; reorder 4 days</span>
+        <span class="glass-panel-m" id="av-count">loading&hellip;</span>
       </div>
-      <div class="colhead hero-cols">
-        <span></span><span>Hero &middot; category</span><span>Days cover</span><span class="r">Status</span>
+      <div style="position:relative">
+        <div class="frost-veil"></div>
+        <div class="colhead hero-cols">
+          <span></span><span>Hero &middot; category</span><span>Days cover</span><span class="r">Status</span>
+        </div>
+        <div id="av-rows"></div>
       </div>
-      <div id="av-rows"></div>
     </div>
     <div class="sc-legend" style="margin-top:16px">
       <span class="k"><span style="width:12px;height:12px;border-radius:50%;background:var(--data-neg);box-shadow:0 0 6px rgba(239,83,80,0.7);display:inline-block"></span> OUT &middot; SOH 0</span>
@@ -877,13 +881,17 @@ function renderHeroRows(heroes) {
 let heroesLoaded = false;
 async function loadHeroes() {
   heroesLoaded = true;
-  document.getElementById('av-rows').innerHTML = '<div class="loading-state">fetching availability…</div>';
+  const panel = document.getElementById('av-panel');
+  panel.setAttribute('data-loading','true');
+  document.getElementById('av-rows').innerHTML = '';
   const { data, error } = await db.rpc('rpc_bt_availability');
   if (error) {
     document.getElementById('av-rows').innerHTML = `<div class="err-state">RPC error: ${error.message}</div>`;
+    panel.setAttribute('data-loading','false');
     return;
   }
   renderHeroRows(data||[]);
+  panel.setAttribute('data-loading','false');
 }
 
 /* ══════════════════════════════════════════
