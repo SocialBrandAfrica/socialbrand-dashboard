@@ -16,7 +16,11 @@
 -- Only rows with units_365 > 0 and units_91 <= 2 to keep view lean.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE VIEW public.l2_bt_tail AS
-WITH scoped_sales AS (
+WITH scoped_stores AS (
+    -- Limit heavy CTEs to BT stores only (avoids full-table scans on cold open)
+    SELECT DISTINCT store_code FROM public.l2_bt_scope
+),
+scoped_sales AS (
     SELECT
         sc.store_code,
         sc.merch_group_nr,
@@ -47,10 +51,10 @@ soh_current AS (
         sd.product_code,
         sd.soh
     FROM public.l2_soh_daily sd
+    JOIN scoped_stores s ON s.store_code = sd.store_code
     ORDER BY sd.store_code, sd.product_code, sd.snapshot_date DESC
 ),
 last_cost AS (
-    -- Last unit cost from a goods-receipt movement
     SELECT DISTINCT ON (sm.store_code, sm.product_code)
         sm.store_code,
         sm.product_code,
@@ -58,6 +62,7 @@ last_cost AS (
              THEN ABS(sm.cost_value) / ABS(sm.qty)
              ELSE NULL END AS unit_cost
     FROM public.sigma_movements sm
+    JOIN scoped_stores s ON s.store_code = sm.store_code
     WHERE sm.movement_type = 'R'
       AND sm.cost_value  IS NOT NULL
       AND sm.qty         IS NOT NULL
