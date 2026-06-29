@@ -825,11 +825,12 @@ async function loadScorecard() {
 
 document.getElementById('sc-reload').addEventListener('click', loadScorecard);
 document.getElementById('month-sel').addEventListener('change', loadScorecard);
-// Fire all four panels independently on page open -- no clicks needed
+// Fire all four panels on page open, independent reveals.
+// Prune is the heaviest query; stagger 800ms to avoid DB contention.
 loadScorecard();
 loadHeroes();
 loadBuying();
-loadPrune();
+setTimeout(loadPrune, 800);
 
 /* ══════════════════════════════════════════
    PANEL 2: HEROES (live — rpc_bt_availability)
