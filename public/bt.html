@@ -73,25 +73,26 @@ html,body{margin:0;padding:0;background:var(--backdrop);background-attachment:fi
   display:flex;align-items:center;gap:7px;}
 .live-dot{width:6px;height:6px;border-radius:50%;background:var(--data-pos);}
 
-/* == tab nav == */
-.tab-bar{
-  display:flex;gap:0;padding:14px 28px 0;max-width:1140px;margin:0 auto;
+/* == action bar == */
+.action-bar{
+  max-width:1140px;margin:0 auto;padding:10px 28px 12px;
+  display:flex;align-items:center;gap:10px;
   border-bottom:1px solid var(--hairline);
 }
-.tab-btn{
-  font-family:var(--font-mono);font-size:11.5px;font-weight:500;letter-spacing:0.04em;
-  text-transform:uppercase;color:var(--text-muted);
-  background:none;border:none;border-bottom:2px solid transparent;
-  padding:0 18px 10px;cursor:pointer;transition:color var(--hover-duration),border-color var(--hover-duration);
-  white-space:nowrap;
-}
-.tab-btn:hover{color:var(--daisy-white);}
-.tab-btn.active{color:var(--core-yellow);border-bottom-color:var(--core-yellow);}
+.action-bar .ab-label{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;
+  letter-spacing:0.08em;color:var(--text-faint);margin-right:2px;}
+.btn-secondary{font-family:var(--font-display);font-weight:600;font-size:13px;
+  color:var(--daisy-white);background:transparent;border:1px solid var(--glass-border);
+  padding:8px 16px;border-radius:var(--radius-chip);cursor:pointer;
+  transition:transform var(--hover-duration),border-color var(--hover-duration);}
+.btn-secondary:hover{border-color:var(--glass-border-hover);transform:translateY(-1px);}
+.btn-secondary:active{transform:translateY(0);}
 
 /* == page body == */
 .wrap{max-width:1140px;margin:0 auto;padding:22px 28px 64px;}
-.tab-panel{display:none;}
-.tab-panel.active{display:block;}
+.cockpit-panel{display:block;}
+.cockpit-panel + .cockpit-panel{margin-top:44px;padding-top:44px;border-top:1px solid var(--hairline);}
+#tab-export{display:none;}
 
 /* == shared chip == */
 .chip{font-family:var(--font-mono);font-size:10px;padding:3px 8px;border-radius:var(--radius-chip);
@@ -232,7 +233,7 @@ html,body{margin:0;padding:0;background:var(--backdrop);background-attachment:fi
 .statuschip.ok{color:var(--data-pos);background:rgba(102,187,106,0.13);}
 
 /* ========== PANEL 3: PRUNE ========== */
-.prune-hero{display:flex;gap:18px;align-items:stretch;flex-wrap:wrap;margin-bottom:18px;}
+.prune-hero{display:flex;gap:18px;align-items:stretch;flex-wrap:wrap;margin-bottom:18px;position:relative;overflow:hidden;}
 .odo{flex:1;min-width:200px;position:relative;overflow:hidden;padding:16px 18px;
   background:var(--kpi-glass);border:1px solid var(--glass-border);
   border-radius:var(--radius-card);box-shadow:var(--glass-bevel-shadow);}
@@ -430,8 +431,9 @@ table.exp-cat tr.etotal td:first-child{font-family:var(--font-mono),monospace;te
   display:flex;justify-content:space-between;gap:12px;}
 @media print{
   body{background:#fff;}
-  .site-hdr,.tab-bar{display:none!important;}
-  .tab-panel:not(.active){display:none!important;}
+  .site-hdr,.action-bar{display:none!important;}
+  .cockpit-panel{display:none!important;}
+  #tab-export{display:block!important;}
   #tab-export .exp-toolbar{display:none!important;}
   .exp-page{width:auto;min-height:0;margin:0;box-shadow:none;padding:0;}
   @page{size:A4;margin:14mm;}
@@ -449,18 +451,17 @@ table.exp-cat tr.etotal td:first-child{font-family:var(--font-mono),monospace;te
   </div>
 </div>
 
-<div class="tab-bar">
-  <button class="tab-btn active" data-tab="scorecard">Scorecard</button>
-  <button class="tab-btn" data-tab="heroes">Heroes</button>
-  <button class="tab-btn" data-tab="prune">Prune</button>
-  <button class="tab-btn" data-tab="buying">Buying</button>
-  <button class="tab-btn" data-tab="export">Export</button>
+<div class="action-bar">
+  <span class="ab-label">Export</span>
+  <button class="btn-daisy" onclick="window.print()">Download PDF</button>
+  <button class="btn-secondary" onclick="downloadPptx()">Download PPTX</button>
+  <button class="btn-secondary" onclick="sendEmail()">Send as Email</button>
 </div>
 
 <div class="wrap">
 
-  <!-- ====== TAB 1: SCORECARD ====== -->
-  <div class="tab-panel active" id="tab-scorecard">
+  <!-- ====== PANEL 1: SCORECARD ====== -->
+  <div class="cockpit-panel" id="tab-scorecard">
     <div class="sc-month-row">
       <label for="month-sel">Month</label>
       <select class="month-sel" id="month-sel"></select>
@@ -507,8 +508,8 @@ table.exp-cat tr.etotal td:first-child{font-family:var(--font-mono),monospace;te
     </div>
   </div>
 
-  <!-- ====== TAB 2: HEROES ====== -->
-  <div class="tab-panel" id="tab-heroes">
+  <!-- ====== PANEL 2: HEROES ====== -->
+  <div class="cockpit-panel" id="tab-heroes">
     <div class="glass-panel" id="av-panel" data-loading="true">
       <div class="glass-panel-h">
         <span class="glass-panel-t">Heroes</span>
@@ -529,8 +530,38 @@ table.exp-cat tr.etotal td:first-child{font-family:var(--font-mono),monospace;te
     </div>
   </div>
 
-  <!-- ====== TAB 3: PRUNE ====== -->
-  <div class="tab-panel" id="tab-prune">
+  <!-- ====== PANEL 3: BUYING ====== -->
+  <div class="cockpit-panel" id="tab-buying">
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;flex-wrap:wrap">
+      <div>
+        <div style="font-family:var(--font-display);font-weight:600;font-size:24px;letter-spacing:-0.01em;margin-bottom:4px">
+          Buying &amp; Tail &middot; Controlled-buying gauge
+        </div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">
+          <b style="color:var(--daisy-white)">2 SPAR stores</b> &middot; purchases as % of sales &middot; target band <b style="color:var(--daisy-white)">80&ndash;86%</b> &middot; reference 85
+        </div>
+      </div>
+      <div style="margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:10px">
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">
+          last 5 months
+        </div>
+        <button class="btn-daisy" id="buy-reload">Reload data</button>
+      </div>
+    </div>
+    <div class="buying-grid" id="buying-grid">
+      <div class="loading-state">fetching buying data&hellip;</div>
+    </div>
+    <div class="buying-legend">
+      <span class="k"><span class="sw" style="background:rgba(102,187,106,0.22);border:1px solid rgba(102,187,106,0.4)"></span> 80&ndash;86% target band</span>
+      <span class="k"><span style="border-top:2px dashed var(--text-faint);width:18px;display:inline-block"></span> 85 reference</span>
+      <span class="k"><span class="ln" style="border-color:var(--series-4)"></span> Delareyville</span>
+      <span class="k"><span class="ln" style="border-color:var(--series-6)"></span> Roosville</span>
+      <span class="k"><span style="width:7px;height:7px;border-radius:50%;background:var(--data-neg);box-shadow:0 0 6px rgba(239,83,80,0.7);display:inline-block"></span> alarm &gt; 95%</span>
+    </div>
+  </div>
+
+  <!-- ====== PANEL 4: PRUNE ====== -->
+  <div class="cockpit-panel" id="tab-prune">
     <div class="prune-hero" id="prune-hero-area" data-loading="true">
       <div class="frost-veil"></div>
       <div class="odo">
@@ -556,46 +587,8 @@ table.exp-cat tr.etotal td:first-child{font-family:var(--font-mono),monospace;te
     </div>
   </div>
 
-  <!-- ====== TAB 4: BUYING ====== -->
-  <div class="tab-panel" id="tab-buying">
-    <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;flex-wrap:wrap">
-      <div>
-        <div style="font-family:var(--font-display);font-weight:600;font-size:24px;letter-spacing:-0.01em;margin-bottom:4px">
-          Buying &amp; Tail &middot; Controlled-buying gauge
-        </div>
-        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">
-          <b style="color:var(--daisy-white)">2 SPAR stores</b> &middot; purchases as % of sales &middot; target band <b style="color:var(--daisy-white)">80&ndash;86%</b> &middot; reference 85
-        </div>
-      </div>
-      <div style="margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:10px">
-        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">
-          last 5 months &middot; <code style="color:var(--core-yellow)">rpc_bt_buying</code>
-        </div>
-        <button class="btn-daisy" id="buy-reload">Reload data</button>
-      </div>
-    </div>
-    <div class="buying-grid" id="buying-grid">
-      <div class="loading-state">fetching buying data&hellip;</div>
-    </div>
-    <div class="buying-legend">
-      <span class="k"><span class="sw" style="background:rgba(102,187,106,0.22);border:1px solid rgba(102,187,106,0.4)"></span> 80&ndash;86% target band</span>
-      <span class="k"><span style="border-top:2px dashed var(--text-faint);width:18px;display:inline-block"></span> 85 reference</span>
-      <span class="k"><span class="ln" style="border-color:var(--series-4)"></span> Delareyville</span>
-      <span class="k"><span class="ln" style="border-color:var(--series-6)"></span> Roosville</span>
-      <span class="k"><span style="width:7px;height:7px;border-radius:50%;background:var(--data-neg);box-shadow:0 0 6px rgba(239,83,80,0.7);display:inline-block"></span> alarm &gt; 95%</span>
-    </div>
-    <div style="margin-top:10px;padding:10px 14px;border-radius:var(--radius-md);
-      background:rgba(255,179,0,0.07);border:1px solid rgba(255,179,0,0.22);
-      font-family:var(--font-mono);font-size:10.5px;color:var(--data-warn);line-height:1.6;">
-      &#9876; <b style="color:var(--daisy-white)">CD flag (PM ruling open):</b>
-      Delareyville mapped to <code>--series-4</code> (cyan, cool/steel) &middot;
-      Roosville to <code>--series-6</code> (orange, clay/warm). Canon forbids blue on chart lines.
-      PM to confirm pairing or specify alternative series tokens.
-    </div>
-  </div>
-
-  <!-- ====== TAB 5: EXPORT ====== -->
-  <div class="tab-panel" id="tab-export">
+  <!-- ====== EXPORT (screen:hidden, print-only) ====== -->
+  <div id="tab-export">
     <div class="exp-toolbar">
       <button class="exp-printbtn" onclick="window.print()">Print / Save PDF</button>
     </div>
@@ -691,6 +684,7 @@ table.exp-cat tr.etotal td:first-child{font-family:var(--font-mono),monospace;te
 
 </div><!-- /wrap -->
 
+<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 const SUPA_URL = 'https://crklvhfwyxlisfcvqenc.supabase.co';
@@ -701,23 +695,10 @@ const zar = v => 'R ' + Math.round(+v).toLocaleString('en-ZA');
 const zarD = v => 'R ' + (+v).toLocaleString('en-ZA', {minimumFractionDigits:0,maximumFractionDigits:0});
 const fmt1 = v => (+v).toFixed(1);
 
-/* ── Tab switching ── */
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    if (btn.dataset.tab === 'heroes' && !heroesLoaded) loadHeroes();
-    if (btn.dataset.tab === 'prune' && !pruneLoaded) loadPrune();
-    if (btn.dataset.tab === 'buying' && !buyingLoaded) loadBuying();
-  });
-});
-
 /* ══════════════════════════════════════════
    PANEL 1: SCORECARD
 ════════════════════════════════════════════ */
-// Populate month selector: 2025-02 to current
+// Populate month selector: 2025-02 to current. Default = last complete month.
 (function buildMonths() {
   const sel = document.getElementById('month-sel');
   const months = [];
@@ -729,10 +710,13 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     m++; if (m > 12) { m = 1; y++; }
   }
   months.reverse();
+  // Default to last complete month (months[1]), not the current part-month (months[0])
+  const defaultMo = months.length > 1 ? months[1] : months[0];
   months.forEach(mo => {
     const opt = document.createElement('option');
     opt.value = mo;
     opt.textContent = mo;
+    if (mo === defaultMo) opt.selected = true;
     sel.appendChild(opt);
   });
 })();
@@ -841,7 +825,11 @@ async function loadScorecard() {
 
 document.getElementById('sc-reload').addEventListener('click', loadScorecard);
 document.getElementById('month-sel').addEventListener('change', loadScorecard);
+// Fire all four panels independently on page open -- no clicks needed
 loadScorecard();
+loadHeroes();
+loadBuying();
+loadPrune();
 
 /* ══════════════════════════════════════════
    PANEL 2: HEROES (live — rpc_bt_availability)
@@ -878,9 +866,7 @@ function renderHeroRows(heroes) {
     `${sorted.length} heroes \xB7 ${out} OUT \xB7 ${short} SHORT \xB7 reorder 4 days`;
 }
 
-let heroesLoaded = false;
 async function loadHeroes() {
-  heroesLoaded = true;
   const panel = document.getElementById('av-panel');
   panel.setAttribute('data-loading','true');
   document.getElementById('av-rows').innerHTML = '';
@@ -897,9 +883,7 @@ async function loadHeroes() {
 /* ══════════════════════════════════════════
    PANEL 3: PRUNE
 ════════════════════════════════════════════ */
-let pruneLoaded = false;
 async function loadPrune() {
-  pruneLoaded = true;
   const heroArea = document.getElementById('prune-hero-area');
   const catsEl = document.getElementById('prune-cats');
   heroArea.setAttribute('data-loading','true');
@@ -974,7 +958,6 @@ async function loadPrune() {
 /* ══════════════════════════════════════════
    PANEL 4: BUYING GAUGE
 ════════════════════════════════════════════ */
-let buyingLoaded = false;
 const BAND_LO = 80, BAND_HI = 86, REF = 85, SCALE_LO = 65, SCALE_HI = 110;
 const Xp = v => (v - SCALE_LO) / (SCALE_HI - SCALE_LO); // 0..1
 
@@ -1038,7 +1021,6 @@ const STORES_CFG = [
 ];
 
 async function loadBuying() {
-  buyingLoaded = true;
   const grid = document.getElementById('buying-grid');
   grid.innerHTML = '<div class="loading-state">fetching buying data…</div>';
 
@@ -1112,10 +1094,89 @@ async function loadBuying() {
   }).join('');
 }
 
-document.getElementById('buy-reload').addEventListener('click', () => {
-  buyingLoaded = false;
-  loadBuying();
-});
+document.getElementById('buy-reload').addEventListener('click', loadBuying);
+
+/* ── PPTX export ── */
+function downloadPptx() {
+  const pres = new PptxGenJS();
+  const slide = pres.addSlide();
+  slide.background = { color: 'FFFFFF' };
+
+  slide.addShape(pres.ShapeType.rect, {x:0, y:0, w:0.06, h:'100%', fill:{color:'1E3F20'}});
+  slide.addText('Month-End Summary', {x:0.4, y:0.25, w:8.5, h:0.6, fontSize:26, bold:true, color:'1E3F20', fontFace:'Georgia'});
+  slide.addText('May 2026  ·  Five-store group  ·  Grocery & health-and-beauty  ·  Figures ex-VAT',
+    {x:0.4, y:0.82, w:8.5, h:0.28, fontSize:10, color:'5A655A'});
+  slide.addShape(pres.ShapeType.line, {x:0.4, y:1.16, w:9.2, h:0, line:{color:'1E3F20', width:1.5}});
+
+  slide.addText('BASKET GROSS PROFIT', {x:0.4, y:1.28, w:9, h:0.22, fontSize:8, bold:true, color:'5A655A', charSpacing:2});
+  slide.addText('R 81 820', {x:0.4, y:1.48, w:5, h:0.82, fontSize:52, bold:true, color:'1A1F1A', fontFace:'Georgia'});
+  slide.addText('+R 5 304 vs baseline R 76 515', {x:0.4, y:2.3, w:5, h:0.28, fontSize:11, color:'2E7D32'});
+
+  slide.addShape(pres.ShapeType.line, {x:0.4, y:2.72, w:9.2, h:0, line:{color:'DCE3DA', width:0.75}});
+  slide.addText('MONTH PURCHASE RATIO', {x:0.4, y:2.82, w:9, h:0.22, fontSize:8, bold:true, color:'1E3F20', charSpacing:2});
+  slide.addText('Purchases as a percent of sales  ·  target band 80–86%  ·  the month, not the week',
+    {x:0.4, y:3.04, w:9, h:0.22, fontSize:9, color:'8A958A'});
+  slide.addTable([
+    [{text:'Store',options:{bold:true,color:'5A655A'}},{text:'Ratio',options:{bold:true,color:'5A655A',align:'right'}},{text:'Status',options:{bold:true,color:'5A655A'}}],
+    ['SPAR Delareyville',{text:'84.6%',options:{bold:true,color:'2E7D32',align:'right'}},{text:'In band',options:{color:'2E7D32'}}],
+    ['SPAR Roosville',   {text:'98.5%',options:{bold:true,color:'C62828',align:'right'}},{text:'Over · alarm',options:{color:'C62828'}}],
+  ], {x:0.4, y:3.28, w:9.2, fontSize:11, border:{type:'solid',color:'DCE3DA'}, fill:'FFFFFF', colW:[5.0, 2.1, 2.1]});
+
+  slide.addShape(pres.ShapeType.line, {x:0.4, y:4.3, w:9.2, h:0, line:{color:'DCE3DA', width:0.75}});
+  slide.addText('CATEGORY GROSS PROFIT VS BASELINE', {x:0.4, y:4.4, w:9, h:0.22, fontSize:8, bold:true, color:'1E3F20', charSpacing:2});
+  slide.addTable([
+    [{text:'Bucket',options:{bold:true,color:'5A655A'}},{text:'Month GP',options:{bold:true,color:'5A655A',align:'right'}},{text:'vs Baseline',options:{bold:true,color:'5A655A',align:'right'}}],
+    ['Grocery — daily',                  {text:'R 41 597',options:{align:'right'}},{text:'+R 1 297',options:{color:'2E7D32',align:'right'}}],
+    ['Health & beauty — daily',           {text:'R 31 230',options:{align:'right'}},{text:'+R 3 166',options:{color:'2E7D32',align:'right'}}],
+    ['Health & beauty — Roosville',       {text:'R 8 994', options:{align:'right'}},{text:'+R 841',     options:{color:'2E7D32',align:'right'}}],
+    [{text:'Basket total',options:{bold:true}},{text:'R 81 820',options:{bold:true,align:'right'}},{text:'+R 5 304',options:{bold:true,color:'2E7D32',align:'right'}}],
+  ], {x:0.4, y:4.64, w:9.2, fontSize:11, border:{type:'solid',color:'DCE3DA'}, fill:'FFFFFF', colW:[5.2, 2.0, 2.0]});
+
+  slide.addShape(pres.ShapeType.line, {x:0.4, y:6.12, w:9.2, h:0, line:{color:'DCE3DA', width:0.75}});
+  slide.addTable([
+    [{text:'DC DEALS WON',options:{bold:true,color:'1E3F20',fontSize:8,charSpacing:2}},
+     {text:'GAP LINES',   options:{bold:true,color:'1E3F20',fontSize:8,charSpacing:2}},
+     {text:'TAIL COUNT',  options:{bold:true,color:'1E3F20',fontSize:8,charSpacing:2}}],
+    [{text:'None logged yet',options:{color:'616161',fontSize:13}},
+     {text:'None logged yet',options:{color:'616161',fontSize:13}},
+     {text:'271',            options:{bold:true,fontSize:28,color:'1A1F1A',fontFace:'Georgia'}}],
+    [{text:'deal capture starts next month',options:{color:'8A958A',fontSize:9}},
+     {text:'ranging-gap feed pending',      options:{color:'8A958A',fontSize:9}},
+     {text:'dead lines · target → 0', options:{color:'5A655A',fontSize:9}}],
+  ], {x:0.4, y:6.22, w:9.2, border:{type:'solid',color:'DCE3DA'}, fill:'FFFFFF', colW:[3.07, 3.07, 3.06]});
+
+  slide.addText('Prepared 1 June 2026  ·  Trading month May 2026  ·  Figures ex-VAT  ·  Rounded to the rand',
+    {x:0.4, y:7.16, w:9.2, h:0.22, fontSize:8.5, color:'8A958A'});
+
+  pres.writeFile({fileName:'SocialBrand-May2026-Summary.pptx'});
+}
+
+/* ── Email export ── */
+function sendEmail() {
+  const sub = encodeURIComponent('Month-End Summary - May 2026');
+  const body = encodeURIComponent([
+    'Month-End Summary - May 2026',
+    'Five-store group | Grocery & health-and-beauty | Figures ex-VAT',
+    '',
+    'Basket Gross Profit: R 81 820',
+    'vs baseline: +R 5 304 (baseline R 76 515)',
+    '',
+    'Month Purchase Ratio (target band 80-86%):',
+    '  SPAR Delareyville: 84.6% - In band',
+    '  SPAR Roosville: 98.5% - Over / alarm (above 95%)',
+    '',
+    'Category GP vs Baseline:',
+    '  Grocery - daily: R 41 597 (+R 1 297)',
+    '  Health & beauty - daily: R 31 230 (+R 3 166)',
+    '  Health & beauty - Roosville: R 8 994 (+R 841)',
+    '  Basket total: R 81 820 (+R 5 304)',
+    '',
+    'Tail count: 271 dead lines (target: 0)',
+    '',
+    'Prepared 1 June 2026 | Rounded to the rand',
+  ].join('\n'));
+  window.location.href = 'mailto:?subject=' + sub + '&body=' + body;
+}
 </script>
 </body>
 </html>
