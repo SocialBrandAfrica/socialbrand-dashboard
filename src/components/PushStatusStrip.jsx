@@ -38,30 +38,11 @@ function formatEffDate(snapDate) {
 
 export default function PushStatusStrip() {
   const { data, loading } = useQuery(async () => {
-    // One query per store to avoid the default 1000-row limit cutting off stores
-    // that haven't pushed recently when other stores have many push_log entries.
-    const results = await Promise.all(
-      STORES.map(async s => {
-        // Freshness is judged by snapshot_date (the effective business date of the
-        // data), NOT completed_at (when the script ran). A stale TAC zip re-pushed
-        // on a night with no end-of-day has a recent completed_at but an old
-        // snapshot_date -- keying off completed_at showed a false green (SB-CC-PUSH-001).
-        // rows_pushed > 0 excludes skip/retention rows that loaded nothing.
-        const { data: row, error } = await supabase
-          .from('push_log')
-          .select('snapshot_date,completed_at')
-          .eq('status', 'SUCCESS')
-          .gt('rows_pushed', 0)
-          .eq('store_code', s.code)
-          .not('snapshot_date', 'is', null)
-          .order('snapshot_date', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-        if (error) throw new Error(error.message)
-        return [s.code, row ?? null]
-      })
-    )
-    return Object.fromEntries(results)
+    // SB-CC-SEC-001: routed through rpc_push_status (SECURITY DEFINER) so
+    // push_log can sit behind RLS. Returns latest successful push per store.
+    const { data: rows, error } = await supabase.rpc('rpc_push_status')
+    if (error) throw new Error(error.message)
+    return Object.fromEntries((rows ?? []).map(r => [r.store_code, r]))
   }, [])
 
   if (loading) return (
