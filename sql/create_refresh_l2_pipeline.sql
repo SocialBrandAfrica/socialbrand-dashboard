@@ -114,6 +114,17 @@ BEGIN
     v_result := v_result || jsonb_build_object('bt_out_events_error', SQLERRM);
   END;
 
+  -- BT precompute (SB-CC-BT-003): l2_bt_monthly, l2_bt_buying_weekly, l2_bt_tail,
+  -- l2_bt_heroes -- converts live table scans to fast nightly-refreshed L2 tables.
+  -- Each sub-refresh is guarded inside refresh_bt_precompute(); a failure in one
+  -- does not abort the rest of the chain.
+  BEGIN
+    PERFORM refresh_bt_precompute();
+  EXCEPTION WHEN OTHERS THEN
+    v_result := v_result || jsonb_build_object('bt_precompute_error', SQLERRM);
+  END;
+  v_result := v_result || jsonb_build_object('bt_precompute_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+
   -- L1 dashboard recovery steps (PM 06-11 ruling): belt-and-braces for the
   -- push script's REST 500s -- refresh mv_kpi_by_date + search index in-DB.
   BEGIN
@@ -149,7 +160,8 @@ $$;
 
 COMMENT ON FUNCTION refresh_l2_pipeline() IS
   'Nightly L2 engine refresh: L2 chain -> consignment(10116) -> classification x(active) '
-  '-> Family 3 anomaly x(active) -> BT out-event logging -> mv_kpi_by_date + mv_rate_of_sale + search index. '
+  '-> Family 3 anomaly x(active) -> BT out-event logging -> BT precompute (SB-CC-BT-003) '
+  '-> mv_kpi_by_date + mv_rate_of_sale + search index. '
   'Fleet sourced from stores WHERE is_active (R25). Scheduled via pg_cron refresh-l2-pipeline (20:15 UTC).';
 
 GRANT EXECUTE ON FUNCTION refresh_l2_pipeline() TO authenticated;
