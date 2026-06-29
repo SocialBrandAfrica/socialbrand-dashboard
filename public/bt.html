@@ -1133,11 +1133,21 @@ async function loadBuying() {
   const grid = document.getElementById('buying-grid');
   grid.innerHTML = '<div class="loading-state">fetching buying data…</div>';
 
-  // 13 weeks back from today
+  // Latest completed Sunday that the nightly precompute includes.
+  // SQL formula: DATE_TRUNC('week', CURRENT_DATE)::date - 1
+  //   (Monday of this ISO week, minus one day = last Sunday)
+  // JS equivalent: find Monday of this week, subtract one day.
   const today = new Date();
-  const from13w = new Date(today); from13w.setDate(from13w.getDate() - 91);
-  const p_from = from13w.toISOString().slice(0,10);
-  const p_to   = today.toISOString().slice(0,10);
+  const daysToMon = (today.getDay() + 6) % 7;   // 0=Mon,1=Tue,...,6=Sun
+  const thisMon = new Date(today);
+  thisMon.setDate(today.getDate() - daysToMon);
+  const latestSunday = new Date(thisMon);
+  latestSunday.setDate(thisMon.getDate() - 1);
+
+  // Default window: first of the current month through latest completed Sunday.
+  const p_from = new Date(today.getFullYear(), today.getMonth(), 1)
+                   .toISOString().slice(0,10);
+  const p_to   = latestSunday.toISOString().slice(0,10);
 
   const results = await Promise.all(STORES_CFG.map(s =>
     db.rpc('rpc_bt_buying', { p_store: s.code, p_from, p_to })
@@ -1149,34 +1159,27 @@ async function loadBuying() {
     return;
   }
 
-  // Aggregate weekly rows to monthly
-  function aggToMonths(rows) {
-    const byMonth = {};
-    rows.forEach(r => {
-      if (!r.purchase_ratio) return;
-      const mo = r.week_start.slice(0,7); // YYYY-MM
-      if (!byMonth[mo]) byMonth[mo] = { sum:0, cnt:0, build:0 };
-      byMonth[mo].sum += +r.purchase_ratio;
-      byMonth[mo].cnt++;
-      if (+r.build > 0) byMonth[mo].build += +r.build;
-    });
-    return Object.entries(byMonth)
-      .sort(([a],[b]) => a.localeCompare(b))
-      .slice(-5)
-      .map(([mo,d]) => ({
-        m: new Date(mo+'-15').toLocaleString('en-ZA',{month:'short'}),
-        v: d.sum/d.cnt,
-        build: d.build > 0 ? d.build : null,
+  // Build weekly series keyed on week_ending (Sunday dates).
+  // Every row in the table is a closed week so no alarm guard needed here.
+  function weeklySeries(rows) {
+    return [...rows]
+      .filter(r => r.purchase_ratio != null)
+      .sort((a,b) => a.week_ending.localeCompare(b.week_ending))
+      .map(r => ({
+        m: new Date(r.week_ending + 'T00:00:00')
+             .toLocaleDateString('en-ZA', { day:'numeric', month:'short' }),
+        v: +r.purchase_ratio,
+        build: +r.build > 0 ? +r.build : null,
       }));
   }
 
   grid.innerHTML = results.map(s => {
     if (s.error) return `<div class="err-state">Error for ${s.code}: ${s.error.message}</div>`;
-    const monthly = aggToMonths(s.rows);
-    if (!monthly.length) return `<div class="err-state">No data for ${s.name}</div>`;
-    const cur = monthly[monthly.length-1].v;
+    const weeks = weeklySeries(s.rows);
+    if (!weeks.length) return `<div class="err-state">No data for ${s.name}</div>`;
+    const cur = weeks[weeks.length - 1].v;
     const tn = ratioTone(cur);
-    const buildItems = monthly.filter(p => p.build);
+    const buildItems = weeks.filter(p => p.build);
     const buildHtml = buildItems.map(b =>
       `<span class="build-chip">build <b>+${zar(b.build)}</b><span class="when"> &middot; ${b.m} &middot; ${b.v.toFixed(1)}%</span></span>`
     ).join('') || `<span class="build-chip" style="color:var(--text-faint)">no positive build this window</span>`;
@@ -1189,15 +1192,15 @@ async function loadBuying() {
         <div class="ratio-now">
           <span class="ratio-num" style="color:${cur>95?'var(--data-neg)':'var(--daisy-white)'}">${cur.toFixed(1)}%</span>
           <span class="buy-chip ${tn.t}"><span class="lamp"></span>${tn.label}</span>
-          <span class="ratio-cap">current &middot; purch &divide; sales</span>
+          <span class="ratio-cap">latest closed week &middot; purch &divide; sales</span>
         </div>
       </div>
       ${buildGauge(cur, s.accent)}
       <div class="trend-hdr">
-        <span class="trend-t">5-month trend</span>
+        <span class="trend-t">week ending Sunday</span>
         <span class="trend-leg">scale ${SCALE_LO}&ndash;${SCALE_HI}%</span>
       </div>
-      ${buildTrend(monthly, s.accent)}
+      ${buildTrend(weeks, s.accent)}
       <div class="build-chips">${buildHtml}</div>
     </div>`;
   }).join('');
