@@ -702,7 +702,7 @@ function LayerFreshnessStrip({ rows }) {
   const lagging = rows.filter(r => r.feed_status === 'FAILED')
   return (
     <div className="sb-fresh-strip">
-      <span className="sb-fresh-chip" title="Latest daily_snapshots date across selected stores (PRSSALE/TAC channel)">
+      <span className="sb-fresh-chip" title="Latest daily_snapshots date across selected stores (nightly ExtractDelta)">
         L1 → {l1Min}
       </span>
       <span className="sb-fresh-chip" title="l2_kpi_daily.positioned_at — last L2 engine refresh (refresh_l2_pipeline, nightly 22:15 SAST)">
@@ -2947,7 +2947,7 @@ export default function Home() {
                       wowDelta:      hasWoW ? deltaInfo(kpiSalesExVat, wowKpiSalesExVat) : null,
                       bench:         sameWeekdayBenchmark ? `avg ${sameWeekdayBenchmark.dow}: ${zarShort(sameWeekdayBenchmark.avgSales)}` : null,
                       benchN:        sameWeekdayBenchmark?.n,
-                      sub:           `${num(kpiQty, 0)} units`,
+                      sub:           kpiQty > 0 ? `${num(kpiQty, 0)} units` : null,
                       accent:        true,
                       tone:          (() => {
                         if (!hasLY || !lyKpiSalesExVat) return 'neutral'
