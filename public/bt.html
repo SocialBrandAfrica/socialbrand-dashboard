@@ -429,6 +429,33 @@ table.exp-cat tr.etotal td:first-child{font-family:var(--font-mono),monospace;te
 .exp-foot{margin-top:32px;border-top:1px solid #DCE3DA;padding-top:12px;
   font-family:var(--font-mono),monospace;font-size:9.5px;color:#8A958A;letter-spacing:0.03em;
   display:flex;justify-content:space-between;gap:12px;}
+/* == department grouping (Heroes + Prune) == */
+.dept-group{margin-bottom:18px;}
+.dept-hdr{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;
+  letter-spacing:0.12em;color:var(--text-faint);padding:6px 0 8px;
+  border-bottom:1px solid var(--hairline);margin-bottom:8px;}
+/* product identifiers */
+.mono-ids{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.mono-id{font-family:var(--font-mono);font-size:10px;color:var(--text-faint);
+  background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;}
+.mono-id.ean{color:var(--veld-mist);}
+.no-ean{font-family:var(--font-mono);font-size:9px;color:var(--text-faint);
+  opacity:0.55;font-style:italic;}
+/* action buckets */
+.bucket-section{margin-bottom:14px;}
+.bucket-section:last-child{margin-bottom:0;}
+.bucket-hdr{font-family:var(--font-mono);font-size:10px;font-weight:600;
+  text-transform:uppercase;letter-spacing:0.1em;padding:5px 0 7px;display:flex;gap:8px;align-items:center;}
+.bucket-section.markdown .bucket-hdr{color:#FFB300;}
+.bucket-section.derange  .bucket-hdr{color:var(--text-faint);}
+.bucket-section.verify   .bucket-hdr{color:#22D3EE;}
+.bucket-section.slow     .bucket-hdr{color:var(--text-faint);opacity:0.65;}
+.bucket-count{background:rgba(255,255,255,0.06);border-radius:var(--radius-pill);
+  padding:1px 7px;font-size:9.5px;font-weight:400;}
+.cnt-badge{font-family:var(--font-mono);font-size:9px;background:rgba(102,187,106,0.15);
+  color:var(--data-pos);border-radius:3px;padding:1px 5px;}
+
+/* == Print detail pages == */
 @media print{
   body{background:#fff;}
   .site-hdr,.action-bar{display:none!important;}
@@ -436,8 +463,36 @@ table.exp-cat tr.etotal td:first-child{font-family:var(--font-mono),monospace;te
   #tab-export{display:block!important;}
   #tab-export .exp-toolbar{display:none!important;}
   .exp-page{width:auto;min-height:0;margin:0;box-shadow:none;padding:0;}
+  .exp-detail-page{page-break-before:always;padding:0;}
   @page{size:A4;margin:14mm;}
 }
+/* detail page print styles (applied in both screen preview and print) */
+.exp-detail-page{width:794px;margin:0 auto;background:#fff;padding:48px 56px;
+  color:#1A1F1A;font-family:var(--font-ui,system-ui),sans-serif;box-shadow:0 8px 40px rgba(0,0,0,0.18);}
+.det-title{font-family:var(--font-display),Georgia,serif;font-weight:700;font-size:20px;
+  color:#1E3F20;border-bottom:2px solid #1E3F20;padding-bottom:10px;margin-bottom:18px;}
+.det-bucket-hdr{font-family:var(--font-mono),monospace;font-size:10px;font-weight:600;
+  text-transform:uppercase;letter-spacing:0.14em;margin:18px 0 6px;}
+.det-bucket-hdr.markdown{color:#E65100;}
+.det-bucket-hdr.derange{color:#616161;}
+.det-bucket-hdr.verify{color:#0277BD;}
+.det-bucket-hdr.slow{color:#616161;}
+.det-dept-hdr{font-family:var(--font-mono),monospace;font-size:9px;text-transform:uppercase;
+  letter-spacing:0.12em;color:#8A958A;margin:10px 0 4px;padding-top:6px;border-top:1px solid #DCE3DA;}
+table.det-tbl{width:100%;border-collapse:collapse;margin-bottom:4px;}
+table.det-tbl th{font-family:var(--font-mono),monospace;font-size:9px;text-transform:uppercase;
+  letter-spacing:0.09em;color:#5A655A;text-align:right;padding:5px 4px 4px;
+  border-bottom:1px solid #DCE3DA;}
+table.det-tbl th:first-child{text-align:left;}
+table.det-tbl td{font-family:var(--font-mono),monospace;font-size:10.5px;font-variant-numeric:tabular-nums;
+  text-align:right;padding:6px 4px;border-bottom:1px solid #F0F0EE;color:#1A1F1A;}
+table.det-tbl td:first-child{text-align:left;font-family:var(--font-ui),sans-serif;font-size:11px;}
+table.det-tbl td.id-cell{font-family:var(--font-mono),monospace;font-size:9.5px;color:#5A655A;}
+.det-cnt-dot{display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:#2E7D32;margin-right:2px;vertical-align:middle;}
+.det-foot{margin-top:24px;border-top:1px solid #DCE3DA;padding-top:10px;
+  font-family:var(--font-mono),monospace;font-size:9px;color:#8A958A;
+  display:flex;justify-content:space-between;}
 </style>
 </head>
 <body>
@@ -453,7 +508,7 @@ table.exp-cat tr.etotal td:first-child{font-family:var(--font-mono),monospace;te
 
 <div class="action-bar">
   <span class="ab-label">Export</span>
-  <button class="btn-daisy" onclick="window.print()">Download PDF</button>
+  <button class="btn-daisy">Download PDF</button>
   <button class="btn-secondary" onclick="downloadPptx()">Download PPTX</button>
   <button class="btn-secondary" onclick="sendEmail()">Send as Email</button>
 </div>
@@ -680,6 +735,8 @@ table.exp-cat tr.etotal td:first-child{font-family:var(--font-mono),monospace;te
       </div>
 
     </div><!-- /exp-page -->
+    <!-- Detail pages: populated from JS on print (buildDetailPages) -->
+    <div id="exp-detail"></div>
   </div><!-- /tab-export -->
 
 </div><!-- /wrap -->
@@ -839,33 +896,63 @@ setTimeout(loadPrune, 4000);
 const SCALE = 14, REORDER = 4;
 const PRIORITY = { OUT:0, SHORT:1, OK:2 };
 
-function renderHeroRows(heroes) {
-  const sorted = [...heroes].sort((a,b) =>
-    (PRIORITY[a.status]??9) - (PRIORITY[b.status]??9) || a.days_cover - b.days_cover
-  );
+// Loaded data stored globally so print detail can access it
+let _heroData = [], _pruneData = [];
+
+function heroRow(h) {
+  const st = (h.status||'ok').toLowerCase();
+  const cover = h.days_cover != null ? +h.days_cover : 0;
+  const fillPct = Math.max(0, Math.min(100, (cover/SCALE)*100));
   const reorderPct = (REORDER/SCALE)*100;
-  document.getElementById('av-rows').innerHTML = sorted.map(h => {
-    const st = (h.status||'ok').toLowerCase();
-    const cover = h.days_cover != null ? +h.days_cover : 0;
-    const fillPct = Math.max(0, Math.min(100, (cover/SCALE)*100));
-    const lab = { out:'OUT', short:'SHORT', ok:'OK' }[st] || st.toUpperCase();
-    return `<div class="trow hero-cols">
-      <span class="av-lamp ${st}"></span>
-      <span class="av-hero-name"><span class="n">${h.description||h.product_code}</span><span class="c">${h.label||''} \xB7 SOH ${Math.round(+h.soh)}</span></span>
-      <span class="av-cover">
-        <span class="av-track">
-          ${cover>0?`<span class="av-fill ${st}" style="width:calc(${fillPct}% - 4px)"></span>`:''}
-          <span class="av-reorder" style="left:${reorderPct}%"></span>
-        </span>
-        <span class="av-val"><b>${cover.toFixed(1)}</b>d</span>
+  const lab = { out:'OUT', short:'SHORT', ok:'OK' }[st] || st.toUpperCase();
+  const eanHtml = h.ean
+    ? `<span class="mono-id ean">${h.ean}</span>`
+    : `<span class="no-ean">no EAN</span>`;
+  return `<div class="trow hero-cols">
+    <span class="av-lamp ${st}"></span>
+    <span class="av-hero-name">
+      <span class="n">${h.description||h.product_code}</span>
+      <span class="c">
+        <span class="mono-ids"><span class="mono-id">${h.product_code}</span>${eanHtml}</span>
+        \xB7 ${h.label||''} \xB7 SOH ${Math.round(+h.soh)}
       </span>
-      <span class="statuschip ${st}">${lab}</span>
+    </span>
+    <span class="av-cover">
+      <span class="av-track">
+        ${cover>0?`<span class="av-fill ${st}" style="width:calc(${fillPct}% - 4px)"></span>`:''}
+        <span class="av-reorder" style="left:${reorderPct}%"></span>
+      </span>
+      <span class="av-val"><b>${cover.toFixed(1)}</b>d</span>
+    </span>
+    <span class="statuschip ${st}">${lab}</span>
+  </div>`;
+}
+
+function renderHeroRows(heroes) {
+  // Group by department, then sort within dept by status / days cover
+  const byDept = {};
+  heroes.forEach(h => {
+    const dept = h.department_name || 'Other';
+    if (!byDept[dept]) byDept[dept] = [];
+    byDept[dept].push(h);
+  });
+  let html = '';
+  Object.entries(byDept).sort(([a],[b]) => a.localeCompare(b)).forEach(([dept, rows]) => {
+    const sorted = [...rows].sort((a,b) =>
+      (PRIORITY[a.status]??9) - (PRIORITY[b.status]??9) ||
+      (a.days_cover??999) - (b.days_cover??999)
+    );
+    html += `<div class="dept-group">
+      <div class="dept-hdr">${dept}</div>
+      ${sorted.map(heroRow).join('')}
     </div>`;
-  }).join('');
-  const out = sorted.filter(h=>h.status==='OUT').length;
-  const short = sorted.filter(h=>h.status==='SHORT').length;
+  });
+  document.getElementById('av-rows').innerHTML = html ||
+    '<div class="loading-state">No heroes found in scope.</div>';
+  const out = heroes.filter(h=>h.status==='OUT').length;
+  const short = heroes.filter(h=>h.status==='SHORT').length;
   document.getElementById('av-count').textContent =
-    `${sorted.length} heroes \xB7 ${out} OUT \xB7 ${short} SHORT \xB7 reorder 4 days`;
+    `${heroes.length} heroes \xB7 ${out} OUT \xB7 ${short} SHORT \xB7 reorder 4 days`;
 }
 
 async function loadHeroes() {
@@ -874,17 +961,50 @@ async function loadHeroes() {
   document.getElementById('av-rows').innerHTML = '';
   const { data, error } = await db.rpc('rpc_bt_availability');
   if (error) {
-    document.getElementById('av-rows').innerHTML = `<div class="err-state">RPC error: ${error.message}</div>`;
+    document.getElementById('av-rows').innerHTML =
+      `<div class="err-state">RPC error: ${error.message}</div>`;
     panel.setAttribute('data-loading','false');
     return;
   }
-  renderHeroRows(data||[]);
+  _heroData = data || [];
+  renderHeroRows(_heroData);
   panel.setAttribute('data-loading','false');
 }
 
 /* ══════════════════════════════════════════
    PANEL 3: PRUNE
 ════════════════════════════════════════════ */
+function pruneRow(r) {
+  const sd = r.last_sale_date ? r.last_sale_date.slice(0,10) : '—';
+  const eanHtml = r.ean
+    ? `<span class="mono-id ean">${r.ean}</span>`
+    : `<span class="no-ean">no EAN</span>`;
+  const cntHtml = r.counted_91d ? '<span class="cnt-badge">counted</span>' : '';
+  return `<div class="sku-row">
+    <span class="sku-name">
+      <span class="statusdot ${r.flag==='DEAD_91D'?'dead':'vslow'}"></span>
+      ${r.description||r.product_code}
+      <span class="mono-ids"><span class="mono-id">${r.product_code}</span>${eanHtml}</span>
+    </span>
+    <span class="sku-mono r">${Math.round(r.soh)}</span>
+    <span class="sku-mono r">${zar(r.soh_cash)}</span>
+    <span class="sku-mono r">${sd}</span>
+    <span class="sku-note">${cntHtml}</span>
+  </div>`;
+}
+
+function renderBucket(rows, label, cls, cap) {
+  if (!rows.length) return '';
+  const show = rows.slice(0, 10);
+  const more = rows.length - show.length;
+  return `<div class="bucket-section ${cls}">
+    <div class="bucket-hdr">${cap} <span class="bucket-count">${rows.length}</span></div>
+    <div class="sku-head"><span>Line</span><span class="r">SOH</span><span class="r">Cash</span><span class="r">Last sale</span><span>Counted</span></div>
+    ${show.map(pruneRow).join('')}
+    ${more > 0 ? `<div class="sku-empty">… ${more} more lines</div>` : ''}
+  </div>`;
+}
+
 async function loadPrune() {
   const heroArea = document.getElementById('prune-hero-area');
   const catsEl = document.getElementById('prune-cats');
@@ -898,60 +1018,47 @@ async function loadPrune() {
     return;
   }
 
-  const dead = (data||[]).filter(r => r.flag === 'DEAD_91D');
-  const allRows = data||[];
+  _pruneData = data || [];
 
-  // hero numbers
+  // Hero KPI numbers — dead = all DEAD_91D, cash = lines with actual SOH
+  const dead = _pruneData.filter(r => r.flag === 'DEAD_91D');
   document.getElementById('dead-total').textContent = dead.length.toLocaleString('en-ZA');
-  const cashTied = dead.reduce((s,r) => s + (+r.soh_cash||0), 0);
+  const cashTied = _pruneData
+    .filter(r => r.action_bucket === 'MARKDOWN' || r.action_bucket === 'VERIFY')
+    .reduce((s,r) => s + (+r.soh_cash||0), 0);
   document.getElementById('cash-tied').textContent = zar(cashTied);
   heroArea.setAttribute('data-loading','false');
 
-  // group by label (merch group)
-  const groups = {};
-  allRows.forEach(r => {
-    const key = r.label;
-    if (!groups[key]) groups[key] = { label:r.label, bucket:r.bucket, dead:[], vslow:[] };
-    if (r.flag === 'DEAD_91D') groups[key].dead.push(r);
-    else groups[key].vslow.push(r);
+  // Group by department, then split into action buckets within each dept
+  const byDept = {};
+  _pruneData.forEach(r => {
+    const dept = r.department_name || 'Other';
+    if (!byDept[dept]) byDept[dept] = { MARKDOWN:[], DERANGE:[], VERIFY:[], SLOW:[] };
+    const bkt = r.action_bucket || 'SLOW';
+    if (!byDept[dept][bkt]) byDept[dept][bkt] = [];
+    byDept[dept][bkt].push(r);
   });
 
-  // sort by dead count desc
-  const sorted = Object.values(groups).sort((a,b) => b.dead.length - a.dead.length || b.vslow.length - a.vslow.length);
-
-  function skuRows(rows) {
-    if (!rows.length) return '';
-    return `<div class="sku-head"><span>Line</span><span class="r">SOH</span><span class="r">Cash</span><span class="r">Last sale</span><span>Note</span></div>` +
-      rows.slice(0,8).map(r => {
-        const fc = r.flag === 'DEAD_91D' ? 'markdown' : 'recode';
-        const fl = r.flag === 'DEAD_91D' ? 'MARKDOWN' : 'VSLOW';
-        const sd = r.last_sale_date ? r.last_sale_date.slice(0,10) : '—';
-        return `<div class="sku-row">
-          <span class="sku-name"><span class="statusdot ${r.flag==='DEAD_91D'?'dead':'vslow'}"></span>${r.description||r.product_code}</span>
-          <span class="sku-mono r">${Math.round(r.soh)}</span>
-          <span class="sku-mono r">${zar(r.soh_cash)}</span>
-          <span class="sku-mono r">${sd}</span>
-          <span class="sku-note">${r.reason||''} <span class="flag-badge ${fc}">${fl}</span></span>
-        </div>`;
-      }).join('') +
-      (rows.length > 8 ? `<div class="sku-empty">… ${rows.length-8} more lines</div>` : '');
-  }
-
-  let html = sorted.map(g => {
-    const total = g.dead.length + g.vslow.length;
-    const tone = g.dead.length > 0 ? 'warn' : 'neutral';
-    const skuHtml = skuRows([...g.dead, ...g.vslow]);
-    const chipLabel = g.dead.length > 0 ? `${g.dead.length} dead` : '0 dead';
-    return `<details>
-      <summary>
-        <span class="chev"></span>
-        <span class="cat-name">${g.label}</span>
-        <span class="cat-count ${tone}">${g.dead.length}</span>
-        <span class="deadchip ${tone}">${chipLabel}</span>
-      </summary>
-      <div class="skus">${skuHtml || '<div class="sku-empty">no detail rows in sample</div>'}</div>
-    </details>`;
-  }).join('');
+  let html = Object.entries(byDept)
+    .sort(([a],[b]) => a.localeCompare(b))
+    .map(([dept, bkts]) => {
+      const deptDead = (bkts.MARKDOWN||[]).length + (bkts.DERANGE||[]).length + (bkts.VERIFY||[]).length;
+      const tone = deptDead > 0 ? 'warn' : 'neutral';
+      const inner =
+        renderBucket(bkts.MARKDOWN||[], 'MARKDOWN', 'markdown', 'Markdown — counted, has stock') +
+        renderBucket(bkts.DERANGE||[],  'DERANGE',  'derange',  'Derange — no stock on floor') +
+        renderBucket(bkts.VERIFY||[],   'VERIFY',   'verify',   'Verify — has SOH, not counted in 91d') +
+        renderBucket(bkts.SLOW||[],     'SLOW',     'slow',     'Very slow — 1–2 units in 91 days');
+      return `<details>
+        <summary>
+          <span class="chev"></span>
+          <span class="cat-name">${dept}</span>
+          <span class="cat-count ${tone}">${deptDead}</span>
+          <span class="deadchip ${tone}">${deptDead} dead</span>
+        </summary>
+        <div class="skus">${inner || '<div class="sku-empty">no lines in scope</div>'}</div>
+      </details>`;
+    }).join('');
 
   if (!html) html = '<div class="loading-state">No dead or very-slow lines found in scope.</div>';
   catsEl.innerHTML = html;
@@ -1026,11 +1133,21 @@ async function loadBuying() {
   const grid = document.getElementById('buying-grid');
   grid.innerHTML = '<div class="loading-state">fetching buying data…</div>';
 
-  // 13 weeks back from today
+  // Latest completed Sunday that the nightly precompute includes.
+  // SQL formula: DATE_TRUNC('week', CURRENT_DATE)::date - 1
+  //   (Monday of this ISO week, minus one day = last Sunday)
+  // JS equivalent: find Monday of this week, subtract one day.
   const today = new Date();
-  const from13w = new Date(today); from13w.setDate(from13w.getDate() - 91);
-  const p_from = from13w.toISOString().slice(0,10);
-  const p_to   = today.toISOString().slice(0,10);
+  const daysToMon = (today.getDay() + 6) % 7;   // 0=Mon,1=Tue,...,6=Sun
+  const thisMon = new Date(today);
+  thisMon.setDate(today.getDate() - daysToMon);
+  const latestSunday = new Date(thisMon);
+  latestSunday.setDate(thisMon.getDate() - 1);
+
+  // Default window: first of the current month through latest completed Sunday.
+  const p_from = new Date(today.getFullYear(), today.getMonth(), 1)
+                   .toISOString().slice(0,10);
+  const p_to   = latestSunday.toISOString().slice(0,10);
 
   const results = await Promise.all(STORES_CFG.map(s =>
     db.rpc('rpc_bt_buying', { p_store: s.code, p_from, p_to })
@@ -1042,34 +1159,27 @@ async function loadBuying() {
     return;
   }
 
-  // Aggregate weekly rows to monthly
-  function aggToMonths(rows) {
-    const byMonth = {};
-    rows.forEach(r => {
-      if (!r.purchase_ratio) return;
-      const mo = r.week_start.slice(0,7); // YYYY-MM
-      if (!byMonth[mo]) byMonth[mo] = { sum:0, cnt:0, build:0 };
-      byMonth[mo].sum += +r.purchase_ratio;
-      byMonth[mo].cnt++;
-      if (+r.build > 0) byMonth[mo].build += +r.build;
-    });
-    return Object.entries(byMonth)
-      .sort(([a],[b]) => a.localeCompare(b))
-      .slice(-5)
-      .map(([mo,d]) => ({
-        m: new Date(mo+'-15').toLocaleString('en-ZA',{month:'short'}),
-        v: d.sum/d.cnt,
-        build: d.build > 0 ? d.build : null,
+  // Build weekly series keyed on week_ending (Sunday dates).
+  // Every row in the table is a closed week so no alarm guard needed here.
+  function weeklySeries(rows) {
+    return [...rows]
+      .filter(r => r.purchase_ratio != null)
+      .sort((a,b) => a.week_ending.localeCompare(b.week_ending))
+      .map(r => ({
+        m: new Date(r.week_ending + 'T00:00:00')
+             .toLocaleDateString('en-ZA', { day:'numeric', month:'short' }),
+        v: +r.purchase_ratio,
+        build: +r.build > 0 ? +r.build : null,
       }));
   }
 
   grid.innerHTML = results.map(s => {
     if (s.error) return `<div class="err-state">Error for ${s.code}: ${s.error.message}</div>`;
-    const monthly = aggToMonths(s.rows);
-    if (!monthly.length) return `<div class="err-state">No data for ${s.name}</div>`;
-    const cur = monthly[monthly.length-1].v;
+    const weeks = weeklySeries(s.rows);
+    if (!weeks.length) return `<div class="err-state">No data for ${s.name}</div>`;
+    const cur = weeks[weeks.length - 1].v;
     const tn = ratioTone(cur);
-    const buildItems = monthly.filter(p => p.build);
+    const buildItems = weeks.filter(p => p.build);
     const buildHtml = buildItems.map(b =>
       `<span class="build-chip">build <b>+${zar(b.build)}</b><span class="when"> &middot; ${b.m} &middot; ${b.v.toFixed(1)}%</span></span>`
     ).join('') || `<span class="build-chip" style="color:var(--text-faint)">no positive build this window</span>`;
@@ -1082,15 +1192,15 @@ async function loadBuying() {
         <div class="ratio-now">
           <span class="ratio-num" style="color:${cur>95?'var(--data-neg)':'var(--daisy-white)'}">${cur.toFixed(1)}%</span>
           <span class="buy-chip ${tn.t}"><span class="lamp"></span>${tn.label}</span>
-          <span class="ratio-cap">current &middot; purch &divide; sales</span>
+          <span class="ratio-cap">latest closed week &middot; purch &divide; sales</span>
         </div>
       </div>
       ${buildGauge(cur, s.accent)}
       <div class="trend-hdr">
-        <span class="trend-t">5-month trend</span>
+        <span class="trend-t">week ending Sunday</span>
         <span class="trend-leg">scale ${SCALE_LO}&ndash;${SCALE_HI}%</span>
       </div>
-      ${buildTrend(monthly, s.accent)}
+      ${buildTrend(weeks, s.accent)}
       <div class="build-chips">${buildHtml}</div>
     </div>`;
   }).join('');
@@ -1179,6 +1289,160 @@ function sendEmail() {
   ].join('\n'));
   window.location.href = 'mailto:?subject=' + sub + '&body=' + body;
 }
+
+/* ══════════════════════════════════════════
+   PRINT DETAIL PAGES
+   Builds expanded Dead Lines + Heroes pages inside #exp-detail before print.
+   Page 1 = existing .exp-page cover (unchanged).
+   Following pages = detail from live _pruneData / _heroData.
+════════════════════════════════════════════ */
+function zarP(v) {
+  // Plain rand formatter for print tables
+  const n = +v || 0;
+  return 'R ' + Math.round(n).toLocaleString('en-ZA');
+}
+
+function buildDetailPages() {
+  const el = document.getElementById('exp-detail');
+  if (!el) return;
+  const today = new Date().toLocaleDateString('en-ZA', { day:'numeric', month:'long', year:'numeric' });
+  const footer = `<div class="det-foot"><span>Figures ex-VAT &middot; rounded to the rand</span><span>${today}</span></div>`;
+
+  el.innerHTML = buildDeadDetail(footer) + buildHeroDetail(footer);
+}
+
+function buildDeadDetail(footer) {
+  if (!_pruneData.length) return '';
+
+  const BUCKETS = [
+    { key:'MARKDOWN', cls:'markdown', cap:'Markdown — counted, has stock' },
+    { key:'DERANGE',  cls:'derange',  cap:'Derange — no stock on floor' },
+    { key:'VERIFY',   cls:'verify',   cap:'Verify — has SOH, not counted in 91 days' },
+    { key:'SLOW',     cls:'slow',     cap:'Very slow — 1–2 units in 91 days' },
+  ];
+
+  // Group all rows by bucket then by department
+  const byBucket = { MARKDOWN:[], DERANGE:[], VERIFY:[], SLOW:[] };
+  _pruneData.forEach(r => {
+    const bkt = r.action_bucket || 'SLOW';
+    if (!byBucket[bkt]) byBucket[bkt] = [];
+    byBucket[bkt].push(r);
+  });
+
+  let body = '';
+  BUCKETS.forEach(({ key, cls, cap }) => {
+    const rows = byBucket[key] || [];
+    if (!rows.length) return;
+
+    // Sub-group by department
+    const byDept = {};
+    rows.forEach(r => {
+      const d = r.department_name || 'Other';
+      if (!byDept[d]) byDept[d] = [];
+      byDept[d].push(r);
+    });
+
+    body += `<div class="det-bucket-hdr ${cls}">${cap} &nbsp;<span style="font-weight:400;font-size:9px;">(${rows.length} lines)</span></div>`;
+
+    Object.entries(byDept).sort(([a],[b]) => a.localeCompare(b)).forEach(([dept, drows]) => {
+      body += `<div class="det-dept-hdr">${dept}</div>`;
+      body += `<table class="det-tbl">
+        <thead><tr>
+          <th>Description</th>
+          <th>Store</th>
+          <th>Product</th>
+          <th>EAN</th>
+          <th>SOH</th>
+          <th>Cash</th>
+          <th>Last sale</th>
+          <th>Counted</th>
+        </tr></thead>
+        <tbody>`;
+      drows.forEach(r => {
+        const sd = r.last_sale_date ? r.last_sale_date.slice(0,10) : '—';
+        const cnt = r.counted_91d ? '<span class="det-cnt-dot"></span>yes' : '—';
+        body += `<tr>
+          <td>${r.description || '—'}</td>
+          <td class="id-cell">${r.store_code}</td>
+          <td class="id-cell">${r.product_code}</td>
+          <td class="id-cell">${r.ean || '—'}</td>
+          <td>${Math.round(r.soh)}</td>
+          <td>${zarP(r.soh_cash)}</td>
+          <td>${sd}</td>
+          <td>${cnt}</td>
+        </tr>`;
+      });
+      body += '</tbody></table>';
+    });
+  });
+
+  return `<div class="exp-detail-page">
+    <div class="det-title">Dead Lines — full detail</div>
+    ${body}
+    ${footer}
+  </div>`;
+}
+
+function buildHeroDetail(footer) {
+  if (!_heroData.length) return '';
+
+  // Group by department
+  const byDept = {};
+  _heroData.forEach(h => {
+    const d = h.department_name || 'Other';
+    if (!byDept[d]) byDept[d] = [];
+    byDept[d].push(h);
+  });
+
+  let body = '';
+  Object.entries(byDept).sort(([a],[b]) => a.localeCompare(b)).forEach(([dept, rows]) => {
+    const sorted = [...rows].sort((a,b) =>
+      (PRIORITY[a.status]??9) - (PRIORITY[b.status]??9) ||
+      (a.days_cover??999) - (b.days_cover??999)
+    );
+    body += `<div class="det-dept-hdr">${dept}</div>
+      <table class="det-tbl">
+        <thead><tr>
+          <th>Description</th>
+          <th>Store</th>
+          <th>Product</th>
+          <th>EAN</th>
+          <th>Sub-dept</th>
+          <th>SOH</th>
+          <th>Days cover</th>
+          <th>Status</th>
+        </tr></thead>
+        <tbody>`;
+    sorted.forEach(h => {
+      const cover = h.days_cover != null ? (+h.days_cover).toFixed(1) : '—';
+      body += `<tr>
+        <td>${h.description || '—'}</td>
+        <td class="id-cell">${h.store_code}</td>
+        <td class="id-cell">${h.product_code}</td>
+        <td class="id-cell">${h.ean || '—'}</td>
+        <td>${h.label || '—'}</td>
+        <td>${Math.round(h.soh)}</td>
+        <td>${cover}</td>
+        <td>${h.status || '—'}</td>
+      </tr>`;
+    });
+    body += '</tbody></table>';
+  });
+
+  return `<div class="exp-detail-page">
+    <div class="det-title">Heroes — availability detail</div>
+    ${body}
+    ${footer}
+  </div>`;
+}
+
+// Override Download PDF to populate detail pages first
+const _nativePrint = window.print.bind(window);
+document.querySelector('.action-bar .btn-daisy').addEventListener('click', function(e) {
+  e.preventDefault();
+  buildDetailPages();
+  setTimeout(_nativePrint, 60);
+});
 </script>
 </body>
 </html>
