@@ -1101,7 +1101,16 @@ function buildGauge(current, accent) {
 function buildTrend(series, accent) {
   const w=440,h=150,padT=24,padB=22,padL=18,padR=18;
   const plotH=h-padT-padB, plotW=w-padL-padR;
-  const Y = v => padT + (1-Xp(v))*plotH;
+  // Auto-fit Y: include all data values + band + padding so no dot clips.
+  const vals = series.map(p=>p.v).filter(v=>v!=null);
+  const dataLo = vals.length ? Math.min(...vals) : SCALE_LO;
+  const dataHi = vals.length ? Math.max(...vals) : SCALE_HI;
+  const fitLo = Math.min(dataLo, BAND_LO);
+  const fitHi = Math.max(dataHi, BAND_HI);
+  const pad = Math.max((fitHi - fitLo) * 0.15, 6);
+  const yLo = fitLo - pad, yHi = fitHi + pad;
+  const fitXp = v => (v - yLo) / (yHi - yLo);
+  const Y = v => padT + (1-fitXp(v))*plotH;
   const px = i => padL + (i/(series.length-1||1))*plotW;
 
   const bandTop=Y(BAND_HI), bandBot=Y(BAND_LO);
@@ -1133,16 +1142,16 @@ async function loadBuying() {
   const grid = document.getElementById('buying-grid');
   grid.innerHTML = '<div class="loading-state">fetching buying data…</div>';
 
-  // Latest completed Sunday that the nightly precompute includes.
-  // SQL formula: DATE_TRUNC('week', CURRENT_DATE)::date - 1
-  //   (Monday of this ISO week, minus one day = last Sunday)
-  // JS equivalent: find Monday of this week, subtract one day.
+  // Latest confirmed Sunday: store data arrives overnight, so Sunday's extract
+  // is not in Supabase until Monday night.  Subtracting 8 from this Monday
+  // skips the most-recent Sunday (data still in transit) and lands on the
+  // prior confirmed Sunday.  Mirrors SQL: DATE_TRUNC('week',CURRENT_DATE)-8.
   const today = new Date();
   const daysToMon = (today.getDay() + 6) % 7;   // 0=Mon,1=Tue,...,6=Sun
   const thisMon = new Date(today);
   thisMon.setDate(today.getDate() - daysToMon);
   const latestSunday = new Date(thisMon);
-  latestSunday.setDate(thisMon.getDate() - 1);
+  latestSunday.setDate(thisMon.getDate() - 8);
 
   // Default window: first of the current month through latest completed Sunday.
   const p_from = new Date(today.getFullYear(), today.getMonth(), 1)
@@ -1198,7 +1207,7 @@ async function loadBuying() {
       ${buildGauge(cur, s.accent)}
       <div class="trend-hdr">
         <span class="trend-t">week ending Sunday</span>
-        <span class="trend-leg">scale ${SCALE_LO}&ndash;${SCALE_HI}%</span>
+        <span class="trend-leg">purch &divide; sales &middot; %</span>
       </div>
       ${buildTrend(weeks, s.accent)}
       <div class="build-chips">${buildHtml}</div>
