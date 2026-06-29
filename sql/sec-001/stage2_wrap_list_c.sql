@@ -131,7 +131,7 @@ SECURITY DEFINER
 AS $$
 SELECT ean
 FROM public.products
-WHERE supplier ILIKE '%' || p_supplier || '%';
+WHERE supplier_code ILIKE '%' || p_supplier || '%';
 $$;
 
 GRANT EXECUTE ON FUNCTION public.rpc_eans_by_supplier(text) TO anon, authenticated;
