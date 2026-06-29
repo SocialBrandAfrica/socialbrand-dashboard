@@ -1380,11 +1380,9 @@ export default function Home() {
   useEffect(() => {
     async function init() {
       const [pushRes, histRes] = await Promise.all([
-        supabase
-          .from('push_log')
-          .select('snapshot_date')
-          .eq('status', 'SUCCESS')
-          .not('snapshot_date', 'is', null),
+        // SB-CC-SEC-001: rpc_push_available_dates (SECURITY DEFINER) replaces
+        // direct push_log read so push_log can sit behind RLS.
+        supabase.rpc('rpc_push_available_dates'),
         // Fetch up to 5000 rows — 5 stores × 16 months × ~31 days = ~2,480 max.
         // Using range(0,4999) ensures we never clip older dates off the picker,
         // even if row count grows after new stores are added.
@@ -1900,11 +1898,9 @@ export default function Home() {
         .then(r => r.data ?? [])
         .catch(() => []),
       // product_catalog carries supplier_name per EAN (loaded from DIWAAIS2 / PLU reference)
+      // SB-CC-SEC-001: routed through rpc_supplier_by_ean (SECURITY DEFINER).
       supabase
-        .from('product_catalog')
-        .select('ean,supplier_name')
-        .in('store_code', storeCodes)
-        .not('supplier_name', 'is', null)
+        .rpc('rpc_supplier_by_ean', { p_stores: storeCodes })
         .then(r => r.data ?? [])
         .catch(() => []),
       // Engine-backed Slow Movers (l2_stock_position.slow_mover_signal, §5 KPI4).

@@ -52,10 +52,9 @@ export default function FocusDrilldown({ date, store, stores }) {
     if (mode === 'supplier') {
       // supplier is not stored in daily_snapshots — look it up via the products table
       // to get the matching EAN list, then query v_focus_trend by those EANs.
+      // SB-CC-SEC-001: routed through rpc_eans_by_supplier (SECURITY DEFINER).
       const { data: prodRows, error: pe } = await supabase
-        .from('products')
-        .select('ean')
-        .ilike('supplier', `%${active}%`)
+        .rpc('rpc_eans_by_supplier', { p_supplier: active })
 
       if (pe) throw new Error(pe.message)
       if (!prodRows || prodRows.length === 0) {
