@@ -25,11 +25,17 @@ export async function middleware(request) {
 
   const { data: { user } } = await supabase.auth.getUser()
   const pathname = request.nextUrl.pathname
+  const hostname = request.headers.get('host') || ''
+  if (hostname.startsWith('bonnytyler.')) {
+    return NextResponse.rewrite(new URL('/bt', request.url))
+  }
+
   const isPublic =
     pathname === '/login' ||
     pathname.startsWith('/auth/') ||
     pathname === '/StockFlow-DevCorner-Demo.html' ||
-    pathname.startsWith('/api/dev-corner/')
+    pathname.startsWith('/api/dev-corner/') ||
+    pathname === '/bt'
 
   if (!user && !isPublic) {
     return NextResponse.redirect(new URL('/login', request.url))
