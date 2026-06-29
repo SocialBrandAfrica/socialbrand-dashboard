@@ -107,7 +107,8 @@ detail_rows AS (
         store_code, merch_group_nr, label, bucket,
         'DETAIL'::text AS row_type,
         sales_ex, gp, gp_pct, units,
-        baseline_gp, delta_gp_rand, delta_gp_pct, target_gp
+        baseline_gp, delta_gp_rand, delta_gp_pct, target_gp,
+        1 AS sort_order
     FROM with_baseline
 ),
 bucket_rows AS (
@@ -126,7 +127,8 @@ bucket_rows AS (
         SUM(baseline_gp)    AS baseline_gp,
         SUM(delta_gp_rand)  AS delta_gp_rand,
         NULL::numeric       AS delta_gp_pct,
-        NULL::numeric       AS target_gp
+        NULL::numeric       AS target_gp,
+        2 AS sort_order
     FROM with_baseline
     GROUP BY bucket
 ),
@@ -146,7 +148,8 @@ basket_row AS (
         SUM(baseline_gp)    AS baseline_gp,
         SUM(delta_gp_rand)  AS delta_gp_rand,
         NULL::numeric       AS delta_gp_pct,
-        NULL::numeric       AS target_gp
+        NULL::numeric       AS target_gp,
+        3 AS sort_order
     FROM with_baseline
 )
 SELECT store_code, merch_group_nr, label, bucket, row_type,
@@ -159,10 +162,7 @@ FROM (
     UNION ALL
     SELECT * FROM basket_row
 ) u
-ORDER BY
-    CASE u.row_type WHEN 'DETAIL' THEN 1 WHEN 'BUCKET' THEN 2 WHEN 'TOTAL' THEN 3 END,
-    u.bucket NULLS LAST,
-    u.label;
+ORDER BY sort_order, bucket NULLS LAST, label;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.rpc_bt_scorecard(text) TO anon, authenticated;
