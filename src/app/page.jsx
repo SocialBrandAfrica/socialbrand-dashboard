@@ -9,6 +9,7 @@ import { SalesTrendPanel }   from '@/components/SalesTrendPanel'
 import { CalendarPopover } from '@/components/CalendarPopover'
 import PushStatusStrip from '@/components/PushStatusStrip'
 import ConsignmentPanel from '@/components/ConsignmentPanel'
+import KpiStrip from '@/components/KpiStrip'
 import './dashboard.css'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2925,13 +2926,17 @@ export default function Home() {
         <div style={{ display: 'grid', gap: 14 }}>
 
           {/* ── KPI STRIP ─────────────────────────────────────────────────────── */}
-          <div className="sb-kpi-strip">
-            {viewsLoading
-              ? Array.from({ length: 5 }, (_, i) => (
-                  <div key={i} className="sb-glass sb-edge sb-frost-veil" data-loading="true" style={{ padding: '18px 20px', '--d': `${i * 80}ms` }} />
-                ))
-              : (() => {
-                  const kpiCards = [
+          <KpiStrip
+            loading={viewsLoading}
+            onTooltip={(key, content, rect) => {
+              setTooltipPos({ left: rect.left, top: rect.bottom + 8 })
+              setTooltipContent(content)
+              setTooltipCard(key)
+            }}
+            onTooltipClear={() => { setTooltipCard(null); setTooltipContent(null) }}
+            cards={(() => {
+              if (viewsLoading) return []
+              const kpiCards = [
                     {
                       key:           'sales',
                       label:         selectedDates.length > 1 ? `Total Sales · ${selectedDates.length} dates` : `Sales · ${selectedDates[0] ?? ''}`,
@@ -3114,106 +3119,33 @@ export default function Home() {
                       onClick:       kpiCapTied > 0 ? () => setCapTiedModalOpen(true) : undefined,
                     },
                   ]
-                  return kpiCards.map((k, kpiIdx) => {
+                  return kpiCards.map(k => {
                     const lyUp   = k.lyDelta?.positive
                     const lyGood = k.lyDeltaInvert ? !lyUp : lyUp
                     const wowUp  = k.wowDelta?.positive
-                    return (
-                      <div key={k.key} className={`sb-glass sb-edge sb-unfrost sb-frost-veil ${k.edge ? `sb-edge-${k.edge}` : ''}`}
-                        data-loading="false"
-                        onClick={k.onClick}
-                        onMouseEnter={k.tooltip ? (e) => {
-                          const rect = e.currentTarget.getBoundingClientRect()
-                          setTooltipPos({ left: rect.left, top: rect.bottom + 8 })
-                          setTooltipContent({ ...k.tooltip, edgeColor: k.edge })
-                          setTooltipCard(k.key)
-                        } : undefined}
-                        onMouseLeave={k.tooltip ? () => { setTooltipCard(null); setTooltipContent(null) } : undefined}
-                        style={{
-                        padding: '18px 20px',
-                        cursor: k.onClick ? 'pointer' : 'default',
-                        position: 'relative',
-                        '--d': `${kpiIdx * 80}ms`,
-                      }}>
-                        <p style={{ fontSize: 10, color: 'var(--veld-mist)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 8, fontFamily: 'var(--font-head)', fontWeight: 500 }}>{k.label}</p>
-                        <p className="sb-kpi-num" style={{
-                          color: k.tone === 'neg' ? 'var(--data-neg)' : k.tone === 'warn' ? 'var(--data-warn)' : k.tone === 'pos' ? 'var(--data-pos)' : k.tone === 'neutral' ? undefined : k.danger && k.value !== '0' ? 'var(--data-neg)' : k.warn ? 'var(--data-warn)' : undefined }}>
-                          {k.value}
-                        </p>
-
-                        {/* Dual-source row: raw companion + delta badge (DASH-TRUTH-001 P1) */}
-                        {k.dual && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
-                            <span className="sb-raw-chip"><span className="lbl">raw</span>{k.dual.rawLabel}</span>
-                            {k.dual.delta && (
-                              <span className={`sb-delta-badge ${k.dual.delta.cls}`} title={k.dual.explain}>
-                                {'Δ'} {k.dual.delta.text}
-                              </span>
-                            )}
-                          </div>
-                        )}
-
-                        {k.sparkline && (
-                          <div style={{ margin: '8px 0 6px', height: 28 }}>
-                            <Sparkline
-                              values={k.sparkline}
-                              color={k.accent ? '#66BB6A' : k.warn || k.danger ? '#FFB300' : 'rgba(245,245,244,0.4)'}
-                              height={28}
-                            />
-                          </div>
-                        )}
-
-                        {(k.lyDelta || k.lyRef || k.wowDelta) && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: k.sparkline ? 4 : 10 }}>
-                            {k.lyDelta && (
-                              <span style={{
-                                fontSize: 10, padding: '2px 6px', borderRadius: 4, fontFamily: "'Geist Mono', monospace",
-                                background: lyGood ? 'rgba(102,187,106,0.14)' : 'rgba(239,83,80,0.14)',
-                                color:      lyGood ? 'var(--data-pos)'        : 'var(--data-neg)',
-                              }}>{k.lyDelta.label}</span>
-                            )}
-                            {k.lyRef && (
-                              <span style={{ fontSize: 10, color: 'rgba(245,245,244,0.3)', fontFamily: "'Geist Mono', monospace" }}>
-                                LY {k.lyRef}
-                              </span>
-                            )}
-                            {k.wowDelta && (
-                              <span style={{
-                                fontSize: 10, padding: '2px 5px', borderRadius: 4, fontFamily: "'Geist Mono', monospace",
-                                borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 8, marginLeft: 2,
-                                color: wowUp ? 'rgba(102,187,106,0.75)' : 'rgba(239,83,80,0.75)',
-                              }}>WoW {k.wowDelta.label}</span>
-                            )}
-                          </div>
-                        )}
-
-                        {k.bench && (
-                          <p style={{ fontSize: 10, color: 'rgba(245,245,244,0.2)', fontFamily: "'Geist Mono', monospace", marginTop: 4 }}>
-                            {k.bench}{k.benchN != null ? ` (${k.benchN}w avg)` : ''}
-                          </p>
-                        )}
-
-                        {!k.lyDelta && !k.lyRef && !k.wowDelta && !k.bench && (
-                          <p style={{ fontSize: 11, color: k.onClick ? 'rgba(249,251,247,0.75)' : 'rgba(245,245,244,0.35)', marginTop: 8, fontFamily: "'Geist Mono', monospace", textDecoration: k.onClick ? 'underline' : 'none' }}>
-                            {k.sub}
-                          </p>
-                        )}
-                        {/* Subtle basis note — informational only, no warning intent */}
-                        {k.basisNote && (
-                          <p style={{
-                            fontSize: 9, color: 'rgba(245,245,244,0.15)',
-                            fontFamily: "'Geist Mono', monospace",
-                            marginTop: 5, letterSpacing: '0.02em',
-                          }}>
-                            {k.basisNote}
-                          </p>
-                        )}
-                      </div>
-                    )
+                    const chips = [
+                      ...(k.lyDelta  ? [{ t: k.lyDelta.label,           k: lyGood ? 'pos' : 'neg' }] : []),
+                      ...(k.lyRef    ? [{ t: `LY ${k.lyRef}`,           k: 'mute' }] : []),
+                      ...(k.wowDelta ? [{ t: `WoW ${k.wowDelta.label}`, k: wowUp ? 'pos' : 'neg' }] : []),
+                      ...(k.dual     ? [{ t: `raw ${k.dual.rawLabel}`,  k: 'mute' }] : []),
+                      ...(k.dual?.delta ? [{ t: `Δ ${k.dual.delta.text}`, k: k.dual.delta.cls === 'sb-delta-amber' ? 'warn' : k.dual.delta.cls === 'sb-delta-red' ? 'neg' : 'mute' }] : []),
+                    ]
+                    return {
+                      key:      k.key,
+                      label:    k.label,
+                      value:    k.value,
+                      tone:     k.tone,
+                      sparkline: k.sparkline,
+                      edge:     k.edge,
+                      onClick:  k.onClick,
+                      tooltip:  k.tooltip,
+                      chips,
+                      meta: k.bench ? k.bench + (k.benchN != null ? ` (${k.benchN}w avg)` : '') : null,
+                      sub:  k.sub ? (k.basisNote ? `${k.sub} · ${k.basisNote}` : k.sub) : k.basisNote ?? null,
+                    }
                   })
-                })()
-            }
-          </div>
+                })()}
+          />
 
           {/* ── SELL-THROUGH RATE PANEL ──────────────────────────────────────── */}
           {sellThroughRate && (

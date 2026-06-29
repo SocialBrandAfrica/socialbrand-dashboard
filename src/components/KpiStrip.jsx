@@ -1,94 +1,122 @@
 'use client'
 
-import { supabase } from '@/lib/supabase'
-import { useQuery } from '@/lib/useQuery'
-import { zar, pct, short } from '@/lib/format'
+// Verdict Wall KPI strip — Pulse design system.
+// Presentational: all data arrives as props from page.jsx (no Supabase calls here).
+//
+// cards prop: Array<{
+//   key:       string,
+//   label:     string,
+//   value:     string,
+//   tone:      'pos' | 'neg' | 'warn' | 'neutral',
+//   sparkline: number[] | null,
+//   chips:     Array<{ t: string, k: 'pos' | 'neg' | 'warn' | 'mute' }>,
+//   meta:      string | null,   -- faint reference line (bench / LY ref)
+//   sub:       string | null,   -- faint descriptor line
+//   edge:      'green' | 'blue' | 'red' | 'amber' | null,
+//   onClick:   function | undefined,
+//   tooltip:   object | undefined,
+// }>
 
-function KpiCard({ label, value, sub, colour = 'text-white' }) {
+const TONE_COLOR = {
+  pos:     'var(--data-pos)',
+  neg:     'var(--data-neg)',
+  warn:    'var(--data-warn)',
+  neutral: 'var(--daisy-white)',
+}
+
+const CHIP_STYLE = {
+  pos:  { color: 'var(--data-pos)',   background: 'rgba(102,187,106,0.13)' },
+  neg:  { color: 'var(--data-neg)',   background: 'rgba(239,83,80,0.13)'   },
+  warn: { color: 'var(--data-warn)',  background: 'rgba(255,179,0,0.13)'   },
+  mute: { color: 'var(--veld-mist)',  background: 'rgba(255,255,255,0.05)' },
+}
+
+function VwSpark({ values, tone }) {
+  if (!values || values.length < 2) return null
+  const w = 150, h = 26
+  const max = Math.max(...values), min = Math.min(...values)
+  const range = (max - min) || 1
+  const pts = values.map((p, i) =>
+    `${((i / (values.length - 1)) * w).toFixed(1)},${(h - ((p - min) / range) * h).toFixed(1)}`
+  ).join(' ')
+  const color = tone === 'neutral' ? 'var(--data-neutral)' : (TONE_COLOR[tone] ?? 'rgba(245,245,244,0.25)')
   return (
-    <div className="bg-[#16213E] border border-[#0F3460] rounded-xl px-5 py-4 flex flex-col gap-1 min-w-[140px]">
-      <span className="text-xs uppercase tracking-widest text-slate-400">{label}</span>
-      <span className={`text-2xl font-bold ${colour}`}>{value}</span>
-      {sub && <span className="text-xs text-slate-500">{sub}</span>}
-    </div>
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
+      style={{ display: 'block', margin: '2px 0' }}>
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="2"
+        strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+    </svg>
   )
 }
 
-export default function KpiStrip({ date, store }) {
-  const { data, loading, error } = useQuery(async () => {
-    // v_kpi_by_date returns 1 row per store per date — at most 5 rows,
-    // never hitting the Supabase 1 000-row default limit.
-    let q = supabase
-      .from('v_kpi_by_date')
-      .select('total_sales, total_cost, total_qty, neg_soh_count, slow_mover_count')
-      .eq('snapshot_date', date)
+function VwChip({ t, k = 'mute' }) {
+  const s = CHIP_STYLE[k] ?? CHIP_STYLE.mute
+  return (
+    <span style={{
+      fontFamily: "'Geist Mono', monospace", fontSize: 10, padding: '2px 7px',
+      borderRadius: 'var(--radius-chip)', fontVariantNumeric: 'tabular-nums',
+      whiteSpace: 'nowrap', lineHeight: 1.5, ...s,
+    }}>{t}</span>
+  )
+}
 
-    if (store !== 'all') q = q.eq('store_code', store)
-
-    const { data: rows, error } = await q
-    if (error) throw new Error(error.message)
-
-    let turnover   = 0
-    let cost       = 0
-    let totalQty   = 0
-    let negSOH     = 0
-    let slowMovers = 0
-
-    for (const r of rows) {
-      turnover   += Number(r.total_sales)       || 0
-      cost       += Number(r.total_cost)        || 0
-      totalQty   += Number(r.total_qty)         || 0
-      negSOH     += Number(r.neg_soh_count)     || 0
-      slowMovers += Number(r.slow_mover_count)  || 0
-    }
-
-    const gp = turnover > 0 ? ((turnover - cost) / turnover) * 100 : 0
-
-    return { turnover, gp, totalQty, negSOH, slowMovers }
-  }, [date, store])
-
+export default function KpiStrip({ loading, cards = [], onTooltip, onTooltipClear }) {
   if (loading) return (
-    <div className="flex gap-4 flex-wrap">
-      {[...Array(5)].map((_, i) => (
-        <div key={i} className="bg-[#16213E] border border-[#0F3460] rounded-xl px-5 py-4 min-w-[140px] h-20 animate-pulse" />
+    <div className="sb-kpi-strip">
+      {Array.from({ length: 5 }, (_, i) => (
+        <div key={i} className="sb-glass sb-edge sb-frost-veil" data-loading="true"
+          style={{ padding: '18px 20px', '--d': `${i * 80}ms` }} />
       ))}
     </div>
   )
 
-  if (error) return (
-    <div className="text-red-400 text-sm p-4 bg-[#16213E] rounded-xl border border-red-900">
-      ⚠ KPI error: {error}
-    </div>
-  )
-
-  if (!data) return null
-
   return (
-    <div className="flex flex-wrap gap-4">
-      <KpiCard
-        label="Group Turnover"
-        value={zar(data.turnover)}
-        sub={`${short(data.totalQty)} units`}
-        colour="text-emerald-400"
-      />
-      <KpiCard
-        label="GP %"
-        value={pct(data.gp)}
-        sub="excl. VAT"
-        colour={data.gp >= 20 ? 'text-emerald-400' : 'text-amber-400'}
-      />
-      <KpiCard
-        label="Negative SOH"
-        value={short(data.negSOH)}
-        sub="lines below zero"
-        colour={data.negSOH > 0 ? 'text-red-400' : 'text-emerald-400'}
-      />
-      <KpiCard
-        label="Slow Movers"
-        value={short(data.slowMovers)}
-        sub="SOH > 0, no sales"
-        colour={data.slowMovers > 50 ? 'text-red-400' : 'text-amber-400'}
-      />
+    <div className="sb-kpi-strip">
+      {cards.map((k, idx) => (
+        <div key={k.key}
+          className={`sb-glass sb-edge sb-unfrost sb-frost-veil${k.edge ? ` sb-edge-${k.edge}` : ''}`}
+          data-loading="false"
+          onClick={k.onClick}
+          onMouseEnter={k.tooltip && onTooltip ? (e) => {
+            const rect = e.currentTarget.getBoundingClientRect()
+            onTooltip(k.key, { ...k.tooltip, edgeColor: k.edge }, rect)
+          } : undefined}
+          onMouseLeave={k.tooltip && onTooltipClear ? onTooltipClear : undefined}
+          style={{ padding: '18px 20px', position: 'relative', cursor: k.onClick ? 'pointer' : 'default', '--d': `${idx * 80}ms` }}>
+
+          <p style={{
+            fontSize: 10, fontFamily: "'Geist Mono', monospace", textTransform: 'uppercase',
+            letterSpacing: '0.12em', color: 'var(--veld-mist)', marginBottom: 8,
+          }}>{k.label}</p>
+
+          <p className="sb-kpi-num" style={{ color: TONE_COLOR[k.tone] ?? undefined }}>
+            {k.value}
+          </p>
+
+          {k.sparkline && <VwSpark values={k.sparkline} tone={k.tone} />}
+
+          {k.chips?.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginTop: 6 }}>
+              {k.chips.map((c, ci) => <VwChip key={ci} t={c.t} k={c.k} />)}
+            </div>
+          )}
+
+          {k.meta && (
+            <p style={{
+              fontFamily: "'Geist Mono', monospace", fontSize: 10, color: 'rgba(245,245,244,0.25)',
+              fontVariantNumeric: 'tabular-nums', marginTop: 5,
+            }}>{k.meta}</p>
+          )}
+
+          {k.sub && (
+            <p style={{
+              fontFamily: "'Geist Mono', monospace", fontSize: 10.5, fontVariantNumeric: 'tabular-nums',
+              color: k.onClick ? 'rgba(249,251,247,0.75)' : 'rgba(245,245,244,0.35)',
+              textDecoration: k.onClick ? 'underline' : 'none', marginTop: 3,
+            }}>{k.sub}</p>
+          )}
+        </div>
+      ))}
     </div>
   )
 }
