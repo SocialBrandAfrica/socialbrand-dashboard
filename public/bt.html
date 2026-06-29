@@ -354,6 +354,87 @@ details[open] .chev{transform:rotate(45deg);}
   font-size:12px;color:var(--text-faint);}
 .err-state{padding:16px 20px;font-family:var(--font-mono);font-size:11px;
   color:var(--data-neg);background:rgba(239,83,80,0.08);border-radius:var(--radius-md);}
+
+/* ── Panel 5 print export (light palette, scoped) ─────────────────────────── */
+#tab-export{background:transparent;}
+#tab-export *{box-sizing:border-box;}
+.exp-toolbar{max-width:794px;margin:0 auto 14px;display:flex;justify-content:flex-end;}
+.exp-printbtn{font-family:var(--font-ui);font-size:12px;font-weight:600;color:#fff;
+  background:#1E3F20;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;}
+.exp-printbtn:hover{background:#2a5a2d;}
+.exp-page{width:794px;min-height:1123px;margin:0 auto;background:#fff;
+  padding:52px 56px;box-shadow:0 8px 40px rgba(0,0,0,0.18);
+  color:#1A1F1A;font-family:var(--font-ui,system-ui),sans-serif;}
+/* header */
+.exp-doc-h{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;
+  border-bottom:2px solid #1E3F20;padding-bottom:16px;}
+.exp-doc-h .etitle{font-family:var(--font-display),Georgia,serif;font-weight:600;font-size:27px;
+  color:#1E3F20;letter-spacing:-0.01em;line-height:1.05;}
+.exp-doc-h .esub{font-family:var(--font-mono),monospace;font-size:11px;color:#5A655A;
+  margin-top:6px;letter-spacing:0.02em;}
+.exp-doc-h .eperiod{text-align:right;}
+.exp-doc-h .eperiod .em{font-family:var(--font-display),Georgia,serif;font-weight:600;font-size:20px;color:#1A1F1A;}
+.exp-doc-h .eperiod .es{font-family:var(--font-mono),monospace;font-size:10px;color:#8A958A;
+  text-transform:uppercase;letter-spacing:0.1em;margin-top:4px;}
+/* hero GP */
+.exp-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;
+  padding:22px 0 24px;border-bottom:1px solid #DCE3DA;}
+.exp-hero .elab{font-family:var(--font-mono),monospace;font-size:10px;text-transform:uppercase;
+  letter-spacing:0.14em;color:#5A655A;display:block;margin-bottom:6px;}
+.exp-hero .enum{font-family:var(--font-display),Georgia,serif;font-weight:700;font-size:52px;
+  line-height:0.92;font-variant-numeric:tabular-nums;letter-spacing:-0.02em;color:#1A1F1A;}
+.exp-hero .evs{text-align:right;}
+.exp-hero .edelta{font-family:var(--font-display),Georgia,serif;font-weight:700;font-size:26px;
+  font-variant-numeric:tabular-nums;color:#2E7D32;}
+.exp-hero .ebase{font-family:var(--font-mono),monospace;font-size:11px;color:#5A655A;margin-top:4px;}
+/* sections */
+.exp-sec{margin-top:26px;}
+.exp-sec-h{font-family:var(--font-mono),monospace;font-size:10.5px;font-weight:600;
+  text-transform:uppercase;letter-spacing:0.16em;color:#1E3F20;margin-bottom:2px;}
+.exp-sec-note{font-family:var(--font-mono),monospace;font-size:10px;color:#8A958A;margin-bottom:12px;}
+/* ratio cards */
+.exp-ratio-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+.exp-ratio{border:1px solid #DCE3DA;border-radius:8px;padding:16px 18px;}
+.exp-ratio .erstore{font-family:var(--font-ui),sans-serif;font-size:13px;font-weight:600;color:#1A1F1A;}
+.exp-ratio .erbig{display:flex;align-items:baseline;gap:10px;margin:8px 0 4px;}
+.exp-ratio .erpct{font-family:var(--font-display),Georgia,serif;font-weight:700;font-size:40px;
+  line-height:0.9;font-variant-numeric:tabular-nums;}
+.exp-ratio .erverdict{font-family:var(--font-mono),monospace;font-size:10px;font-weight:600;
+  text-transform:uppercase;letter-spacing:0.08em;padding:3px 9px;border-radius:999px;}
+.exp-ratio .erscale{font-family:var(--font-mono),monospace;font-size:10px;color:#8A958A;}
+.ep-pos{color:#2E7D32;} .ep-neg{color:#C62828;} .ep-warn{color:#E65100;} .ep-neut{color:#616161;}
+.ep-bg-pos{background:rgba(46,125,50,0.10);} .ep-bg-neg{background:rgba(198,40,40,0.10);}
+/* category table */
+table.exp-cat{width:100%;border-collapse:collapse;}
+table.exp-cat th{font-family:var(--font-mono),monospace;font-size:9.5px;text-transform:uppercase;
+  letter-spacing:0.1em;color:#5A655A;text-align:right;padding:7px 0;border-bottom:1px solid #DCE3DA;}
+table.exp-cat th:first-child{text-align:left;}
+table.exp-cat td{font-family:var(--font-mono),monospace;font-size:13px;font-variant-numeric:tabular-nums;
+  text-align:right;padding:9px 0;border-bottom:1px solid #DCE3DA;color:#1A1F1A;}
+table.exp-cat td:first-child{text-align:left;font-family:var(--font-ui),sans-serif;font-size:13px;}
+table.exp-cat tr.etotal td{font-weight:700;border-bottom:none;border-top:2px solid #1E3F20;}
+table.exp-cat tr.etotal td:first-child{font-family:var(--font-mono),monospace;text-transform:uppercase;
+  letter-spacing:0.06em;font-size:11px;}
+/* trio */
+.exp-trio{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-top:26px;
+  border-top:1px solid #DCE3DA;padding-top:22px;}
+.exp-cell .exp-sec-h{margin-bottom:8px;}
+.exp-cell .ecval{font-family:var(--font-display),Georgia,serif;font-weight:700;font-size:32px;
+  font-variant-numeric:tabular-nums;color:#1A1F1A;line-height:1;}
+.exp-cell .ecval.none{font-family:var(--font-ui),sans-serif;font-size:15px;font-weight:500;color:#616161;}
+.exp-cell .eccap{font-family:var(--font-mono),monospace;font-size:10px;color:#5A655A;margin-top:7px;}
+/* footer */
+.exp-foot{margin-top:32px;border-top:1px solid #DCE3DA;padding-top:12px;
+  font-family:var(--font-mono),monospace;font-size:9.5px;color:#8A958A;letter-spacing:0.03em;
+  display:flex;justify-content:space-between;gap:12px;}
+@media print{
+  body{background:#fff;}
+  .site-hdr,.tab-bar{display:none!important;}
+  .tab-panel:not(.active){display:none!important;}
+  #tab-export .exp-toolbar{display:none!important;}
+  .exp-page{width:auto;min-height:0;margin:0;box-shadow:none;padding:0;}
+  @page{size:A4;margin:14mm;}
+}
 </style>
 </head>
 <body>
@@ -372,6 +453,7 @@ details[open] .chev{transform:rotate(45deg);}
   <button class="tab-btn" data-tab="heroes">Heroes</button>
   <button class="tab-btn" data-tab="prune">Prune</button>
   <button class="tab-btn" data-tab="buying">Buying</button>
+  <button class="tab-btn" data-tab="export">Export</button>
 </div>
 
 <div class="wrap">
@@ -426,16 +508,6 @@ details[open] .chev{transform:rotate(45deg);}
 
   <!-- ====== TAB 2: HEROES ====== -->
   <div class="tab-panel" id="tab-heroes">
-    <div class="wirebar">
-      <span class="pip">Not wired</span>
-      <div class="txt">
-        <b>Design preview &mdash; awaiting SB-CC-BT-FIX-001.</b>
-        <code>rpc_bt_availability()</code> throws <code>column reference &ldquo;store_code&rdquo; is ambiguous</code>
-        in the <code>INSERT INTO bt_out_events</code> body. Fix: add <code>#variable_conflict use_column</code>
-        at the top of the plpgsql body, or rename locals to <code>v_store_code</code> / <code>v_product_code</code>.
-        Sample below is PM ground-truth 2026-06-29.
-      </div>
-    </div>
     <div class="glass-panel">
       <div class="glass-panel-h">
         <span class="glass-panel-t">Heroes</span>
@@ -518,6 +590,101 @@ details[open] .chev{transform:rotate(45deg);}
     </div>
   </div>
 
+  <!-- ====== TAB 5: EXPORT ====== -->
+  <div class="tab-panel" id="tab-export">
+    <div class="exp-toolbar">
+      <button class="exp-printbtn" onclick="window.print()">Print / Save PDF</button>
+    </div>
+    <div class="exp-page">
+
+      <div class="exp-doc-h">
+        <div>
+          <div class="etitle">Month-End Summary</div>
+          <div class="esub">Five-store group &middot; grocery &amp; health-and-beauty &middot; figures ex-VAT, rounded to the rand</div>
+        </div>
+        <div class="eperiod">
+          <div class="em">May 2026</div>
+          <div class="es">trading month</div>
+        </div>
+      </div>
+
+      <div class="exp-hero">
+        <div>
+          <span class="elab">Basket gross profit &mdash; the month</span>
+          <span class="enum">R&thinsp;81&thinsp;820</span>
+        </div>
+        <div class="evs">
+          <div class="edelta">+R&thinsp;5&thinsp;304</div>
+          <div class="ebase">vs baseline R&thinsp;76&thinsp;515</div>
+        </div>
+      </div>
+
+      <!-- LEAD: month purchase ratio -->
+      <div class="exp-sec">
+        <div class="exp-sec-h">Month purchase ratio</div>
+        <div class="exp-sec-note">purchases as a percent of sales &middot; target band 80&ndash;86% &middot; the month, not the week</div>
+        <div class="exp-ratio-grid">
+          <div class="exp-ratio">
+            <div class="erstore">SPAR Delareyville</div>
+            <div class="erbig">
+              <span class="erpct ep-pos">84.6%</span>
+              <span class="erverdict ep-pos ep-bg-pos">In band</span>
+            </div>
+            <div class="erscale">inside the 80&ndash;86% control band</div>
+          </div>
+          <div class="exp-ratio">
+            <div class="erstore">SPAR Roosville</div>
+            <div class="erbig">
+              <span class="erpct ep-neg">98.5%</span>
+              <span class="erverdict ep-neg ep-bg-neg">Over &middot; alarm</span>
+            </div>
+            <div class="erscale">above 95% &mdash; buying ran ahead of sales</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Category GP vs baseline -->
+      <div class="exp-sec">
+        <div class="exp-sec-h">Category gross profit vs baseline</div>
+        <div class="exp-sec-note">three buckets &middot; month GP and the move against baseline</div>
+        <table class="exp-cat">
+          <thead><tr><th>Bucket</th><th>Month GP</th><th>vs baseline</th></tr></thead>
+          <tbody>
+            <tr><td>Grocery &mdash; daily</td><td>R&thinsp;41&thinsp;597</td><td class="ep-pos">+R&thinsp;1&thinsp;297</td></tr>
+            <tr><td>Health &amp; beauty &mdash; daily</td><td>R&thinsp;31&thinsp;230</td><td class="ep-pos">+R&thinsp;3&thinsp;166</td></tr>
+            <tr><td>Health &amp; beauty &mdash; Roosville</td><td>R&thinsp;8&thinsp;994</td><td class="ep-pos">+R&thinsp;841</td></tr>
+            <tr class="etotal"><td>Basket</td><td>R&thinsp;81&thinsp;820</td><td class="ep-pos">+R&thinsp;5&thinsp;304</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Bottom trio -->
+      <div class="exp-trio">
+        <div class="exp-cell">
+          <div class="exp-sec-h">DC deals won</div>
+          <div class="ecval none">None logged yet</div>
+          <div class="eccap">deal capture starts next month</div>
+        </div>
+        <div class="exp-cell">
+          <div class="exp-sec-h">Gap lines &amp; sell-through</div>
+          <div class="ecval none">None logged yet</div>
+          <div class="eccap">ranging-gap feed pending</div>
+        </div>
+        <div class="exp-cell">
+          <div class="exp-sec-h">Tail count</div>
+          <div class="ecval">271</div>
+          <div class="eccap">dead lines &middot; target &rarr; 0</div>
+        </div>
+      </div>
+
+      <div class="exp-foot">
+        <span>Prepared 1 June 2026 &middot; trading month May 2026</span>
+        <span>Figures ex-VAT &middot; rounded to the rand</span>
+      </div>
+
+    </div><!-- /exp-page -->
+  </div><!-- /tab-export -->
+
 </div><!-- /wrap -->
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
@@ -537,6 +704,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'heroes' && !heroesLoaded) loadHeroes();
     if (btn.dataset.tab === 'prune' && !pruneLoaded) loadPrune();
     if (btn.dataset.tab === 'buying' && !buyingLoaded) loadBuying();
   });
@@ -672,39 +840,51 @@ document.getElementById('month-sel').addEventListener('change', loadScorecard);
 loadScorecard();
 
 /* ══════════════════════════════════════════
-   PANEL 2: HEROES (static — not wired)
+   PANEL 2: HEROES (live — rpc_bt_availability)
 ════════════════════════════════════════════ */
-(function renderHeroes() {
-  const HEROES = [
-    { name:'Grandpa Powder',          cat:'Medicinal',    soh:0,  cover:0.0, status:'out' },
-    { name:'F/Life Tots Original',    cat:'Baby Food',    soh:0,  cover:0.0, status:'out' },
-    { name:'Vaseline Coconut Butter', cat:'Skincare F',   soh:0,  cover:0.0, status:'out' },
-    { name:'Nestle Nido 1+',          cat:'Baby Food',    soh:0,  cover:0.0, status:'out' },
-    { name:'Excella Sunflower Oil',   cat:'Cooking Oils', soh:10, cover:1.1, status:'short' },
-    { name:'Wabona Maize',            cat:'Maize',        soh:4,  cover:2.9, status:'short' },
-    { name:'Jungle Oats',             cat:'Cereals',      soh:24, cover:3.7, status:'short' },
-  ];
-  const SCALE = 14, REORDER = 4;
-  const PRIORITY = { out:0, short:1, ok:2 };
-  const sorted = [...HEROES].sort((a,b) => PRIORITY[a.status]-PRIORITY[b.status] || a.cover-b.cover);
+const SCALE = 14, REORDER = 4;
+const PRIORITY = { OUT:0, SHORT:1, OK:2 };
+
+function renderHeroRows(heroes) {
+  const sorted = [...heroes].sort((a,b) =>
+    (PRIORITY[a.status]??9) - (PRIORITY[b.status]??9) || a.days_cover - b.days_cover
+  );
   const reorderPct = (REORDER/SCALE)*100;
   document.getElementById('av-rows').innerHTML = sorted.map(h => {
-    const fillPct = Math.max(0, Math.min(100, (h.cover/SCALE)*100));
-    const lab = { out:'OUT', short:'SHORT', ok:'OK' }[h.status];
+    const st = (h.status||'ok').toLowerCase();
+    const cover = h.days_cover != null ? +h.days_cover : 0;
+    const fillPct = Math.max(0, Math.min(100, (cover/SCALE)*100));
+    const lab = { out:'OUT', short:'SHORT', ok:'OK' }[st] || st.toUpperCase();
     return `<div class="trow hero-cols">
-      <span class="av-lamp ${h.status}"></span>
-      <span class="av-hero-name"><span class="n">${h.name}</span><span class="c">${h.cat} · SOH ${h.soh}</span></span>
+      <span class="av-lamp ${st}"></span>
+      <span class="av-hero-name"><span class="n">${h.description||h.product_code}</span><span class="c">${h.label||''} \xB7 SOH ${Math.round(+h.soh)}</span></span>
       <span class="av-cover">
         <span class="av-track">
-          ${h.cover>0?`<span class="av-fill ${h.status}" style="width:calc(${fillPct}% - 4px)"></span>`:''}
+          ${cover>0?`<span class="av-fill ${st}" style="width:calc(${fillPct}% - 4px)"></span>`:''}
           <span class="av-reorder" style="left:${reorderPct}%"></span>
         </span>
-        <span class="av-val"><b>${h.cover.toFixed(1)}</b>d</span>
+        <span class="av-val"><b>${cover.toFixed(1)}</b>d</span>
       </span>
-      <span class="statuschip ${h.status}">${lab}</span>
+      <span class="statuschip ${st}">${lab}</span>
     </div>`;
   }).join('');
-})();
+  const out = sorted.filter(h=>h.status==='OUT').length;
+  const short = sorted.filter(h=>h.status==='SHORT').length;
+  document.getElementById('av-count').textContent =
+    `${sorted.length} heroes \xB7 ${out} OUT \xB7 ${short} SHORT \xB7 reorder 4 days`;
+}
+
+let heroesLoaded = false;
+async function loadHeroes() {
+  heroesLoaded = true;
+  document.getElementById('av-rows').innerHTML = '<div class="loading-state">fetching availability…</div>';
+  const { data, error } = await db.rpc('rpc_bt_availability');
+  if (error) {
+    document.getElementById('av-rows').innerHTML = `<div class="err-state">RPC error: ${error.message}</div>`;
+    return;
+  }
+  renderHeroRows(data||[]);
+}
 
 /* ══════════════════════════════════════════
    PANEL 3: PRUNE

@@ -70,8 +70,9 @@ WHERE rn <= 5;
 -- ---------------------------------------------------------------------------
 -- RPC: rpc_bt_availability()
 -- Per hero: SOH (latest l2_soh_daily), 28d daily rate, days_cover, status.
--- Side-effect: logs OUT events to bt_out_events (hence plpgsql + VOLATILE).
+-- Pure read path -- OUT event logging moved to rpc_bt_log_out_events() below.
 -- VOLATILE: mandated for all BT RPCs (SB-CC-BT-001).
+-- SB-CC-BT-FIX-001: removed INSERT from read RPC (OUT param shadowed column).
 -- ---------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS public.rpc_bt_availability();
 
@@ -95,27 +96,6 @@ AS $$
 DECLARE
     v_today date := CURRENT_DATE;
 BEGIN
-    -- Log today's OUT events (idempotent)
-    INSERT INTO public.bt_out_events
-        (store_code, product_code, merch_group_nr, logged_date, soh)
-    SELECT
-        h.store_code,
-        h.product_code,
-        h.merch_group_nr,
-        v_today,
-        COALESCE(ls.soh, 0)
-    FROM public.l2_bt_heroes h
-    LEFT JOIN LATERAL (
-        SELECT sd.soh
-        FROM public.l2_soh_daily sd
-        WHERE sd.store_code   = h.store_code
-          AND sd.product_code = h.product_code
-        ORDER BY sd.snapshot_date DESC
-        LIMIT 1
-    ) ls ON true
-    WHERE COALESCE(ls.soh, 0) <= 0
-    ON CONFLICT (store_code, product_code, logged_date) DO NOTHING;
-
     -- Return availability for all heroes
     RETURN QUERY
     WITH soh_current AS (
@@ -173,3 +153,43 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.rpc_bt_availability() TO anon, authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- FUNCTION: rpc_bt_log_out_events()
+-- Logs today's OUT-status heroes to bt_out_events.
+-- Call from the nightly refresh job (refresh_l2_pipeline) instead of from
+-- the read RPC -- keeps the read path clean (SB-CC-BT-FIX-001).
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.rpc_bt_log_out_events()
+RETURNS void
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_today date := CURRENT_DATE;
+BEGIN
+    INSERT INTO public.bt_out_events
+        (store_code, product_code, merch_group_nr, logged_date, soh)
+    SELECT
+        h.store_code,
+        h.product_code,
+        h.merch_group_nr,
+        v_today,
+        COALESCE(ls.soh, 0)
+    FROM public.l2_bt_heroes h
+    LEFT JOIN LATERAL (
+        SELECT sd.soh
+        FROM public.l2_soh_daily sd
+        WHERE sd.store_code   = h.store_code
+          AND sd.product_code = h.product_code
+        ORDER BY sd.snapshot_date DESC
+        LIMIT 1
+    ) ls ON true
+    WHERE COALESCE(ls.soh, 0) <= 0
+    ON CONFLICT (store_code, product_code, logged_date) DO NOTHING;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.rpc_bt_log_out_events() TO anon, authenticated;
