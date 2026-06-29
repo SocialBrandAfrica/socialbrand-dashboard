@@ -149,15 +149,20 @@ basket_row AS (
         NULL::numeric       AS target_gp
     FROM with_baseline
 )
-SELECT * FROM detail_rows
-UNION ALL
-SELECT * FROM bucket_rows
-UNION ALL
-SELECT * FROM basket_row
+SELECT store_code, merch_group_nr, label, bucket, row_type,
+       sales_ex, gp, gp_pct, units,
+       baseline_gp, delta_gp_rand, delta_gp_pct, target_gp
+FROM (
+    SELECT * FROM detail_rows
+    UNION ALL
+    SELECT * FROM bucket_rows
+    UNION ALL
+    SELECT * FROM basket_row
+) u
 ORDER BY
-    CASE row_type WHEN 'DETAIL' THEN 1 WHEN 'BUCKET' THEN 2 WHEN 'TOTAL' THEN 3 END,
-    bucket NULLS LAST,
-    label;
+    CASE u.row_type WHEN 'DETAIL' THEN 1 WHEN 'BUCKET' THEN 2 WHEN 'TOTAL' THEN 3 END,
+    u.bucket NULLS LAST,
+    u.label;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.rpc_bt_scorecard(text) TO anon, authenticated;
