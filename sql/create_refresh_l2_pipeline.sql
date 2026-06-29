@@ -106,6 +106,14 @@ BEGIN
     END;
   END LOOP;
 
+  -- BT out-event logging (SB-CC-BT-FIX-001: moved from read RPC to nightly pipeline).
+  -- Guarded so it can never abort the chain.
+  BEGIN
+    PERFORM rpc_bt_log_out_events();
+  EXCEPTION WHEN OTHERS THEN
+    v_result := v_result || jsonb_build_object('bt_out_events_error', SQLERRM);
+  END;
+
   -- L1 dashboard recovery steps (PM 06-11 ruling): belt-and-braces for the
   -- push script's REST 500s -- refresh mv_kpi_by_date + search index in-DB.
   BEGIN
@@ -141,7 +149,7 @@ $$;
 
 COMMENT ON FUNCTION refresh_l2_pipeline() IS
   'Nightly L2 engine refresh: L2 chain -> consignment(10116) -> classification x(active) '
-  '-> Family 3 anomaly x(active) -> mv_kpi_by_date + mv_rate_of_sale + search index. '
+  '-> Family 3 anomaly x(active) -> BT out-event logging -> mv_kpi_by_date + mv_rate_of_sale + search index. '
   'Fleet sourced from stores WHERE is_active (R25). Scheduled via pg_cron refresh-l2-pipeline (20:15 UTC).';
 
 GRANT EXECUTE ON FUNCTION refresh_l2_pipeline() TO authenticated;
