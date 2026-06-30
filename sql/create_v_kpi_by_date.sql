@@ -1,38 +1,52 @@
 -- =============================================================================
 -- create_v_kpi_by_date.sql
--- SB-CC-DASH-SOURCE-002 Step 1 (SB-INDEX-005 Phase 2).
--- Deployed 2026-06-13 via Supabase MCP migration
---   dash_source_002_step1_v_kpi_by_date_leftjoin_pushdown. Canonical source.
+-- SB-CC-PRSSALE-RETIRE-002 Tier 1, object 1.
+-- Supersedes: SB-CC-DASH-SOURCE-002 Step 1 (2026-06-13, transitional).
 -- =============================================================================
+-- HISTORY:
+--   Step 1 (2026-06-13): repointed SALES facts onto sigma_sales; stock facts
+--     and date driver still on daily_snapshots (deliberate hold at the time).
+--   Step 2 (this file, RETIRE-002): completes the retirement.
+--     daily_snapshots write path removed 2026-06-28 (Push-SigmaToSupabase.ps1
+--     tasks removed on all servers). daily_snapshots frozen at 2026-06-28.
+--     Any date >= 2026-06-29 returned no row -- single-date dashboard showed R0.
+--
 -- WHAT THIS STEP DOES:
---   Re-sources the SALES FACTS of v_kpi_by_date (the dashboard's primary KPI
---   view) from PRSSALE (daily_snapshots) onto the Sigma-native exact ledger
---   (sigma_sales / DBUMBA, period_kind='T' AND txn_kind=1):
---     total_sales        = SUM(sales_incl_vat)             was SUM(today_sales)
---     total_cost         = SUM(cost_value)  (dEKUmsatz)    was SUM(today_cost)
---     total_sales_ex_vat = SUM(sales_incl_vat - vat_value) native VAT
---                          (was today_sales/(1 + vat_pct/100), flat-1.15 approx)
---   Real GP% is now derivable downstream from exact ex-VAT + exact cost.
---   Reconcile (2026-06-13, latest date 06-12): view total_sales/ex_vat/cost ==
---   direct sigma_sales sums to the rand on all 5 stores; GP% 10116 18.3 / 21355
---   13.0 / 80175 19.4 / 80176 17.1 / 80579 14.8 %.
+--   Flips the driving table from daily_snapshots to sigma_sales so a row exists
+--   for every trading date in sigma_sales (period_kind='T', txn_kind=1).
+--   Stock facts (neg_soh_count, slow_mover_count, capital_tied, ghost_stock_value)
+--   repointed from daily_snapshots inline aggregation to l2_soh_daily +
+--   l2_stock_position -- the same proven CTEs used in mv_kpi_by_date (RETIRE-001).
+--   store_name from stores (same pattern as mv_kpi_by_date).
+--   total_qty from sigma_sales.qty (PRSSALE qty retired with the pipeline).
+--   daily_snapshots dependency dropped entirely from this view.
 --
--- HELD ON PRSSALE THIS STEP (deliberate):
---   total_qty -- Sigma qty diverges ~+20% at 10116 (7,361 PRSSALE vs 8,835
---   Sigma on 06-12); unit definition (weighed/scale vs each) unconfirmed.
---   Stock facts (neg_soh_count, slow_mover_count, capital_tied,
---   ghost_stock_value, store_name) stay on daily_snapshots -- a later step.
+-- NULLS (R22 -- surface not hide):
+--   Stock facts are NULL for dates before l2_soh_daily ingestion floor:
+--     2026-06-11 x stores 10116, 21355, 80175, 80176
+--     2026-06-21 x store 80579
+--   Sales facts populate for any date present in sigma_sales.
 --
--- DATE SET: unchanged (driven by daily_snapshots) so single-date card queries
---   keep predicate pushdown into idx_ds_store_date (94ms). A FULL OUTER union
---   with sigma_sales (to surface missed-EOD days like 10116 2026-05-29) blocked
---   pushdown and full-scanned 18M rows (51s -- would time out live). The date
---   picker is fed by push_log + mv_kpi_by_date (NOT this view), so sigma-only
---   missed-EOD days are not selectable here anyway; recovering them belongs to
---   the later step that moves the driving/stock source + mv_kpi_by_date onto
---   sigma-native.
+-- PERFORMANCE:
+--   sigma_sales driver: idx_sigma_sales_store_date (store_code, sale_date) --
+--     confirmed present; carries the single-date pushdown predicate.
+--   l2_soh_daily stock CTE: idx_l2_soh_store_date (store_code, snapshot_date DESC)
+--     -- confirmed present; carries the stock CTE predicate.
+--   PG15 CTEs inline by default -- WHERE snapshot_date = $1 from the caller is
+--     rewritten to sale_date = $1 on sigma_sales and snapshot_date = $1 on
+--     l2_soh_daily; both hit their indexes. No sequential scan regression.
 --
--- Rule 19: DROP + clean CREATE. No dependent views (verified). anon SELECT.
+-- COLUMN ORDER: preserved exactly from the replaced view (zero client breakage).
+-- GRANT: anon + authenticated SELECT (same as before).
+--
+-- Out of scope (RETIRE-001 do-not-touch list): purge_old_snapshots,
+--   check_l1_feed_freshness, rpc_feed_health_daily, rpc_layer_freshness,
+--   fn_diag_snapshot_counts, v_deleted_lines_audit, refresh_l2_pipeline.
+--
+-- Acceptance (R22): single-date total_sales reconciles to sigma_sales direct
+--   sum on all 5 stores for 2026-06-29+; stock facts NULL for pre-floor dates.
+--
+-- Rule 19: DROP + clean CREATE. No dependent views (verified pre-deploy).
 -- =============================================================================
 
 DROP VIEW IF EXISTS public.v_kpi_by_date;
@@ -42,42 +56,52 @@ WITH sales AS (
   SELECT
     ss.store_code,
     ss.sale_date,
-    round(sum(ss.sales_incl_vat), 2) AS total_sales,
-    round(sum(ss.cost_value), 2) AS total_cost,
-    round(sum(ss.sales_incl_vat - ss.vat_value), 2) AS total_sales_ex_vat
-  FROM sigma_sales ss
-  WHERE ss.period_kind = 'T' AND ss.txn_kind = 1
+    round(sum(ss.sales_incl_vat), 2)                 AS total_sales,
+    round(sum(ss.cost_value), 2)                     AS total_cost,
+    round(sum(ss.sales_incl_vat - ss.vat_value), 2) AS total_sales_ex_vat,
+    round(sum(ss.qty), 2)                            AS total_qty
+  FROM public.sigma_sales ss
+  WHERE ss.period_kind = 'T'
+    AND ss.txn_kind    = 1
   GROUP BY ss.store_code, ss.sale_date
+),
+stock AS (
+  SELECT
+    ls.store_code,
+    ls.snapshot_date,
+    SUM(CASE WHEN ls.soh < 0 THEN 1 ELSE 0 END)::bigint               AS neg_soh_count,
+    SUM(CASE WHEN sp.slow_mover_signal THEN 1 ELSE 0 END)::bigint     AS slow_mover_count,
+    COALESCE(ROUND(SUM(
+      CASE WHEN sp.class = 'NORMAL' AND ls.soh > 0
+           THEN ls.soh * COALESCE(sp.unit_cost, 0)
+      END)::numeric, 2), 0)                                            AS capital_tied,
+    COALESCE(ROUND(SUM(
+      CASE WHEN sp.class IN ('PRODUCTION', 'NON_STOCK') AND ls.soh > 0
+           THEN ls.soh * COALESCE(sp.unit_cost, 0)
+      END)::numeric, 2), 0)                                            AS ghost_stock_value
+  FROM public.l2_soh_daily ls
+  JOIN public.l2_stock_position sp
+    ON  sp.store_code   = ls.store_code
+    AND sp.product_code = ls.product_code
+  GROUP BY ls.store_code, ls.snapshot_date
 )
 SELECT
-  ds.store_code,
-  ds.store_name,
-  ds.snapshot_date,
+  sa.store_code,
+  s.store_name,
+  sa.sale_date                AS snapshot_date,
   sa.total_sales,
   sa.total_cost,
-  sum(ds.today_qty) AS total_qty,
-  count(*) FILTER (WHERE ds.soh < 0::numeric) AS neg_soh_count,
-  count(*) FILTER (WHERE ds.period_qty = 0::numeric AND ds.soh > 0::numeric AND ds.is_placeholder = false
-      AND classify_snapshot_item(ds.dept_name, ds.sub_dept_name, ds.soh, ds.last_sales_date_iso) IS NULL
-      AND NOT (is_fresh_perishable(ds.dept_name, ds.sub_dept_name)
-               AND (ds.last_sales_date_iso IS NULL OR ds.last_sales_date_iso < (CURRENT_DATE - '30 days'::interval)))
-    ) AS slow_mover_count,
-  round(sum(
-      CASE WHEN ds.period_qty = 0::numeric AND ds.soh > 0::numeric AND ds.is_placeholder = false
-            AND classify_snapshot_item(ds.dept_name, ds.sub_dept_name, ds.soh, ds.last_sales_date_iso) IS NULL
-            AND NOT (is_fresh_perishable(ds.dept_name, ds.sub_dept_name)
-                     AND (ds.last_sales_date_iso IS NULL OR ds.last_sales_date_iso < (CURRENT_DATE - '30 days'::interval)))
-           THEN ds.soh * COALESCE(ds.unit_cost, 0::numeric) ELSE 0::numeric END), 2) AS capital_tied,
+  sa.total_qty,
+  st.neg_soh_count,
+  st.slow_mover_count,
+  st.capital_tied,
   sa.total_sales_ex_vat,
-  round(sum(
-      CASE WHEN ds.period_qty = 0::numeric AND ds.soh > 0::numeric AND ds.is_placeholder = false
-            AND ((classify_snapshot_item(ds.dept_name, ds.sub_dept_name, ds.soh, ds.last_sales_date_iso) = ANY (ARRAY['PRODUCTION'::text, 'NON_STOCK'::text]))
-                 OR is_fresh_perishable(ds.dept_name, ds.sub_dept_name)
-                    AND (ds.last_sales_date_iso IS NULL OR ds.last_sales_date_iso < (CURRENT_DATE - '30 days'::interval)))
-           THEN ds.soh * COALESCE(ds.unit_cost, 0::numeric) ELSE 0::numeric END), 2) AS ghost_stock_value
-FROM daily_snapshots ds
-LEFT JOIN sales sa
-  ON sa.store_code = ds.store_code AND sa.sale_date = ds.snapshot_date
-GROUP BY ds.store_code, ds.store_name, ds.snapshot_date, sa.total_sales, sa.total_cost, sa.total_sales_ex_vat;
+  st.ghost_stock_value
+FROM sales sa
+LEFT JOIN public.stores s
+  ON  s.store_code   = sa.store_code
+LEFT JOIN stock st
+  ON  st.store_code   = sa.store_code
+  AND st.snapshot_date = sa.sale_date;
 
 GRANT SELECT ON public.v_kpi_by_date TO anon, authenticated;
