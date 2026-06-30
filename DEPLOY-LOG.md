@@ -4,6 +4,67 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-29 SAST -- bt-perf-001 MERGED to main (a0e5131) -- PM APPROVED
+
+**MERGED to `main` + pushed to origin. Vercel auto-redeploys.**
+
+- **`bt-perf-001`** (merge `a0e5131`, SB-CC-BT-003/004/005):
+  BT-003: `l2_bt_buying_weekly` + `l2_bt_tail`/`l2_bt_heroes` precompute tables seeded nightly via `refresh_bt_precompute()`. Sub-1s anon-key RPCs replace runtime aggregates. BT-004: identifiers panel, dept grouping, counted-dead buckets, full PDF export. BT-005: Sunday buying gauge + closed-week cutoff (`week_ending`=Sunday, -8 week fence); auto-fit Y-axis.
+  Tidy commit `c939b87` on top: suppresses 0-unit rows on multi-date sales; removes dead Top20Panel.
+
+**DB fixes (2026-06-29, applied via SQL -- not in git):**
+- `mv_kpi_by_date.total_qty` NULL: MV rebuilt sourcing `sigma_sales.qty`. 374,601 units on June MTD x5. Verified live.
+- `rpc_layer_freshness` timeout: index `idx_daily_snapshots_store_date ON daily_snapshots(store_code, snapshot_date DESC)` created. Returns <1s.
+
+---
+
+## 2026-06-29 SAST -- sec-001-rls MERGED to main (df56c61) -- PM APPROVED
+
+**MERGED to `main` + pushed to origin. Vercel auto-redeploys.**
+
+- **`sec-001-rls`** (merge `df56c61`, SB-CC-SEC-001):
+  RLS lockdown Stage 0+1+2. `rpc_eans_by_supplier` added. All anon-readable tables verified. `supplier_code` join bug fixed. Policy drop SQL for `product_search_index` anon-read policy committed (Pieter to execute after RETIRE-002 search RPCs land).
+
+---
+
+## 2026-06-29 SAST -- bt-instruments-001 MERGED to main (9d47ace) -- PM APPROVED
+
+**MERGED to `main` + pushed to origin. Vercel auto-redeploys.**
+
+- **`bt-instruments-001`** (merge `9d47ace`, SB-CC-BT-001/002):
+  Bonnie Tyler dashboard `/bt.html` (bonnytyler.socialbrand.africa). BT-001: 7 SQL measurement-instrument files. BT-002: one-page scroll layout, PDF/PPTX/email export. Verdict Wall KPI card design (`4689ef0`) landed ahead of this merge.
+
+---
+
+## 2026-06-28 SAST -- prssale-retire-001 MERGED to main (43ffed6) -- PM APPROVED
+
+**MERGED to `main` + pushed to origin. Vercel auto-redeploys.**
+
+- **`prssale-retire-001`** (merge `43ffed6`, SB-CC-PRSSALE-RETIRE-001):
+  Retired `daily_snapshots` as the live dashboard data source. `mv_kpi_by_date`, `rpc_top20`, `rpc_kpi_dept_counts`, `rpc_dept_summary`, `rpc_lost_sales_oos` repointed to `sigma_sales` + engine (`l2_soh_daily` / `l2_stock_position`). `daily_snapshots` is now a frozen historical table: last write was 2026-06-28 (PRSSALE push tasks removed from all 6 servers on the same date -- no future writes). Timeout fix (`SET LOCAL 60000` + `rpc_kpi_dept_counts` plpgsql index fix, SB-CC-DASH-TIMEOUT-001) bundled. `Remove-PrssalePushTasks.ps1` committed to scripts/.
+
+**ON PIETER (still open):**
+- Apply `prssale-retire-002` objects as they clear PM sign-off (branch `prssale-retire-002` -- the single-date dashboard is blank for 29 Jun+ until these land).
+
+---
+
+## 2026-06-28 SAST -- pmini-go-live-001 + pmini fixes MERGED to main -- PM APPROVED
+
+**MERGED to `main`. Vercel auto-redeploys.**
+
+- **`pmini-go-live-001`** (merge `ca5d157`, SB-CC-PMINI-GO-LIVE-001): partner-facing consignment page `/pmini` (`public/StockFlow-DevCorner-Demo.html`); SQL bundle: `v_consignment_catalog`, `l2_consignment_daily` re-sourced, 5-arg `rpc_consignment_lines`.
+- **pmini fixes** (`bed9c6f`-->`810d82b`, SB-CC-PMINI-FIX-001/002/003): Pulse Mini new design (sales-based health, daily bars); `StockFlow-DevCorner-Demo.html` = `pmini.html` rule. Focus Area CD cosmetic spec (`SB-CD-SPEC-FOCUS-001`, `78b5228`) same date window.
+
+---
+
+## 2026-06-21 SAST -- extractor v1.17 self-heal MERGED to main (e30efe4)
+
+**MERGED to `main`. Self-deploys to servers on next nightly run.**
+
+- **Extractor v1.17** (`e30efe4`, SB-CC-DICE-REPAIR-001): self-heal for `dw220sdb` user-mapping error on TOPS Dice (80579). All 5 stores self-healing on login failures.
+
+---
+
 ## 2026-06-20 16:48 SAST -- verdict-wall-001 MERGED to main (72b6d01) — PM APPROVED
 
 **MERGED to `main` + pushed to origin. Vercel auto-redeploys dashboard.socialbrand.africa.**
