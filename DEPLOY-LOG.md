@@ -4,6 +4,36 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-06-30 SAST -- prssale-retire-002 MERGED to main -- PM APPROVED + R22 PASSED
+
+**Branch:** prssale-retire-002
+**Commits:** cc23147 · e2fc471 · ef28749 · 8834cb6
+**Applied + reconciled by:** Pieter van der Westhuizen
+**R22:** PM-reconciled MTD period_sales ×5 to the cent; historical SOH spot-check clean (l2_soh_daily date-keyed); search index 54,952 rows (net gain vs prior daily_snapshots-sourced index).
+
+### Objects retired off daily_snapshots
+
+| Object | Type | Commit |
+|---|---|---|
+| v_dept_by_date | view | cc23147 |
+| mv_sparkline_14d | matview | cc23147 |
+| rpc_focus_chart | fn | cc23147 |
+| rpc_product_detail | fn | cc23147 |
+| rpc_subdepts | fn | cc23147 |
+| v_focus_trend | view | e2fc471 |
+| v_top_products_by_date | view | e2fc471 |
+| rpc_search_products | fn | e2fc471 |
+| rpc_all_rows | fn | ef28749 |
+| upsert_search_index | fn | 8834cb6 |
+
+### What changed
+- All 10 Tier-1 by-date objects repointed: sigma_sales driver (period_kind=T, txn_kind=1); stock facts from l2_soh_daily + l2_stock_position; dept/subdept from sigma_articles joins.
+- R20 addendum applied throughout: LEFT JOIN v_ean_bridge + COALESCE synthetic EAN (LPAD(store_code,5,'0')||LPAD(product_code::text,8,'0')) -- recovers 4.8-36% of sales/products INNER JOIN was silently dropping (PLU/produce/TOPS lines).
+- upsert_search_index: driver changed from daily_snapshots to sigma_articles; signature changed (p_snapshot_date dropped, p_store_code now DEFAULT NULL); pg_cron job refresh-search-index added at 20:30 UTC (after refresh-l2-pipeline, before feed-freshness-check).
+- daily_snapshots fully retired as a live driver. Remains as frozen historical table (valid <= 2026-06-28). Out-of-scope monitors (purge_old_snapshots, check_l1_feed_freshness, fn_diag_snapshot_counts etc.) continue to reference it by design.
+
+---
+
 ## 2026-06-29 SAST -- bt-perf-001 MERGED to main (a0e5131) -- PM APPROVED
 
 **MERGED to `main` + pushed to origin. Vercel auto-redeploys.**
