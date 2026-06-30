@@ -1,16 +1,18 @@
 -- =============================================================================
 -- create_v_top_products_by_date.sql
--- SB-CC-PRSSALE-RETIRE-002 Tier 1, object 6.
+-- SB-CC-PRSSALE-RETIRE-002 Tier 1, object 8 (was held as obj 6; cleared 2026-06-30).
 -- Supersedes: SB-CC-RECONCILE-001 Phase 1 / fix_top20_subdept.sql.
 -- =============================================================================
 -- WHY:
 --   View was FROM daily_snapshots WHERE today_sales > 0, with RANK() over
 --   (store_code, snapshot_date). Frozen at 2026-06-28.
 --
--- WHAT CHANGES:
+-- WHAT CHANGES (v2, 2026-06-30 per RULE-BOOK R20 addendum):
 --   Driver: sigma_sales (period_kind='T', txn_kind=1) aggregated per
 --     (store, sale_date, ean).
---   ean: via v_ean_bridge (canonical 1-EAN-per-product rule).
+--   ean: LEFT JOIN v_ean_bridge + COALESCE(b.ean, synthetic store+product)
+--     so PLU/produce/uncatalogued lines are not dropped (INNER JOIN dropped
+--     up to 48% of sales on some stores -- the R20 coverage rule).
 --   description: sigma_articles.description.
 --   dept_name: sigma_departments via sigma_articles.department_nr.
 --   sub_dept_name: sigma_subdepts via sigma_articles.merch_group_nr.
@@ -18,6 +20,10 @@
 --   WHERE today_sales > 0 filter preserved (HAVING clause on the aggregation).
 --   daily_snapshots dependency dropped entirely.
 --
+-- SYNTHETIC EAN fallback: LPAD(store_code,5,'0')||LPAD(product_code::text,8,'0')
+--   matches the old daily_snapshots PLU-expansion convention (13 chars).
+--
+-- R22 acceptance: view total = direct sigma_sales SUM x5 to the rand.
 -- COLUMN ORDER: preserved exactly (store_code, snapshot_date, ean, description,
 --   dept_name, sub_dept_name, today_sales, today_qty, rank_by_sales, rank_by_qty).
 -- GRANT: anon + authenticated SELECT.
@@ -31,14 +37,15 @@ WITH sales AS (
   SELECT
     ss.store_code,
     ss.sale_date,
-    b.ean,
+    COALESCE(b.ean,
+      LPAD(ss.store_code, 5, '0') || LPAD(ss.product_code::text, 8, '0'))          AS ean,
     a.description,
-    sd.name                                          AS dept_name,
-    sub.name                                         AS sub_dept_name,
-    round(sum(ss.sales_incl_vat), 2)                 AS today_sales,
-    round(sum(ss.qty), 2)                            AS today_qty
+    sd.name                                                                         AS dept_name,
+    sub.name                                                                        AS sub_dept_name,
+    round(sum(ss.sales_incl_vat), 2)                                                AS today_sales,
+    round(sum(ss.qty), 2)                                                           AS today_qty
   FROM public.sigma_sales ss
-  JOIN public.v_ean_bridge b
+  LEFT JOIN public.v_ean_bridge b
     ON  b.store_code   = ss.store_code
     AND b.product_code = ss.product_code
   JOIN public.sigma_articles a
@@ -52,7 +59,13 @@ WITH sales AS (
     AND sub.merch_group_nr = a.merch_group_nr
   WHERE ss.period_kind = 'T'
     AND ss.txn_kind    = 1
-  GROUP BY ss.store_code, ss.sale_date, b.ean, a.description, sd.name, sub.name
+  GROUP BY
+    ss.store_code,
+    ss.sale_date,
+    COALESCE(b.ean, LPAD(ss.store_code, 5, '0') || LPAD(ss.product_code::text, 8, '0')),
+    a.description,
+    sd.name,
+    sub.name
   HAVING sum(ss.sales_incl_vat) > 0
 )
 SELECT
