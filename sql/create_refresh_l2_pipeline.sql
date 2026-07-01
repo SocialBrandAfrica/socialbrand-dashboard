@@ -146,7 +146,7 @@ BEGIN
     BEGIN
       SELECT MAX(snapshot_date) INTO v_snap FROM daily_snapshots WHERE store_code = v_store;
       IF v_snap IS NOT NULL THEN
-        PERFORM upsert_search_index(v_store, v_snap);
+        PERFORM upsert_search_index(v_store);
       END IF;
     EXCEPTION WHEN OTHERS THEN
       v_result := v_result || jsonb_build_object('search_index_error_' || v_store, SQLERRM);
