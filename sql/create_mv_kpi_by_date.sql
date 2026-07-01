@@ -95,3 +95,9 @@ LEFT JOIN stores s
 
 CREATE UNIQUE INDEX idx_mv_kpi_store_date ON public.mv_kpi_by_date (store_code, snapshot_date);
 GRANT SELECT ON public.mv_kpi_by_date TO anon, authenticated;
+
+-- PATCH 2026-07-01 (CC, post-outage): see create_v_kpi_by_date.sql for the full
+-- note. Schema-reload protocol (RULE-BOOK §8); verify live, don't assume this
+-- alone clears PostgREST's cache -- the Dashboard "Reload schema" button may
+-- be required.
+SELECT pg_notify('pgrst', 'reload schema');
