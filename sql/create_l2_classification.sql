@@ -33,10 +33,14 @@
 -- EAN RESOLUTION (s8.4) from v_item_ean v2:
 --   has_barcode=true                         -> REAL  (ean_key = first barcode)
 --   is_confirmed_plu=true (no barcode)       -> PLU   (ean_key NULL)
---   neither                                  -> UNRESOLVED (error state -> AMBIGUOUS,
---                                               reason ean_unresolved; never zeroed).
+--   neither                                  -> UNRESOLVED (still classified by
+--                                               behaviour from 2026-07-01, see PATCH
+--                                               below -- identity gates the artifact,
+--                                               never the verdict. Lands in AMBIGUOUS
+--                                               only as the genuine residual, s8.10).
 --   SYNTHETIC is NOT assigned here -- it may only be issued after the server
---   source is fully mapped (canon s8.4); we are at ~410 unresolved, not 0.
+--   source is fully mapped (canon s8.4); ~332 in-scope UNRESOLVED as of 2026-07-01
+--   (root cause: recycled/duplicate Sigma product codes, see PATCH TRACE below).
 --
 -- v1.1 INPUTS (s8.12, BINDING; Pieter, the Dice wrong-zero day) are present below
 --   as clearly-flagged [[v1.1]] blocks, currently INERT pending PM's 06-13
@@ -48,6 +52,77 @@
 --   after the L2 chain (l2_stock_position must be fresh). Idempotent: DELETE the
 --   (store, ref_date) slice + re-INSERT. Returns a JSONB summary incl. the
 --   unresolved_ean count (s8.6 guard 4: no silent empties).
+-- =============================================================================
+--
+-- PATCH 2026-07-01 (CC, PM directive "Engine self-reliance", anchored to R21/
+-- R25/R28 + canon s8.5/8.10/10). effective_from 2026-07-01. Supersedes the
+-- s8.4 "ean_unresolved -> AMBIGUOUS" pre-gate below (superseded_on same date,
+-- R28 -- the old rule is not deleted, it is described here as retired and why).
+--
+-- FAULT: the pre-gate sent every UNRESOLVED-EAN line straight to AMBIGUOUS
+-- BEFORE any behaviour signal (moved_365_any / sold_91 / commercial_in_365 /
+-- commercial_out_365 / counted_91 / recv_91) was ever evaluated. Identity was
+-- acting as a GATE on classification itself, not a signal on artifact routing.
+-- Verified live: 332 in-scope lines are currently UNRESOLVED across the 5
+-- stores; 214 of them (64%) already carry a behaviour signal that the cascade
+-- never got to see (COKE ZERO PET, CASTLE LITE, TILL ROLLS, HEINEKEN CRATES,
+-- SAVANNA C/PACK, ICE among them).
+--
+-- CHANGE (GENERAL, R21 -- the formula, not the product):
+--   1. The pre-gate is REMOVED. UNRESOLVED lines now flow through the full
+--      cascade like any other line. ean_status stops gating the VERDICT and
+--      continues to gate only the ARTIFACT: `tlx` still requires a real,
+--      scannable barcode ("you cannot TLX what you cannot scan") -- DEAD_ZERO
+--      and PHANTOM_ZERO on a non-REAL line still route to zero_manual/
+--      stockflow/ambiguous, never tlx. Nothing about auto-zero safety changed.
+--   2. area_class (s8.3) widened past the narrow SERVICE/CONSUMABLE dept-name
+--      regex: CONSUMABLE now also matches a packaging-department signal
+--      (DEMO_CALIBRATION -- 'FRONTEND PACK' is this estate's literal dept
+--      name; a new operator recalibrates the department, not the mechanism)
+--      plus a wider GENERAL description vocabulary (bags/wraps/foil/film/
+--      straws/lids/labels/serviettes/tape, word-bounded to avoid false
+--      positives like CUPCAKE).
+--   3. NEW GENERAL signal `ever_received` (full ledger history, unwindowed --
+--      canon s11's exact test: "K movements + ZERO R movements ever" is a
+--      full-history question, not a 365d one). SOURCE_FIX (step 7) widened:
+--      a line that sold in the last 365d and has NEVER had a GRV receipt in
+--      its whole history is production behaviour regardless of dept-name
+--      regex or EAN status (excluding REAL -- a real barcode implies bought,
+--      canon s10 "a real EAN proves bought, not sold" is not overridden here,
+--      it is the reason REAL stays out of this branch).
+--   4. Steps 7/8 (SOURCE_FIX/EXPENSE_ZERO) widened from `ean_status IN
+--      (PLU,SYNTHETIC)` to also admit UNRESOLVED -- an unmapped internal
+--      code behaving like packaging or production is still packaging or
+--      production; the identity gap is a separate, tracked debt (see TRACE),
+--      not a reason to withhold the verdict.
+--   5. AMBIGUOUS (step 9, else) is now reached ONLY after every behavioural
+--      and widened area/production test has failed -- the genuine residual
+--      per canon s8.10, proven not tuned: no target total was set, see the
+--      verification report for the before/after split and every residual
+--      reason.
+--
+-- TRACE (the "why" behind the identity gap, closed at source per PM directive):
+--   Root cause is NOT an extractor bug. Invoke-ExtractScanRefs pulls DBREFE
+--   with no WHERE filter beyond the dARTNR/dREFNR dedup (rn=1) -- every row
+--   Sigma holds is already being extracted. blocked_flag is not the cause
+--   either (100% of live sigma_scan_refs rows carry blocked_flag='0').
+--   Verified live on CASTLE LITE @ 21355: ~50 distinct product_codes exist
+--   for the same physical product (240, 230, 277, 272, 314 UNRESOLVED vs 286
+--   "CASTLE LITE NRB" REAL, barcode 6003326015721, actively selling+
+--   receiving). This is Sigma's own recycled/duplicate-product-code pattern
+--   (already canonised -- Sprite 2944/76807, "recycled product codes" s2,
+--   LINK_CODES s8.12#5): the ACTIVE/current-listing code carries the DBREFE
+--   scan-ref registration; superseded/legacy sibling codes that still carry
+--   residual SOH/sales in the ledger do not. Closing this fully (borrowing a
+--   resolved sibling's identity via description/merch_group matching) is the
+--   already-designed but not-yet-built l2_link_codes_queue (s8.12#5) -- CC
+--   recommends prioritising that build next; it was not built into this
+--   patch (a matching-rule of that weight deserves its own session, R21 s3/
+--   s4, not a bolt-on under this one). This patch's cascade fix already
+--   resolves the OPERATIONAL symptom for the 214/332 behaviourally-rescuable
+--   lines without needing LINK_CODES; LINK_CODES would further shrink the
+--   remaining true-unresolved population and let SYNTHETIC ids be assigned
+--   correctly (canon s8.4) instead of leaving them UNRESOLVED forever.
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -75,6 +150,8 @@ CREATE TABLE public.l2_classification (
     recv_91              boolean     NOT NULL DEFAULT false,
     counted_91           boolean     NOT NULL DEFAULT false,
     moved_365_any        boolean     NOT NULL DEFAULT false,
+    ever_received        boolean     NOT NULL DEFAULT false,   -- PATCH 2026-07-01: full-history receipt check (canon s11)
+    root_sibling_ever_received boolean NOT NULL DEFAULT false, -- PATCH 2026-07-01: description-root sibling corroboration guard
     -- resolution + area
     ean_status           text        NOT NULL,   -- REAL / PLU / UNRESOLVED
     ean_key              text,
@@ -113,7 +190,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-    v_engine   text := 'l2_classification v1.0 (canon s8.5; v1.1 inputs inert)';
+    v_engine   text := 'l2_classification v1.1 (canon s8.5, behaviour-first PATCH 2026-07-01; v1.1 s8.12 inputs still inert)';
     v_ref      date;
     v_summary  jsonb;
     v_pool     int;
@@ -162,6 +239,39 @@ BEGIN
           AND movement_date > v_ref - 365
         GROUP BY product_code
     ),
+    -- ever_recv (PATCH 2026-07-01, GENERAL): full ledger history, UNWINDOWED --
+    -- canon s11's production test ("K movements + ZERO R movements ever") is a
+    -- full-history question. Deliberately separate from `sig` above, which is
+    -- windowed to 365d for every other signal.
+    ever_recv AS (
+        SELECT DISTINCT product_code
+        FROM sigma_movements
+        WHERE store_code = p_store AND movement_type = 'R'
+    ),
+    -- root_sibling (PATCH 2026-07-01, GENERAL -- bounded corroboration guard,
+    -- added after the story-test caught a false positive): "sells with no
+    -- receipts ever" on its own cannot distinguish genuine production (ICE) from
+    -- a duplicate/recycled Sigma product code riding on an actively-purchased
+    -- SIBLING's receiving (live catch: CASTLE LITE 240/272/277 @ 21355 vs the
+    -- resolved "CASTLE LITE NRB" 286, which carries the real GS1 + receipts --
+    -- exactly the recycled-code pattern from the TRACE above). description_root
+    -- strips common pack/container/size tokens -- the SAME "strip the pack
+    -- suffix" concept canon already uses for parent-child pack detection -- so
+    -- siblings group together. If ANY sibling under the same root ever
+    -- received, this line is not production; it is an identity problem
+    -- (LINK_CODES' job, s8.12#5), not a BOM/source-fix problem, and it falls
+    -- through to AMBIGUOUS as the honest residual instead.
+    root_sibling AS (
+        SELECT
+            regexp_replace(regexp_replace(upper(trim(sp2.description)),
+                '[_ ]?(NRB|RB|CAN|PET|BTL|PK|CASE|CRATE|\d+ML|\d+L|\d+KG|\d+X\d+ML|\d+X\d+L)\M', '', 'g'),
+                '\s+', ' ', 'g')                       AS description_root,
+            bool_or(er.product_code IS NOT NULL)        AS root_ever_received
+        FROM l2_stock_position sp2
+        LEFT JOIN ever_recv er ON er.product_code = sp2.product_code
+        WHERE sp2.store_code = p_store AND sp2.class = 'NORMAL' AND sp2.soh <> 0
+        GROUP BY 1
+    ),
     base AS (
         SELECT
             sp.client_id, sp.store_code, sp.product_code, sp.description,
@@ -174,6 +284,12 @@ BEGIN
             COALESCE(s.recv_91,            false) AS recv_91,
             COALESCE(s.counted_91,         false) AS counted_91,
             COALESCE(s.moved_365_any,      false) AS moved_365_any,
+            -- ever_received (PATCH 2026-07-01, GENERAL): full-history receipt
+            -- check, powers the widened production signature at step 7.
+            (er.product_code IS NOT NULL)          AS ever_received,
+            -- root_sibling_ever_received (PATCH 2026-07-01, GENERAL): corroboration
+            -- guard, see root_sibling CTE above.
+            COALESCE(rs.root_ever_received, false)  AS root_sibling_ever_received,
             -- EAN resolution (s8.4)
             CASE
                 WHEN COALESCE(ie.has_barcode, false)      THEN 'REAL'
@@ -184,12 +300,21 @@ BEGIN
                  THEN split_part(ie.barcode_list, '|', 1)
                  ELSE NULL END AS ean_key,
             -- area_class (s8.3, interim regex until a server-side dimension lands, R23)
+            -- PATCH 2026-07-01: CONSUMABLE widened past the narrow keyword list --
+            -- (a) DEMO_CALIBRATION dept-name signal (FRONTEND PACK/PACKAGING/
+            --     CONSUMABLES -- this estate's literal packaging department;
+            --     a new operator recalibrates the name, not the mechanism), OR
+            -- (b) GENERAL description vocabulary, word-bounded (\m..\M) so
+            --     generic tokens (BAG, WRAP, CUP, LID) don't false-positive on
+            --     real merchandise (CUPCAKE, GIFT WRAP paper as a sold item, etc).
             CASE
                 WHEN (COALESCE(sp.dept_name,'') || ' ' || COALESCE(sp.subdept_name,'')) ~*
                      '(BUTCHER|BAKERY|BAKE OFF|DELI|HMR|HOME MEAL|CONFECTION|HOT FOOD|ROTISSER|SUSHI|PIZZA|SALAD BAR|PREP)'
                      THEN 'SERVICE'
-                WHEN (COALESCE(sp.dept_name,'') || ' ' || COALESCE(sp.subdept_name,'') || ' ' || COALESCE(sp.description,'')) ~*
-                     '(PACKAG|CONSUMABLE|CARRIER BAG|SHOPPING BAG|STRAW|TILL ROLL|SHELF LABEL|CLEANING MATERIAL|STATIONER)'
+                WHEN (COALESCE(sp.dept_name,'') || ' ' || COALESCE(sp.subdept_name,'')) ~*
+                     '(FRONT.?END\s*PACK|PACKAGING|NON.?FOOD\s*NON.?SCAN|\mCONSUMABLES?\M)'
+                  OR (COALESCE(sp.dept_name,'') || ' ' || COALESCE(sp.subdept_name,'') || ' ' || COALESCE(sp.description,'')) ~*
+                     '(PACKAG|\mCONSUMABLE\M|CARRIER\s*BAG|SHOPPING\s*BAG|C/BAG|\mBAGS?\M|\mFOIL\M|CLING\s*(FILM|WRAP)|\mWRAP(PING)?\M|\mSTRAW(S)?\M|TILL\s*ROLL|SHELF\s*LABEL|\mSERVIETTES?\M|\mNAPKINS?\M|CLEANING\s*MATERIAL|STATIONER|\mLIDS?\M|STYRENE|\mFOMO\M)'
                      THEN 'CONSUMABLE'
                 ELSE 'MERCH'
             END AS area_class,
@@ -205,6 +330,11 @@ BEGIN
             ( COALESCE(sp.description,'') ~* '(\mDEP\M|\mDEPOSIT\M|EMPT(Y|IES)|RETURNABLE|\mCRATE|CHARGE BOTTLE)' ) AS deposit_account
         FROM l2_stock_position sp
         LEFT JOIN sig s ON s.product_code = sp.product_code
+        LEFT JOIN ever_recv er ON er.product_code = sp.product_code
+        LEFT JOIN root_sibling rs
+               ON rs.description_root = regexp_replace(regexp_replace(upper(trim(sp.description)),
+                    '[_ ]?(NRB|RB|CAN|PET|BTL|PK|CASE|CRATE|\d+ML|\d+L|\d+KG|\d+X\d+ML|\d+X\d+L)\M', '', 'g'),
+                    '\s+', ' ', 'g')
         LEFT JOIN v_item_ean ie
                ON ie.store_code = sp.store_code AND ie.product_code = sp.product_code
         WHERE sp.store_code = p_store
@@ -231,13 +361,13 @@ BEGIN
             -- (no GS1) so this must precede 0c, but DEPOSIT never zeroes so the
             -- never-zero protection on unmapped items is preserved.
             WHEN b.deposit_account                                           THEN 'DEPOSIT'        -- 0c-DEP
-            -- s8.4 hard guard: an UNRESOLVED EAN is an error state, not a class.
-            -- It pre-empts every zero/count/healthy line so an unmapped item is
-            -- NEVER zeroed/expensed (the over-zeroing lesson) -- it routes to
-            -- AMBIGUOUS (work queue, reason ean_unresolved) until L1 mapping
-            -- resolves it. This also makes line 1's "else zero_manual" apply only
-            -- to RESOLVED PLU/SYNTHETIC dead lines, reconciling s8.4 with s8.5.
-            WHEN b.ean_status = 'UNRESOLVED'                                 THEN 'AMBIGUOUS'      -- 0c (s8.4)
+            -- PATCH 2026-07-01: the old s8.4 "ean_status=UNRESOLVED -> AMBIGUOUS"
+            -- pre-gate is RETIRED here (superseded_on 2026-07-01, R28 -- not
+            -- deleted, described: it sent every unmapped line to AMBIGUOUS before
+            -- any behaviour signal ran at all). Identity now gates the ARTIFACT
+            -- only (tlx still requires a real scannable barcode, enforced in the
+            -- artifact CASE below and in steps 2b/5/6 which stay REAL-gated by
+            -- design) -- never the verdict. Behaviour runs first, from here down.
             WHEN NOT b.moved_365_any                                         THEN 'DEAD_ZERO'      -- 1
             WHEN b.sold_91 AND b.soh > 0
                  AND (b.ean_status = 'REAL'
@@ -249,25 +379,39 @@ BEGIN
             WHEN b.ean_status = 'REAL' AND NOT b.sold_365
                  AND NOT b.counted_91                                       THEN 'PHANTOM_ZERO'   -- 5
             WHEN b.ean_status = 'REAL'                                      THEN 'AMBIGUOUS'      -- 6
-            WHEN b.ean_status IN ('PLU','SYNTHETIC') AND b.area_class = 'SERVICE'
-                                                                            THEN 'SOURCE_FIX'    -- 7
-            WHEN b.ean_status IN ('PLU','SYNTHETIC') AND b.area_class = 'CONSUMABLE'
-                                                                            THEN 'EXPENSE_ZERO'  -- 8
-            ELSE 'AMBIGUOUS'                                                                       -- 9
+            -- PATCH 2026-07-01: 7/8 widened from ean_status IN (PLU,SYNTHETIC) to
+            -- also admit UNRESOLVED (an unmapped internal code behaving like
+            -- production/packaging is still production/packaging -- the identity
+            -- gap is a separate tracked debt, see file header TRACE). REAL stays
+            -- excluded by design (canon s10: a real EAN proves bought, not made).
+            -- Step 7 also gains a GENERAL movement-signature OR: sold in 365d with
+            -- NO receipt ever in the full ledger = made-in-store (canon s11),
+            -- independent of the dept-name regex -- catches ICE-pattern lines
+            -- whose department doesn't say BUTCHER/BAKERY/etc. Guarded by
+            -- root_sibling_ever_received (story-test catch: without this guard,
+            -- CASTLE LITE's duplicate/legacy codes at 21355 false-positived as
+            -- production because their sibling code absorbs the real receiving).
+            WHEN b.ean_status IN ('PLU','SYNTHETIC','UNRESOLVED')
+                 AND (b.area_class = 'SERVICE'
+                      OR (b.sold_365 AND NOT b.ever_received
+                          AND NOT b.root_sibling_ever_received))              THEN 'SOURCE_FIX'    -- 7
+            WHEN b.ean_status IN ('PLU','SYNTHETIC','UNRESOLVED')
+                 AND b.area_class = 'CONSUMABLE'                              THEN 'EXPENSE_ZERO'  -- 8
+            ELSE 'AMBIGUOUS'                                                                       -- 9 (genuine residual)
         END AS bucket
         FROM base b
     )
     INSERT INTO l2_classification (
         client_id, store_code, product_code, snapshot_date,
         description, dept_name, subdept_name, soh, capital_value, unit_cost,
-        sold_91, sold_365, commercial_in_365, commercial_out_365, recv_91, counted_91, moved_365_any,
+        sold_91, sold_365, commercial_in_365, commercial_out_365, recv_91, counted_91, moved_365_any, ever_received, root_sibling_ever_received,
         ean_status, ean_key, area_class, nonstock_account, deposit_account, cost_sanity_flag,
         bucket, artifact, bucket_reason, engine_version, classified_at
     )
     SELECT
         v.client_id, v.store_code, v.product_code, v_ref,
         v.description, v.dept_name, v.subdept_name, v.soh, v.capital_value, v.unit_cost,
-        v.sold_91, v.sold_365, v.commercial_in_365, v.commercial_out_365, v.recv_91, v.counted_91, v.moved_365_any,
+        v.sold_91, v.sold_365, v.commercial_in_365, v.commercial_out_365, v.recv_91, v.counted_91, v.moved_365_any, v.ever_received, v.root_sibling_ever_received,
         v.ean_status, v.ean_key, v.area_class, v.nonstock_account, v.deposit_account, v.cost_sanity_flag,
         v.bucket,
         -- ARTIFACT (s8.5 mapping). [[v1.1]] s8.12 #3 adds TLX near-certainty:
@@ -312,11 +456,15 @@ BEGIN
             WHEN 'LEAVE_COUNTED' THEN 'stocktake within 91d = human-verified present, leave'
             WHEN 'PHANTOM_ZERO' THEN 'real EAN, not sold 365d, not counted 91d = phantom'
                                      || CASE WHEN ABS(v.soh)>=24 THEN ' (big SOH -> count first)' ELSE '' END
-            WHEN 'SOURCE_FIX'   THEN 'PLU/scale line in a service area -> Sigma source fix'
-            WHEN 'EXPENSE_ZERO' THEN 'PLU consumable/packaging -> expense zero'
+            WHEN 'SOURCE_FIX'   THEN CASE
+                                       WHEN v.area_class = 'SERVICE' THEN 'no-barcode line in a service area -> Sigma source fix'
+                                       ELSE 'sells in 365d with no receipt ever in the ledger = made-in-store (movement signature, canon s11)' END
+                                     || CASE WHEN v.ean_status='UNRESOLVED' THEN ' [ean_unresolved -- see TRACE]' ELSE '' END
+            WHEN 'EXPENSE_ZERO' THEN 'no-barcode consumable/packaging (dept or description signal) -> expense zero'
+                                     || CASE WHEN v.ean_status='UNRESOLVED' THEN ' [ean_unresolved -- see TRACE]' ELSE '' END
             WHEN 'AMBIGUOUS'    THEN CASE
-                                       WHEN v.ean_status = 'UNRESOLVED' THEN 'ean_unresolved: no barcode + no PLU flag -- data gap, never zero (s8.4)'
                                        WHEN v.ean_status = 'REAL' THEN 'real EAN, one-directional/insufficient signal -> investigate'
+                                       WHEN v.ean_status = 'UNRESOLVED' THEN 'ean_unresolved AND no behaviour/area/production signal fired -- genuine residual, data gap, never zero (s8.4/s8.10)'
                                        ELSE 'no real EAN + merch area = data gap' END
             ELSE NULL
         END AS bucket_reason,
