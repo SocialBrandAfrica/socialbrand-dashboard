@@ -120,6 +120,7 @@ article_dims AS (
         a.scale_flag,
         a.record_stock_qty,
         a.description,
+        a.sell_price_incl_vat,
         -- is_virtual (SB-CC-B-REPLACE-002): airtime / data bundle / voucher / non-scan
         -- money-posting = NO physical item on a shelf, so sells_real must NOT rescue it
         -- (a till-selling top-up is not stock). Authentic dept + content signals; the
@@ -162,6 +163,31 @@ has_receipt AS (
     SELECT DISTINCT client_id, store_code, product_code
     FROM l2_movements_typed
     WHERE movement_class = 'RECEIPT'
+),
+
+-- PATCH 2026-07-01 (CC, PM merge-queue directive; CC's own ×5 verify caught
+-- this before it shipped). Re-derives l2_stock_position's cost_sanity_flag
+-- test INLINE (same source, same formula: sigma_supplier_link list_cost/
+-- pack_size vs sigma_articles.sell_price_incl_vat) rather than joining
+-- l2_stock_position directly -- l2_stock_position is BUILT FROM this MV
+-- (build order: item_classification -> ranging_tier -> stock_position), so
+-- joining it here would be circular. Verified live 2026-06-30: without this
+-- guard, sells_real rescues 10116 product 266 "250 ML STYRENE FOMO CUPS"
+-- (cost_sanity_flag=true, unit_cost R333.33, soh 5129) into Capital Tied at
+-- R1,709,649.57 -- fictional capital from a broken Sigma pack-size cost, not
+-- real stock value (canon §8.5 cascade line 0b: "a line with a broken cost
+-- must have its Sigma cost/pack fixed FIRST -- its capital is fiction").
+-- Clean (cost-sane) rescue total is ~R54k across 5 stores; this one line was
+-- 97% of the naive total. GENERAL (R21) -- same formula l2_stock_position
+-- already uses, just computed at the point sells_real needs it.
+best_cost AS (
+    SELECT DISTINCT ON (client_id, store_code, product_code)
+        client_id, store_code, product_code,
+        CASE WHEN pack_size > 0 THEN list_cost / pack_size ELSE NULL END AS unit_cost
+    FROM sigma_supplier_link
+    WHERE status IS DISTINCT FROM 'I'
+    ORDER BY client_id, store_code, product_code,
+             valid_from DESC NULLS LAST, pack_size ASC NULLS LAST
 ),
 
 -- Signal evaluation per article.
@@ -231,6 +257,14 @@ signals AS (
          AND COALESCE(ros.never_sold, TRUE) = TRUE
         )                                           AS sig_received_never_sold,
 
+        -- S8 (PATCH 2026-07-01): cost sanity, re-derived inline -- see best_cost
+        -- CTE comment above. Gates sells_real so a broken Sigma pack-size cost
+        -- can never be rescued into Capital Tied.
+        (    bc.unit_cost IS NOT NULL
+         AND ad.sell_price_incl_vat > 0
+         AND bc.unit_cost > ad.sell_price_incl_vat
+        )                                           AS sig_cost_sanity,
+
         -- B-replacement (SB-CC-DEPOSIT-001 follow-on, revised SB-CC-B-REPLACE-002):
         -- a PHYSICAL stock-tracking line (record_stock_qty=1, NOT is_virtual) that
         -- SOLD AT TILL within the §5 364-day "alive" window is real sellable stock --
@@ -246,6 +280,10 @@ signals AS (
          AND NOT ad.is_virtual
          AND lc.last_sale_date IS NOT NULL
          AND lc.last_sale_date >= CURRENT_DATE - 364
+         AND NOT (    bc.unit_cost IS NOT NULL
+                  AND ad.sell_price_incl_vat > 0
+                  AND bc.unit_cost > ad.sell_price_incl_vat
+                 )
         )                                           AS sells_real
 
     FROM article_dims ad
@@ -261,6 +299,10 @@ signals AS (
         ON  hr.client_id    = ad.client_id
         AND hr.store_code   = ad.store_code
         AND hr.product_code = ad.product_code
+    LEFT JOIN best_cost bc
+        ON  bc.client_id    = ad.client_id
+        AND bc.store_code   = ad.store_code
+        AND bc.product_code = ad.product_code
 )
 
 SELECT
