@@ -119,7 +119,22 @@ article_dims AS (
         a.plu_flag,
         a.scale_flag,
         a.record_stock_qty,
-        a.description
+        a.description,
+        a.sell_price_incl_vat,
+        -- is_virtual (SB-CC-B-REPLACE-002): airtime / data bundle / voucher / non-scan
+        -- money-posting = NO physical item on a shelf, so sells_real must NOT rescue it
+        -- (a till-selling top-up is not stock). Authentic dept + content signals; the
+        -- GS1 barcode does NOT separate virtual from physical (verified live 2026-06-15:
+        -- airtime + sales-diff postings carry GS1, the physical FOMO cups do not).
+        --   - wholesale-virtual VAS depts: AIRTIME, ONLINE VAS/TRANSACTIONS, NON SCAN SALES
+        --   - SPAR MOBILE is MIXED: only the SIM card (description) is physical
+        --   - NON SCAN / 14% money-postings anywhere (the sales-difference dept)
+        -- Mis-deptted real confectionery in the sales-difference dept has no NON SCAN/14%
+        -- in its name, so it stays physical and IS rescued.
+        ( COALESCE(d.name,'') IN ('AIRTIME','ONLINE VAS PRODUCTS','ONLINE TRANSACTIONS','NON SCAN SALES')
+          OR (COALESCE(d.name,'') = 'SPAR MOBILE' AND COALESCE(a.description,'') !~* '\mSIM\M')
+          OR COALESCE(a.description,'') ~* '(NON.?SCAN|[^0-9]14\s*%)'
+        )                       AS is_virtual
     FROM sigma_articles a
     LEFT JOIN sigma_departments d
         ON  d.client_id     = a.client_id
@@ -148,6 +163,31 @@ has_receipt AS (
     SELECT DISTINCT client_id, store_code, product_code
     FROM l2_movements_typed
     WHERE movement_class = 'RECEIPT'
+),
+
+-- PATCH 2026-07-01 (CC, PM merge-queue directive; CC's own ×5 verify caught
+-- this before it shipped). Re-derives l2_stock_position's cost_sanity_flag
+-- test INLINE (same source, same formula: sigma_supplier_link list_cost/
+-- pack_size vs sigma_articles.sell_price_incl_vat) rather than joining
+-- l2_stock_position directly -- l2_stock_position is BUILT FROM this MV
+-- (build order: item_classification -> ranging_tier -> stock_position), so
+-- joining it here would be circular. Verified live 2026-06-30: without this
+-- guard, sells_real rescues 10116 product 266 "250 ML STYRENE FOMO CUPS"
+-- (cost_sanity_flag=true, unit_cost R333.33, soh 5129) into Capital Tied at
+-- R1,709,649.57 -- fictional capital from a broken Sigma pack-size cost, not
+-- real stock value (canon §8.5 cascade line 0b: "a line with a broken cost
+-- must have its Sigma cost/pack fixed FIRST -- its capital is fiction").
+-- Clean (cost-sane) rescue total is ~R54k across 5 stores; this one line was
+-- 97% of the naive total. GENERAL (R21) -- same formula l2_stock_position
+-- already uses, just computed at the point sells_real needs it.
+best_cost AS (
+    SELECT DISTINCT ON (client_id, store_code, product_code)
+        client_id, store_code, product_code,
+        CASE WHEN pack_size > 0 THEN list_cost / pack_size ELSE NULL END AS unit_cost
+    FROM sigma_supplier_link
+    WHERE status IS DISTINCT FROM 'I'
+    ORDER BY client_id, store_code, product_code,
+             valid_from DESC NULLS LAST, pack_size ASC NULLS LAST
 ),
 
 -- Signal evaluation per article.
@@ -215,7 +255,36 @@ signals AS (
         --   Treats missing ros row (LEFT JOIN miss) as never_sold = TRUE.
         (    hr.product_code IS NOT NULL
          AND COALESCE(ros.never_sold, TRUE) = TRUE
-        )                                           AS sig_received_never_sold
+        )                                           AS sig_received_never_sold,
+
+        -- S8 (PATCH 2026-07-01): cost sanity, re-derived inline -- see best_cost
+        -- CTE comment above. Gates sells_real so a broken Sigma pack-size cost
+        -- can never be rescued into Capital Tied.
+        (    bc.unit_cost IS NOT NULL
+         AND ad.sell_price_incl_vat > 0
+         AND bc.unit_cost > ad.sell_price_incl_vat
+        )                                           AS sig_cost_sanity,
+
+        -- B-replacement (SB-CC-DEPOSIT-001 follow-on, revised SB-CC-B-REPLACE-002):
+        -- a PHYSICAL stock-tracking line (record_stock_qty=1, NOT is_virtual) that
+        -- SOLD AT TILL within the §5 364-day "alive" window is real sellable stock --
+        -- presence proven by sales (Glenlivet law / canon §8.5), overriding the
+        -- dept/dim NON_STOCK heuristic. The is_virtual guard holds airtime, data
+        -- bundles, vouchers and NON SCAN money-postings OUT even when they sell --
+        -- a till-selling top-up is not physical stock (the verdict, before any rand).
+        -- 1990 sentinel + NULL fail the window, so dormant/expense junk is not rescued.
+        -- Rescues only physical: carrier bags, FOMO cups, SIM cards, mis-deptted
+        -- confectionery. record_stock_qty=0 still wins (S0). Reconcile 2026-06-15:
+        -- 41 physical rescued, 87 virtual held, zero virtual in Capital Tied x5.
+        (    ad.record_stock_qty = 1
+         AND NOT ad.is_virtual
+         AND lc.last_sale_date IS NOT NULL
+         AND lc.last_sale_date >= CURRENT_DATE - 364
+         AND NOT (    bc.unit_cost IS NOT NULL
+                  AND ad.sell_price_incl_vat > 0
+                  AND bc.unit_cost > ad.sell_price_incl_vat
+                 )
+        )                                           AS sells_real
 
     FROM article_dims ad
     LEFT JOIN lifecycle lc
@@ -230,6 +299,10 @@ signals AS (
         ON  hr.client_id    = ad.client_id
         AND hr.store_code   = ad.store_code
         AND hr.product_code = ad.product_code
+    LEFT JOIN best_cost bc
+        ON  bc.client_id    = ad.client_id
+        AND bc.store_code   = ad.store_code
+        AND bc.product_code = ad.product_code
 )
 
 SELECT
@@ -241,12 +314,16 @@ SELECT
     -- S0 RECORD_STOCK_OFF: cBESTANDSFUE=0 = Sigma does NOT track this line's stock
     -- quantity (Pieter's intentional do-not-deplete flag). Authoritative NON_STOCK,
     -- above the dept/merch heuristic (SB-CC-L1-RECSTK-001 step 2). NULL = flag not
-    -- captured yet -> falls through to the heuristic. Only =0 overrides here; the
-    -- =1 "sells-so-it's-stock" rescue is a separate, sales-gated change (B-replacement).
+    -- captured yet -> falls through to the heuristic. =0 wins above everything (S0).
+    -- B-replacement: sells_real (record_stock_qty=1 AND sold-at-till in 364d) OVERRIDES
+    -- the dept (S1) and dim-orphan (S2) NON_STOCK heuristic -- a proven seller is real
+    -- stock regardless of its dept (canon §8.5, presence-by-sales). It then falls through
+    -- to the value cascade -> NORMAL (-> HEALTHY downstream). Rescues carrier bags / FOMO
+    -- cups / SIM cards (~128 lines, ~R157k); dormant/expense junk fails the 364d sale test.
     CASE
         WHEN record_stock_qty = 0                THEN 'NON_STOCK'
-        WHEN sig_non_stock_dept                  THEN 'NON_STOCK'
-        WHEN sig_dim_excluded                    THEN 'NON_STOCK'
+        WHEN sig_non_stock_dept AND NOT sells_real  THEN 'NON_STOCK'
+        WHEN sig_dim_excluded   AND NOT sells_real  THEN 'NON_STOCK'
         WHEN sig_prod_input_subdept              THEN 'PRODUCTION'
         WHEN sig_receipting_break                THEN 'RECEIPTING_BREAK'
         WHEN sig_prod_dept_never_sold            THEN 'PRODUCTION'
