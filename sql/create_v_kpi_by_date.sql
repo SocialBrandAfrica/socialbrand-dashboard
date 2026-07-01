@@ -105,3 +105,14 @@ LEFT JOIN stock st
   AND st.snapshot_date = sa.sale_date;
 
 GRANT SELECT ON public.v_kpi_by_date TO anon, authenticated;
+
+-- PATCH 2026-07-01 (CC, post-outage): PostgREST caches the schema and does not
+-- pick up a new/changed view without being told. Missing this line was half the
+-- 2026-07-01 dashboard outage -- the objects existed but the API layer kept
+-- serving "Could not find the table ... in the schema cache" regardless. Also
+-- note: the SQL-level NOTIFY did not visibly clear the cache that day; the
+-- Supabase Dashboard's own "Reload schema" button (Project Settings -> API) is
+-- what actually worked. Run this NOTIFY as a matter of protocol (RULE-BOOK §8)
+-- but do not assume it is sufficient -- verify via a live dashboard console
+-- check, and use the Dashboard button if the API still 404s a live object.
+SELECT pg_notify('pgrst', 'reload schema');
