@@ -34,6 +34,23 @@
 -- USED BY:
 --   - Consignment sushi applet: completeness strip under the sales table.
 --   - Nightly governance check: call for each store, surface EOD_MISSING + DIVERGENT.
+--
+-- SB-CC-RETIRE-003 (2026-07-02) -- R28 lineage, the PRSSALE-horizon rule:
+--   PRSSALE (daily_snapshots) write-retired 2026-06-28. Post-retire dates were
+--   coming back EOD_MISSING / 100% variance (verified live: 10116 2026-07-01,
+--   DBUMBA R234,998.01, "PRSSALE gap") -- a false alarm for every trading day
+--   forever, which trains people to ignore red (R22 damage).
+--   GENERAL RULE (no magic date): the two-feed comparison is only valid inside
+--   the PRSSALE feed's lifetime for that store = dates <= MAX(snapshot_date)
+--   in daily_snapshots. Beyond the horizon the function runs SINGLE-FEED:
+--   status COMPLETE when the ledger holds the day, NO_TRADE / FUTURE as before;
+--   prssale_total and variance_pct are NULL (absence surfaced, no pretend
+--   reconciliation). EOD_MISSING / DIVERGENT can only fire inside the horizon.
+--   The "did today land" alarm for the live pipeline is owned by
+--   check_l1_feed_freshness v2, not this function.
+--   Follow-up (needs a Vercel deploy, held): a distinct SINGLE_FEED status +
+--   ConsignmentPanel STATUS_CFG entry so provenance is labelled on the strip
+--   (R22 s5), instead of reusing COMPLETE.
 -- =============================================================================
 
 -- NOTE: daily_snapshots.client_id is UUID; sigma_sales.client_id is text.
@@ -54,8 +71,9 @@ RETURNS TABLE (
     dbumba_total  numeric,    -- sigma_sales store total (exact ledger)
     prssale_total numeric,    -- daily_snapshots store total (PRSSALE/TAC)
     variance_pct  numeric,    -- |dbumba - prssale| / dbumba * 100; NULL when no trade
+                              -- or past the PRSSALE horizon (single-feed mode)
     status        text,       -- COMPLETE | EOD_MISSING | DIVERGENT | NO_TRADE | FUTURE
-    is_flagged    boolean     -- TRUE on EOD_MISSING or DIVERGENT
+    is_flagged    boolean     -- TRUE on EOD_MISSING or DIVERGENT (horizon only)
 )
 LANGUAGE sql STABLE SECURITY DEFINER AS $$
 WITH
@@ -98,17 +116,31 @@ prssale AS (
       AND snapshot_date >= (SELECT d_start FROM month_start)
       AND snapshot_date <= (SELECT d_end   FROM month_end)
     GROUP BY snapshot_date
+),
+
+prssale_horizon AS (
+    -- RETIRE-003: the PRSSALE feed's lifetime for this store. The two-feed
+    -- comparison is only valid for dates <= this horizon (write-retired
+    -- 2026-06-28; general rule, no magic date). NULL when the store never
+    -- had PRSSALE rows -> every date runs single-feed.
+    SELECT MAX(snapshot_date) AS h FROM daily_snapshots WHERE store_code = p_store
 )
 
 SELECT
     ds.d                                                        AS sale_date,
     TO_CHAR(ds.d, 'Dy')                                         AS day_name,
     COALESCE(db.total, 0)                                       AS dbumba_total,
-    COALESCE(pr.total, 0)                                       AS prssale_total,
 
-    -- variance: NULL when no trade (both zero), else |diff| / dbumba * 100
+    -- prssale_total: NULL past the horizon (feed retired -- absence surfaced,
+    -- never shown as a zero that reads like a missing EOD)
     CASE
-        WHEN COALESCE(db.total, 0) = 0 THEN NULL
+        WHEN ds.d <= ph.h THEN COALESCE(pr.total, 0)
+        ELSE NULL
+    END                                                         AS prssale_total,
+
+    -- variance: NULL when no trade or past the horizon
+    CASE
+        WHEN COALESCE(db.total, 0) = 0 OR ds.d > ph.h OR ph.h IS NULL THEN NULL
         ELSE ROUND(
             ABS(COALESCE(db.total, 0) - COALESCE(pr.total, 0))
             / db.total * 100,
@@ -117,6 +149,9 @@ SELECT
 
     CASE
         WHEN ds.d > CURRENT_DATE                                THEN 'FUTURE'
+        -- single-feed mode past the PRSSALE horizon: the ledger alone decides
+        WHEN ds.d > ph.h OR ph.h IS NULL THEN
+            CASE WHEN COALESCE(db.total, 0) > 0 THEN 'COMPLETE' ELSE 'NO_TRADE' END
         WHEN COALESCE(db.total, 0) = 0
          AND COALESCE(pr.total, 0) = 0                         THEN 'NO_TRADE'
         WHEN COALESCE(db.total, 0) > 0
@@ -128,6 +163,7 @@ SELECT
 
     CASE
         WHEN ds.d > CURRENT_DATE                                THEN FALSE
+        WHEN ds.d > ph.h OR ph.h IS NULL                        THEN FALSE
         WHEN COALESCE(db.total, 0) > 0
          AND COALESCE(pr.total, 0) = 0                         THEN TRUE
         WHEN ABS(COALESCE(db.total, 0) - COALESCE(pr.total, 0))
@@ -136,6 +172,7 @@ SELECT
     END                                                         AS is_flagged
 
 FROM date_spine ds
+CROSS JOIN prssale_horizon ph
 LEFT JOIN dbumba  db ON db.sale_date = ds.d
 LEFT JOIN prssale pr ON pr.sale_date = ds.d
 ORDER BY ds.d;
@@ -148,6 +185,10 @@ COMMENT ON FUNCTION public.rpc_feed_health_daily(text, text) IS
     'DIVERGENT = both feeds present but |gap| / dbumba > 3% (normal baseline 0.3-1.3%). '
     'NO_TRADE = both zero (store closed, benign). '
     'COMPLETE = both present, variance <= 3%. '
+    'RETIRE-003 (2026-07-02): two-feed comparison only inside the PRSSALE horizon '
+    '(MAX daily_snapshots.snapshot_date per store, frozen 2026-06-28); past it the '
+    'function runs single-feed on sigma_sales -- COMPLETE when the ledger holds the '
+    'day, prssale_total/variance NULL, EOD_MISSING/DIVERGENT cannot fire. '
     'Verified on 10116 May-2026: 05-29 = EOD_MISSING (R383,388 absent from PRSSALE). '
     'Family 1 of ANOM-001 radar, elevated to immediate per SB-CC-AUDIT-002.';
 
