@@ -26,9 +26,18 @@
 --   ean -> sigma_product_code = sigma_articles.product_code (96.8% of eans
 --   bridge; the rest are unresolved/identity codes).
 --
--- HELD on PRSSALE: total_qty + capital_tied (point-in-time stock, latest
---   snapshot/store) stay on daily_snapshots, filtered by the same selection on
---   ds dimensions (dept_name / sub_dept_name / ean) -- a later migration step.
+-- SB-CC-RETIRE-003 (2026-07-02) -- R28 lineage:
+--   * total_qty RESTORED from sigma_sales SUM(qty) (selling-units convention,
+--     RULE-BOOK section 2 quantity family: units sold, never weight). It was
+--     dropped at RETIRE-001 because the PRSSALE today_qty source diverged ~20%
+--     from Sigma; summing the Sigma ledger itself has no divergence.
+--   * capital_tied repointed l2_stock_position raw (class=NORMAL, soh>0) ->
+--     ENGINE PURIFIED scope (l2_classification latest snapshot/store, bucket IN
+--     HEALTHY/COUNT/AMBIGUOUS/LEAVE_COUNTED, canon 8.8) so dept-filtered cards
+--     match the purified Capital Tied headline (v_l2_capital_by_store). The raw
+--     chip stays available whole-store via v_kpi_by_date.capital_tied.
+--   Prior daily_snapshots stock facts retired at RETIRE-001 (e875402,
+--   2026-06-28); the old "HELD on PRSSALE" note here was stale prose.
 --   FULL OUTER on dept_name so a dept with sales-but-no-qualifying-stock (or
 --   vice versa) still returns.
 --
@@ -42,10 +51,9 @@
 -- PERF (2026-06-13): converted to plpgsql, v_dates pre-cast ONCE so the date
 --   predicates keep their indexes (same gotcha that timed out rpc_focus_top5).
 --   Helps the sigma leg; whole-call 2.86s -> 2.43s on the 5-store x 14-day period
---   view, 170ms on the single-store/date page default. The residual cost is the
---   daily_snapshots capital_tied calc (classify_snapshot_item per row) -- that
---   clears when capital_tied migrates in the stock-facts step. Data unchanged
---   (whole-store total still ties to sigma_sales, delta 0.00).
+--   view, 170ms on the single-store/date page default. The daily_snapshots
+--   capital residual cleared at RETIRE-001; the capital leg now reads the
+--   engine table at its latest snapshot per store (small, indexed).
 -- =============================================================================
 
 DROP FUNCTION IF EXISTS public.rpc_dept_summary(text[], text[], text, text[]);
@@ -57,7 +65,10 @@ CREATE FUNCTION public.rpc_dept_summary(
     p_eans        text[] DEFAULT NULL
 )
 RETURNS TABLE(dept_name text, total_sales numeric, total_cost numeric, total_qty numeric, total_sales_ex_vat numeric, capital_tied numeric)
-LANGUAGE plpgsql STABLE SECURITY DEFINER
+-- NOT marked STABLE: the body does SET LOCAL statement_timeout, which Postgres
+-- forbids in non-volatile functions (caught live 2026-07-02, hotfixed minutes
+-- later via retire003_rpc_dept_summary_fix_volatility).
+LANGUAGE plpgsql SECURITY DEFINER
 AS $function$
 #variable_conflict use_column
 DECLARE
@@ -69,6 +80,7 @@ BEGIN
     SELECT COALESCE(sd.name, 'UNMAPPED') AS dept_name,
            ROUND(SUM(ss.sales_incl_vat)::numeric, 2)               AS total_sales,
            ROUND(SUM(ss.cost_value)::numeric, 2)                   AS total_cost,
+           ROUND(SUM(ss.qty)::numeric, 2)                          AS total_qty,
            ROUND(SUM(ss.sales_incl_vat - ss.vat_value)::numeric, 2) AS total_sales_ex_vat
     FROM   sigma_sales ss
     LEFT   JOIN sigma_articles a    ON a.store_code = ss.store_code AND a.product_code = ss.product_code
@@ -86,28 +98,39 @@ BEGIN
                 AND  pc.sigma_product_code ~ '^[0-9]+$'))
     GROUP  BY COALESCE(sd.name, 'UNMAPPED')
   ),
-  -- SB-CC-PRSSALE-RETIRE-001: capital_tied migrated to l2_stock_position.
-  -- Always-latest sigma-native position; no date scan on daily_snapshots.
-  -- total_qty was SUM(today_qty) from PRSSALE (~20% Sigma divergence) -- dropped.
+  -- SB-CC-RETIRE-003: capital_tied = ENGINE PURIFIED (canon 8.8), mirroring
+  -- v_l2_capital_by_store scope rules at dept grain: l2_classification at the
+  -- latest snapshot per store, SUM(capital_value) over the include-set buckets
+  -- HEALTHY / COUNT / AMBIGUOUS / LEAVE_COUNTED. Depts holding only excluded
+  -- buckets (NON_STOCK, COST_ERROR, DEPOSIT, zeros) return NULL capital by
+  -- design -- excluded capital is surfaced in its own reports, never here.
+  -- p_eans filter via v_ean_bridge is an EAN-FILTERED selection (R20 addendum:
+  -- INNER-style is correct for selections, never for totals).
+  latest AS (
+    SELECT lc.store_code, MAX(lc.snapshot_date) AS d
+    FROM   l2_classification lc
+    WHERE  lc.store_code = ANY(p_store_codes)
+    GROUP  BY lc.store_code
+  ),
   sigma_cap AS (
     SELECT
-      COALESCE(sp.dept_name, 'UNMAPPED') AS dept_name,
-      ROUND(SUM(
-        CASE WHEN sp.class = 'NORMAL' AND sp.soh > 0
-        THEN sp.soh * COALESCE(sp.unit_cost, 0) END)::numeric, 2) AS capital_tied
-    FROM l2_stock_position sp
-    WHERE sp.store_code = ANY(p_store_codes)
-      AND (p_subdept IS NULL OR sp.subdept_name = p_subdept)
-      AND (p_eans    IS NULL OR sp.product_code IN (
+      COALESCE(lc.dept_name, 'UNMAPPED') AS dept_name,
+      ROUND(SUM(lc.capital_value) FILTER (
+        WHERE lc.bucket IN ('HEALTHY','COUNT','AMBIGUOUS','LEAVE_COUNTED')
+      )::numeric, 2) AS capital_tied
+    FROM l2_classification lc
+    JOIN latest l ON l.store_code = lc.store_code AND lc.snapshot_date = l.d
+    WHERE (p_subdept IS NULL OR lc.subdept_name = p_subdept)
+      AND (p_eans    IS NULL OR lc.product_code IN (
             SELECT b.product_code FROM v_ean_bridge b
             WHERE b.store_code = ANY(p_store_codes) AND b.ean = ANY(p_eans)
           ))
-    GROUP BY sp.dept_name
+    GROUP BY COALESCE(lc.dept_name, 'UNMAPPED')
   )
   SELECT COALESCE(s.dept_name, c.dept_name) AS dept_name,
          s.total_sales,
          s.total_cost,
-         NULL::numeric                       AS total_qty,
+         s.total_qty,
          s.total_sales_ex_vat,
          c.capital_tied
   FROM   sigma_dept s
