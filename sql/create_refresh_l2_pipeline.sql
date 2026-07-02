@@ -38,6 +38,15 @@
 --   mv_rate_of_sale uses plain REFRESH (pg_cron wraps the call in a txn, so
 --   REFRESH ... CONCURRENTLY is not usable inside the pipeline).
 --
+-- 2026-07-02 RETIRE-003 (R28): the search-index loop gated each
+--   upsert_search_index(store) call on MAX(daily_snapshots.snapshot_date) IS NOT
+--   NULL. daily_snapshots froze 2026-06-28 (write-retired), so the gate was dead
+--   logic -- always true, guarding nothing, and the pipeline's last read of the
+--   retired table. Gate removed; upsert_search_index(v_store) runs directly
+--   (it reads sigma_articles + v_ean_bridge + l2_rate_of_sale since RETIRE-002).
+--   mv_rate_of_sale's refresh block STAYS until its frontend consumers repoint
+--   to l2_rate_of_sale (tracked in RETIRE-003 -- its SOH facts are frozen).
+--
 -- SCHEDULE: pg_cron job 'refresh-l2-pipeline' at 20:15 UTC (22:15 SAST).
 -- Rule 19: DROP + clean CREATE.
 -- =============================================================================
@@ -50,7 +59,6 @@ DECLARE
   v_t0            timestamptz := clock_timestamp();
   v_result        jsonb := '{}'::jsonb;
   v_store         text;
-  v_snap          date;
   -- R25: the fleet is config, not code. Single source for every per-store loop.
   v_active_stores text[] := ARRAY(SELECT store_code FROM stores WHERE is_active ORDER BY store_code);
 BEGIN
@@ -144,10 +152,7 @@ BEGIN
   FOR v_store IN SELECT unnest(v_active_stores)
   LOOP
     BEGIN
-      SELECT MAX(snapshot_date) INTO v_snap FROM daily_snapshots WHERE store_code = v_store;
-      IF v_snap IS NOT NULL THEN
-        PERFORM upsert_search_index(v_store);
-      END IF;
+      PERFORM upsert_search_index(v_store);
     EXCEPTION WHEN OTHERS THEN
       v_result := v_result || jsonb_build_object('search_index_error_' || v_store, SQLERRM);
     END;
