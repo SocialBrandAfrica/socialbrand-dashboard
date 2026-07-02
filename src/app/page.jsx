@@ -702,7 +702,7 @@ function LayerFreshnessStrip({ rows }) {
   const lagging = rows.filter(r => r.feed_status === 'FAILED')
   return (
     <div className="sb-fresh-strip">
-      <span className="sb-fresh-chip" title="Latest daily_snapshots date across selected stores (nightly ExtractDelta)">
+      <span className="sb-fresh-chip" title="Oldest per-store sigma_sales trading date (L1 mirror currency, nightly extractor) — rpc_layer_freshness">
         L1 → {l1Min}
       </span>
       <span className="sb-fresh-chip" title="l2_kpi_daily.positioned_at — last L2 engine refresh (refresh_l2_pipeline, nightly 22:15 SAST)">
@@ -1373,30 +1373,16 @@ export default function Home() {
   }, [focusBasket, isDefaultBasket])
 
   // ── on mount: load ALL available dates ──────────────────────────────────────
-  // Two sources merged so the full date history is always available:
-  //   push_log  — snapshot_date set since v3.10 (2026-05-24); shows new dates
-  //               immediately after a push without waiting for mv refresh.
-  //   mv_kpi_by_date — pre-aggregated history; covers all dates before v3.10
-  //                    where push_log.snapshot_date was NULL.
+  // Single source since RETIRE-003 (2026-07-02): rpc_push_available_dates
+  // (SECURITY DEFINER) returns the FULL date set — mv_kpi_by_date history
+  // UNION any fresher sigma_sales dates — so the old direct mv_kpi_by_date
+  // leg (whose error was silently ignored) is retired. A picker failure now
+  // logs loudly instead of half-loading.
   useEffect(() => {
     async function init() {
-      const [pushRes, histRes] = await Promise.all([
-        // SB-CC-SEC-001: rpc_push_available_dates (SECURITY DEFINER) replaces
-        // direct push_log read so push_log can sit behind RLS.
-        supabase.rpc('rpc_push_available_dates'),
-        // Fetch up to 5000 rows — 5 stores × 16 months × ~31 days = ~2,480 max.
-        // Using range(0,4999) ensures we never clip older dates off the picker,
-        // even if row count grows after new stores are added.
-        supabase
-          .from('mv_kpi_by_date')
-          .select('snapshot_date')
-          .order('snapshot_date', { ascending: false })
-          .range(0, 4999)
-      ])
-      const allDates = new Set([
-        ...(pushRes.data ?? []).map(r => r.snapshot_date),
-        ...(histRes.data ?? []).map(r => r.snapshot_date)
-      ].filter(Boolean))
+      const { data, error } = await supabase.rpc('rpc_push_available_dates')
+      if (error) { console.error('[rpc_push_available_dates]', error.message); return }
+      const allDates = new Set((data ?? []).map(r => r.snapshot_date).filter(Boolean))
       if (!allDates.size) return
       const unique = [...allDates].sort((a, b) => b.localeCompare(a))
       setAvailableDates(unique)
