@@ -38,14 +38,18 @@
 --   mv_rate_of_sale uses plain REFRESH (pg_cron wraps the call in a txn, so
 --   REFRESH ... CONCURRENTLY is not usable inside the pipeline).
 --
--- 2026-07-02 RETIRE-003 (R28): the search-index loop gated each
+-- 2026-07-02 RETIRE-003, first pass (R28): the search-index loop gated each
 --   upsert_search_index(store) call on MAX(daily_snapshots.snapshot_date) IS NOT
 --   NULL. daily_snapshots froze 2026-06-28 (write-retired), so the gate was dead
 --   logic -- always true, guarding nothing, and the pipeline's last read of the
 --   retired table. Gate removed; upsert_search_index(v_store) runs directly
 --   (it reads sigma_articles + v_ean_bridge + l2_rate_of_sale since RETIRE-002).
---   mv_rate_of_sale's refresh block STAYS until its frontend consumers repoint
---   to l2_rate_of_sale (tracked in RETIRE-003 -- its SOH facts are frozen).
+--
+-- 2026-07-02 RETIRE-003, second pass: mv_rate_of_sale's own body was repointed
+--   fully sigma-native (l2_stock_position + v_ean_bridge, see
+--   sql/create_mv_rate_of_sale.sql) -- SOH is no longer frozen. This pipeline's
+--   REFRESH call is unchanged (body-agnostic) but now refreshes a genuinely
+--   current matview instead of a stale-SOH one.
 --
 -- SCHEDULE: pg_cron job 'refresh-l2-pipeline' at 20:15 UTC (22:15 SAST).
 -- Rule 19: DROP + clean CREATE.
@@ -141,8 +145,9 @@ BEGIN
     v_result := v_result || jsonb_build_object('mv_kpi_error', SQLERRM);
   END;
 
-  -- mv_rate_of_sale (SB-CC-DASH-SOURCE-002): ROS off sigma_sales + held SOH off
-  -- daily_snapshots. Guarded. Plain REFRESH (CONCURRENTLY not usable in the txn).
+  -- mv_rate_of_sale: fully sigma-native since RETIRE-003 2026-07-02
+  -- (l2_stock_position + v_ean_bridge). Guarded. Plain REFRESH (CONCURRENTLY
+  -- not usable in the txn).
   BEGIN
     REFRESH MATERIALIZED VIEW mv_rate_of_sale;
   EXCEPTION WHEN OTHERS THEN

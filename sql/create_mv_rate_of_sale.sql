@@ -1,100 +1,111 @@
 -- =============================================================================
 -- create_mv_rate_of_sale.sql
--- SB-CC-DASH-SOURCE-002 (SB-INDEX-005 Phase 2) -- rate-of-sale source migration.
--- STATUS: DEPLOYED LIVE 2026-06-13 via dash_source_002_mv_rate_of_sale_to_sigma;
---   refresh wired into refresh_l2_pipeline via _wire_mv_rate_of_sale_into_pipeline.
---   Reconciled: 35,531 rows == 35,531 distinct (store,ean) keys (no fan-out);
---   ROS matches PM worked example; SIZZLER days_cover 0.6 (soh 9 / ros 15.69).
+-- SB-CC-RETIRE-003 (2026-07-02, CC) -- fully sigma-native repoint.
+-- STATUS: DEPLOYED LIVE 2026-07-02 via retire003_mv_rate_of_sale_sigma_native
+--   (+ hotfix v2 for the PK collision, see below).
 -- =============================================================================
--- HYBRID migration (per PM qty/ROS ruling):
---   ROS (SALES FACT) -> sigma_sales. daily_ros = SUM(qty over 91d)/91 in
---     SELLING-UNITS (no weight/unit conversion; KG-line ROS = weigh-tickets/day,
---     a sound ordering proxy). Keyed by canonical ean via the SHARED
---     v_ean_bridge view (one ean per (store, product_code) -- no fan-out).
---     91-day window anchored on each store's MAX(sale_date) in sigma_sales
---     (more current than the old snapshot anchor; sigma is intraday-fresh).
---   SOH + dims + sell_price + unit_cost + status (STOCK FACTS) -> STAY on
---     daily_snapshots (the held stock-facts thread). days_cover = SOH / ROS
---     therefore straddles both: held SOH / sigma ROS. When SOH migrates in the
---     coordinated stock step, the 'latest' CTE moves to sigma-native and the
---     ean-keying below becomes fully canonical.
+-- WHY (SB-PRIORITY-FRAMEWORK-001 v1.1 sequencing -- this closed BEFORE Bloom
+-- code started, per Pieter's ruling that Tier 1 stays clean while Bloom runs
+-- as a parallel tributary):
+--   daily_ros/days_cover were already sigma-native (SB-CC-DASH-SOURCE-002,
+--   2026-06-13 -- see prior header below). But SOH/price/dept facts still came
+--   from the frozen daily_snapshots "latest" CTE. PRSSALE write-retired
+--   2026-06-28 (SB-CC-PRSSALE-RETIRE-001) -> that CTE's snapshot froze the
+--   same day. Every product-detail SOH and days-cover lookup on the platform
+--   was therefore up to 4+ days stale, silently, system-wide.
 --
--- KNOWN CAVEAT (ean keying across the two sources):
---   'latest' is keyed by daily_snapshots.ean (PRSSALE-expanded form); 'ros_window'
---   by the canonical sigma ean. For the lone product_catalog dup (SRC-001, 10116
---   product 34937 CAMEL ONE BOX: snapshot may carry the PLU ean while sigma
---   carries 42139126) the LEFT JOIN can miss -> days_cover NULL for that 1 SKU.
---   Blast radius = 1 product across all 5 stores; clears when SRC-001 is fixed at
---   the loader and/or when SOH migrates to canonical ean. Logged in BUG-LOG.
+-- NEW SOURCE: l2_stock_position (sigma-native, always-latest, refreshed ahead
+--   of this matview in refresh_l2_pipeline) already carries soh, unit_cost,
+--   sell_price_incl_vat, dept_name, subdept_name, department_nr, merch_group_nr
+--   AND daily_ros/days_cover pre-computed from l2_rate_of_sale's 91d window
+--   (RULE-BOOK ROS formula) -- reused directly, not recomputed here.
 --
--- REFRESH WIRING (done): added to refresh_l2_pipeline beside mv_kpi_by_date
---   (plain REFRESH -- pg_cron wraps the pipeline call in a txn so CONCURRENTLY is
---   not usable there; the unique index still supports a manual CONCURRENTLY).
+-- EAN KEYING (R20 addendum -- coverage, not a total): LEFT JOIN v_ean_bridge +
+--   COALESCE synthetic EAN (lpad(store_code,5,'0') || lpad(product_code,8,'0')),
+--   identical convention to the RETIRE-002 objects (v_focus_trend etc). PLU/
+--   scale lines with no real GS1 EAN still surface a row.
 --
--- ROS foundation reconcile (read-only, live, 10116, 91d to MAX sale_date):
---   1011600240103 = 266.16/day (24,221u) | 1011600200332 = 15.69/day (1,428u) |
---   6001008772719 = 3.13/day (285u). Matches PM's worked example; the two
---   store-internal-coded sellers read ROS 0 on the old PRSSALE source.
+-- PK COLLISION (found on first apply, hotfixed same session): UNIQUE
+--   (store_code, ean) failed -- product 28880 @ 80176 has a REAL bridged ean
+--   (8017600000010, a store-prefixed short code) that is byte-identical to
+--   product 10's SYNTHETIC fallback key at the same store (same store prefix +
+--   zero-padded product_code format coincide). Real-vs-synthetic namespace
+--   collision, not fixable by reformatting the synthetic scheme (any fixed-
+--   width scheme risks the same coincidence). l2_stock_position's own PK is
+--   (client_id, store_code, product_code) -- rebuilt the unique index on
+--   (store_code, product_code), the true identity, with a plain (non-unique)
+--   index on (ean, store_code) for the frontend's .eq('ean', ean) lookups.
+--   Two product_codes CAN legitimately share a displayed ean after this
+--   change (recycled/duplicate-code reality, already documented canon) --
+--   frontend ean lookups return all matching rows, same as any other EAN
+--   collision in the raw data.
 --
--- DROP + CREATE (R19); recreate both indexes; grant anon/authenticated.
+-- COLUMN GAPS (R23 L1, same convention as the RETIRE-002 objects):
+--   status -- no sigma-native decode yet, NULL (was daily_snapshots.status).
+--   internal_ref -- NOT a gap: product_code::text IS the authoritative value
+--     (product_catalog.sigma_product_code = internal_ref in daily_snapshots).
+--   dept_code / sub_dept_code -- LPAD(department_nr,6,'0') / LPAD(merch_group_nr,9,'0'),
+--     same convention as rpc_all_rows (RETIRE-002 obj 10).
+--
+-- CANON DEBT CLOSED: added to CLEANUP-ENGINE-CANON section 13's mandatory
+--   CASCADE-rebuild list (now four objects downstream of l2_stock_position:
+--   v_kpi_by_date, mv_kpi_by_date, mv_sparkline_14d, mv_rate_of_sale). Any
+--   future l2_stock_position rebuild must recreate this matview + both
+--   indexes in the same deploy, or the CASCADE silently drops it (the exact
+--   2026-07-01 outage class).
+--
+-- FRONTEND: zero edits needed. Column set, matview name, REFRESH ...
+--   CONCURRENTLY (pg_cron nightly-ros-refresh, 22:30 UTC) unchanged. Verified
+--   live consumers (page.jsx x2, ProductDetailPanel.jsx x2) only ever select
+--   ean, store_code, store_name, soh, daily_ros, days_cover.
+--
+-- R22 verified on apply: l2_stock_position.positioned_at = 2026-07-01 20:15
+--   UTC (today's pipeline run) vs daily_snapshots frozen 2026-06-28 -- the
+--   staleness this repoint fixes, proven. Row counts unchanged per store
+--   (10116 70,018 / 21355 52,627 / 80175 55,653 / 80176 46,592 / 80579 51,797).
+--
+-- Rule 19: DROP + clean CREATE. Rule lineage (R28): effective_from 2026-07-02,
+--   scope GENERAL (portable formula, no demo-store constants). Supersedes the
+--   2026-06-13 hybrid body below (retired 2026-07-02).
 -- =============================================================================
 
-DROP MATERIALIZED VIEW IF EXISTS mv_rate_of_sale;
+DROP MATERIALIZED VIEW IF EXISTS public.mv_rate_of_sale CASCADE;
 
-CREATE MATERIALIZED VIEW mv_rate_of_sale AS
-WITH sigma_max AS (
-    SELECT store_code, MAX(sale_date) AS max_date
-    FROM   sigma_sales
-    WHERE  period_kind = 'T' AND txn_kind = 1
-    GROUP  BY store_code
-),
-ros_window AS (                         -- SALES FACT: 91d selling-unit ROS off sigma
-    SELECT b.ean,
-           ss.store_code,
-           SUM(ss.qty) AS total_qty_91d
-    FROM   sigma_sales ss
-    JOIN   v_ean_bridge b ON b.store_code = ss.store_code AND b.product_code = ss.product_code
-    JOIN   sigma_max sm   ON sm.store_code = ss.store_code
-    WHERE  ss.sale_date >= (sm.max_date - INTERVAL '90 days')
-      AND  ss.sale_date <= sm.max_date
-      AND  ss.period_kind = 'T' AND ss.txn_kind = 1
-    GROUP  BY b.ean, ss.store_code
-),
-store_max_date AS (                     -- held: snapshot anchor for SOH/dims
-    SELECT store_code, MAX(snapshot_date) AS max_date
-    FROM   daily_snapshots
-    GROUP  BY store_code
-),
-latest AS (                             -- STOCK FACTS + dims (held on daily_snapshots)
-    SELECT DISTINCT ON (ds.store_code, ds.ean)
-           ds.store_code, ds.store_name, ds.ean, ds.description, ds.dept_name,
-           ds.sub_dept_name, ds.dept_code, ds.sub_dept_code, ds.soh, ds.sell_price,
-           ds.unit_cost, ds.status, ds.internal_ref
-    FROM   daily_snapshots ds
-    JOIN   store_max_date smd ON ds.store_code = smd.store_code AND ds.snapshot_date = smd.max_date
-    ORDER  BY ds.store_code, ds.ean
-)
-SELECT l.store_code,
-       l.store_name,
-       l.ean,
-       l.description,
-       l.dept_name,
-       l.sub_dept_name,
-       l.dept_code,
-       l.sub_dept_code,
-       l.soh,
-       l.sell_price,
-       l.unit_cost,
-       l.status,
-       l.internal_ref,
-       ROUND(COALESCE(r.total_qty_91d, 0::numeric) / 91.0, 4) AS daily_ros,
-       CASE WHEN COALESCE(r.total_qty_91d, 0::numeric) = 0::numeric THEN NULL::numeric
-            ELSE ROUND(l.soh / (r.total_qty_91d / 91.0), 1)
-       END AS days_cover
-FROM   latest l
-LEFT   JOIN ros_window r ON l.ean = r.ean AND l.store_code = r.store_code;
+CREATE MATERIALIZED VIEW public.mv_rate_of_sale AS
+SELECT
+  sp.store_code,
+  st.store_name,
+  sp.product_code,
+  COALESCE(b.ean, lpad(sp.store_code, 5, '0') || lpad(sp.product_code::text, 8, '0')) AS ean,
+  sp.description,
+  sp.dept_name,
+  sp.subdept_name AS sub_dept_name,
+  lpad(sp.department_nr::text, 6, '0') AS dept_code,
+  lpad(sp.merch_group_nr::text, 9, '0') AS sub_dept_code,
+  sp.soh,
+  sp.sell_price_incl_vat AS sell_price,
+  sp.unit_cost,
+  NULL::text AS status,
+  sp.product_code::text AS internal_ref,
+  sp.daily_ros,
+  sp.days_cover
+FROM public.l2_stock_position sp
+LEFT JOIN public.v_ean_bridge b ON b.store_code = sp.store_code AND b.product_code = sp.product_code
+LEFT JOIN public.stores st ON st.store_code = sp.store_code;
 
-CREATE UNIQUE INDEX mv_rate_of_sale_pk  ON public.mv_rate_of_sale USING btree (store_code, ean);
-CREATE INDEX        mv_rate_of_sale_ean ON public.mv_rate_of_sale USING btree (ean);
+CREATE UNIQUE INDEX mv_rate_of_sale_pk ON public.mv_rate_of_sale (store_code, product_code);
+CREATE INDEX mv_rate_of_sale_ean ON public.mv_rate_of_sale (ean, store_code);
 
-GRANT SELECT ON mv_rate_of_sale TO anon, authenticated;
+GRANT SELECT ON public.mv_rate_of_sale TO anon, authenticated;
+
+-- =============================================================================
+-- PRIOR HEADER (2026-06-13, SB-CC-DASH-SOURCE-002) -- kept for history, body
+-- retired above:
+--   HYBRID migration (per PM qty/ROS ruling): ROS (SALES FACT) -> sigma_sales,
+--   daily_ros = SUM(qty over 91d)/91 in selling-units, keyed via v_ean_bridge,
+--   91d window anchored on MAX(sale_date). SOH + dims + sell_price + unit_cost
+--   + status (STOCK FACTS) STAYED on daily_snapshots pending "the coordinated
+--   stock step" -- that step is this file's 2026-07-02 rewrite.
+--   Known caveat then (SRC-001 product_catalog dup, 10116 product 34937) is
+--   moot now -- ean keying no longer crosses two different sources.
+-- =============================================================================
