@@ -6,6 +6,23 @@
 -- file's date, scope split GENERAL (formula structure) / DEMO_CALIBRATION
 -- (the constants named below, sourced from bloom_dc_config + inline literals).
 -- =============================================================================
+-- v2 (2026-07-03, PM ruling after the reconciliation gap): the recipe now
+-- ORDERS OFF RAW ros_14d/28d/56d, not the DF-2 stockout-corrected variant.
+-- The corrected value is still computed and carried on every row as a
+-- REPORTED DELTA (ros_used_corrected, ros_correction_delta,
+-- ros_correction_delta_pct) -- visible, never silently applied. Root cause
+-- of the 2026-07-02/03 reconciliation gap: ros_Xd_corrected is by
+-- construction always >= raw ros_Xd (removing presumed-stockout days from
+-- the divisor can only raise the rate), so driving the tiers off the
+-- corrected value inflated every trigger and every need calculation --
+-- exactly the shape of the overshoot found (2,669 lines / R778,493, then
+-- 1,189 / R281,872 after the FLOOR + ros_used>0 fixes, both still over the
+-- brief's 817-line target). Switching the driver to raw ROS is the fix, not
+-- another threshold guess. THIS RUN, on raw ROS, is the new reference --
+-- cut and signed 2026-07-03, superseding the 2026-07-02 817-line /
+-- R173,977.97 figure (which the gap strongly implies was itself computed on
+-- raw ROS, not corrected -- consistent with this fix).
+--
 -- SCOPE (canon s14): DC supplier link (type Z, non-suspended -- status<>'S')
 -- x cycle department set (bloom_dc_config.dc_cycle_dept_nrs, per store,
 -- RULED x5 2026-07-02) x class NORMAL x active (sold 364d OR soh<>0). The
@@ -21,15 +38,23 @@
 -- (from l2_ranging_tier's value/qty ranking) -- canon s14 names which ROS
 -- window and cover target apply to each existing tier, it does not define a
 -- new tier split.
---   T100  -- ros_14d_corrected, 14 days cover, A MUST (always computes a
---            need, even when need<=0 -> order 0), min 1 pack once triggered.
---   T1000 -- ros_28d_corrected, 12 days cover, triggers only when need > 0.
---   BOR   -- ros_56d_corrected, fill to 14 days, triggers only when
+--   T100  -- ros_14d (raw), 14 days cover, A MUST (always computes a need,
+--            even when need<=0 -> order 0), min 1 pack once triggered.
+--   T1000 -- ros_28d (raw), 12 days cover, triggers only when need > 0.
+--   BOR   -- ros_56d (raw), fill to 14 days, triggers only when
 --            projected_soh(D) < 3 (the canon-specified BOR trigger).
 --
--- PROJECTED SOH(D): GREATEST(soh,0) - ros_corrected * lead_days, lead_days =
+-- PROJECTED SOH(D): GREATEST(soh,0) - ros_used(raw) * lead_days, lead_days =
 -- p_delivery_date - CURRENT_DATE (clamped >= 0) -- "computed from the dates
 -- the user picked, never hardcoded" (canon).
+--
+-- MIN-1-PACK GATE (kept from the 2026-07-03 fix, applies regardless of raw
+-- vs corrected): canon says "round down to packs ... min 1 pack where the
+-- trigger fires" -- FLOOR, and the min-1-pack floor is gated on
+-- ros_used(raw) > 0. A trigger firing on a genuinely zero-velocity line is a
+-- presence question, not a reorder signal -- forcing stock into a
+-- non-selling line contradicts this platform's own governing law (canon:
+-- "presence proven by sales, never by SOH", DF-7 Glenlivet pattern).
 --
 -- PROMO: promo_eligibility(D,D2) computed INLINE against
 -- sigma_promotion_articles (see create_l2_bloom_promo_pantry.sql header for
@@ -41,9 +66,9 @@
 -- (ACTIVE) and a populated list_cost (2026-07-02 data-check finding) --
 -- NULL + cost_resolved=false otherwise, never guessed.
 --
--- STORY (R29): every line carries window used, correction days removed, soh,
--- target days, trigger fired, tier and pack size -- the reason a quantity
--- was suggested travels with the number.
+-- STORY (R29): every line carries window used, raw ROS, the corrected-ROS
+-- delta (reported, not applied), soh, target days, trigger fired, tier and
+-- pack size -- the reason a quantity was suggested travels with the number.
 --
 -- Rule 19: DROP + clean CREATE. Function-change protocol (RULE-BOOK s8).
 -- =============================================================================
@@ -56,35 +81,38 @@ CREATE FUNCTION public.rpc_bloom_order_dc(
   p_next_delivery   date
 )
 RETURNS TABLE (
-  store_code            text,
-  product_code           bigint,
-  ean                     text,
-  description             text,
-  dept_name               text,
-  tier                    text,
-  soh                     numeric,
-  unit_cost               numeric,
-  pack_size               smallint,
-  pack_cost               numeric,
-  ros_window_used         text,
-  ros_used                numeric,
-  correction_days_removed int,
-  projected_soh           numeric,
-  target_days_cover       int,
-  trigger_fired           boolean,
-  need_units              numeric,
-  normal_packs            int,
-  promo_active            boolean,
-  promo_nr                bigint,
-  promo_start             date,
-  promo_end               date,
-  promo_uplift            numeric,
-  promo_uplift_source     text,
-  geared_packs            int,
-  suggested_packs         int,
-  promo_cost_delta        numeric,
-  promo_cost_resolved     boolean,
-  story                   text
+  store_code                  text,
+  product_code                 bigint,
+  ean                           text,
+  description                   text,
+  dept_name                     text,
+  tier                          text,
+  soh                           numeric,
+  unit_cost                     numeric,
+  pack_size                     smallint,
+  pack_cost                     numeric,
+  ros_window_used               text,
+  ros_used                      numeric,   -- RAW, drives the recipe
+  ros_used_corrected            numeric,   -- DF-2 stockout-corrected, REPORTED ONLY
+  ros_correction_delta          numeric,   -- corrected - raw, always >= 0
+  ros_correction_delta_pct      numeric,   -- delta / raw * 100, NULL if raw=0
+  correction_days_removed       int,
+  projected_soh                 numeric,
+  target_days_cover             int,
+  trigger_fired                 boolean,
+  need_units                    numeric,
+  normal_packs                  int,
+  promo_active                  boolean,
+  promo_nr                      bigint,
+  promo_start                   date,
+  promo_end                     date,
+  promo_uplift                  numeric,
+  promo_uplift_source           text,
+  geared_packs                  int,
+  suggested_packs               int,
+  promo_cost_delta               numeric,
+  promo_cost_resolved            boolean,
+  story                          text
 )
 -- NOT marked STABLE: SET LOCAL statement_timeout is illegal in a non-volatile
 -- function (same gotcha hit and fixed earlier this session on rpc_dept_summary).
@@ -117,9 +145,12 @@ BEGIN
   ),
   with_ros AS (
     SELECT bp.*,
-      COALESCE(rp.ros_14d_corrected, 0) AS ros_14d_c,
-      COALESCE(rp.ros_28d_corrected, 0) AS ros_28d_c,
-      COALESCE(rp.ros_56d_corrected, 0) AS ros_56d_c,
+      COALESCE(rp.ros_14d, 0) AS ros_14d_raw,
+      COALESCE(rp.ros_28d, 0) AS ros_28d_raw,
+      COALESCE(rp.ros_56d, 0) AS ros_56d_raw,
+      COALESCE(rp.ros_14d_corrected, rp.ros_14d, 0) AS ros_14d_c,
+      COALESCE(rp.ros_28d_corrected, rp.ros_28d, 0) AS ros_28d_c,
+      COALESCE(rp.ros_56d_corrected, rp.ros_56d, 0) AS ros_56d_c,
       rp.correction_days_removed_14d, rp.correction_days_removed_28d, rp.correction_days_removed_56d,
       COALESCE(pp.promo_uplift, 2.00) AS promo_uplift,
       COALESCE(pp.promo_uplift_source, 'default') AS promo_uplift_source
@@ -128,9 +159,6 @@ BEGIN
     LEFT JOIN public.l2_bloom_promo_pantry pp ON pp.store_code = bp.store_code AND pp.product_code = bp.product_code
   ),
   promo_match AS (
-    -- promo_eligibility(D,D2): [start_date,end_date] overlaps [D,D2). Prefer the
-    -- most cost-resolvable row (status='1' ACTIVE first) when more than one
-    -- promo row overlaps the window.
     SELECT DISTINCT ON (wr.store_code, wr.product_code)
       wr.store_code, wr.product_code,
       pa.promo_nr, pa.start_date, pa.end_date, pa.status, pa.list_cost AS promo_unit_cost
@@ -146,16 +174,12 @@ BEGIN
     SELECT wr.*,
       pm.promo_nr, pm.start_date AS promo_start, pm.end_date AS promo_end, pm.status AS promo_status,
       pm.promo_unit_cost,
+      CASE wr.tier WHEN 'TOP_100' THEN wr.ros_14d_raw WHEN 'TOP_1000' THEN wr.ros_28d_raw WHEN 'BOR' THEN wr.ros_56d_raw ELSE NULL END AS ros_used,
+      CASE wr.tier WHEN 'TOP_100' THEN wr.ros_14d_c   WHEN 'TOP_1000' THEN wr.ros_28d_c   WHEN 'BOR' THEN wr.ros_56d_c   ELSE NULL END AS ros_used_corrected,
       CASE wr.tier
-        WHEN 'TOP_100'  THEN wr.ros_14d_c
-        WHEN 'TOP_1000' THEN wr.ros_28d_c
-        WHEN 'BOR'      THEN wr.ros_56d_c
-        ELSE NULL
-      END AS ros_used,
-      CASE wr.tier
-        WHEN 'TOP_100'  THEN 'ros_14d_corrected'
-        WHEN 'TOP_1000' THEN 'ros_28d_corrected'
-        WHEN 'BOR'      THEN 'ros_56d_corrected'
+        WHEN 'TOP_100'  THEN 'ros_14d'
+        WHEN 'TOP_1000' THEN 'ros_28d'
+        WHEN 'BOR'      THEN 'ros_56d'
         ELSE NULL
       END AS ros_window_used,
       CASE wr.tier
@@ -183,18 +207,6 @@ BEGIN
   final AS (
     SELECT c.*,
       GREATEST(c.ros_used * c.target_days_cover - c.proj_soh, 0) AS need,
-      -- Canon: "round down to packs ... min 1 pack where the trigger fires."
-      -- FLOOR not CEIL (2026-07-03 fix -- CEIL was a real bug, over-ordered
-      -- every fractional-pack line). The min-1-pack floor is gated on
-      -- ros_used > 0: a trigger firing on a genuinely zero-velocity line
-      -- (BOR, low SOH, no sales) is a presence question, not a reorder
-      -- signal -- forcing stock into a non-selling line contradicts this
-      -- platform's own governing law (canon: "presence proven by sales,
-      -- never by SOH", DF-7 Glenlivet pattern). OPEN QUESTION flagged to
-      -- PM/Pieter, not resolved here: does the reference 80175 run apply
-      -- this same ros_used>0 gate, or a different BOR trigger calibration?
-      -- This function has not yet reconciled to the brief's validated
-      -- 817-line / R173,977.97 target -- see HANDOVER.
       CASE WHEN c.fires AND c.ros_used > 0
            THEN GREATEST(FLOOR((c.ros_used * c.target_days_cover - c.proj_soh) / NULLIF(c.pack_size,0)), 1)
            ELSE 0 END AS normal_packs_calc
@@ -204,7 +216,12 @@ BEGIN
     f.store_code, f.product_code, f.ean, f.description, f.dept_name, f.tier,
     f.soh, f.unit_cost, f.pack_size,
     ROUND(f.pack_list_cost, 2) AS pack_cost,
-    f.ros_window_used, ROUND(f.ros_used, 4), f.correction_days_removed,
+    f.ros_window_used,
+    ROUND(f.ros_used, 4),
+    ROUND(f.ros_used_corrected, 4),
+    ROUND(f.ros_used_corrected - f.ros_used, 4) AS ros_correction_delta,
+    CASE WHEN f.ros_used > 0 THEN ROUND((f.ros_used_corrected - f.ros_used) / f.ros_used * 100, 2) ELSE NULL END AS ros_correction_delta_pct,
+    f.correction_days_removed,
     ROUND(f.proj_soh, 2), f.target_days_cover, f.fires,
     ROUND(f.need, 2),
     f.normal_packs_calc::int AS normal_packs,
@@ -220,8 +237,10 @@ BEGIN
          THEN ROUND((f.pack_list_cost / NULLIF(f.pack_size,0)) - f.promo_unit_cost, 4)
          ELSE NULL END AS promo_cost_delta,
     (f.promo_status = '1' AND f.promo_unit_cost IS NOT NULL AND f.promo_unit_cost <> 0) AS promo_cost_resolved,
-    format('%s tier, %s window=%s (corrected, %s days removed), SOH %s, target %s days -> projected %s, trigger %s, need %s units = %s packs%s',
-           f.tier, f.tier, f.ros_window_used, COALESCE(f.correction_days_removed,0), f.soh, f.target_days_cover,
+    format('%s tier, window=%s raw=%s (corrected %s, +%s%%), SOH %s, target %s days -> projected %s, trigger %s, need %s units = %s packs%s',
+           f.tier, f.ros_window_used, ROUND(f.ros_used,2), ROUND(f.ros_used_corrected,2),
+           CASE WHEN f.ros_used>0 THEN ROUND((f.ros_used_corrected-f.ros_used)/f.ros_used*100,1) ELSE 0 END,
+           f.soh, f.target_days_cover,
            ROUND(f.proj_soh,1), f.fires, ROUND(f.need,1), f.normal_packs_calc,
            CASE WHEN f.promo_nr IS NOT NULL THEN format(' | promo %s->%s uplift %s (%s)', f.promo_start, f.promo_end, f.promo_uplift, f.promo_uplift_source) ELSE '' END
     ) AS story
