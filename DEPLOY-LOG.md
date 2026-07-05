@@ -4,6 +4,19 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-05 SAST -- extractor v1.18: HEALTH-aware task self-heal (DASH-FINAL item 8)
+
+**File:** `scripts/Invoke-ExtractFromSigmaSQL.ps1` (v1.17 -> v1.18). **Brief:** CC-BRIEF-DASH-FINAL-001 §8 (Pieter GENERAL ruling -- heal every server the same way).
+**Ships via:** push to `main` -> `Invoke-DeployExtractor` (Push-SigmaToSupabase.ps1) pulls the raw file from GitHub `main` on the next push/extract cycle. The 4 live stores pick it up automatically; TOPS Dice (task dead 30 Jun on a logon failure) needs ONE manual bootstrap run on srsdelareyt2svr (STORE-ONBOARDING-RECIPE "Server bootstrap").
+
+- **Root gap:** `Register-ExtractDeltaTask` returned as soon as the task existed with an 18:40 trigger -- it never checked whether the task was RUNNING. A task dead on a logon/launch failure passed the idempotence check forever and never self-healed.
+- **Fix (R21 general-case):** the startup check now also reads `Get-ScheduledTaskInfo`. Stale `LastRunTime` (older than 2 days, or never) OR a logon/launch-failure `LastTaskResult` (0x80070569/052E/052F, 0x80070005, 0x80070775 -- normalized from signed Int32 via `-band 0xFFFFFFFFL`) forces Unregister + fresh Register under the current context.
+- **Non-admin fallback (R22):** if `-RunLevel Highest` is denied, register Limited (extract needs SQL Windows-Auth + HTTPS, not admin) and log the downgrade to `push_log` (`push_type='extractor_deploy'`, status PARTIAL) so it surfaces -- no silent degradation. Both-fail path logs status FAILED.
+- **Verified:** PowerShell parser PARSE OK; 0 non-ASCII bytes (Windows-1252 rule); `LastTaskResult` normalization unit-tested (0x80070569 signed -2147023511 -> 2147943785 = launch-fail hit; success 0 + not-yet-run 267011 -> no hit).
+- **Acceptance (tonight):** Dice's 18:40 slot fires or not -- `push_log` (`sigma_extractor`/`l1_table` rows for 80579) is the proof either way.
+
+---
+
 ## 2026-07-05 SAST -- DASH-FINAL items 4+6+7: engine-native report RPCs + v_diwaais rebuild + honest neg-SOH labels
 
 **Migrations (applied live, additive/safe):** `dashfinal_ghost_integrity_reports_engine`, `dashfinal_v_diwaais_sigma_native_rebuild`

@@ -142,7 +142,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.17'   # v1.17 (SB-CC-DICE-REPAIR-001, 2026-06-21): Self-healing dw220sdb user mapping repair. When Wait-ForSigmaDw detects ONLINE+MULTI_USER failure (permission problem, not EOD lock), attempts to restore the db_datareader mapping from a master connection before giving up. (v1.16: truthful status, bounded retry)
+$ScriptVersion  = 'v1.18'   # v1.18 (DASH-FINAL item 8, 2026-07-05): HEALTH-aware task self-heal. Register-ExtractDeltaTask now checks Get-ScheduledTaskInfo (stale LastRunTime >2d/never OR logon/launch-failure LastTaskResult forces a fresh re-register) instead of returning as soon as the task exists -- the old check let a task dead on a logon failure (the Dice 30 Jun cause) pass forever. Non-admin fallback: if RunLevel Highest is denied, register Limited (extract needs SQL+HTTPS, not admin) and log the downgrade to push_log (R22). (v1.17 SB-CC-DICE-REPAIR-001: self-healing dw220sdb user mapping repair. v1.16: truthful status, bounded retry)
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -194,14 +194,64 @@ $EasyDbBlockMinEnd    = 30
 # SELF-REGISTERING PRE-EOD TASK (v1.14)
 # =============================================================================
 
+function Send-TaskHealthLog {
+    # v1.18 (DASH-FINAL item 8): surface scheduled-task self-heal events to
+    # push_log so a re-register, an elevation downgrade or a registration failure
+    # is visible on the platform (R22 -- no silent degradation). Runs at startup,
+    # before the main push loop, so it posts directly (Send-TableLog is defined
+    # later in the file and is not yet available here). Non-fatal: a failed log
+    # write never blocks registration or the extract. Documented statuses only
+    # (PARTIAL/FAILED) so any push_log.status CHECK is satisfied; detail rides in
+    # error_message. push_type='extractor_deploy' (the task-registration lane).
+    param([string]$Task, [string]$Status, [string]$ErrorMsg)
+    try {
+        $rec = [ordered]@{
+            store_code     = $StoreCode
+            push_type      = 'extractor_deploy'
+            table_name     = $Task
+            status         = $Status
+            script_version = $ScriptVersion
+            started_at     = (Get-Date -Format 'o')
+            completed_at   = (Get-Date -Format 'o')
+        }
+        if ($ErrorMsg) { $rec['error_message'] = $ErrorMsg.Substring(0, [Math]::Min(490, $ErrorMsg.Length)) }
+        $json  = ConvertTo-Json -InputObject $rec -Compress
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+        $hdrs  = @{
+            'apikey'        = $SupabaseKey
+            'Authorization' = "Bearer $SupabaseKey"
+            'Content-Type'  = 'application/json; charset=utf-8'
+            'Prefer'        = 'return=minimal'
+            'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+        }
+        $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log" -Method POST -Headers $hdrs -Body $bytes -TimeoutSec 15
+    }
+    catch {
+        Write-Warning "  [task] push_log health row failed (non-fatal): $_"
+    }
+}
+
 function Register-ExtractDeltaTask {
-    # Ensures the SocialBrand-ExtractDelta scheduled task exists and fires at
-    # 18:40 (before the 19:00 store close, clear of the ~20:00 dw220sdb lock).
-    # Idempotent: registers only when the task is missing or its trigger is not
-    # 18:40. Runs at extractor startup BEFORE any SQL, so it lands even when
-    # dw220sdb is locked. Non-fatal -- a registration failure never blocks the
-    # extract (it just retries next run). Self-heals all 5 servers via the fresh
-    # nightly extractor deploy.
+    # Ensures the SocialBrand-ExtractDelta scheduled task exists, fires at 18:40
+    # (before the 19:00 store close, clear of the ~20:00 dw220sdb lock), AND is
+    # actually running. Runs at extractor startup BEFORE any SQL, so it lands even
+    # when dw220sdb is locked. Non-fatal -- a registration failure never blocks the
+    # extract (it just retries next run).
+    #
+    # v1.18 (DASH-FINAL item 8, Pieter GENERAL ruling -- heal every server the same
+    # way, no special-casing Dice): the old check returned as soon as the task
+    # existed with an 18:40 trigger. It never checked task HEALTH, so a task dead on
+    # a logon/launch failure (run-as password rotated -- the likely Dice cause since
+    # 30 Jun) passed the idempotence check forever and never self-healed. Now the
+    # startup check also reads Get-ScheduledTaskInfo: a stale LastRunTime (older than
+    # 2 days, or never run) OR a logon/launch-failure LastTaskResult forces a fresh
+    # Unregister + Register under the current context. Fallback: if -RunLevel Highest
+    # is denied, register without elevation (the extract needs SQL Windows-Auth +
+    # HTTPS, not admin) and log the downgrade to push_log (R22).
+    #
+    # Bootstrap: a dead task cannot run the script that heals it -- a stranded box
+    # needs ONE manual extractor run, which then permanently re-registers a healthy
+    # task. Documented in STORE-ONBOARDING-RECIPE (same bootstrap every server got).
     #
     # 18:40 is hardcoded to match Create-ExtractorScheduledTask.ps1. Per Pieter
     # (R25 / SB-CC-SOURCE-001): pre-EOD time is per-store/per-day CONFIG, not
@@ -216,17 +266,61 @@ function Register-ExtractDeltaTask {
         }
         $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
         if ($existing) {
-            # Already present with an 18:40 daily trigger -> leave it alone.
             $hasSlot = $false
             foreach ($t in $existing.Triggers) {
                 if ($t.StartBoundary -and ($t.StartBoundary -match 'T18:40:00')) { $hasSlot = $true }
             }
             if ($hasSlot) {
-                Write-Host "  [task] '$taskName' already registered for $atTime." -ForegroundColor DarkGray
-                return
+                # v1.18: existence + the right trigger are NOT enough -- verify the
+                # task is actually firing. A logon/launch failure leaves the trigger
+                # intact while the task never runs, so it must be probed, not trusted.
+                $healthy = $true
+                $reason  = ''
+                try {
+                    $info = Get-ScheduledTaskInfo -TaskName $taskName -ErrorAction Stop
+                    if (-not $info.LastRunTime -or $info.LastRunTime -lt (Get-Date).AddDays(-2)) {
+                        $lrt = if ($info.LastRunTime) { $info.LastRunTime.ToString('yyyy-MM-dd HH:mm') } else { 'never' }
+                        $healthy = $false
+                        $reason  = "LastRunTime stale ($lrt)"
+                    }
+                    else {
+                        # Normalize LastTaskResult to unsigned 32-bit and flag the
+                        # known logon/launch-failure codes (a genuine app-level exit
+                        # code is not in this set, so a live task with a script error
+                        # is left alone -- that surfaces via the l1_table rows).
+                        # 0xFFFFFFFFL (Int64 literal, not 0xFFFFFFFF which PowerShell
+                        # parses as Int32 -1 -- a no-op mask) normalizes a negative
+                        # Int32 result to its unsigned 32-bit value.
+                        $res = ([int64]$info.LastTaskResult) -band 0xFFFFFFFFL
+                        $launchFail = @(
+                            2147943785,  # 0x80070569 ERROR_LOGON_FAILURE
+                            2147943726,  # 0x8007052E ERROR_LOGON_FAILURE (alt)
+                            2147943727,  # 0x8007052F ERROR_ACCOUNT_RESTRICTION
+                            2147942405,  # 0x80070005 ERROR_ACCESS_DENIED
+                            2147944309   # 0x80070775 ERROR_ACCOUNT_DISABLED
+                        )
+                        if ($launchFail -contains $res) {
+                            $healthy = $false
+                            $reason  = ('LastTaskResult 0x{0:X8}' -f $res)
+                        }
+                    }
+                }
+                catch {
+                    $healthy = $false
+                    $reason  = "Get-ScheduledTaskInfo failed: $_"
+                }
+                if ($healthy) {
+                    Write-Host "  [task] '$taskName' registered for $atTime and healthy." -ForegroundColor DarkGray
+                    return
+                }
+                Write-Host "  [task] '$taskName' at $atTime but UNHEALTHY ($reason) - re-registering." -ForegroundColor Yellow
+                Send-TaskHealthLog -Task $taskName -Status 'PARTIAL' -ErrorMsg "self-heal: task unhealthy, re-registering -- $reason"
+                Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
             }
-            Write-Host "  [task] '$taskName' present but not at $atTime - re-registering." -ForegroundColor Yellow
-            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+            else {
+                Write-Host "  [task] '$taskName' present but not at $atTime - re-registering." -ForegroundColor Yellow
+                Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+            }
         }
 
         $psExe   = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -243,19 +337,36 @@ function Register-ExtractDeltaTask {
             -StartWhenAvailable `
             -WakeToRun:$false
 
-        Register-ScheduledTask `
-            -TaskName $taskName `
-            -Trigger  $trigger `
-            -Action   $action `
-            -Settings $settings `
-            -RunLevel  Highest `
-            -Force | Out-Null
-        Write-Host "  [task] Registered '$taskName' -> daily $atTime." -ForegroundColor Green
+        # v1.18: try Highest first; on denial fall back to the current run level.
+        # The extract needs SQL (Windows Auth) + HTTPS, not admin, so a non-elevated
+        # task still does the whole job. The downgrade is logged, never silent (R22).
+        try {
+            Register-ScheduledTask `
+                -TaskName $taskName `
+                -Trigger  $trigger `
+                -Action   $action `
+                -Settings $settings `
+                -RunLevel  Highest `
+                -Force | Out-Null
+            Write-Host "  [task] Registered '$taskName' -> daily $atTime (Highest)." -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "[task] Highest-level registration denied ($_). Retrying without elevation."
+            Register-ScheduledTask `
+                -TaskName $taskName `
+                -Trigger  $trigger `
+                -Action   $action `
+                -Settings $settings `
+                -Force | Out-Null
+            Write-Host "  [task] Registered '$taskName' -> daily $atTime (Limited, no elevation)." -ForegroundColor Yellow
+            Send-TaskHealthLog -Task $taskName -Status 'PARTIAL' -ErrorMsg 'RunLevel Highest denied; registered without elevation (extract needs SQL+HTTPS, not admin).'
+        }
     }
     catch {
-        # Non-fatal: needs admin/highest rights; if the run context lacks them
-        # this warns and retries next run. The extract continues regardless.
+        # Non-fatal: if BOTH registration attempts fail, warn + surface; the extract
+        # continues and the next run retries.
         Write-Warning "[task] Could not register '$taskName' (non-fatal): $_"
+        Send-TaskHealthLog -Task $taskName -Status 'FAILED' -ErrorMsg "register failed: $_"
     }
 }
 
