@@ -4,6 +4,19 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-05 SAST -- DASH-FINAL items 4+6+7: engine-native report RPCs + v_diwaais rebuild + honest neg-SOH labels
+
+**Migrations (applied live, additive/safe):** `dashfinal_ghost_integrity_reports_engine`, `dashfinal_v_diwaais_sigma_native_rebuild`
+**Files:** `sql/create_rpc_ghost_stock_report.sql`, `sql/create_rpc_stock_integrity_report.sql`, `sql/create_v_diwaais.sql`, `src/app/page.jsx`, DB-SCHEMA.md
+**Brief:** CC-BRIEF-DASH-FINAL-001 items 4, 6, 7
+
+- **Item 4:** `rpc_ghost_stock_report` + `rpc_stock_integrity_report` rewritten off frozen daily_snapshots (0 rows on July dates) onto `l2_stock_position` (always-latest, sigma-native). Output signatures UNCHANGED (zero frontend edits). Ghost = production/non-stock stock carrying capital; integrity = receipting breaks (soh<-50) + fresh-impossible. R22 live x5: ghost 281/15/185/13/23 rows; integrity RECEIPTING_BREAK 84/9/22/8/5 + FRESH_IMPOSSIBLE 154/0/78/0/0 — reconcile to the direct l2_stock_position filters.
+- **Item 7:** `v_diwaais` REBUILT sigma-native (was frozen daily_snapshots + Phase-1 products). REBUILD not drop (Pieter). Current-state export; period_* = MTD to each store's latest sale_date. R22: period_sales ties to sigma_sales MTD to the rand x4; 10116 −R89.99 = one dummy open-price code (88889999), documented in the file. MUST NOT feed ordering (Bloom is the ordering engine).
+- **Item 6:** No DB change needed — `v_kpi_by_date` / `mv_kpi_by_date` / `mv_sparkline_14d` were ALREADY sigma-native (l2_soh_daily), so the raw Negative-SOH chip + 14d sparkline are already off frozen PRSSALE (verified live). Fixed the stale neg-SOH hover text that still named "PRSSALE daily_snapshots"; updated stale DB-SCHEMA matview notes. FLAGGED to PM: the sales + GP dual-chip "engine vs PRSSALE" hover narrative is likewise obsolete post-RETIRE (both chips are now sigma-native, different VAT basis) — left for PM's copy pass, not silently rewritten.
+- Frontend committed with the deploy below.
+
+---
+
 ## 2026-07-05 SAST -- rpc_report_rows: Reports drawer rebuilt (DASH-FINAL items 1+2+5) -- RPC LIVE, frontend committed NOT deployed
 
 **Migration:** `dashfinal_rpc_report_rows_single_shot` (CC, applied live 2026-07-05 -- additive, no CASCADE, safe during trading)

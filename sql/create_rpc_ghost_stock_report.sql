@@ -1,90 +1,67 @@
 -- =============================================================================
 -- create_rpc_ghost_stock_report.sql
--- SB-CC-RECONCILE-001 Phase 1 -- canonical source-of-record for rpc_ghost_stock_report.
--- DDL previously lived only in sb_ap_003_a6_*/sb_ap_004_c_* sediment (latest def).
--- Extracted verbatim from LIVE 2026-06-17. (DB-SCHEMA had it as PENDING; it is LIVE.)
--- PRODUCTION/NON_STOCK slow-movers + fresh-impossible stock, valued for the report.
+-- Drawer "Ghost Stock" report (SB-AP-004 C).
 -- =============================================================================
+-- RETIRE-003 / CC-BRIEF-DASH-FINAL-001 item 4 (2026-07-05):
+--   Rewritten OFF frozen daily_snapshots (0 rows on any date >= 29 Jun) ONTO the
+--   always-latest, sigma-native engine (l2_stock_position). Applied live
+--   (migration dashfinal_ghost_integrity_reports_engine). Output signature
+--   UNCHANGED -- the frontend column map (handleReportCardClick) is untouched.
+--   Prior canonical (SB-CC-RECONCILE-001, daily_snapshots + classify_snapshot_item)
+--   is superseded; history in git.
+--
+-- WHAT IT SURFACES:
+--   Production + non-stock stock that carries capital (SOH > 0, capital_value > 0)
+--   -- stock the engine has classified as NOT real sellable capital. The engine
+--   class verdict (l2_stock_position.class, from l2_item_classification) replaces
+--   the old classify_snapshot_item() over daily_snapshots.
+--   exclusion_class = the engine class; ghost_value = engine capital_value.
+--   Fresh-impossible perishable moved WHOLLY to rpc_stock_integrity_report
+--   (it was duplicated across both reports on the daily_snapshots versions).
+--
+-- p_date: accepted for signature compatibility only. The engine has no historical
+--   date dimension (one latest position per store); the frozen table this
+--   replaced returned nothing for current dates regardless.
+--
+-- R22 (2026-07-05, latest position x5): ghost rows 281/15/185/13/23,
+--   ghost capital R4.25M/R0.04M/R3.75M/R0.03M/R0.05M -- reconciles to the direct
+--   l2_stock_position filter (class IN PRODUCTION/NON_STOCK, soh>0, capital>0).
+-- =============================================================================
+
 CREATE OR REPLACE FUNCTION public.rpc_ghost_stock_report(p_store_codes text[], p_date text)
  RETURNS TABLE(store_code text, store_name text, ean text, description text, dept_name text, sub_dept_name text, soh numeric, unit_cost numeric, ghost_value numeric, exclusion_class text, score integer, why_flagged text, confirmed_by text)
  LANGUAGE sql
  STABLE SECURITY DEFINER
+ SET statement_timeout TO '15s'
 AS $function$
-    -- PRODUCTION and NON_STOCK slow-movers (incl. never-sold production inputs)
-    SELECT
-        ds.store_code,
-        MAX(ds.store_name)                                                   AS store_name,
-        ds.ean,
-        MAX(ds.description)                                                  AS description,
-        MAX(ds.dept_name)                                                    AS dept_name,
-        MAX(ds.sub_dept_name)                                                AS sub_dept_name,
-        MAX(ds.soh)                                                          AS soh,
-        MAX(ds.unit_cost)                                                    AS unit_cost,
-        ROUND((MAX(ds.soh) * COALESCE(MAX(ds.unit_cost), 0))::numeric, 2)   AS ghost_value,
-        MAX(classify_snapshot_item(ds.dept_name, ds.sub_dept_name,
-                                   ds.soh, ds.last_sales_date_iso))         AS exclusion_class,
-        NULL::int                                                            AS score,
-        MAX(
-            CASE classify_snapshot_item(ds.dept_name, ds.sub_dept_name,
-                                        ds.soh, ds.last_sales_date_iso)
-                WHEN 'PRODUCTION' THEN
-                    'dept=' || ds.dept_name || ' sub=' || COALESCE(ds.sub_dept_name,'')
-                    || CASE WHEN ds.last_sales_date_iso IS NULL
-                            THEN ' | never-sold production input'
-                            ELSE ' | production sub-dept keyword'
-                       END
-                WHEN 'NON_STOCK' THEN
-                    'dept=' || ds.dept_name || ' sub=' || COALESCE(ds.sub_dept_name,'')
-                    || ' | non-stock/store-use'
-                ELSE NULL
-            END
-        )                                                                    AS why_flagged,
-        NULL::text                                                           AS confirmed_by
-    FROM daily_snapshots ds
-    WHERE ds.store_code    = ANY(p_store_codes)
-      AND ds.snapshot_date = p_date::date
-      AND ds.soh            > 0
-      AND ds.period_qty     = 0
-      AND ds.is_placeholder = FALSE
-      AND classify_snapshot_item(ds.dept_name, ds.sub_dept_name,
-                                 ds.soh, ds.last_sales_date_iso)
-          IN ('PRODUCTION', 'NON_STOCK')
-    GROUP BY ds.store_code, ds.ean
-
-    UNION ALL
-
-    -- Fresh impossible-stock slow-movers
-    SELECT
-        ds.store_code,
-        MAX(ds.store_name)                                                   AS store_name,
-        ds.ean,
-        MAX(ds.description)                                                  AS description,
-        MAX(ds.dept_name)                                                    AS dept_name,
-        MAX(ds.sub_dept_name)                                                AS sub_dept_name,
-        MAX(ds.soh)                                                          AS soh,
-        MAX(ds.unit_cost)                                                    AS unit_cost,
-        ROUND((MAX(ds.soh) * COALESCE(MAX(ds.unit_cost), 0))::numeric, 2)   AS ghost_value,
-        'FRESH_ALERT'::text                                                  AS exclusion_class,
-        NULL::int                                                            AS score,
-        MAX('dept=' || ds.dept_name || ' sub=' || COALESCE(ds.sub_dept_name,'')
-            || ' | fresh perishable, no sale '
-            || COALESCE((CURRENT_DATE - ds.last_sales_date_iso)::text, 'ever')
-            || 'd')                                                          AS why_flagged,
-        NULL::text                                                           AS confirmed_by
-    FROM daily_snapshots ds
-    WHERE ds.store_code    = ANY(p_store_codes)
-      AND ds.snapshot_date = p_date::date
-      AND ds.soh            > 0
-      AND ds.period_qty     = 0
-      AND ds.is_placeholder = FALSE
-      AND classify_snapshot_item(ds.dept_name, ds.sub_dept_name,
-                                 ds.soh, ds.last_sales_date_iso) IS NULL
-      AND is_fresh_perishable(ds.dept_name, ds.sub_dept_name)
-      AND (ds.last_sales_date_iso IS NULL
-           OR ds.last_sales_date_iso < CURRENT_DATE - INTERVAL '30 days')
-    GROUP BY ds.store_code, ds.ean, ds.last_sales_date_iso
-
-    ORDER BY ghost_value DESC;
+  SELECT
+    sp.store_code,
+    st.store_name,
+    b.ean,
+    sp.description,
+    sp.dept_name,
+    sp.subdept_name                                         AS sub_dept_name,
+    sp.soh,
+    sp.unit_cost,
+    ROUND(sp.capital_value::numeric, 2)                     AS ghost_value,
+    sp.class                                                AS exclusion_class,
+    NULL::int                                               AS score,
+    'dept=' || COALESCE(sp.dept_name,'') || ' sub=' || COALESCE(sp.subdept_name,'')
+      || CASE sp.class
+           WHEN 'PRODUCTION' THEN ' | made-in-store / production stock -- SOH is a recipe by-product'
+           WHEN 'NON_STOCK'  THEN ' | non-stock / store-use line carrying value'
+           ELSE ' | engine-excluded stock'
+         END                                                AS why_flagged,
+    NULL::text                                              AS confirmed_by
+  FROM public.l2_stock_position sp
+  LEFT JOIN public.v_ean_bridge b ON b.store_code = sp.store_code AND b.product_code = sp.product_code
+  LEFT JOIN public.stores st      ON st.store_code = sp.store_code
+  WHERE sp.store_code = ANY(p_store_codes)
+    AND sp.class IN ('PRODUCTION','NON_STOCK')
+    AND sp.soh > 0
+    AND sp.capital_value > 0
+  ORDER BY ghost_value DESC;
 $function$;
 
 GRANT EXECUTE ON FUNCTION public.rpc_ghost_stock_report(text[], text) TO anon, authenticated;
+SELECT pg_notify('pgrst', 'reload schema');

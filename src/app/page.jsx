@@ -2992,12 +2992,12 @@ export default function Home() {
                       dual:          (dualStockPairable && l2Agg != null) ? {
                         rawLabel: `${num(kpiNegSOH)}`,
                         delta:    dualDelta(l2Agg.negSohAll, kpiNegSOH, 'pct'),
-                        explain:  'Headline = L2 engine all-class Negative SOH (l2_kpi_daily.neg_soh_count_all, sigma ledger soh<0, canon RULE-BOOK §5 KPI 5 incl. Type-A production negatives). Raw chip = L1 PRSSALE daily_snapshots all-class count. Delta = sigma ledger vs PRSSALE SOH; the ledger is the truth (R26). 14-day sparkline is the L1 daily series (stays PRSSALE until l2_soh_daily accrues history).',
+                        explain:  'Headline = L2 engine all-class Negative SOH (l2_kpi_daily.neg_soh_count_all, always-latest sigma position, canon RULE-BOOK §5 KPI 5 incl. Type-A production negatives). Raw chip = the selected-date sigma-ledger snapshot (v_kpi_by_date, sourced from l2_soh_daily). Delta = always-latest position vs the day\'s ledger snapshot and scope; the ledger is the truth (R26). 14-day sparkline is the l2_soh_daily series.',
                       } : null,
                       tooltip: {
                         heading: 'Negative SOH',
                         what:    'Count of products where the Sigma ledger shows less than zero on shelf.',
-                        source:  'Engine reads the live Sigma stock ledger directly -- more complete than the PRSSALE count, which is why it is usually higher.',
+                        source:  'Engine reads the always-latest Sigma stock position directly. The raw chip counts the selected date\'s ledger snapshot, so the two differ by timing and scope, not by data source.',
                         compare: 'Same date last year -- a falling count means the team is fixing receiving gaps and count errors.',
                         signal:  'Any negative is a stock integrity issue. Click to open the full list. Production lines (bread, scale items) carry structural negatives -- those need a floor fix, not a stocktake.',
                       },
