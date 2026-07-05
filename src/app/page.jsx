@@ -2002,7 +2002,7 @@ export default function Home() {
     if (currentReport === 'slowmovers')
       return buildSlowMoversEngine(engineSlowRows, { deptFilter, subDeptFilter, focusEans, refDate, supplierMap })
     return buildReport(currentReport, filteredReportRows, moverMode, refDate, rosMap, supplierMap, daysInPeriod, focusEans)
-  }, [currentReport, filteredReportRows, moverMode, selectedDates, reportLoaded, rosMap, supplierMap, deptSummary, lyDeptSummary, focusEans, daysInPeriod, ghostStockRows, engineSlowRows, deptFilter, subDeptFilter])
+  }, [currentReport, filteredReportRows, moverMode, selectedDates, reportLoaded, rosMap, supplierMap, deptSummary, lyDeptSummary, focusEans, daysInPeriod, ghostStockRows, stockIntegrityRows, engineSlowRows, deptFilter, subDeptFilter])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DERIVED — KPIs
@@ -2911,14 +2911,14 @@ export default function Home() {
                       dual:          dualSalesPairable ? {
                         rawLabel: zarShort(kpiSalesExVat),
                         delta:    dualDelta(l2Agg.exVat, kpiSalesExVat, 'pct'),
-                        explain:  'Headline = L2 engine (sigma_sales, ex-VAT flat 15%). Raw = L1 PRSSALE ex-VAT (total_sales_ex_vat, per-item vat_pct). Delta sources: engine-vs-PRSSALE + intraday timing.',
+                        explain:  'One Sigma sales ledger, two VAT treatments. Headline = engine daily KPI, ex-VAT at a flat 15%. Raw chip = the same ledger with each line\'s native VAT. The delta is the VAT basis (plus any intraday timing), not two sources.',
                       } : null,
                       tooltip: {
                         heading: 'Total Sales',
                         what:    'Rand value of everything sold across selected stores and period, ex-VAT.',
                         source:  'Sigma sales ledger -- every till transaction, captured nightly.',
                         compare: 'Same period last year, shifted back exactly 52 weeks to preserve the day of week.',
-                        signal:  'Green = up on LY. The raw chip (single-date engine view) is a PRSSALE snapshot -- a small delta is normal; a large one is unusual.',
+                        signal:  'Green = up on LY. The raw chip is the same Sigma ledger on a native per-line VAT basis -- a small delta is normal; a large one is unusual.',
                       },
                     },
                     {
@@ -2947,14 +2947,14 @@ export default function Home() {
                       dual:          dualSalesPairable && l2Agg.gp != null ? {
                         rawLabel: pct(kpiGP),
                         delta:    dualDelta(l2Agg.gp, kpiGP, 'pp'),
-                        explain:  'Headline = L2 engine GP (sigma dEKUmsatz cost). Raw = L1 PRSSALE-cost GP. A red delta usually means PRSSALE pack_size cost corruption on this store -- the red IS the finding (R22).',
+                        explain:  'One Sigma ledger, two VAT treatments. Headline = engine GP on Sigma recorded cost (dEKUmsatz), ex-VAT at a flat 15%. Raw chip = the same ledger and cost with each line\'s native VAT. The delta is the VAT basis, not a data source. Pack-size cost corruption surfaces in the Cost Error worklist, not here.',
                       } : null,
                       tooltip: {
                         heading: 'Gross Profit',
                         what:    "What's left after cost of goods, as a percentage of ex-VAT sales.",
-                        source:  "Engine uses Sigma's own recorded cost (dEKUmsatz) -- more accurate than the PRSSALE cost. The raw chip shows PRSSALE-cost GP for comparison.",
-                        compare: 'Same period last year. A large delta between raw chip and headline is a cost corruption finding, not a display bug.',
-                        signal:  'Below 18% -- watch it. A red raw-chip delta means a store has pack-size cost errors worth fixing.',
+                        source:  "Engine uses Sigma's own recorded cost (dEKUmsatz), ex-VAT. The raw chip is the same figure on a native per-line VAT basis, shown for comparison.",
+                        compare: 'Same period last year. The raw-chip delta is a VAT-basis difference, not a display bug.',
+                        signal:  'Below 18% -- watch it. Pack-size cost errors that dent GP are surfaced in the Cost Error worklist, to fix at source.',
                       },
                     },
                     {
@@ -3060,7 +3060,7 @@ export default function Home() {
                         heading: 'Capital Tied',
                         what:    'The rand value of sellable, buyable stock on shelf at cost -- your real stock investment.',
                         source:  'Engine-purified: ghost stock, production lines, deposits and cost errors stripped out. The raw chip shows the unfiltered figure before that cleanup.',
-                        compare: 'LY reference shown as direction only -- the LY figure is a PRSSALE historical snapshot, so treat the percentage as a trend signal, not a precise comparison.',
+                        compare: 'LY reference shown as direction only -- the LY figure is a historical snapshot on an older basis, so treat the percentage as a trend signal, not a precise comparison.',
                         signal:  'The gap between purified and raw is capital locked in lines the engine has flagged. 30 days cover or less is the target for standard lines.',
                         note:    'Deposits (quart bottles, crates, empties) are carved out separately -- returnable float, not stock investment.',
                       },
