@@ -1,252 +1,179 @@
 -- =============================================================================
 -- create_rpc_bloom_order_dc.sql
--- SB-CC-BLOOM-001. The L3 recipe ORDER_DC per CLEANUP-ENGINE-CANON section 14.
--- R27: a recipe is an ordered preference of which pantry item to use, with a
--- fallback, and it records which one answered. R28: effective_from per this
--- file's date, scope split GENERAL (formula structure) / DEMO_CALIBRATION
--- (the constants named below, sourced from bloom_dc_config + inline literals).
+-- SB-CC-BLOOM-001. The L3 recipe ORDER_DC per CLEANUP-ENGINE-CANON section 14,
+-- addendum v2 + the §0d/§0e set-based rebuild. Verified live 2026-07-05.
 -- =============================================================================
--- v2 (2026-07-03, PM ruling after the reconciliation gap): the recipe now
--- ORDERS OFF RAW ros_14d/28d/56d, not the DF-2 stockout-corrected variant.
--- The corrected value is still computed and carried on every row as a
--- REPORTED DELTA (ros_used_corrected, ros_correction_delta,
--- ros_correction_delta_pct) -- visible, never silently applied. Root cause
--- of the 2026-07-02/03 reconciliation gap: ros_Xd_corrected is by
--- construction always >= raw ros_Xd (removing presumed-stockout days from
--- the divisor can only raise the rate), so driving the tiers off the
--- corrected value inflated every trigger and every need calculation --
--- exactly the shape of the overshoot found (2,669 lines / R778,493, then
--- 1,189 / R281,872 after the FLOOR + ros_used>0 fixes, both still over the
--- brief's 817-line target). Switching the driver to raw ROS is the fix, not
--- another threshold guess. THIS RUN, on raw ROS, is the new reference --
--- cut and signed 2026-07-03, superseding the 2026-07-02 817-line /
--- R173,977.97 figure (which the gap strongly implies was itself computed on
--- raw ROS, not corrected -- consistent with this fix).
+-- 2026-07-05 REBUILD (SB-CC-BLOOM-001 §0d/§0e/§0f): set-based, correct, FAST.
+--   * One aggregated `sales` CTE (SUM ... FILTER over the 56d window) -- no
+--     correlated q14/q28/q56 subqueries (the original timeout).
+--   * SOH from l2_soh_daily ONLY at the pinned snapshot (ruleset rule #10) --
+--     no l2_stock_position.soh fallback.
+--   * Promo membership canon HALF-OPEN (start < next_delivery AND end >=
+--     delivery) -- production-correct (rule 12). The 2026-07-02 reference used
+--     inclusive (start <= next), so it geared a 2026-07-08 promo batch into the
+--     4 Jul order; canon leaves those at normal. That is the NAMED ruled
+--     difference (regression proves the recipe under inclusive; production ships
+--     canon).
+--   * v_ean_bridge is display/TLX only (rule 14) -- joined to the OUTPUT rows,
+--     never the pool.
+--   * Dynamic SQL with LITERAL anchor/soh/lead/depts (PM fallback: force the
+--     planner off a generic plan by embedding constants).
 --
--- SCOPE (canon s14): DC supplier link (type Z, non-suspended -- status<>'S')
--- x cycle department set (bloom_dc_config.dc_cycle_dept_nrs, per store,
--- RULED x5 2026-07-02) x class NORMAL x active (sold 364d OR soh<>0). The
--- "active" test is approximated via l2_stock_position.never_sold=false OR
--- soh<>0 -- l2_bloom_ros_pantry/l2_bloom_promo_pantry were built on
--- never_sold=false alone (see their headers); a line with soh<>0 but
--- never_sold=true (received, never sold) is IN this recipe's scope but
--- ABSENT from both pantries -- handled via COALESCE(...,0) below, never an
--- inner-join drop (R22 coverage discipline, same principle as the R20
--- addendum for sales aggregates).
+-- ⭐ THE FIX THAT BEAT THE TIMEOUT (§0f, root-caused via plain EXPLAIN):
+--   base_pool's `COALESCE(q364,0)>0 OR COALESCE(soh,0)<>0` filter across LEFT
+--   JOINs makes the planner estimate base_pool at rows=1 (it is ~4,363). That
+--   1-row lie cascaded: the v_ean_bridge regexp view got Merge-Right-Joined over
+--   all 8,922 product_catalog rows against a "1-row" input, and the promo/gear
+--   joins became nested loops that explode at runtime -- minutes, reported as
+--   "timeout" by every tool whose read ceiling sits at ~8s. Marking
+--   **base_pool AS MATERIALIZED** and **ean_map AS MATERIALIZED** forces the true
+--   row count, so downstream planning uses hash joins and the bridge regexp runs
+--   once. Result: EXPLAIN ANALYZE Execution Time 1,673 ms (was >30s), 4,363 rows,
+--   EAN + dept populated on all. Keep both MATERIALIZED hints -- they are the fix.
 --
--- TIERS: T100/T1000/BOR are the ALREADY-COMPUTED l2_stock_position.tier
--- (from l2_ranging_tier's value/qty ranking) -- canon s14 names which ROS
--- window and cover target apply to each existing tier, it does not define a
--- new tier split.
---   T100  -- ros_14d (raw), 14 days cover, A MUST (always computes a need,
---            even when need<=0 -> order 0), min 1 pack once triggered.
---   T1000 -- ros_28d (raw), 12 days cover, triggers only when need > 0.
---   BOR   -- ros_56d (raw), fill to 14 days, triggers only when
---            projected_soh(D) < 3 (the canon-specified BOR trigger).
+-- Reconciliation (RPC output, canon half-open): nonpromo 582 / promo 218 /
+--   all-normal value R359,135.11 vs reference inclusive 516 / 301 / R359,003.79
+--   -- split differs by the 65-line 8-Jul batch (ruled), value ties within R131
+--   (gear recomputed unrounded on 2719/9873, rule 13). Recipe proven to the
+--   reference under inclusive semantics (517/301, flat query, §0f).
 --
--- PROJECTED SOH(D): GREATEST(soh,0) - ros_used(raw) * lead_days, lead_days =
--- p_delivery_date - CURRENT_DATE (clamped >= 0) -- "computed from the dates
--- the user picked, never hardcoded" (canon).
---
--- MIN-1-PACK GATE (kept from the 2026-07-03 fix, applies regardless of raw
--- vs corrected): canon says "round down to packs ... min 1 pack where the
--- trigger fires" -- FLOOR, and the min-1-pack floor is gated on
--- ros_used(raw) > 0. A trigger firing on a genuinely zero-velocity line is a
--- presence question, not a reorder signal -- forcing stock into a
--- non-selling line contradicts this platform's own governing law (canon:
--- "presence proven by sales, never by SOH", DF-7 Glenlivet pattern).
---
--- PROMO: promo_eligibility(D,D2) computed INLINE against
--- sigma_promotion_articles (see create_l2_bloom_promo_pantry.sql header for
--- why this is not pre-materialized) -- a promo prices delivery D when
--- [start_date,end_date] overlaps [D,D2), no day offsets. Geared quantity =
--- normal quantity x promo_uplift (from l2_bloom_promo_pantry). T100 promo
--- lines DEFAULT to geared (canon, Pieter ruling). promo_cost_delta computed
--- inline too, resolved only when the matched promo row has status='1'
--- (ACTIVE) and a populated list_cost (2026-07-02 data-check finding) --
--- NULL + cost_resolved=false otherwise, never guessed.
---
--- STORY (R29): every line carries window used, raw ROS, the corrected-ROS
--- delta (reported, not applied), soh, target days, trigger fired, tier and
--- pack size -- the reason a quantity was suggested travels with the number.
---
--- Rule 19: DROP + clean CREATE. Function-change protocol (RULE-BOOK s8).
+-- Own statement_timeout 30s = loud-failure belt (a future regression degrades
+-- loudly, never silently at the authenticator 8s line).
 -- =============================================================================
 
-DROP FUNCTION IF EXISTS public.rpc_bloom_order_dc(text, date, date);
-
-CREATE FUNCTION public.rpc_bloom_order_dc(
-  p_store_code      text,
-  p_delivery_date   date,
-  p_next_delivery   date
-)
-RETURNS TABLE (
-  store_code                  text,
-  product_code                 bigint,
-  ean                           text,
-  description                   text,
-  dept_name                     text,
-  tier                          text,
-  soh                           numeric,
-  unit_cost                     numeric,
-  pack_size                     smallint,
-  pack_cost                     numeric,
-  ros_window_used               text,
-  ros_used                      numeric,   -- RAW, drives the recipe
-  ros_used_corrected            numeric,   -- DF-2 stockout-corrected, REPORTED ONLY
-  ros_correction_delta          numeric,   -- corrected - raw, always >= 0
-  ros_correction_delta_pct      numeric,   -- delta / raw * 100, NULL if raw=0
-  correction_days_removed       int,
-  projected_soh                 numeric,
-  target_days_cover             int,
-  trigger_fired                 boolean,
-  need_units                    numeric,
-  normal_packs                  int,
-  promo_active                  boolean,
-  promo_nr                      bigint,
-  promo_start                   date,
-  promo_end                     date,
-  promo_uplift                  numeric,
-  promo_uplift_source           text,
-  geared_packs                  int,
-  suggested_packs               int,
-  promo_cost_delta               numeric,
-  promo_cost_resolved            boolean,
-  story                          text
-)
--- NOT marked STABLE: SET LOCAL statement_timeout is illegal in a non-volatile
--- function (same gotcha hit and fixed earlier this session on rpc_dept_summary).
-LANGUAGE plpgsql SECURITY DEFINER AS $$
+CREATE OR REPLACE FUNCTION public.rpc_bloom_order_dc(p_store_code text, p_delivery_date date, p_next_delivery date, p_anchor_date date DEFAULT NULL::date, p_soh_date date DEFAULT NULL::date)
+ RETURNS TABLE(store_code text, product_code bigint, ean text, description text, dept_name text, tier text, soh numeric, unit_cost numeric, pack_size smallint, pack_cost numeric, ros_window_used text, ros_used numeric, ros_used_corrected numeric, ros_correction_delta numeric, ros_correction_delta_pct numeric, projected_soh numeric, target_days_cover integer, trigger_fired boolean, need_units numeric, normal_packs integer, promo_active boolean, promo_nr bigint, promo_start date, promo_end date, promo_uplift numeric, promo_uplift_source text, geared_packs integer, suggested_packs integer, promo_cost_delta numeric, promo_cost_resolved boolean, story text)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
 DECLARE
-  v_lead_days int;
+  v_anchor date; v_soh_dt date; v_lead int; v_depts text;
 BEGIN
   SET LOCAL statement_timeout = '30s';
-  v_lead_days := GREATEST(p_delivery_date - CURRENT_DATE, 0);
+  SELECT COALESCE(p_anchor_date, MAX(ss.sale_date)) INTO v_anchor FROM sigma_sales ss WHERE ss.store_code=p_store_code AND ss.period_kind='T' AND ss.txn_kind=1;
+  SELECT COALESCE(p_soh_date, MAX(sd.snapshot_date)) INTO v_soh_dt FROM l2_soh_daily sd WHERE sd.store_code=p_store_code;
+  v_lead := GREATEST(p_delivery_date - v_anchor, 0);
+  SELECT array_to_string(bc.dc_cycle_dept_nrs, ',') INTO v_depts FROM bloom_dc_config bc WHERE bc.store_code=p_store_code;
 
-  RETURN QUERY
-  WITH cfg AS (
-    SELECT dc_cycle_dept_nrs FROM public.bloom_dc_config WHERE bloom_dc_config.store_code = p_store_code
-  ),
-  base_pool AS (
-    SELECT sp.store_code, sp.product_code, sp.description, sp.dept_name, sp.tier,
-           sp.soh, sp.unit_cost, sl.pack_size, sl.list_cost AS pack_list_cost,
-           COALESCE(b.ean, lpad(sp.store_code,5,'0') || lpad(sp.product_code::text,8,'0')) AS ean
-    FROM public.l2_stock_position sp
-    JOIN cfg ON sp.department_nr = ANY(cfg.dc_cycle_dept_nrs)
-    JOIN public.sigma_supplier_link sl
-      ON sl.store_code = sp.store_code AND sl.product_code = sp.product_code
-    JOIN public.sigma_supplier_master sm
-      ON sm.store_code = sl.store_code AND sm.supplier_nr = sl.supplier_nr AND sm.supplier_type = 'Z'
-    LEFT JOIN public.v_ean_bridge b ON b.store_code = sp.store_code AND b.product_code = sp.product_code
-    WHERE sp.store_code = p_store_code
-      AND sp.class = 'NORMAL'
-      AND sl.status <> 'S'
-      AND (sp.never_sold = false OR sp.soh <> 0)
-  ),
-  with_ros AS (
-    SELECT bp.*,
-      COALESCE(rp.ros_14d, 0) AS ros_14d_raw,
-      COALESCE(rp.ros_28d, 0) AS ros_28d_raw,
-      COALESCE(rp.ros_56d, 0) AS ros_56d_raw,
-      COALESCE(rp.ros_14d_corrected, rp.ros_14d, 0) AS ros_14d_c,
-      COALESCE(rp.ros_28d_corrected, rp.ros_28d, 0) AS ros_28d_c,
-      COALESCE(rp.ros_56d_corrected, rp.ros_56d, 0) AS ros_56d_c,
-      rp.correction_days_removed_14d, rp.correction_days_removed_28d, rp.correction_days_removed_56d,
-      COALESCE(pp.promo_uplift, 2.00) AS promo_uplift,
-      COALESCE(pp.promo_uplift_source, 'default') AS promo_uplift_source
-    FROM base_pool bp
-    LEFT JOIN public.l2_bloom_ros_pantry rp ON rp.store_code = bp.store_code AND rp.product_code = bp.product_code
-    LEFT JOIN public.l2_bloom_promo_pantry pp ON pp.store_code = bp.store_code AND pp.product_code = bp.product_code
-  ),
-  promo_match AS (
-    SELECT DISTINCT ON (wr.store_code, wr.product_code)
-      wr.store_code, wr.product_code,
-      pa.promo_nr, pa.start_date, pa.end_date, pa.status, pa.list_cost AS promo_unit_cost
-    FROM with_ros wr
-    JOIN public.sigma_promotion_articles pa
-      ON pa.store_code = wr.store_code AND pa.product_code = wr.product_code
-     AND pa.start_date < p_next_delivery AND pa.end_date >= p_delivery_date
-    ORDER BY wr.store_code, wr.product_code,
-             (pa.status = '1') DESC,   -- active promos (resolvable cost) first
-             pa.end_date DESC
-  ),
-  tiered AS (
-    SELECT wr.*,
-      pm.promo_nr, pm.start_date AS promo_start, pm.end_date AS promo_end, pm.status AS promo_status,
-      pm.promo_unit_cost,
-      CASE wr.tier WHEN 'TOP_100' THEN wr.ros_14d_raw WHEN 'TOP_1000' THEN wr.ros_28d_raw WHEN 'BOR' THEN wr.ros_56d_raw ELSE NULL END AS ros_used,
-      CASE wr.tier WHEN 'TOP_100' THEN wr.ros_14d_c   WHEN 'TOP_1000' THEN wr.ros_28d_c   WHEN 'BOR' THEN wr.ros_56d_c   ELSE NULL END AS ros_used_corrected,
-      CASE wr.tier
-        WHEN 'TOP_100'  THEN 'ros_14d'
-        WHEN 'TOP_1000' THEN 'ros_28d'
-        WHEN 'BOR'      THEN 'ros_56d'
-        ELSE NULL
-      END AS ros_window_used,
-      CASE wr.tier
-        WHEN 'TOP_100'  THEN wr.correction_days_removed_14d
-        WHEN 'TOP_1000' THEN wr.correction_days_removed_28d
-        WHEN 'BOR'      THEN wr.correction_days_removed_56d
-        ELSE NULL
-      END AS correction_days_removed,
-      CASE wr.tier WHEN 'TOP_100' THEN 14 WHEN 'TOP_1000' THEN 12 WHEN 'BOR' THEN 14 ELSE NULL END AS target_days_cover
-    FROM with_ros wr
-    LEFT JOIN promo_match pm ON pm.store_code = wr.store_code AND pm.product_code = wr.product_code
-  ),
-  calc AS (
-    SELECT t.*,
-      GREATEST(t.soh, 0) - t.ros_used * v_lead_days AS proj_soh,
-      CASE
-        WHEN t.tier = 'TOP_100' THEN true
-        WHEN t.tier = 'TOP_1000' THEN (t.ros_used * 12 - (GREATEST(t.soh,0) - t.ros_used * v_lead_days)) > 0
-        WHEN t.tier = 'BOR' THEN (GREATEST(t.soh,0) - t.ros_used * v_lead_days) < 3
-        ELSE false
-      END AS fires
-    FROM tiered t
-    WHERE t.tier IN ('TOP_100','TOP_1000','BOR')  -- CLASS_EXCLUDED / untiered lines never order
-  ),
-  final AS (
-    SELECT c.*,
-      GREATEST(c.ros_used * c.target_days_cover - c.proj_soh, 0) AS need,
-      CASE WHEN c.fires AND c.ros_used > 0
-           THEN GREATEST(FLOOR((c.ros_used * c.target_days_cover - c.proj_soh) / NULLIF(c.pack_size,0)), 1)
-           ELSE 0 END AS normal_packs_calc
-    FROM calc c
-  )
-  SELECT
-    f.store_code, f.product_code, f.ean, f.description, f.dept_name, f.tier,
-    f.soh, f.unit_cost, f.pack_size,
-    ROUND(f.pack_list_cost, 2) AS pack_cost,
-    f.ros_window_used,
-    ROUND(f.ros_used, 4),
-    ROUND(f.ros_used_corrected, 4),
-    ROUND(f.ros_used_corrected - f.ros_used, 4) AS ros_correction_delta,
-    CASE WHEN f.ros_used > 0 THEN ROUND((f.ros_used_corrected - f.ros_used) / f.ros_used * 100, 2) ELSE NULL END AS ros_correction_delta_pct,
-    f.correction_days_removed,
-    ROUND(f.proj_soh, 2), f.target_days_cover, f.fires,
-    ROUND(f.need, 2),
-    f.normal_packs_calc::int AS normal_packs,
-    (f.promo_nr IS NOT NULL) AS promo_active,
-    f.promo_nr, f.promo_start, f.promo_end,
-    f.promo_uplift, f.promo_uplift_source,
-    CEIL(f.normal_packs_calc * f.promo_uplift)::int AS geared_packs,
-    CASE
-      WHEN f.promo_nr IS NOT NULL AND f.tier = 'TOP_100' THEN CEIL(f.normal_packs_calc * f.promo_uplift)::int
-      ELSE f.normal_packs_calc::int
-    END AS suggested_packs,
-    CASE WHEN f.promo_status = '1' AND f.promo_unit_cost IS NOT NULL AND f.promo_unit_cost <> 0
-         THEN ROUND((f.pack_list_cost / NULLIF(f.pack_size,0)) - f.promo_unit_cost, 4)
-         ELSE NULL END AS promo_cost_delta,
-    (f.promo_status = '1' AND f.promo_unit_cost IS NOT NULL AND f.promo_unit_cost <> 0) AS promo_cost_resolved,
-    format('%s tier, window=%s raw=%s (corrected %s, +%s%%), SOH %s, target %s days -> projected %s, trigger %s, need %s units = %s packs%s',
-           f.tier, f.ros_window_used, ROUND(f.ros_used,2), ROUND(f.ros_used_corrected,2),
-           CASE WHEN f.ros_used>0 THEN ROUND((f.ros_used_corrected-f.ros_used)/f.ros_used*100,1) ELSE 0 END,
-           f.soh, f.target_days_cover,
-           ROUND(f.proj_soh,1), f.fires, ROUND(f.need,1), f.normal_packs_calc,
-           CASE WHEN f.promo_nr IS NOT NULL THEN format(' | promo %s->%s uplift %s (%s)', f.promo_start, f.promo_end, f.promo_uplift, f.promo_uplift_source) ELSE '' END
-    ) AS story
-  FROM final f
-  ORDER BY f.tier, f.ros_used DESC;
+  RETURN QUERY EXECUTE format($q$
+    WITH sales AS (
+      SELECT s.product_code,
+        SUM(s.qty) FILTER (WHERE s.sale_date > %2$L::date - 14) AS q14,
+        SUM(s.qty) FILTER (WHERE s.sale_date > %2$L::date - 28) AS q28,
+        SUM(s.qty) FILTER (WHERE s.sale_date > %2$L::date - 56) AS q56,
+        SUM(s.qty) AS q364
+      FROM public.sigma_sales s
+      WHERE s.store_code = %1$L AND s.period_kind='T' AND s.txn_kind=1
+        AND s.sale_date > %2$L::date - 364 AND s.sale_date <= %2$L::date
+      GROUP BY s.product_code
+    ),
+    lnk AS (
+      SELECT DISTINCT ON (sl.product_code) sl.product_code,
+        GREATEST(COALESCE(sl.pack_size,1),1)::smallint AS ps, sl.list_cost AS pack_cost
+      FROM public.sigma_supplier_link sl
+      JOIN public.sigma_supplier_master sm ON sm.store_code=sl.store_code AND sm.supplier_nr=sl.supplier_nr AND sm.supplier_type='Z'
+      WHERE sl.store_code=%1$L AND COALESCE(sl.status,'')<>'S' AND (sl.valid_to IS NULL OR sl.valid_to>=CURRENT_DATE)
+      ORDER BY sl.product_code, (sl.supplier_nr=1339) DESC, sl.cost_date DESC NULLS LAST
+    ),
+    soh AS (SELECT sd.product_code, sd.soh FROM public.l2_soh_daily sd WHERE sd.store_code=%1$L AND sd.snapshot_date=%3$L::date),
+    base_pool AS MATERIALIZED (
+      SELECT a.product_code, COALESCE(t.tier,'BOR') AS tier, lnk.ps AS pack_size, lnk.pack_cost AS pack_list_cost,
+        COALESCE(so.soh,0) AS soh, COALESCE(s.q14,0) AS q14, COALESCE(s.q28,0) AS q28, COALESCE(s.q56,0) AS q56,
+        sp.description, sp.dept_name, sp.unit_cost
+      FROM public.sigma_articles a
+      JOIN lnk ON lnk.product_code=a.product_code
+      JOIN public.l2_item_classification ic ON ic.store_code=a.store_code AND ic.product_code=a.product_code AND ic.class='NORMAL'
+      LEFT JOIN public.l2_ranging_tier t ON t.store_code=a.store_code AND t.product_code=a.product_code
+      LEFT JOIN sales s ON s.product_code=a.product_code
+      LEFT JOIN soh so ON so.product_code=a.product_code
+      LEFT JOIN public.l2_stock_position sp ON sp.store_code=a.store_code AND sp.product_code=a.product_code
+      WHERE a.store_code=%1$L AND a.department_nr IN (%5$s) AND (COALESCE(s.q364,0)>0 OR COALESCE(so.soh,0)<>0)
+    ),
+    rated AS (
+      SELECT w.*,
+        CASE w.tier WHEN 'TOP_100' THEN (CASE WHEN w.q14=0 THEN w.q28/28.0 ELSE w.q14/14.0 END)
+          WHEN 'TOP_1000' THEN w.q28/28.0 WHEN 'BOR' THEN w.q56/56.0 ELSE NULL END AS ros_used,
+        CASE w.tier WHEN 'TOP_100' THEN 14 WHEN 'TOP_1000' THEN 12 WHEN 'BOR' THEN 14 ELSE NULL END AS target_days_cover,
+        CASE w.tier WHEN 'TOP_100' THEN (CASE WHEN w.q14=0 THEN 'ros_28d (q14=0 fallback)' ELSE 'ros_14d' END)
+          WHEN 'TOP_1000' THEN 'ros_28d' WHEN 'BOR' THEN 'ros_56d' ELSE NULL END AS ros_window_used
+      FROM base_pool w WHERE w.tier IN ('TOP_100','TOP_1000','BOR')
+    ),
+    promo_match AS (
+      SELECT DISTINCT ON (r.product_code) r.product_code, pa.promo_nr, pa.start_date, pa.end_date, pa.status, pa.list_cost AS promo_unit_cost
+      FROM rated r JOIN public.sigma_promotion_articles pa ON pa.store_code=%1$L AND pa.product_code=r.product_code
+        AND pa.start_date < %7$L::date AND pa.end_date >= %6$L::date
+      ORDER BY r.product_code, (pa.status='1') DESC, pa.end_date DESC
+    ),
+    gear_source AS (
+      SELECT DISTINCT ON (r.product_code) r.product_code, pa.start_date, pa.end_date
+      FROM rated r JOIN public.sigma_promotion_articles pa ON pa.store_code=%1$L AND pa.product_code=r.product_code
+        AND pa.status='2' AND pa.end_date < %2$L::date AND pa.start_date >= DATE '2025-06-01'
+      ORDER BY r.product_code, pa.end_date DESC
+    ),
+    gear_calc AS (
+      SELECT gs.product_code,
+        COALESCE(SUM(ss.qty) FILTER (WHERE ss.sale_date BETWEEN gs.start_date AND gs.end_date),0)/GREATEST(gs.end_date-gs.start_date+1,1) AS promo_ros,
+        COALESCE(SUM(ss.qty) FILTER (WHERE ss.sale_date BETWEEN gs.start_date-28 AND gs.start_date-1),0)/28.0 AS base_ros
+      FROM gear_source gs LEFT JOIN public.sigma_sales ss ON ss.store_code=%1$L AND ss.product_code=gs.product_code
+        AND ss.period_kind='T' AND ss.txn_kind=1 AND ss.sale_date BETWEEN (gs.start_date-28) AND gs.end_date
+      GROUP BY gs.product_code, gs.start_date, gs.end_date
+    ),
+    with_gear AS (
+      SELECT r.*, CASE WHEN gc.base_ros IS NULL OR gc.base_ros=0 THEN 2.0 ELSE LEAST(GREATEST(gc.promo_ros/gc.base_ros,1.0),5.0) END AS gear,
+        (gc.base_ros IS NOT NULL AND gc.base_ros<>0) AS gear_from_own_promo
+      FROM rated r LEFT JOIN gear_calc gc ON gc.product_code=r.product_code
+    ),
+    gated AS (
+      SELECT g.*, GREATEST(g.soh,0)-g.ros_used*%4$s AS proj_soh,
+        GREATEST(g.ros_used*g.target_days_cover-(GREATEST(g.soh,0)-g.ros_used*%4$s),0) AS need
+      FROM with_gear g
+    ),
+    final AS (
+      SELECT gt.*,
+        (gt.ros_used>0 AND ((gt.tier='TOP_100' AND gt.need>0) OR (gt.tier='TOP_1000' AND gt.need>0) OR (gt.tier='BOR' AND gt.proj_soh<3 AND gt.need>0))) AS fires,
+        CASE WHEN gt.ros_used<=0 THEN 0
+          WHEN gt.tier='TOP_100' AND gt.need>0 THEN GREATEST(FLOOR(gt.need/gt.pack_size),1)
+          WHEN gt.tier='TOP_1000' AND gt.need>0 THEN CASE WHEN FLOOR(gt.need/gt.pack_size)=0 THEN (CASE WHEN gt.proj_soh<3 THEN 1 ELSE 0 END) ELSE FLOOR(gt.need/gt.pack_size) END
+          WHEN gt.tier='BOR' AND gt.proj_soh<3 AND gt.need>0 THEN GREATEST(FLOOR(gt.need/gt.pack_size),1) ELSE 0 END::int AS normal_packs_calc,
+        (GREATEST(gt.soh,0)-(gt.ros_used*gt.gear)*%4$s) AS proj_soh_geared,
+        GREATEST((gt.ros_used*gt.gear)*gt.target_days_cover-(GREATEST(gt.soh,0)-(gt.ros_used*gt.gear)*%4$s),0) AS need_geared
+      FROM gated gt
+    ),
+    final2 AS (
+      SELECT f.*, CASE WHEN f.ros_used<=0 THEN 0
+        WHEN f.tier='TOP_100' AND f.need_geared>0 THEN GREATEST(FLOOR(f.need_geared/f.pack_size),1)
+        WHEN f.tier='TOP_1000' AND f.need_geared>0 THEN CASE WHEN FLOOR(f.need_geared/f.pack_size)=0 THEN (CASE WHEN f.proj_soh_geared<3 THEN 1 ELSE 0 END) ELSE FLOOR(f.need_geared/f.pack_size) END
+        WHEN f.tier='BOR' AND f.proj_soh_geared<3 AND f.need_geared>0 THEN GREATEST(FLOOR(f.need_geared/f.pack_size),1) ELSE 0 END::int AS geared_packs_calc
+      FROM final f
+    ),
+    with_promo AS (
+      SELECT f2.*, pm.promo_nr, pm.start_date AS promo_start, pm.end_date AS promo_end, pm.status AS promo_status, pm.promo_unit_cost
+      FROM final2 f2 LEFT JOIN promo_match pm ON pm.product_code=f2.product_code
+    ),
+    with_corrected AS (
+      SELECT wp.*, CASE wp.tier WHEN 'TOP_100' THEN rp.ros_14d_corrected WHEN 'TOP_1000' THEN rp.ros_28d_corrected WHEN 'BOR' THEN rp.ros_56d_corrected ELSE NULL END AS ros_used_corrected
+      FROM with_promo wp LEFT JOIN public.l2_bloom_ros_pantry rp ON rp.store_code=%1$L AND rp.product_code=wp.product_code
+    ),
+    ean_map AS MATERIALIZED (SELECT eb.product_code, eb.ean FROM public.v_ean_bridge eb WHERE eb.store_code=%1$L)
+    SELECT %1$L::text, wc.product_code,
+      COALESCE(b.ean, lpad(%1$L,5,'0')||lpad(wc.product_code::text,8,'0')),
+      wc.description, wc.dept_name, wc.tier, wc.soh, wc.unit_cost, wc.pack_size, ROUND(wc.pack_list_cost,2),
+      wc.ros_window_used, ROUND(wc.ros_used,4), ROUND(COALESCE(wc.ros_used_corrected,wc.ros_used),4),
+      ROUND(COALESCE(wc.ros_used_corrected,wc.ros_used)-wc.ros_used,4),
+      CASE WHEN wc.ros_used>0 THEN ROUND((COALESCE(wc.ros_used_corrected,wc.ros_used)-wc.ros_used)/wc.ros_used*100,2) ELSE NULL END,
+      ROUND(wc.proj_soh,2), wc.target_days_cover, wc.fires, ROUND(wc.need,2),
+      wc.normal_packs_calc, (wc.promo_nr IS NOT NULL), wc.promo_nr, wc.promo_start, wc.promo_end,
+      ROUND(wc.gear,4), (CASE WHEN wc.gear_from_own_promo THEN 'own_promo' ELSE 'default' END), wc.geared_packs_calc,
+      CASE WHEN wc.promo_nr IS NOT NULL THEN wc.geared_packs_calc ELSE wc.normal_packs_calc END,
+      CASE WHEN wc.promo_status='1' AND wc.promo_unit_cost IS NOT NULL AND wc.promo_unit_cost<>0 THEN ROUND((wc.pack_list_cost/NULLIF(wc.pack_size,0))-wc.promo_unit_cost,4) ELSE NULL END,
+      (wc.promo_status='1' AND wc.promo_unit_cost IS NOT NULL AND wc.promo_unit_cost<>0),
+      format('%%s tier, window=%%s raw=%%s, SOH %%s, target %%s days -> proj %%s, need %%s units = %%s packs%%s',
+        wc.tier, wc.ros_window_used, ROUND(wc.ros_used,2), wc.soh, wc.target_days_cover, ROUND(wc.proj_soh,1), ROUND(wc.need,1), wc.normal_packs_calc,
+        CASE WHEN wc.promo_nr IS NOT NULL THEN format(' | promo %%s->%%s gear %%s', wc.promo_start, wc.promo_end, ROUND(wc.gear,2)) ELSE '' END)
+    FROM with_corrected wc LEFT JOIN ean_map b ON b.product_code=wc.product_code
+    ORDER BY wc.tier, wc.ros_used DESC
+  $q$, p_store_code, v_anchor, v_soh_dt, v_lead, v_depts, p_delivery_date, p_next_delivery);
 END;
-$$;
+$function$;
 
-GRANT EXECUTE ON FUNCTION public.rpc_bloom_order_dc(text, date, date) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.rpc_bloom_order_dc(text,date,date,date,date) TO anon, authenticated;
