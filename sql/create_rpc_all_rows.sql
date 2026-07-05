@@ -2,6 +2,14 @@
 -- create_rpc_all_rows.sql
 -- SB-CC-PRSSALE-RETIRE-002 Tier 1, object 10.
 -- Supersedes: SB-CC-RECONCILE-001 Phase 1 (daily_snapshots paginated dump).
+--
+-- *** RETIRED AS THE REPORTS-DRAWER LOADER 2026-07-05 (R28 lineage). ***
+-- Successor: rpc_report_rows (sql/create_rpc_report_rows.sql,
+-- CC-BRIEF-DASH-FINAL-001 item 1). This function's sigma_articles x dates
+-- driver joined ~1.1M rows and re-ran the full computation per 1,000-row page
+-- (measured 27,760 ms/page 2026-07-05 vs the authenticator 8s timeout -- every
+-- drawer call died). Function stays live in the DB, no frontend consumer;
+-- drop is a PM/Pieter call.
 -- =============================================================================
 -- WHY:
 --   Old function: SELECT * FROM daily_snapshots WHERE snapshot_date::text = ANY(p_dates).

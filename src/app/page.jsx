@@ -134,30 +134,26 @@ function dateSummaryLabel(selectedDates, availableDates) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DATA FETCH — on-demand when a report is explicitly loaded.
-// Uses rpc_all_rows (SECURITY DEFINER) — direct daily_snapshots reads are
-// blocked by RLS for the anon key.  Pages through results in 1 000-row batches.
+// CC-BRIEF-DASH-FINAL-001 item 1: rpc_report_rows (SECURITY DEFINER, own 15s
+// statement_timeout) returns the FULL drawer dataset as one jsonb array —
+// one row per (store, product) with activity in the selection (sold on the
+// selected dates, sold MTD at the last selected date, or SOH ≠ 0 at the
+// store's latest snapshot). Replaces the paged rpc_all_rows loop (27.8s per
+// 1 000-row page, died at the 8s authenticator timeout on every call) and its
+// 10 000-row truncation cap — the returned totals now reconcile to
+// sigma_sales (R22). Rows arrive already date-merged: today_* summed over the
+// selected dates, period_* = MTD at the max selected date, soh at the store's
+// latest snapshot ≤ the selection end. Each row also carries daily_ros /
+// days_cover / tier / class from the engine (l2_stock_position).
 // ─────────────────────────────────────────────────────────────────────────────
 async function fetchAllRows({ storeCodes, dates }) {
   if (!storeCodes.length || !dates.length) return []
-  const allRows = []
-  const batchSize = 1000
-  const maxRows   = 10000
-  let from = 0
-  while (true) {
-    const { data, error } = await supabase.rpc('rpc_all_rows', {
-      p_store_codes: storeCodes,
-      p_dates:       dates,
-      p_from:        from,
-      p_limit:       batchSize,
-    })
-    if (error) { console.error('rpc_all_rows:', error.message); break }
-    if (!data || data.length === 0) break
-    allRows.push(...data)
-    if (allRows.length >= maxRows) { console.warn('[fetchAllRows] row cap reached — truncated at', maxRows); break }
-    if (data.length < batchSize) break
-    from += batchSize
-  }
-  return allRows
+  const { data, error } = await supabase.rpc('rpc_report_rows', {
+    p_store_codes: storeCodes,
+    p_dates:       dates,
+  })
+  if (error) { console.error('rpc_report_rows:', error.message); return [] }
+  return Array.isArray(data) ? data : []
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -302,17 +298,10 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
 
     case 'velocity': {
       const n = nDates > 0 ? nDates : 1
-      // Derive ranging tier from 13-week daily_ros ranking across all EANs in rosMap
-      // Top 100 by ROS → Top tier | next 900 → Mid | rest → BOR
-      const byRos = [...rosMap.values()]
-        .filter(r => (r.daily_ros ?? 0) > 0)
-        .sort((a, b) => (b.daily_ros ?? 0) - (a.daily_ros ?? 0))
-      const tierMap = new Map()
-      byRos.forEach((r, i) => {
-        const key = `${r.ean}__${r.store_code}`
-        if (!tierMap.has(key))
-          tierMap.set(key, i < TOP_TIER_RANK_CUTOFF ? 'Top' : i < MID_TIER_RANK_CUTOFF ? 'Mid' : 'BOR')
-      })
+      // Ranging tier is the ENGINE verdict (l2_ranging_tier via l2_stock_position,
+      // carried on every rpc_report_rows row) — 13-week value AND volume ranking
+      // per RULE-BOOK §4, not a client-side ROS-only approximation.
+      const ENGINE_TIER = { TOP_100: 'Top', TOP_1000: 'Mid', BOR: 'BOR' }
       return rows
         .filter(r => {
           const ros = rosMap.get(`${r.ean}__${r.store_code}`) ?? {}
@@ -346,7 +335,7 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
             'Daily ROS (13w)':  baselineRos.toFixed(3),
             'Current ROS':      currentRos.toFixed(3),
             'ROS vs Baseline':  rosVsBase != null ? rosVsBase.toFixed(2) + 'x' : '—',
-            'Ranging Tier':     tierMap.get(`${r.ean}__${r.store_code}`) ?? 'BOR',
+            'Ranging Tier':     ENGINE_TIER[r.tier] ?? 'BOR',
             'Last Sale':        r.last_sales_date_iso ?? '',
           }
         })
@@ -1206,6 +1195,7 @@ export default function Home() {
   const [ghostStockRows,     setGhostStockRows]     = useState([])   // SB-AP-004 C -- ghost_stock report
   const [stockIntegrityRows, setStockIntegrityRows] = useState([])   // SB-AP-004 C -- stock_integrity report
   const [storeRosData,  setStoreRosData]  = useState([])
+  const [top20RosData,  setTop20RosData]  = useState([])  // ROS/days-cover scoped to the Top 20 EANs (loads before any report)
   const [supplierMap,   setSupplierMap]   = useState(new Map())  // ean → supplier_name from product_catalog
   const [lostSalesItems,    setLostSalesItems]    = useState([])  // True OOS items: SOH<=0, period_qty=0, active line
   const [lostSalesTimeline, setLostSalesTimeline] = useState(new Map()) // ean → [{store_code, store_name, days:[{snap_date,sold_bool,oos_bool,soh}]}]
@@ -1421,77 +1411,17 @@ export default function Home() {
       })
   }, [])
 
-  // ── Lost Sales: OOS items from l2_stock_position (SB-CC-PRSSALE-RETIRE-001) ──
-  // soh <= 0 + sales_qty_91d > 0 = active-line OOS. class filter excludes ghost stock.
-  // Always-latest sigma-native position; two-date dedup no longer needed.
-  useEffect(() => {
-    if (!storeCodes.length) return
-    let cancelled = false
+  // ── Lost Sales: PARKED (Pieter ruling, RULE-BOOK §6, 2026-06-16) ─────────────
+  // The rpc_lost_sales_oos call fired on EVERY page load, measured 94.5s, and
+  // died at the 8s authenticator timeout on every load (CC-BRIEF-DASH-FINAL-001
+  // item 2, removed 2026-07-05). The RPCs stay live in the DB (R28: retired
+  // with a successor path, never deleted) — reinstate engine-side (DF-3
+  // lost_sales_est) when Lost Sales is properly re-opened. lostSalesItems stays
+  // [] so the widget below never renders.
 
-    supabase
-      .rpc('rpc_lost_sales_oos', { p_store_codes: storeCodes })
-      .then(({ data, error }) => {
-        if (cancelled) return
-        if (error) { console.error('[lostSales]', error.message); return }
-        setLostSalesItems(data ?? [])
-      })
-
-    return () => { cancelled = true }
-  }, [storeCodes])
-
-  // ── Lost Sales Timeline: fetch 28-day sold/OOS bars once items are known ────
-  useEffect(() => {
-    if (!lostSalesItems.length || !availableDates.length || !storeCodes.length) {
-      setLostSalesTimeline(new Map())
-      return
-    }
-    let cancelled = false
-
-    async function loadTimeline() {
-      setTimelineLoading(true)
-      // Top 10 by lost value — same ordering as the widget rows
-      const top10 = [...lostSalesItems]
-        .sort((a, b) => (Math.abs(b.soh ?? 0) * (b.sell_price ?? 0)) - (Math.abs(a.soh ?? 0) * (a.sell_price ?? 0)))
-        .slice(0, 10)
-        .map(r => r.ean)
-
-      const endDate = availableDates[0] // newest date, same as lostSales query
-
-      const { data, error } = await supabase.rpc('rpc_lost_sales_timeline', {
-        p_eans:     top10,
-        p_stores:   storeCodes,
-        p_end_date: endDate,
-        p_days:     56,
-      })
-
-      if (cancelled) return
-      if (error) { console.error('[lostSalesTimeline]', error.message); setTimelineLoading(false); return }
-
-      // Group by EAN → store → sorted day array — one strip per store, no cross-store merge
-      const byEan = new Map()
-      for (const row of (data ?? [])) {
-        if (!byEan.has(row.ean)) byEan.set(row.ean, new Map())
-        const byStore = byEan.get(row.ean)
-        if (!byStore.has(row.store_code)) byStore.set(row.store_code, [])
-        byStore.get(row.store_code).push({ snap_date: row.snap_date, sold_bool: row.sold_bool, oos_bool: row.oos_bool, soh: row.soh })
-      }
-
-      const merged = new Map()
-      for (const [ean, byStore] of byEan) {
-        const storeRows = []
-        for (const [store_code, days] of byStore) {
-          storeRows.push({ store_code, store_name: STORE_MAP[store_code] ?? store_code, days: days.sort((a, b) => a.snap_date < b.snap_date ? -1 : 1) })
-        }
-        merged.set(ean, storeRows)
-      }
-
-      setLostSalesTimeline(merged)
-      setTimelineLoading(false)
-    }
-
-    loadTimeline()
-    return () => { cancelled = true }
-  }, [lostSalesItems, storeCodes, availableDates])
+  // ── Lost Sales Timeline: PARKED with the widget above (item 2, 2026-07-05) ──
+  // rpc_lost_sales_timeline call removed with rpc_lost_sales_oos; the RPC stays
+  // live in the DB. lostSalesTimeline stays an empty Map.
 
   // ── fetch KPI + dept summary on store / date change (server-side aggregation via RPC) ──
   useEffect(() => {
@@ -1601,13 +1531,9 @@ export default function Home() {
       setLyTrendData(lyTrendRes.data ?? [])
       setViewsLoading(false)
 
-      // Load ROS/days-cover in background so Top 20 can show days cover without
-      // requiring the user to open the Reports tab first.
-      supabase
-        .from('mv_rate_of_sale')
-        .select('ean,store_code,daily_ros,days_cover')
-        .in('store_code', storeCodes)
-        .then(({ data }) => { if (!cancelled) setStoreRosData(data ?? []) })
+      // Top 20 days-cover now loads in its own effect, scoped to the Top 20
+      // EANs (the old whole-store mv_rate_of_sale fetch was silently capped at
+      // 1 000 rows by PostgREST — CC-BRIEF-DASH-FINAL-001 item 5).
     }
 
     loadViews()
@@ -1782,6 +1708,23 @@ export default function Home() {
     return () => { cancelled = true }
   }, [storeCodes, selectedDates, deptFilter, subDeptFilter, top20Activity, includeParents, focusEans, refreshKey])
 
+  // ── Top 20 days-cover: mv_rate_of_sale scoped to the Top 20 EANs ────────────
+  // Replaces the whole-store background fetch (PostgREST capped it at 1 000 of
+  // ~345k rows — CC-BRIEF-DASH-FINAL-001 item 5). ≤40 EANs × stores stays far
+  // under the cap and hits the (ean, store_code) index.
+  useEffect(() => {
+    const eans = [...new Set(top20Data.map(r => r.ean).filter(Boolean))]
+    if (!eans.length || !storeCodes.length) { setTop20RosData([]); return }
+    let cancelled = false
+    supabase
+      .from('mv_rate_of_sale')
+      .select('ean,store_code,daily_ros,days_cover')
+      .in('store_code', storeCodes)
+      .in('ean', eans)
+      .then(({ data }) => { if (!cancelled) setTop20RosData(data ?? []) })
+    return () => { cancelled = true }
+  }, [top20Data, storeCodes])
+
   // ── search index — one row per EAN; loaded per dept/store combo ───────────
   // When any dept is selected, OR when a subset of stores is selected,
   // we pre-load matching rows from product_search_index into state so
@@ -1876,14 +1819,8 @@ export default function Home() {
     if (!storeCodes.length || !selectedDates.length || reportLoading) return
     setReportLoading(true)
 
-    const [rows, rosRes, catalogRes, engineSlowRes] = await Promise.all([
+    const [rows, catalogRes, engineSlowRes] = await Promise.all([
       fetchAllRows({ storeCodes, dates: selectedDates }),
-      supabase
-        .from('mv_rate_of_sale')
-        .select('ean,store_code,daily_ros,days_cover')
-        .in('store_code', storeCodes)
-        .then(r => r.data ?? [])
-        .catch(() => []),
       // product_catalog carries supplier_name per EAN (loaded from DIWAAIS2 / PLU reference)
       // SB-CC-SEC-001: routed through rpc_supplier_by_ean (SECURITY DEFINER).
       supabase
@@ -1897,6 +1834,15 @@ export default function Home() {
         .then(r => r.data ?? [])
         .catch(() => []),
     ])
+
+    // ROS / days-cover per (ean, store) comes off the report rows themselves —
+    // rpc_report_rows carries the engine's daily_ros/days_cover on every row.
+    // Replaces the unpaged mv_rate_of_sale table fetch that PostgREST silently
+    // capped at 1 000 rows (~345k in the matview), which left Velocity tiers
+    // and Signal C computing on <1% of the range (CC-BRIEF-DASH-FINAL-001 item 5).
+    const rosRes = rows
+      .filter(r => r.daily_ros != null || r.days_cover != null)
+      .map(r => ({ ean: r.ean, store_code: r.store_code, daily_ros: r.daily_ros, days_cover: r.days_cover }))
 
     // Build ean → supplier_name lookup (last-write wins across stores — supplier is the same)
     const suppMap = new Map()
@@ -1943,15 +1889,17 @@ export default function Home() {
 
   // EAN-level days cover for Top 20 display. When multiple stores are selected,
   // takes the lowest (most urgent) days cover across stores for each EAN.
+  // Sources: the Top-20-scoped fetch (available before any report is loaded)
+  // plus the report rows' engine values once a report has been fetched.
   const eanDaysCoverMap = useMemo(() => {
     const m = new Map()
-    for (const r of storeRosData) {
+    for (const r of [...top20RosData, ...storeRosData]) {
       if (r.days_cover == null) continue
       const existing = m.get(r.ean)
       if (existing == null || r.days_cover < existing) m.set(r.ean, Number(r.days_cover))
     }
     return m
-  }, [storeRosData])
+  }, [top20RosData, storeRosData])
 
   // Signal C — phantom stock: SOH > 0, active line, days_since_sale x daily_ros >= threshold
   const signalCCount = useMemo(() => {
@@ -2225,20 +2173,12 @@ export default function Home() {
     const refDate = selectedDates.length ? [...selectedDates].sort().reverse()[0] : null
     const activeLineCutoff = refDate ? shiftDate(refDate, -ACTIVE_LINE_LOOKBACK) : null
     const isActiveLine = r => !activeLineCutoff || ((r.last_sales_date_iso ?? '') >= activeLineCutoff)
-    // Build tier map by daily_ros rank (same logic as velocity report)
-    const byRos = [...rosMap.values()]
-      .filter(r => (r.daily_ros ?? 0) > 0)
-      .sort((a, b) => (b.daily_ros ?? 0) - (a.daily_ros ?? 0))
-    const tierMap = new Map()
-    byRos.forEach((r, i) => {
-      const key = `${r.ean}__${r.store_code}`
-      if (!tierMap.has(key))
-        tierMap.set(key, i < TOP_TIER_RANK_CUTOFF ? 'top100' : i < MID_TIER_RANK_CUTOFF ? 'top1000' : 'bor')
-    })
+    // Tier is the ENGINE verdict carried on every rpc_report_rows row
+    // (l2_ranging_tier, RULE-BOOK §4) — replaces the client ROS-rank approximation.
     const counts = { top100: { total: 0, sold: 0 }, top1000: { total: 0, sold: 0 }, bor: { total: 0, sold: 0 } }
     for (const r of mergedReportRows) {
       if (!isActiveLine(r)) continue
-      const tier = tierMap.get(`${r.ean}__${r.store_code}`) ?? 'bor'
+      const tier = r.tier === 'TOP_100' ? 'top100' : r.tier === 'TOP_1000' ? 'top1000' : 'bor'
       counts[tier].total++
       if ((r.period_qty ?? 0) > 0) counts[tier].sold++
     }
@@ -2248,7 +2188,7 @@ export default function Home() {
       sold:    counts[tier].sold,
       total:   counts[tier].total,
     }))
-  }, [reportLoaded, mergedReportRows, rosMap, selectedDates])
+  }, [reportLoaded, mergedReportRows, selectedDates])
 
   // ── dept chart (top 10) — deptSummary is already one row per dept, sorted by sales ──
   const deptChart = useMemo(() => {

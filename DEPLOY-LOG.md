@@ -4,6 +4,21 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-05 SAST -- rpc_report_rows: Reports drawer rebuilt (DASH-FINAL items 1+2+5) -- RPC LIVE, frontend committed NOT deployed
+
+**Migration:** `dashfinal_rpc_report_rows_single_shot` (CC, applied live 2026-07-05 -- additive, no CASCADE, safe during trading)
+**Files:** `sql/create_rpc_report_rows.sql` (new canonical), `sql/create_rpc_all_rows.sql` (retirement lineage note), `src/app/page.jsx`
+**Brief:** CC-BRIEF-DASH-FINAL-001 items 1, 2, 5
+
+- **Item 1 (drawer dead):** new `rpc_report_rows(p_store_codes, p_dates)` returns the FULL drawer dataset as ONE jsonb array -- one row per (store, product) with activity in the selection, already date-merged (today_* summed over selected dates, period_* = MTD at max date, soh = store's latest l2_soh_daily snapshot <= selection end). Replaces the paged rpc_all_rows loop (measured 27,760 ms PER 1,000-row page vs the 8s authenticator timeout -- every report died) and the frontend's 10,000-row cap. rpc_all_rows stays live, retired as drawer loader with lineage (R28).
+- **Measured:** 2,355 ms in-DB (EXPLAIN ANALYZE, 5 stores x 4 dates, 19,855 rows). Through PostgREST with gzip (browser path): 5.37s total, 1.26MB wire. Own 15s statement_timeout.
+- **R22 proof:** per-store SUM(today_sales/qty) and SUM(period_sales) reconcile to sigma_sales direct SUM (T/1) diff 0.00 x4 selling stores; Dice returns 794 rows off its 30 Jun position while dark (honest, not blank).
+- **Item 2 (lost sales):** `rpc_lost_sales_oos` (94.5s, fired every page load) + `rpc_lost_sales_timeline` calls removed from page.jsx. RPCs stay live in the DB (R28). Lost Sales is PARKED per Pieter ruling (RULE-BOOK 6, 2026-06-16).
+- **Item 5 (1,000-row cap):** both unpaged mv_rate_of_sale fetches gone. Report ROS/days-cover now ride on the report rows (engine facts from l2_stock_position); Top 20 days-cover fetch scoped to the Top 20 EANs. Velocity tier + sell-through tiers now read the ENGINE verdict (l2_ranging_tier via row.tier) instead of a client ROS-rank approximation.
+- **Frontend commit is NOT deployed** -- Vercel deploy waits for Pieter's word (standing discipline). The drawer stays broken on the live site until then; the RPC is live and ready.
+
+---
+
 ## 2026-07-05 SAST -- rpc_push_status sigma-native -- APPLIED LIVE BY PM, committed by CC
 
 **Migration:** `retire003_rpc_push_status_sigma_native` (PM, applied live 2026-07-05 morning)
