@@ -4,6 +4,18 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-05 SAST -- rpc_push_status sigma-native -- APPLIED LIVE BY PM, committed by CC
+
+**Migration:** `retire003_rpc_push_status_sigma_native` (PM, applied live 2026-07-05 morning)
+**Committed:** `sql/create_rpc_push_status.sql` (new canonical file; live was ahead of main)
+**Brief:** CC-BRIEF-DASH-FINAL-001 item 0
+
+- Old def filtered `push_log.snapshot_date IS NOT NULL` -- only retired PRSSALE nightly rows carry it (frozen 28 Jun), so the Last Push strip showed "6d ago" x5 forever.
+- New def: snapshot_date = MAX(sigma_sales.sale_date) per store; completed_at = latest SUCCESS l1_table sigma_sales push; fleet from stores(is_active) (R25); own 15s statement_timeout. Same contract, zero frontend edits.
+- **R22 (PM, live):** 4 stores green "18h ago"; TOPS Dice amber "4d ago" -- honest, extractor dark since 30 Jun (server-side, on Pieter).
+
+---
+
 ## 2026-06-30 SAST -- prssale-retire-002 MERGED to main -- PM APPROVED + R22 PASSED
 
 **Branch:** prssale-retire-002
