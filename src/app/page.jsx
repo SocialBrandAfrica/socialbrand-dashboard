@@ -1463,7 +1463,20 @@ export default function Home() {
       // LY / WoW / trend are always historical so always use the MV.
       const kpiTable = selectedDates.length === 1 ? 'v_kpi_by_date' : 'mv_kpi_by_date'
 
-      const [kpiRes, subDeptRes, lyKpiRes, wowKpiRes, lyDeptRes, trendRes, lyTrendRes] = await Promise.all([
+      // TWO-WAVE FETCH (dash-timeout-001, applied to main 2026-07-05 — item 3):
+      // the authenticator role connects PostgREST to Postgres and carries
+      // statement_timeout=8s (tighter than anon/authenticated's 30s — PostgREST's
+      // SET ROLE mid-session does NOT re-apply the target role's rolconfig, so the
+      // connecting role's 8s ceiling governs every request). The old single
+      // Promise.all fired 7 queries at once here, plus 5 more from the sibling
+      // dept-summary effect on the same render — ~12 concurrent DB hits including
+      // a 90-day trend scan. Under that burst on free-tier compute the cards-
+      // critical KPI query sometimes missed the 8s window even though it completes
+      // sub-second in isolation. Fix: fetch the cards-critical pair first and
+      // render immediately, then the comparison/trend data as a second wave, so
+      // peak concurrency drops and the cards stop being held hostage by the
+      // heaviest, least time-critical query.
+      const [kpiRes, subDeptRes] = await Promise.all([
         // Current KPI — includes total_sales_ex_vat (per-item vat_pct, no flat assumption)
         supabase.from(kpiTable)
           .select('store_code,store_name,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied,ghost_stock_value')
@@ -1476,7 +1489,22 @@ export default function Home() {
           p_dates:       selectedDates,
           p_dept_names:  null,
         }),
+      ])
 
+      if (cancelled) return
+      if (kpiRes.error) console.error(`[${kpiTable}]`, kpiRes.error.message)
+      const kpiData    = kpiRes.data ?? []
+      const allSubDepts = [...new Set((subDeptRes.data ?? []).map(r => r.sub_dept_name))].filter(Boolean).sort()
+      viewsCache.current.set(vKey, { kpiData, allSubDepts })
+      setKpiData(kpiData)
+      setAllSubDepts(allSubDepts)
+      setViewsLoading(false)
+
+      // Wave 2 — comparison + trend data, fired after the cards already have what
+      // they need. Each promise resolves with { data, error } (supabase-js never
+      // rejects on a query error), so one slow/timed-out call here can't block the
+      // others or wave 1.
+      const [lyKpiRes, wowKpiRes, lyDeptRes, trendRes, lyTrendRes] = await Promise.all([
         // LY KPI — always historical, use MV
         lyDates.length > 0
           ? supabase.from('mv_kpi_by_date')
@@ -1518,18 +1546,12 @@ export default function Home() {
       ])
 
       if (cancelled) return
-      if (kpiRes.error) console.error('[mv_kpi_by_date]', kpiRes.error.message)
-      const kpiData    = kpiRes.data ?? []
-      const allSubDepts = [...new Set((subDeptRes.data ?? []).map(r => r.sub_dept_name))].filter(Boolean).sort()
-      viewsCache.current.set(vKey, { kpiData, allSubDepts })
-      setKpiData(kpiData)
-      setAllSubDepts(allSubDepts)
+      if (trendRes.error) console.error('[mv_kpi_by_date trend]', trendRes.error.message)
       setLyKpiData(lyKpiRes.data   ?? [])
       setWowKpiData(wowKpiRes.data ?? [])
       setLyDeptSummary(lyDeptRes.data ?? [])
       setTrendData(trendRes.data   ?? [])
       setLyTrendData(lyTrendRes.data ?? [])
-      setViewsLoading(false)
 
       // Top 20 days-cover now loads in its own effect, scoped to the Top 20
       // EANs (the old whole-store mv_rate_of_sale fetch was silently capped at
