@@ -36,13 +36,16 @@ function todayIso(offsetDays = 0) {
   return d.toISOString().slice(0, 10)
 }
 
-function lineQty(line, useGeared) {
-  if (useGeared && line.geared_packs != null) return line.geared_packs
-  return line.suggested_packs ?? line.normal_packs ?? 0
-}
-
-function defaultMode(line) {
-  return line.promo_active && line.tier === 'TOP_100' && line.geared_packs != null ? 'geared' : 'normal'
+// Basis is a single global choice made before Generate (State A), not a
+// per-row toggle — a per-row N/G select duplicated the qty column and could
+// disagree with it (the select's own label showed the OLD suggested_packs
+// figure, which the RPC always computes as the geared value for ANY promo
+// line regardless of tier, while the row's number field held something
+// else). One column, one source of truth: normal_packs/geared_packs read
+// directly, never suggested_packs.
+function lineQty(line, basis) {
+  if (basis === 'geared' && line.promo_active && line.geared_packs != null) return line.geared_packs
+  return line.normal_packs ?? 0
 }
 
 function downloadText(filename, text) {
@@ -93,7 +96,7 @@ function BudgetGauge({ total, budget }) {
 // State A — the generate form
 // ─────────────────────────────────────────────────────────────────────────────
 function GenerateForm({ stores, storeCode, setStoreCode, deliveryDate, setDeliveryDate,
-  nextDeliveryDate, setNextDeliveryDate, budget, setBudget, onGenerate, generating, error }) {
+  nextDeliveryDate, setNextDeliveryDate, budget, setBudget, basis, setBasis, onGenerate, generating, error }) {
   const inputStyle = {
     fontFamily: 'var(--font-mono)', fontSize: 14, color: 'var(--daisy-white)',
     background: 'rgba(0,0,0,0.28)', border: '1px solid var(--glass-border)',
@@ -136,6 +139,10 @@ function GenerateForm({ stores, storeCode, setStoreCode, deliveryDate, setDelive
                 style={{ ...inputStyle, paddingLeft: 30 }} />
             </div>
           ))}
+          {field('Order basis (promo lines)', (
+            <SegmentedControl value={basis} onChange={setBasis}
+              options={[{ value: 'normal', label: 'Normal' }, { value: 'geared', label: 'Geared (buy-in)' }]} />
+          ))}
           {error && (
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: '#fca5a5',
               background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 8, padding: '8px 12px' }}>
@@ -158,10 +165,9 @@ function GenerateForm({ stores, storeCode, setStoreCode, deliveryDate, setDelive
 // ─────────────────────────────────────────────────────────────────────────────
 // State B — the order form
 // ─────────────────────────────────────────────────────────────────────────────
-function OrderRow({ line, qty, mode, isEdited, onQty, onMode }) {
+function OrderRow({ line, qty, isEdited, onQty }) {
   const code = line.product_code
   const isPromo = !!line.promo_active
-  const hasGeared = isPromo && line.geared_packs != null && line.geared_packs !== line.normal_packs
   const value = (qty ?? 0) * (line.pack_cost ?? 0)
   const wash = line.promo_active ? 'linear-gradient(90deg, rgba(255,179,0,0.13), rgba(255,179,0,0.02))' : 'transparent'
   return (
@@ -193,27 +199,19 @@ function OrderRow({ line, qty, mode, isEdited, onQty, onMode }) {
         <input type="number" min="0" value={qty ?? 0}
           onChange={e => onQty(code, Math.max(0, parseInt(e.target.value || '0', 10)))}
           style={{
-            width: 56, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12.5,
+            width: 64, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12.5,
             color: 'var(--daisy-white)', padding: '5px 7px', background: 'rgba(0,0,0,0.28)',
             borderRadius: 'var(--radius-chip)', border: '1px solid var(--glass-border)', outline: 'none',
             boxShadow: isEdited ? '0 0 0 2px rgba(255,209,0,0.35)' : 'none',
           }} />
-        {hasGeared && (
-          <select value={mode} onChange={e => onMode(code, e.target.value)}
-            style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)',
-              background: 'rgba(0,0,0,0.28)', border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-chip)', padding: '5px 4px' }}>
-            <option value="normal">N {line.normal_packs}</option>
-            <option value="geared">G {line.geared_packs}</option>
-          </select>
-        )}
       </span>
       <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>{zar(value, 2)}</span>
     </div>
   )
 }
 
-function OrderForm({ store, deliveryDate, nextDeliveryDate, budget, lines, qty, mode, edited,
-  onQty, onMode, total, filter, setFilter, onExportCsv, onExportTlx, onSubmit }) {
+function OrderForm({ store, deliveryDate, nextDeliveryDate, budget, lines, qty, edited,
+  onQty, total, filter, setFilter, onExportCsv, onExportTlx, onSubmit }) {
   const shown = filter === 'all' ? lines : lines.filter(l => l.promo_active)
   const promoCount = lines.filter(l => l.promo_active).length
   const cols = ['Code', 'Pack', 'Description', 'Dept', 'SOH', 'ROS/day', 'Tier', 'Promo', 'Qty · packs', 'Value']
@@ -256,8 +254,8 @@ function OrderForm({ store, deliveryDate, nextDeliveryDate, budget, lines, qty, 
             ))}
           </div>
           {shown.map(l => (
-            <OrderRow key={l.product_code} line={l} qty={qty[l.product_code]} mode={mode[l.product_code] || 'normal'}
-              isEdited={!!edited[l.product_code]} onQty={onQty} onMode={onMode} />
+            <OrderRow key={l.product_code} line={l} qty={qty[l.product_code]}
+              isEdited={!!edited[l.product_code]} onQty={onQty} />
           ))}
           {shown.length === 0 && (
             <p style={{ padding: 24, textAlign: 'center', fontFamily: 'var(--font-display)', fontStyle: 'italic', color: 'var(--veld-mist)' }}>
@@ -270,7 +268,7 @@ function OrderForm({ store, deliveryDate, nextDeliveryDate, budget, lines, qty, 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14,
         padding: '16px 24px', borderTop: '1px solid var(--glass-border)', flexWrap: 'wrap' }}>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)', flex: '1 1 200px' }}>
-          Edited cells ringed · geared quantities default on T100 promo rows
+          Edited cells ringed · quantities free to retype
         </span>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <Button variant="solid" onClick={onExportCsv}>StockFlow CSV</Button>
@@ -380,11 +378,11 @@ export default function BloomPage() {
   const [deliveryDate, setDeliveryDate] = useState(todayIso(1))
   const [nextDeliveryDate, setNextDeliveryDate] = useState(todayIso(4))
   const [budget, setBudget] = useState('')
+  const [basis, setBasis] = useState('normal')
   const [phase, setPhase] = useState('A')
   const [generating, setGenerating] = useState(false)
   const [lines, setLines] = useState([])
   const [qty, setQty] = useState({})
-  const [mode, setMode] = useState({})
   const [edited, setEdited] = useState({})
   const [filter, setFilter] = useState('all')
   const [error, setError] = useState(null)
@@ -428,15 +426,10 @@ export default function BloomPage() {
     }
     setGenerating(false)
     const rows = all.sort((a, b) => (b.ros_used ?? 0) - (a.ros_used ?? 0))
-    const q = {}, m = {}
-    for (const r of rows) {
-      const useGeared = defaultMode(r) === 'geared'
-      m[r.product_code] = useGeared ? 'geared' : 'normal'
-      q[r.product_code] = lineQty(r, useGeared)
-    }
+    const q = {}
+    for (const r of rows) q[r.product_code] = lineQty(r, basis)
     setLines(rows)
     setQty(q)
-    setMode(m)
     setEdited({})
     setFilter('all')
     setPhase('B')
@@ -445,15 +438,6 @@ export default function BloomPage() {
   function onQty(code, v) {
     setQty(q => ({ ...q, [code]: v }))
     setEdited(e => ({ ...e, [code]: true }))
-    setMode(m => ({ ...m, [code]: 'normal' }))
-  }
-
-  function onMode(code, newMode) {
-    const line = lines.find(l => l.product_code === code)
-    if (!line) return
-    setQty(q => ({ ...q, [code]: lineQty(line, newMode === 'geared') }))
-    setMode(m => ({ ...m, [code]: newMode }))
-    setEdited(e => ({ ...e, [code]: newMode === 'geared' }))
   }
 
   const total = useMemo(() => lines.reduce((s, l) => s + (qty[l.product_code] ?? 0) * (l.pack_cost ?? 0), 0), [lines, qty])
@@ -497,6 +481,7 @@ export default function BloomPage() {
           deliveryDate={deliveryDate} setDeliveryDate={setDeliveryDate}
           nextDeliveryDate={nextDeliveryDate} setNextDeliveryDate={setNextDeliveryDate}
           budget={budget} setBudget={setBudget}
+          basis={basis} setBasis={setBasis}
           onGenerate={generate} generating={generating} error={error}
         />
       )}
@@ -504,8 +489,8 @@ export default function BloomPage() {
       {phase === 'B' && (
         <OrderForm
           store={store} deliveryDate={deliveryDate} nextDeliveryDate={nextDeliveryDate} budget={budget}
-          lines={lines} qty={qty} mode={mode} edited={edited}
-          onQty={onQty} onMode={onMode} total={total}
+          lines={lines} qty={qty} edited={edited}
+          onQty={onQty} total={total}
           filter={filter} setFilter={setFilter}
           onExportCsv={exportCsv} onExportTlx={exportTlx}
           onSubmit={() => setPhase('C')}
