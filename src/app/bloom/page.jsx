@@ -170,6 +170,13 @@ function OrderRow({ line, qty, isEdited, onQty }) {
   const isPromo = !!line.promo_active
   const value = (qty ?? 0) * (line.pack_cost ?? 0)
   const wash = line.promo_active ? 'linear-gradient(90deg, rgba(255,179,0,0.13), rgba(255,179,0,0.02))' : 'transparent'
+  // The per-line default is set once at Generate time (the "Order basis" toggle
+  // applies to every promo line), but the buyer can still flip any ONE line to
+  // its other suggestion here. The select has no state of its own -- its
+  // selected option is DERIVED from the current qty, so it can never disagree
+  // with the number field the way the old per-row mode tracking did.
+  const hasGeared = isPromo && line.geared_packs != null && line.geared_packs !== line.normal_packs
+  const selected = hasGeared && qty === line.geared_packs ? 'geared' : 'normal'
   return (
     <div style={{
       display: 'grid', gridTemplateColumns: '76px 44px minmax(180px,1.7fr) 110px 56px 90px 90px 60px 130px 100px',
@@ -199,11 +206,20 @@ function OrderRow({ line, qty, isEdited, onQty }) {
         <input type="number" min="0" value={qty ?? 0}
           onChange={e => onQty(code, Math.max(0, parseInt(e.target.value || '0', 10)))}
           style={{
-            width: 64, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12.5,
+            width: 56, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12.5,
             color: 'var(--daisy-white)', padding: '5px 7px', background: 'rgba(0,0,0,0.28)',
             borderRadius: 'var(--radius-chip)', border: '1px solid var(--glass-border)', outline: 'none',
             boxShadow: isEdited ? '0 0 0 2px rgba(255,209,0,0.35)' : 'none',
           }} />
+        {hasGeared && (
+          <select value={selected}
+            onChange={e => onQty(code, e.target.value === 'geared' ? line.geared_packs : line.normal_packs)}
+            style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)',
+              background: 'rgba(0,0,0,0.28)', border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-chip)', padding: '5px 4px' }}>
+            <option value="normal">N {line.normal_packs}</option>
+            <option value="geared">G {line.geared_packs}</option>
+          </select>
+        )}
       </span>
       <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>{zar(value, 2)}</span>
     </div>
