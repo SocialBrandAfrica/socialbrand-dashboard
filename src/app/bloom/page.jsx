@@ -7,6 +7,10 @@
 // The browser renders and edits only; it never computes a suggested quantity
 // (NORTH_STAR three-layer rule, R21).
 //
+// Styled on CD's actual Pulse Design System components (Chip, Button,
+// SegmentedControl, GlassCard, KpiCard — ported to src/components/ds/, see
+// that file's header) rather than an approximation of them.
+//
 // Out of scope for this v0 (tracked debt, not silently dropped — R21 §5):
 //   - GP% per line (rpc_bloom_order_dc carries no sell price yet, R23 gap)
 //   - Not-on-Sigma well (promo lines with no sigma_articles match)
@@ -18,6 +22,11 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import { zar, pct, num } from '@/lib/format'
+import { Button, Chip, SegmentedControl, GlassCard, KpiCard } from '@/components/ds'
+// dashboard.css is only bundled for the root `/` route (imported inside its
+// own page.jsx) -- Next.js app-router CSS imports are per-route-segment, not
+// automatically shared. Bloom needs its own import to get the token block.
+import '../dashboard.css'
 
 const TIER_LABEL = { TOP_100: 'Top 100', TOP_1000: 'Top 1000', BOR: 'BOR' }
 
@@ -49,22 +58,12 @@ function downloadText(filename, text) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Small shared bits
+// Small shared bits (Bloom-specific — not part of the general DS component set)
 // ─────────────────────────────────────────────────────────────────────────────
 function Label({ children, style }) {
   return (
-    <span style={{ fontFamily: 'var(--font-data)', fontSize: 9.5, letterSpacing: '0.08em',
+    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, letterSpacing: 'var(--label-tracking)',
       textTransform: 'uppercase', color: 'var(--veld-mist)', ...style }}>{children}</span>
-  )
-}
-
-function GlassCard({ children, style }) {
-  return (
-    <div style={{
-      background: 'var(--glass-tint-rest)', backdropFilter: 'blur(var(--glass-blur-rest, 14px))',
-      border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-card, 16px)',
-      boxShadow: 'var(--glass-shadow)', ...style,
-    }}>{children}</div>
   )
 }
 
@@ -79,12 +78,12 @@ function BudgetGauge({ total, budget }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 220 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
         <Label>Budget</Label>
-        <span style={{ fontFamily: 'var(--font-data)', fontSize: 11, color: over ? 'var(--core-yellow)' : 'var(--daisy-white)' }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: over ? 'var(--core-yellow)' : 'var(--daisy-white)' }}>
           {zar(total)} {b > 0 ? `/ ${zar(b)}` : ''}
         </span>
       </div>
-      <div style={{ height: 8, borderRadius: 999, background: 'rgba(0,0,0,0.35)', boxShadow: 'var(--well-shadow)', overflow: 'hidden' }}>
-        <span style={{ display: 'block', height: '100%', width: fillPct + '%', borderRadius: 999, background: fill, transition: 'width 300ms ease' }} />
+      <div style={{ height: 8, borderRadius: 'var(--radius-pill)', background: 'rgba(0,0,0,0.35)', boxShadow: 'var(--well-shadow)', overflow: 'hidden' }}>
+        <span style={{ display: 'block', height: '100%', width: fillPct + '%', borderRadius: 'var(--radius-pill)', background: fill, transition: 'width 300ms ease' }} />
       </div>
     </div>
   )
@@ -96,7 +95,7 @@ function BudgetGauge({ total, budget }) {
 function GenerateForm({ stores, storeCode, setStoreCode, deliveryDate, setDeliveryDate,
   nextDeliveryDate, setNextDeliveryDate, budget, setBudget, onGenerate, generating, error }) {
   const inputStyle = {
-    fontFamily: 'var(--font-data)', fontSize: 14, color: 'var(--daisy-white)',
+    fontFamily: 'var(--font-mono)', fontSize: 14, color: 'var(--daisy-white)',
     background: 'rgba(0,0,0,0.28)', border: '1px solid var(--glass-border)',
     borderRadius: 'var(--radius-chip)', padding: '11px 13px', outline: 'none', width: '100%',
   }
@@ -109,8 +108,8 @@ function GenerateForm({ stores, storeCode, setStoreCode, deliveryDate, setDelive
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
       <GlassCard style={{ width: 'min(460px, 100%)', padding: '30px' }}>
         <div style={{ marginBottom: 22, display: 'flex', flexDirection: 'column' }}>
-          <span style={{ fontFamily: 'var(--font-head)', fontSize: 28, fontWeight: 600, color: 'var(--daisy-white)' }}>Bloom</span>
-          <span style={{ fontFamily: 'var(--font-data)', fontSize: 10, letterSpacing: '0.14em', color: 'var(--growth-green)' }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 'var(--weight-semi)', color: 'var(--daisy-white)' }}>Bloom</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.14em', color: 'var(--growth-green)' }}>
             ordering &amp; replenishment
           </span>
         </div>
@@ -118,16 +117,9 @@ function GenerateForm({ stores, storeCode, setStoreCode, deliveryDate, setDelive
           {field('Store', (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {stores.map(s => (
-                <button key={s.store_code} type="button" onClick={() => setStoreCode(s.store_code)}
-                  style={{
-                    padding: '7px 12px', borderRadius: 999, cursor: 'pointer',
-                    fontFamily: 'var(--font-data)', fontSize: 11.5,
-                    background: storeCode === s.store_code ? 'rgba(255,209,0,0.14)' : 'rgba(0,0,0,0.24)',
-                    border: `1px solid ${storeCode === s.store_code ? 'rgba(255,209,0,0.4)' : 'var(--glass-border)'}`,
-                    color: storeCode === s.store_code ? 'var(--daisy-white)' : 'var(--veld-mist)',
-                  }}>
+                <Chip key={s.store_code} active={storeCode === s.store_code} onClick={() => setStoreCode(s.store_code)}>
                   {s.store_code} · {s.store_name}
-                </button>
+                </Chip>
               ))}
             </div>
           ))}
@@ -139,26 +131,22 @@ function GenerateForm({ stores, storeCode, setStoreCode, deliveryDate, setDelive
           ))}
           {field('Budget (R, manual)', (
             <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-              <span style={{ position: 'absolute', left: 13, fontFamily: 'var(--font-data)', fontSize: 14, color: 'var(--veld-mist)' }}>R</span>
+              <span style={{ position: 'absolute', left: 13, fontFamily: 'var(--font-mono)', fontSize: 14, color: 'var(--veld-mist)' }}>R</span>
               <input value={budget} onChange={e => setBudget(e.target.value)} inputMode="numeric"
                 style={{ ...inputStyle, paddingLeft: 30 }} />
             </div>
           ))}
           {error && (
-            <div style={{ fontFamily: 'var(--font-data)', fontSize: 11.5, color: '#fca5a5',
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: '#fca5a5',
               background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 8, padding: '8px 12px' }}>
               {error}
             </div>
           )}
-          <button type="button" onClick={onGenerate} disabled={generating}
-            style={{
-              marginTop: 6, width: '100%', padding: '13px', fontSize: 14, borderRadius: 'var(--radius-chip)',
-              fontFamily: 'var(--font-data)', fontWeight: 600, letterSpacing: '0.02em', cursor: generating ? 'default' : 'pointer',
-              background: generating ? 'rgba(255,209,0,0.35)' : 'var(--core-yellow)', color: '#1a1400', border: 'none',
-            }}>
+          <Button variant="daisy" onClick={onGenerate} style={{ marginTop: 6, width: '100%', textAlign: 'center', padding: '13px', fontSize: 14 }}
+            {...(generating ? { disabled: true } : {})}>
             {generating ? 'Running engine …' : 'Generate DC Groceries / Perishables Order'}
-          </button>
-          <p style={{ margin: 0, fontFamily: 'var(--font-data)', fontSize: 10, color: 'var(--veld-mist)', textAlign: 'center' }}>
+          </Button>
+          <p style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)', textAlign: 'center' }}>
             The engine runs server-side — rpc_bloom_order_dc
           </p>
         </div>
@@ -180,14 +168,16 @@ function OrderRow({ line, qty, mode, isEdited, onQty, onMode }) {
     <div style={{
       display: 'grid', gridTemplateColumns: '76px 44px minmax(180px,1.7fr) 110px 56px 90px 90px 60px 130px 100px',
       alignItems: 'center', gap: 0, padding: '9px 18px', background: wash,
-      borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: 12, fontFamily: 'var(--font-data)',
+      borderBottom: '1px solid var(--hairline)', fontSize: 12, fontFamily: 'var(--font-mono)',
       fontVariantNumeric: 'tabular-nums',
     }}>
       <span style={{ color: 'var(--veld-mist)' }}>{String(line.product_code)}</span>
       <span style={{ color: 'var(--veld-mist)' }}>{line.pack_size ?? '—'}</span>
       <span style={{ color: 'var(--daisy-white)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{line.description}</span>
       <span style={{ color: 'var(--veld-mist)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{line.dept_name ?? '—'}</span>
-      <span style={{ textAlign: 'right', color: line.soh < 0 ? 'var(--data-neg)' : 'var(--veld-mist)' }}>{line.soh ?? '—'}</span>
+      <span style={{ textAlign: 'right', color: line.soh < 0 ? 'var(--data-neg)' : 'var(--veld-mist)' }}>
+        {line.soh == null ? '—' : Number.isInteger(line.soh) ? line.soh : num(line.soh)}
+      </span>
       <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>
         {num(line.ros_used)}
         {line.ros_correction_delta != null && Math.abs(line.ros_correction_delta) > 0.001 && (
@@ -203,14 +193,14 @@ function OrderRow({ line, qty, mode, isEdited, onQty, onMode }) {
         <input type="number" min="0" value={qty ?? 0}
           onChange={e => onQty(code, Math.max(0, parseInt(e.target.value || '0', 10)))}
           style={{
-            width: 56, textAlign: 'right', fontFamily: 'var(--font-data)', fontSize: 12.5,
+            width: 56, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12.5,
             color: 'var(--daisy-white)', padding: '5px 7px', background: 'rgba(0,0,0,0.28)',
             borderRadius: 'var(--radius-chip)', border: '1px solid var(--glass-border)', outline: 'none',
             boxShadow: isEdited ? '0 0 0 2px rgba(255,209,0,0.35)' : 'none',
           }} />
         {hasGeared && (
           <select value={mode} onChange={e => onMode(code, e.target.value)}
-            style={{ fontFamily: 'var(--font-data)', fontSize: 10, color: 'var(--veld-mist)',
+            style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)',
               background: 'rgba(0,0,0,0.28)', border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-chip)', padding: '5px 4px' }}>
             <option value="normal">N {line.normal_packs}</option>
             <option value="geared">G {line.geared_packs}</option>
@@ -233,39 +223,24 @@ function OrderForm({ store, deliveryDate, nextDeliveryDate, budget, lines, qty, 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, justifyContent: 'space-between',
         alignItems: 'flex-start', padding: '18px 24px', borderBottom: '1px solid var(--glass-border)' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <span style={{ fontFamily: 'var(--font-head)', fontSize: 20, fontWeight: 600, color: 'var(--daisy-white)' }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 'var(--weight-semi)', color: 'var(--daisy-white)' }}>
             {store?.store_code} · {store?.store_name}
           </span>
-          <span style={{ fontFamily: 'var(--font-data)', fontSize: 11, color: 'var(--veld-mist)' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)' }}>
             DC Groceries · deliver {deliveryDate} · next {nextDeliveryDate}
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 28, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <Label>Running total</Label>
-            <span style={{ fontFamily: 'var(--font-head)', fontWeight: 700, fontSize: 30, color: 'var(--daisy-white)', fontVariantNumeric: 'tabular-nums' }}>
-              {zar(total)}
-            </span>
-            <span style={{ fontFamily: 'var(--font-data)', fontSize: 10, color: 'var(--veld-mist)' }}>{lines.length} lines</span>
-          </div>
+          <KpiCard label="Running total" value={zar(total)} sub={`${lines.length} lines`} style={{ padding: 0 }} />
           <BudgetGauge total={total} budget={budget} />
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 24px', borderBottom: '1px solid rgba(255,255,255,0.06)', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 24px', borderBottom: '1px solid var(--hairline)', flexWrap: 'wrap' }}>
         <Label style={{ color: 'var(--veld-mist)' }}>Sorted fastest ROS → slowest</Label>
         <div style={{ flex: 1 }} />
-        <div style={{ display: 'flex', gap: 4 }}>
-          {[['all', `All ${lines.length}`], ['promo', `Promo ${promoCount}`]].map(([v, label]) => (
-            <button key={v} type="button" onClick={() => setFilter(v)}
-              style={{
-                padding: '6px 12px', borderRadius: 999, fontFamily: 'var(--font-data)', fontSize: 10.5, cursor: 'pointer',
-                background: filter === v ? 'rgba(255,209,0,0.14)' : 'rgba(0,0,0,0.2)',
-                border: `1px solid ${filter === v ? 'rgba(255,209,0,0.4)' : 'var(--glass-border)'}`,
-                color: filter === v ? 'var(--daisy-white)' : 'var(--veld-mist)',
-              }}>{label}</button>
-          ))}
-        </div>
+        <SegmentedControl size="sm" value={filter} onChange={setFilter}
+          options={[{ value: 'all', label: `All ${lines.length}` }, { value: 'promo', label: `Promo ${promoCount}` }]} />
       </div>
 
       <div style={{ maxHeight: '52vh', overflow: 'auto' }}>
@@ -275,7 +250,7 @@ function OrderForm({ store, deliveryDate, nextDeliveryDate, budget, lines, qty, 
             padding: '9px 18px', background: 'rgba(14,18,14,0.96)', borderBottom: '1px solid var(--glass-border)',
           }}>
             {cols.map((c, i) => (
-              <span key={i} style={{ fontFamily: 'var(--font-data)', fontSize: 9, fontWeight: 500,
+              <span key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 500,
                 letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--veld-mist)',
                 textAlign: i >= 4 && i !== 6 && i !== 7 ? 'right' : 'left' }}>{c}</span>
             ))}
@@ -285,7 +260,7 @@ function OrderForm({ store, deliveryDate, nextDeliveryDate, budget, lines, qty, 
               isEdited={!!edited[l.product_code]} onQty={onQty} onMode={onMode} />
           ))}
           {shown.length === 0 && (
-            <p style={{ padding: 24, textAlign: 'center', fontFamily: 'var(--font-head)', fontStyle: 'italic', color: 'var(--veld-mist)' }}>
+            <p style={{ padding: 24, textAlign: 'center', fontFamily: 'var(--font-display)', fontStyle: 'italic', color: 'var(--veld-mist)' }}>
               No lines in this filter.
             </p>
           )}
@@ -294,26 +269,17 @@ function OrderForm({ store, deliveryDate, nextDeliveryDate, budget, lines, qty, 
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14,
         padding: '16px 24px', borderTop: '1px solid var(--glass-border)', flexWrap: 'wrap' }}>
-        <span style={{ fontFamily: 'var(--font-data)', fontSize: 11, color: 'var(--veld-mist)', flex: '1 1 200px' }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)', flex: '1 1 200px' }}>
           Edited cells ringed · geared quantities default on T100 promo rows
         </span>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <button type="button" onClick={onExportCsv} style={btnStyle('solid')}>StockFlow CSV</button>
-          <button type="button" onClick={onExportTlx} style={btnStyle('solid')}>TLX</button>
-          <button type="button" onClick={onSubmit} style={btnStyle('daisy')}>Submit order</button>
+          <Button variant="solid" onClick={onExportCsv}>StockFlow CSV</Button>
+          <Button variant="solid" onClick={onExportTlx}>TLX</Button>
+          <Button variant="daisy" onClick={onSubmit}>Submit order</Button>
         </div>
       </div>
     </GlassCard>
   )
-}
-
-function btnStyle(variant) {
-  const base = {
-    padding: '10px 16px', borderRadius: 'var(--radius-chip)', fontFamily: 'var(--font-data)',
-    fontSize: 11.5, fontWeight: 600, letterSpacing: '0.02em', cursor: 'pointer', border: 'none',
-  }
-  if (variant === 'daisy') return { ...base, background: 'var(--core-yellow)', color: '#1a1400' }
-  return { ...base, background: 'rgba(255,255,255,0.06)', color: 'var(--daisy-white)', border: '1px solid var(--glass-border)' }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -324,10 +290,10 @@ function Bar({ label, value, share, sub }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
         <span style={{ color: 'var(--daisy-white)' }}>{label}</span>
-        <span style={{ fontFamily: 'var(--font-data)', color: 'var(--veld-mist)' }}>{value}{sub ? ` · ${sub}` : ''}</span>
+        <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--veld-mist)' }}>{value}{sub ? ` · ${sub}` : ''}</span>
       </div>
-      <div style={{ height: 8, borderRadius: 999, background: 'rgba(0,0,0,0.35)', overflow: 'hidden' }}>
-        <span style={{ display: 'block', height: '100%', width: `${share}%`, borderRadius: 999, background: 'var(--growth-green)' }} />
+      <div style={{ height: 8, borderRadius: 'var(--radius-pill)', background: 'rgba(0,0,0,0.35)', overflow: 'hidden' }}>
+        <span style={{ display: 'block', height: '100%', width: `${share}%`, borderRadius: 'var(--radius-pill)', background: 'var(--growth-green)' }} />
       </div>
     </div>
   )
@@ -363,43 +329,35 @@ function Preview({ store, deliveryDate, nextDeliveryDate, budget, lines, qty, on
   return (
     <div style={{ margin: '20px 32px', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <GlassCard style={{ padding: '22px 26px' }}>
-        <span style={{ fontFamily: 'var(--font-head)', fontSize: 19, fontWeight: 600, color: 'var(--daisy-white)' }}>
+        <span style={{ fontFamily: 'var(--font-display)', fontSize: 19, fontWeight: 'var(--weight-semi)', color: 'var(--daisy-white)' }}>
           Order locked · {store?.store_code} {store?.store_name}
         </span>
-        <div style={{ fontFamily: 'var(--font-data)', fontSize: 11, color: 'var(--veld-mist)', marginTop: 4 }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)', marginTop: 4 }}>
           deliver {deliveryDate} · next {nextDeliveryDate}
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 28, flexWrap: 'wrap', marginTop: 14 }}>
-          <div>
-            <Label>Order value</Label>
-            <div style={{ fontFamily: 'var(--font-head)', fontWeight: 700, fontSize: 38,
-              color: overBudget ? 'var(--core-yellow)' : 'var(--daisy-white)' }}>{zar(grand)}</div>
-            <span style={{ fontFamily: 'var(--font-data)', fontSize: 10, color: 'var(--veld-mist)' }}>{rows.length} lines</span>
-          </div>
+          <KpiCard label="Order value" value={zar(grand)} sub={`${rows.length} lines`}
+            tone={overBudget ? 'warn' : 'default'} style={{ padding: 0 }} />
           <BudgetGauge total={grand} budget={budget} />
         </div>
       </GlassCard>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-        <GlassCard style={{ padding: '18px 22px' }}>
-          <Label style={{ color: 'var(--daisy-white)', display: 'block', marginBottom: 12 }}>By tier</Label>
+        <GlassCard title="By tier">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {byTier.map(([t, v]) => <Bar key={t} label={TIER_LABEL[t] ?? t} value={zar(v)} share={(v / tierMax) * 100} sub={pct((v / grand) * 100)} />)}
           </div>
         </GlassCard>
-        <GlassCard style={{ padding: '18px 22px' }}>
-          <Label style={{ color: 'var(--daisy-white)', display: 'block', marginBottom: 12 }}>By department</Label>
+        <GlassCard title="By department">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {byDept.map(([d, v]) => <Bar key={d} label={d} value={zar(v)} share={(v / deptMax) * 100} sub={pct((v / grand) * 100)} />)}
           </div>
         </GlassCard>
-        <GlassCard style={{ padding: '18px 22px' }}>
-          <Label style={{ color: 'var(--daisy-white)', display: 'block', marginBottom: 12 }}>Promo take-in</Label>
-          <div style={{ fontFamily: 'var(--font-head)', fontWeight: 700, fontSize: 26, color: 'var(--daisy-white)' }}>{zar(promoValue)}</div>
-          <span style={{ fontFamily: 'var(--font-data)', fontSize: 10, color: 'var(--veld-mist)' }}>{promoRows.length} promo lines</span>
+        <GlassCard title="Promo take-in">
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 'var(--weight-bold)', fontSize: 26, color: 'var(--daisy-white)' }}>{zar(promoValue)}</div>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)' }}>{promoRows.length} promo lines</span>
         </GlassCard>
-        <GlassCard style={{ padding: '18px 22px' }}>
-          <Label style={{ color: 'var(--daisy-white)', display: 'block', marginBottom: 12 }}>Biggest movers</Label>
+        <GlassCard title="Biggest movers">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {movers.map(m => <Bar key={m.product_code} label={m.description} value={zar(m.value)} share={(m.value / moverMax) * 100} />)}
           </div>
@@ -407,7 +365,7 @@ function Preview({ store, deliveryDate, nextDeliveryDate, budget, lines, qty, on
       </div>
 
       <GlassCard style={{ padding: '16px 22px', display: 'flex', justifyContent: 'flex-end' }}>
-        <button type="button" onClick={onNewOrder} style={btnStyle('solid')}>New order</button>
+        <Button variant="solid" onClick={onNewOrder}>New order</Button>
       </GlassCard>
     </div>
   )
@@ -522,16 +480,13 @@ export default function BloomPage() {
     downloadText(`${storeCode}.tlx`, `${storeCode}++${parts.join('+')}`)
   }
 
-  const backdrop = {
-    minHeight: '100vh',
-    background: 'linear-gradient(180deg, var(--sky-zenith), var(--sky-deep) 40%, var(--sky-horizon) 72%, var(--veld-floor))',
-  }
+  const backdrop = { minHeight: '100vh', background: 'var(--backdrop)' }
 
   return (
     <div style={backdrop}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 32px', flexWrap: 'wrap', gap: 12 }}>
-        <span style={{ fontFamily: 'var(--font-head)', fontSize: 22, fontWeight: 600, color: 'var(--daisy-white)' }}>Bloom</span>
-        <span style={{ fontFamily: 'var(--font-data)', fontSize: 10, letterSpacing: '0.08em', color: 'var(--veld-mist)', textTransform: 'uppercase' }}>
+        <span style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 'var(--weight-semi)', color: 'var(--daisy-white)' }}>Bloom</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em', color: 'var(--veld-mist)', textTransform: 'uppercase' }}>
           orders.socialbrand.africa
         </span>
       </header>

@@ -93,6 +93,41 @@
   --well-shadow:  inset 0 2px 6px rgba(0,0,0,0.50), inset 0 -1px 0 rgba(255,255,255,0.06);
   --key-shadow:   0 1px 0 rgba(255,255,255,0.18), 0 2px 6px rgba(0,0,0,0.45);
   --knob-shadow:  0 1px 0 rgba(255,255,255,0.20), 0 3px 8px rgba(0,0,0,0.55);
+
+  /* CD-SPEC-BLOOM-001 -- additive tokens from CD's Pulse Design System bundle
+     (SocialBrandPulseDesignSystem_02dcc2), needed by the ported Button/Chip/
+     DateButton/SegmentedControl/GlassCard/KpiCard/DataTable/DataValue/
+     DeltaBadge components in src/components/ds/. Nothing existing above is
+     renamed or removed -- these are new names only. Fraunces/Geist Mono/Geist
+     are already loaded via the @import at the top of this file. */
+  --font-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-ui: 'Geist', system-ui, -apple-system, sans-serif;
+  --radius-md: 12px;
+  --radius-pill: 999px;
+  --text-primary: var(--daisy-white);
+  --text-muted: rgba(245, 245, 244, 0.65);
+  --text-faint: rgba(245, 245, 244, 0.40);
+  --text-label: var(--veld-mist);
+  --hairline: rgba(255, 255, 255, 0.07);
+  --surface-inset: rgba(255, 255, 255, 0.04);
+  --surface-hover: rgba(255, 255, 255, 0.07);
+  --series-1: #66BB6A; --series-2: #FFB300; --series-3: #F472B6;
+  --series-4: #22D3EE; --series-5: #A78BFA; --series-6: #FB923C;
+  --type-h3: 16px;
+  --type-label: 10px;
+  --type-meta: 11px;
+  --type-data: 12px;
+  --weight-medium: 500;
+  --weight-semi: 600;
+  --weight-bold: 700;
+  --label-tracking: 0.08em;
+  --hover-ease: ease;
+  --kpi-number: 34px;
+  --kpi-number-sm: 24px;
+  --glass-inset: inset 0 1px 0 rgba(255,255,255,0.16), inset 1px 0 0 rgba(255,255,255,0.06),
+                 inset -1px -1px 0 var(--glass-edge-return);
+  --glass-bevel-shadow: var(--glass-shadow), var(--glass-inset);
 }
 
 /* ── Liquid glass at rest (§7): growth tint over a resting frost, light
