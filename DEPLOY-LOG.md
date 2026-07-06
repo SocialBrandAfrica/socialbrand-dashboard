@@ -4,6 +4,29 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-06 -- Bloom v0 gate-1 (SB-CC-BLOOM-001/002) + R30 repair set + SEC-002
+
+**Commits (main, in order):** `592c0b0` `162d990` `190da36` `8e13ef2` `7425d66` `c938749` `ee0920d` `1edc1e1`
+
+**Bloom v0 functional screen (gate 1):**
+- `592c0b0` -- `rpc_bloom_order_dc` root-caused and fixed: `base_pool`/`ean_map` unmaterialized let the planner mis-estimate `base_pool` at rows=1 (actual ~4,363), collapsing every downstream join into nested loops. Marking both `MATERIALIZED` gives the true row count -- 1.67s (was >30s timeout). No calculation changed, only the plan.
+- `162d990` -- new `src/app/bloom/page.jsx`: store + dates + budget -> real order table (generate/edit/export), wired to the now-fast RPC. Also this deploy: fixed `auth/callback/route.js` deriving origin from `new URL(request.url)` (resolves to the deployment's primary domain on a Vercel alias, bounced `orders.` logins back to `dashboard.`) to read `x-forwarded-host`/`host` instead; and moved `middleware.js` -> `src/middleware.js` (BUG-LOG MW-001 -- it was never being detected by Next.js at the repo root in an `src/app` project, so the whole-site auth gate was dead code in prod until this move). Added the `orders. -> /bloom` host rewrite in the same pass.
+- `190da36` -- rebuilt Bloom's UI on CD's actual Pulse Design System components (`src/components/ds/index.jsx`: Button/Chip/SegmentedControl/GlassCard/KpiCard/DataTable/DataValue/DeltaBadge, ported from the compiled DS bundle CD shipped, not approximated by hand). Also found `dashboard.css` was never loading on `/bloom` at all (Next app-router CSS imports are per-route-segment, and the file was only imported inside the root `/` page.jsx) -- fixed by importing it directly in `bloom/page.jsx`.
+- `8e13ef2`, `7425d66` -- one qty column (not two disagreeing ones): the per-row N/G select's displayed value is now derived from the current qty (`qty === geared_packs ? 'geared' : 'normal'`) instead of tracked as separate state, so it cannot drift from the number field -- restores the per-line override Pieter asked to keep after the upfront Order-basis picker was added.
+- `c938749` -- SB-CC-BLOOM-002: `p_days_cover integer DEFAULT 7` added to `rpc_bloom_order_dc`, replacing the fixed per-tier cover targets (T100 14d/T1000 12d/BOR 14d) with one selectable cover (7/10/14, default 7) -- the twice-weekly DC cadence made the flat 14-day target over-order ~100%. Folded into CLEANUP-ENGINE-CANON §14 ADDENDUM v4 at handover.
+- Also fixed in this arc (BUG-LOG BLOOM-001): `rpc_bloom_order_dc`'s `ORDER BY` had no unique tiebreak, so PostgREST's forced client-side pagination (max_rows=1000, ~4,370-row pool) returned overlapping/duplicate rows on tier/ros_used ties. Added `, wc.product_code`.
+- **Verified live throughout** (not just SQL): generated real orders for store 80175 in-browser at multiple days-cover settings, confirmed exact rand-figure matches against direct SQL, confirmed the N/G toggle and running total stay in sync in both directions.
+
+**R30 repair set (`ee0920d`, BUG-LOG PMINI-001):** 4 new SECURITY DEFINER RPCs (`rpc_pmini_snapshot`, `rpc_pmini_sales_history`, `rpc_kitchen_sales`, `rpc_kitchen_movements`) replace direct `daily_snapshots`/`push_log`/`sigma_sales`/`sigma_movements` reads in `api/dev-corner/lines/route.js` and the Kitchen tab (`StockFlow-DevCorner-Demo.html` + `pmini.html`, byte-identical files, edited identically). `daily_snapshots` froze 2026-06-28 -- Pulse Mini's product tiles had been silently stale for over a week; the Kitchen tab's direct table reads failed silently on RLS with no anon SELECT policy. Verified live: `asAt` now today, `lastSales` now yesterday, Kitchen RPCs return real rows per store.
+
+**SEC-002 (`1edc1e1`, PM ruling, BUG-LOG SEC-002):** revoked `anon` EXECUTE on 13 refresh/purge/cleanup functions. First revoke pass (`FROM anon`) alone left 12 of 13 still anon-executable -- Postgres grants EXECUTE to PUBLIC by default and anon inherits PUBLIC. Second pass revokes `FROM PUBLIC`, re-grants `authenticated` explicitly. Verified via `has_function_privilege`: all 13 anon=false, authenticated=true.
+
+**Assessment only, no code changed (PM to rule):** the four `daily_snapshots` readers PM flagged (`rpc_feed_health_daily`, `rpc_layer_freshness`, `rpc_lost_sales_timeline`, `rpc_never_sold`) were checked against their live definitions. Correction: `rpc_layer_freshness` doesn't actually read `daily_snapshots` at all -- the earlier flag was a false positive matching a SQL comment, not a real table reference; it's already fully sigma-native. The other three: `rpc_feed_health_daily` is a genuine two-feed reconciler whose `daily_snapshots` leg only has value for the fixed historical window <= 28 Jun (repoint candidate, confirmed). `rpc_lost_sales_timeline` and `rpc_never_sold` are both structurally broken for any current date and have zero frontend consumers (confirmed by grep) -- retire, don't repoint.
+
+**DB-SCHEMA.md + CLEANUP-ENGINE-CANON.md §14 + BUG-LOG.md updated in place** (Daisy root, separate repo, not committed here) to mirror all of the above.
+
+---
+
 ## 2026-07-05 SAST -- extractor v1.18: HEALTH-aware task self-heal (DASH-FINAL item 8)
 
 **File:** `scripts/Invoke-ExtractFromSigmaSQL.ps1` (v1.17 -> v1.18). **Brief:** CC-BRIEF-DASH-FINAL-001 §8 (Pieter GENERAL ruling -- heal every server the same way).
