@@ -171,7 +171,7 @@ BEGIN
         wc.tier, wc.ros_window_used, ROUND(wc.ros_used,2), wc.soh, wc.target_days_cover, ROUND(wc.proj_soh,1), ROUND(wc.need,1), wc.normal_packs_calc,
         CASE WHEN wc.promo_nr IS NOT NULL THEN format(' | promo %%s->%%s gear %%s', wc.promo_start, wc.promo_end, ROUND(wc.gear,2)) ELSE '' END)
     FROM with_corrected wc LEFT JOIN ean_map b ON b.product_code=wc.product_code
-    ORDER BY wc.tier, wc.ros_used DESC
+    ORDER BY wc.tier, wc.ros_used DESC, wc.product_code
   $q$, p_store_code, v_anchor, v_soh_dt, v_lead, v_depts, p_delivery_date, p_next_delivery);
 END;
 $function$;

@@ -3,9 +3,15 @@ import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 
 export async function GET(request) {
-  const { searchParams, origin } = new URL(request.url)
+  const { searchParams } = new URL(request.url)
   const code = searchParams.get('code')
   const next = searchParams.get('next') ?? '/'
+  // On a Vercel alias domain (e.g. orders.socialbrand.africa), request.url's own
+  // origin resolves to the deployment's primary domain, not the host the user hit —
+  // sending them back to the wrong site after login. Read the actual host instead.
+  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host')
+  const proto = request.headers.get('x-forwarded-proto') ?? 'https'
+  const origin = `${proto}://${host}`
 
   if (code) {
     const cookieStore = cookies()

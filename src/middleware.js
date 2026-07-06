@@ -45,6 +45,13 @@ export async function middleware(request) {
     return NextResponse.redirect(new URL('/', request.url))
   }
 
+  // orders.socialbrand.africa hosts the Bloom ordering applet on this same
+  // deployment (host-based route, no separate Vercel project — SB-CC-BLOOM-001 §0c).
+  // Placed AFTER the auth gate — Bloom writes real ordering decisions, unlike /bt.
+  if (hostname.startsWith('orders.') && pathname === '/') {
+    return NextResponse.rewrite(new URL('/bloom', request.url))
+  }
+
   return response
 }
 

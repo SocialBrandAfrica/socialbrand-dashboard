@@ -13,6 +13,15 @@ export function pct(value, decimals = 1) {
   return Number(value).toFixed(decimals) + '%'
 }
 
+/** Plain decimal number (e.g. rate of sale, units/day) */
+export function num(value, decimals = 1) {
+  if (value == null || isNaN(value)) return '—'
+  return Number(value).toLocaleString('en-ZA', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  })
+}
+
 /** Short number (1 234 → 1.2k) — always rounds to whole number first */
 export function short(value) {
   if (value == null || isNaN(value)) return '—'
