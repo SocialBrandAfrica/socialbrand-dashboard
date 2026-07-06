@@ -40,8 +40,19 @@
 -- Own statement_timeout 30s = loud-failure belt (a future regression degrades
 -- loudly, never silently at the authenticator 8s line).
 -- =============================================================================
+-- 2026-07-06 (SB-CC-BLOOM-002): added p_days_cover integer DEFAULT 7 -- ONE
+-- cover target across every tier, replacing the fixed per-tier targets
+-- (T100 14 / T1000 12 / BOR 14). Pieter floor-checked the 14-day normal-basis
+-- order against a right-sized order and found it over-ordered ~100% -- the
+-- DC delivers twice a week, so a flat 14-day cover buys a fortnight of stock
+-- three days before the next truck. 7 days is the new default; 10/14 remain
+-- selectable. Per-tier targets retired: scope DEMO_CALIBRATION, effective
+-- 2026-07-06, superseded by this parameter (R28 lineage, folded into
+-- CLEANUP-ENGINE-CANON §14 at handover). Interim lever -- the durable fix is
+-- cover-to-next-delivery (cadence-aware), parked as a follow-on.
+-- =============================================================================
 
-CREATE OR REPLACE FUNCTION public.rpc_bloom_order_dc(p_store_code text, p_delivery_date date, p_next_delivery date, p_anchor_date date DEFAULT NULL::date, p_soh_date date DEFAULT NULL::date)
+CREATE OR REPLACE FUNCTION public.rpc_bloom_order_dc(p_store_code text, p_delivery_date date, p_next_delivery date, p_anchor_date date DEFAULT NULL::date, p_soh_date date DEFAULT NULL::date, p_days_cover integer DEFAULT 7)
  RETURNS TABLE(store_code text, product_code bigint, ean text, description text, dept_name text, tier text, soh numeric, unit_cost numeric, pack_size smallint, pack_cost numeric, ros_window_used text, ros_used numeric, ros_used_corrected numeric, ros_correction_delta numeric, ros_correction_delta_pct numeric, projected_soh numeric, target_days_cover integer, trigger_fired boolean, need_units numeric, normal_packs integer, promo_active boolean, promo_nr bigint, promo_start date, promo_end date, promo_uplift numeric, promo_uplift_source text, geared_packs integer, suggested_packs integer, promo_cost_delta numeric, promo_cost_resolved boolean, story text)
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -93,7 +104,7 @@ BEGIN
       SELECT w.*,
         CASE w.tier WHEN 'TOP_100' THEN (CASE WHEN w.q14=0 THEN w.q28/28.0 ELSE w.q14/14.0 END)
           WHEN 'TOP_1000' THEN w.q28/28.0 WHEN 'BOR' THEN w.q56/56.0 ELSE NULL END AS ros_used,
-        CASE w.tier WHEN 'TOP_100' THEN 14 WHEN 'TOP_1000' THEN 12 WHEN 'BOR' THEN 14 ELSE NULL END AS target_days_cover,
+        %8$s::int AS target_days_cover,
         CASE w.tier WHEN 'TOP_100' THEN (CASE WHEN w.q14=0 THEN 'ros_28d (q14=0 fallback)' ELSE 'ros_14d' END)
           WHEN 'TOP_1000' THEN 'ros_28d' WHEN 'BOR' THEN 'ros_56d' ELSE NULL END AS ros_window_used
       FROM base_pool w WHERE w.tier IN ('TOP_100','TOP_1000','BOR')
@@ -172,8 +183,8 @@ BEGIN
         CASE WHEN wc.promo_nr IS NOT NULL THEN format(' | promo %%s->%%s gear %%s', wc.promo_start, wc.promo_end, ROUND(wc.gear,2)) ELSE '' END)
     FROM with_corrected wc LEFT JOIN ean_map b ON b.product_code=wc.product_code
     ORDER BY wc.tier, wc.ros_used DESC, wc.product_code
-  $q$, p_store_code, v_anchor, v_soh_dt, v_lead, v_depts, p_delivery_date, p_next_delivery);
+  $q$, p_store_code, v_anchor, v_soh_dt, v_lead, v_depts, p_delivery_date, p_next_delivery, p_days_cover);
 END;
 $function$;
 
-GRANT EXECUTE ON FUNCTION public.rpc_bloom_order_dc(text,date,date,date,date) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.rpc_bloom_order_dc(text,date,date,date,date,integer) TO anon, authenticated;

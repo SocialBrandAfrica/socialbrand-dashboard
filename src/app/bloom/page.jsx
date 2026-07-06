@@ -96,7 +96,8 @@ function BudgetGauge({ total, budget }) {
 // State A — the generate form
 // ─────────────────────────────────────────────────────────────────────────────
 function GenerateForm({ stores, storeCode, setStoreCode, deliveryDate, setDeliveryDate,
-  nextDeliveryDate, setNextDeliveryDate, budget, setBudget, basis, setBasis, onGenerate, generating, error }) {
+  nextDeliveryDate, setNextDeliveryDate, budget, setBudget, basis, setBasis,
+  daysCover, setDaysCover, onGenerate, generating, error }) {
   const inputStyle = {
     fontFamily: 'var(--font-mono)', fontSize: 14, color: 'var(--daisy-white)',
     background: 'rgba(0,0,0,0.28)', border: '1px solid var(--glass-border)',
@@ -142,6 +143,10 @@ function GenerateForm({ stores, storeCode, setStoreCode, deliveryDate, setDelive
           {field('Order basis (promo lines)', (
             <SegmentedControl value={basis} onChange={setBasis}
               options={[{ value: 'normal', label: 'Normal' }, { value: 'geared', label: 'Geared (buy-in)' }]} />
+          ))}
+          {field('Days cover', (
+            <SegmentedControl value={daysCover} onChange={setDaysCover}
+              options={[{ value: 7, label: '7' }, { value: 10, label: '10' }, { value: 14, label: '14' }]} />
           ))}
           {error && (
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: '#fca5a5',
@@ -395,6 +400,7 @@ export default function BloomPage() {
   const [nextDeliveryDate, setNextDeliveryDate] = useState(todayIso(4))
   const [budget, setBudget] = useState('')
   const [basis, setBasis] = useState('normal')
+  const [daysCover, setDaysCover] = useState(7)
   const [phase, setPhase] = useState('A')
   const [generating, setGenerating] = useState(false)
   const [lines, setLines] = useState([])
@@ -434,6 +440,7 @@ export default function BloomPage() {
     for (;;) {
       const { data, error: err } = await supabase.rpc('rpc_bloom_order_dc', {
         p_store_code: storeCode, p_delivery_date: deliveryDate, p_next_delivery: nextDeliveryDate,
+        p_days_cover: daysCover,
       }).range(offset, offset + PAGE - 1)
       if (err) { setGenerating(false); setError(err.message); return }
       all = all.concat(data ?? [])
@@ -498,6 +505,7 @@ export default function BloomPage() {
           nextDeliveryDate={nextDeliveryDate} setNextDeliveryDate={setNextDeliveryDate}
           budget={budget} setBudget={setBudget}
           basis={basis} setBasis={setBasis}
+          daysCover={daysCover} setDaysCover={setDaysCover}
           onGenerate={generate} generating={generating} error={error}
         />
       )}
