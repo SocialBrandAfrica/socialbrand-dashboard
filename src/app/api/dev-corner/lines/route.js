@@ -2,7 +2,6 @@
 // SB-AP-007 — Pulse Mini data endpoint.
 //
 // Security contract (brief §6a):
-//   - SELECT-only: Supabase anon key has no write rights on this table.
 //   - Fixed output: returns exactly the 11 lines below. No query parameter
 //     can change what is returned. EAN list is locked server-side.
 //   - No schema leak: response uses curated field names only — no table or
@@ -10,6 +9,13 @@
 //   - CORS: same-origin (no Access-Control-Allow-Origin: *).
 //   - Keys never in response, page, or URL. Uses NEXT_PUBLIC env vars only
 //     because those keys are already published for client-side use.
+//
+// R30 repair (2026-07-06): this route used to read daily_snapshots and
+// push_log directly. daily_snapshots is frozen at 2026-06-28 (RETIRE-002/003)
+// and neither table has an anon SELECT policy, so every figure here was
+// stale by construction. Now reads only published interfaces: rpc_push_status
+// (freshness), rpc_pmini_snapshot (current SOH/price), rpc_pmini_sales_history
+// (the 42-day + last-year windows) — all sigma-native, always current.
 
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse }  from 'next/server'
@@ -68,28 +74,14 @@ export async function GET(request) {
   )
 
   try {
-    // ---- 1. Latest push timestamp (asAt) -----------------------------------
-    // Order by completed_at (always populated) not snapshot_date (NULL on pre-v3.10 rows).
-    const { data: pushRow } = await supabase
-      .from('push_log')
-      .select('snapshot_date, completed_at')
-      .eq('store_code', STORE)
-      .eq('status', 'SUCCESS')
-      .order('completed_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
+    // ---- 1. Latest push timestamp (asAt) + true latest trading date -------
+    // rpc_push_status: snapshot_date = MAX(sigma_sales.sale_date) per store
+    // (true data freshness, sigma-native); completed_at = latest SUCCESS push.
+    const { data: pushRows, error: pushErr } = await supabase.rpc('rpc_push_status')
+    if (pushErr) throw pushErr
+    const pushRow = (pushRows ?? []).find(r => r.store_code === STORE)
 
-    // Get true latest date from daily_snapshots rather than push_log.snapshot_date,
-    // which can be NULL on older rows and return stale results.
-    const { data: latestSnap } = await supabase
-      .from('daily_snapshots')
-      .select('snapshot_date')
-      .eq('store_code', STORE)
-      .order('snapshot_date', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    const latestDate = latestSnap?.snapshot_date ?? isoDate(new Date())
+    const latestDate = pushRow?.snapshot_date ?? isoDate(new Date())
     const asAt = pushRow?.completed_at
       ? new Date(pushRow.completed_at).toLocaleString('en-ZA', {
           timeZone: 'Africa/Johannesburg',
@@ -98,16 +90,9 @@ export async function GET(request) {
         })
       : 'Unknown'
 
-    // ---- 2. Current snapshot per EAN (SOH, price, last_sales) -------------
+    // ---- 2. Current snapshot per EAN (SOH, price, last_sale) --------------
     const { data: snapRows, error: snapErr } = await supabase
-      .from('daily_snapshots')
-      .select(
-        'ean, description, dept_name, sub_dept_name, soh, sell_price,' +
-        'unit_cost, last_sales_date_iso'
-      )
-      .eq('store_code', STORE)
-      .eq('snapshot_date', latestDate)
-      .in('ean', FIXED_EANS)
+      .rpc('rpc_pmini_snapshot', { p_store_code: STORE, p_eans: FIXED_EANS })
 
     if (snapErr) throw snapErr
     const snapByEan = Object.fromEntries((snapRows ?? []).map(r => [r.ean, r]))
@@ -115,12 +100,7 @@ export async function GET(request) {
     // ---- 3. Daily history for 6 weekly buckets (last 42 days) -------------
     const histFrom = subtractDays(latestDate, 42)
     const { data: histRows, error: histErr } = await supabase
-      .from('daily_snapshots')
-      .select('ean, snapshot_date, today_qty')
-      .eq('store_code', STORE)
-      .in('ean', FIXED_EANS)
-      .gte('snapshot_date', histFrom)
-      .lte('snapshot_date', latestDate)
+      .rpc('rpc_pmini_sales_history', { p_store_code: STORE, p_eans: FIXED_EANS, p_from: histFrom, p_to: latestDate })
 
     if (histErr) throw histErr
     const histByEan = {}
@@ -137,21 +117,17 @@ export async function GET(request) {
     const lyPrevEnd     = subtractDays(lyWindowStart, 1)
     const lyPrevStart   = subtractDays(lyPrevEnd, 27)
 
-    const { data: lyRows } = await supabase
-      .from('daily_snapshots')
-      .select('ean, snapshot_date, today_qty')
-      .eq('store_code', STORE)
-      .in('ean', FIXED_EANS)
-      .gte('snapshot_date', lyPrevStart)
-      .lte('snapshot_date', lyWindowEnd)
+    const { data: lyRows, error: lyErr } = await supabase
+      .rpc('rpc_pmini_sales_history', { p_store_code: STORE, p_eans: FIXED_EANS, p_from: lyPrevStart, p_to: lyWindowEnd })
+    if (lyErr) throw lyErr
 
     const lyByEan = {}
     for (const r of lyRows ?? []) {
       if (!lyByEan[r.ean]) lyByEan[r.ean] = { same: 0, prev: 0 }
-      if (r.snapshot_date >= lyWindowStart && r.snapshot_date <= lyWindowEnd) {
-        lyByEan[r.ean].same += Math.max(0, r.today_qty ?? 0)
+      if (r.sale_date >= lyWindowStart && r.sale_date <= lyWindowEnd) {
+        lyByEan[r.ean].same += Math.max(0, r.qty ?? 0)
       } else {
-        lyByEan[r.ean].prev += Math.max(0, r.today_qty ?? 0)
+        lyByEan[r.ean].prev += Math.max(0, r.qty ?? 0)
       }
     }
 
@@ -161,11 +137,11 @@ export async function GET(request) {
       const buckets = [0, 0, 0, 0, 0, 0]
       const t0 = new Date(latest + 'T12:00:00Z').getTime()
       for (const r of rows) {
-        const t1 = new Date(r.snapshot_date + 'T12:00:00Z').getTime()
+        const t1 = new Date(r.sale_date + 'T12:00:00Z').getTime()
         const daysDiff = Math.round((t0 - t1) / 86400000)
         const b = Math.floor(daysDiff / 7)
         if (b >= 0 && b < 6) {
-          buckets[b] += Math.max(0, r.today_qty ?? 0)
+          buckets[b] += Math.max(0, r.qty ?? 0)
         }
       }
       return buckets.map(v => Math.round(v))
@@ -192,8 +168,8 @@ export async function GET(request) {
         ? Math.round((soh / avgDaily) * 10) / 10
         : null
 
-      const lastSales = snap?.last_sales_date_iso
-        ? isoDate(snap.last_sales_date_iso)
+      const lastSales = snap?.last_sale_date
+        ? isoDate(snap.last_sale_date)
         : null
 
       return {
@@ -204,12 +180,12 @@ export async function GET(request) {
         soh:       soh,
         wk,
         lastSales,
-        lastRecv:  null,    // not in daily_snapshots (SQL pipeline will add)
+        lastRecv:  null,    // not carried by rpc_pmini_snapshot (SQL pipeline will add)
         stockDays: stockDays,
         cost:      snap?.unit_cost  ?? null,
         sell:      snap?.sell_price ?? null,
         syf,
-        // band and onOrder omitted — not in daily_snapshots, page uses snapshot fallback
+        // band and onOrder omitted — engine doesn't carry them yet, page uses snapshot fallback
       }
     })
 

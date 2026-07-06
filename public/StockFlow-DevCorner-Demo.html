@@ -342,6 +342,7 @@ const KCFG=[
 ];
 
 async function sbRest(path){const r=await fetch(SB_URL+'/rest/v1/'+path,{headers:HDRS});if(!r.ok)throw new Error(path.split('?')[0]+' '+r.status);return r.json();}
+async function sbRpc(name,params){const r=await fetch(SB_URL+'/rest/v1/rpc/'+name,{method:'POST',headers:HDRS,body:JSON.stringify(params)});if(!r.ok)throw new Error(name+' '+r.status);return r.json();}
 
 /* unfrost */
 const cards=[...document.querySelectorAll('.glass')];
@@ -466,11 +467,14 @@ document.addEventListener('click',e=>{const r=e.target.closest('#view-consign [d
 /* ===== KITCHEN + STORE (owner view) ===== */
 let KDATA=null,KSEL={};
 async function fetchKitchen(){
+  // R30 repair (2026-07-06): sigma_sales/sigma_movements have RLS with no anon
+  // SELECT policy -- the direct sbRest() reads below failed silently. Now
+  // behind rpc_kitchen_sales/rpc_kitchen_movements (SECURITY DEFINER).
   const out=[];
   for(const cfg of KCFG){
-    const codes=cfg.soup.map(l=>l.c).concat([cfg.bwors.c]).join(',');
-    const rows=await sbRest('sigma_sales?select=sale_date,product_code,sales_incl_vat,qty&store_code=eq.'+cfg.store+'&product_code=in.('+codes+')&sale_date=gte.'+PROJECT_START+'&order=sale_date.asc');
-    const moves=await sbRest('sigma_movements?select=product_code,movement_type,movement_process,movement_date,qty,new_soh&store_code=eq.'+cfg.store+'&product_code=in.('+codes+')&movement_date=gte.'+PROJECT_START+'&movement_type=neq.K&order=movement_date.asc');
+    const codeArr=cfg.soup.map(l=>l.c).concat([cfg.bwors.c]);
+    const rows=await sbRpc('rpc_kitchen_sales',{p_store_code:cfg.store,p_product_codes:codeArr,p_from_date:PROJECT_START});
+    const moves=await sbRpc('rpc_kitchen_movements',{p_store_code:cfg.store,p_product_codes:codeArr,p_from_date:PROJECT_START});
     out.push({...cfg,rows,moves});
   }
   return out;
