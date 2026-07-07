@@ -391,6 +391,237 @@ function Preview({ store, deliveryDate, nextDeliveryDate, budget, lines, qty, on
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Desk mode — SB-CC-BLOOM-003 Ship 1 (EXPERIMENTAL). Budget gauge (real ledger,
+// not manual entry) + SAB-equivalent direct-beer proposals for the 3 TOPS
+// stores, via rpc_bloom_order_direct_beer. DC mode above is completely
+// untouched (R30) -- this is a parallel, opt-in surface.
+// =============================================================================
+const TOPS_STORES = [
+  { store_code: '21355', store_name: 'TOPS Delareyville' },
+  { store_code: '80176', store_name: 'TOPS Roosville' },
+  { store_code: '80579', store_name: 'TOPS Dice' },
+]
+
+function monthStartIso(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+}
+
+function DeskRow({ line, qty, isEdited, onQty }) {
+  const value = (qty ?? 0) * (Number(line.pack_cost) || 0)
+  const wash = line.sibling_gated ? 'linear-gradient(90deg, rgba(0,224,140,0.13), rgba(0,224,140,0.02))' : 'transparent'
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: '76px 40px minmax(180px,1.6fr) 100px 56px 90px 90px 100px 90px',
+      alignItems: 'center', gap: 0, padding: '9px 18px', background: wash,
+      borderBottom: '1px solid var(--hairline)', fontSize: 12, fontFamily: 'var(--font-mono)',
+      fontVariantNumeric: 'tabular-nums',
+    }} title={line.story}>
+      <span style={{ color: 'var(--veld-mist)' }}>{String(line.product_code)}</span>
+      <span style={{ color: 'var(--veld-mist)' }}>{line.pack_size ?? '—'}</span>
+      <span style={{ color: 'var(--daisy-white)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {line.description}
+        {line.sibling_gated && (
+          <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--growth-green)', border: '1px solid var(--growth-green)',
+            borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>DOOR REOPEN</span>
+        )}
+      </span>
+      <span style={{ color: 'var(--veld-mist)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{line.merch_group_name ?? '—'}</span>
+      <span style={{ textAlign: 'right', color: Number(line.soh) < 0 ? 'var(--data-neg)' : 'var(--veld-mist)' }}>{num(line.soh)}</span>
+      <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>{num(line.ros_used)}</span>
+      <span style={{ textAlign: 'left', paddingLeft: 6, color: 'var(--veld-mist)' }}>{TIER_LABEL[line.tier] ?? line.tier ?? '—'}</span>
+      <input type="number" min="0" value={qty ?? 0}
+        onChange={e => onQty(line.product_code, Math.max(0, parseInt(e.target.value || '0', 10)))}
+        style={{
+          width: 64, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12.5,
+          color: 'var(--daisy-white)', padding: '5px 7px', background: 'rgba(0,0,0,0.28)',
+          borderRadius: 'var(--radius-chip)', border: '1px solid var(--glass-border)', outline: 'none',
+          boxShadow: isEdited ? '0 0 0 2px rgba(255,209,0,0.35)' : 'none', justifySelf: 'end',
+        }} />
+      <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>{zar(value, 2)}</span>
+    </div>
+  )
+}
+
+function DeskFlags({ flags }) {
+  if (!flags.length) return null
+  const totalUnits = flags.reduce((s, f) => s + (Number(f.q364) || 0), 0)
+  return (
+    <GlassCard style={{ margin: '0 32px 20px', padding: '16px 22px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+        <span style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 'var(--weight-semi)', color: 'var(--core-yellow)' }}>
+          Data quality — {flags.length} door{flags.length > 1 ? 's' : ''} the engine cannot order (fix at source, R21)
+        </span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)' }}>{num(totalUnits)} units sold last 12 months, no order proposed</span>
+      </div>
+      <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflow: 'auto' }}>
+        {flags.map(f => (
+          <div key={f.product_code} style={{ display: 'flex', justifyContent: 'space-between', gap: 12,
+            fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>
+            <span style={{ color: 'var(--daisy-white)' }}>{f.description}</span>
+            <span style={{ color: 'var(--veld-mist)', textAlign: 'right', flex: '0 0 auto' }}>
+              {num(f.q364)} units/12m · {f.reason}
+            </span>
+          </div>
+        ))}
+      </div>
+    </GlassCard>
+  )
+}
+
+function DeskMode() {
+  const [store, setStore] = useState(TOPS_STORES[1].store_code) // default 80176, the worked example
+  const [deliveryDate, setDeliveryDate] = useState(todayIso(3))
+  const [nextDeliveryDate, setNextDeliveryDate] = useState(todayIso(10))
+  const [budgetRow, setBudgetRow] = useState(null)
+  const [lines, setLines] = useState([])
+  const [qty, setQty] = useState({})
+  const [edited, setEdited] = useState({})
+  const [flags, setFlags] = useState([])
+  const [generating, setGenerating] = useState(false)
+  const [error, setError] = useState(null)
+  const [generated, setGenerated] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    supabase.from('order_budget_ledger').select('*')
+      .eq('store_code', store).eq('route_key', 'DIRECT_BEER').eq('year_month', monthStartIso())
+      .maybeSingle()
+      .then(({ data, error: err }) => { if (!cancelled) { setBudgetRow(err ? null : data); } })
+    supabase.rpc('rpc_bloom_direct_beer_flags', { p_store_code: store })
+      .then(({ data, error: err }) => { if (!cancelled) setFlags(err ? [] : (data ?? [])) })
+    setGenerated(false); setLines([]); setQty({}); setEdited({})
+    return () => { cancelled = true }
+  }, [store])
+
+  async function generate() {
+    setError(null); setGenerating(true)
+    const { data, error: err } = await supabase.rpc('rpc_bloom_order_direct_beer', {
+      p_store_code: store, p_delivery_date: deliveryDate, p_next_delivery: nextDeliveryDate,
+    })
+    setGenerating(false)
+    if (err) { setError(err.message); return }
+    const rows = (data ?? []).sort((a, b) => (b.ros_used ?? 0) - (a.ros_used ?? 0))
+    const q = {}
+    for (const r of rows) q[r.product_code] = r.suggested_packs ?? 0
+    setLines(rows); setQty(q); setEdited({}); setGenerated(true)
+  }
+
+  function onQty(code, v) {
+    setQty(q => ({ ...q, [code]: v }))
+    setEdited(e => ({ ...e, [code]: true }))
+  }
+
+  const total = useMemo(() => lines.reduce((s, l) => s + (qty[l.product_code] ?? 0) * (Number(l.pack_cost) || 0), 0), [lines, qty])
+  const storeInfo = TOPS_STORES.find(s => s.store_code === store)
+  const budget = Number(budgetRow?.budget_amount) || 0
+  const landed = Number(budgetRow?.landed_amount) || 0
+  const salesActual = Number(budgetRow?.sales_actual) || 0
+  const spent = landed + total // landed-to-date + this order's committed value
+
+  function exportCsv() {
+    const header = 'product_code,description,pack_size,qty_packs,pack_cost,line_value\n'
+    const body = lines.filter(l => (qty[l.product_code] ?? 0) > 0).map(l => {
+      const q = qty[l.product_code] ?? 0
+      const v = q * (Number(l.pack_cost) || 0)
+      const desc = String(l.description ?? '').replace(/"/g, '""')
+      return `${l.product_code},"${desc}",${l.pack_size ?? ''},${q},${l.pack_cost ?? ''},${v.toFixed(2)}`
+    }).join('\n')
+    downloadText(`${store}_direct_beer_order_${deliveryDate}.csv`, header + body)
+  }
+
+  const inputStyle = {
+    fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--daisy-white)',
+    background: 'rgba(0,0,0,0.28)', border: '1px solid var(--glass-border)',
+    borderRadius: 'var(--radius-chip)', padding: '9px 11px', outline: 'none',
+  }
+
+  return (
+    <div>
+      <GlassCard style={{ margin: '20px 32px', padding: '18px 24px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'flex-end', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Label>Store (direct-beer route)</Label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {TOPS_STORES.map(s => (
+                  <Chip key={s.store_code} active={store === s.store_code} onClick={() => setStore(s.store_code)}>
+                    {s.store_code} · {s.store_name}
+                  </Chip>
+                ))}
+              </div>
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Label>Delivery date</Label>
+              <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} style={inputStyle} />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Label>Following delivery</Label>
+              <input type="date" value={nextDeliveryDate} onChange={e => setNextDeliveryDate(e.target.value)} style={inputStyle} />
+            </label>
+            <Button variant="daisy" onClick={generate} {...(generating ? { disabled: true } : {})}>
+              {generating ? 'Running engine …' : 'Generate beer order'}
+            </Button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 28, flexWrap: 'wrap' }}>
+            <KpiCard label="This order" value={zar(total)} sub={`${lines.filter(l => (qty[l.product_code] ?? 0) > 0).length} lines`} style={{ padding: 0 }} />
+            <KpiCard label={`${new Date().toLocaleString('en-ZA', { month: 'long' })} landed`} value={zar(landed)} sub={`sales ${zar(salesActual)}`} style={{ padding: 0 }} />
+            <BudgetGauge total={spent} budget={budget} />
+          </div>
+        </div>
+        {error && (
+          <div style={{ marginTop: 12, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: '#fca5a5',
+            background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 8, padding: '8px 12px' }}>
+            {error}
+          </div>
+        )}
+        {!budgetRow && (
+          <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--veld-mist)' }}>
+            No budget row found for {storeInfo?.store_name} this month — check order_budget_ledger.
+          </div>
+        )}
+      </GlassCard>
+
+      <DeskFlags flags={flags} />
+
+      {generated && (
+        <GlassCard style={{ margin: '0 32px 32px', padding: 0, overflow: 'hidden' }}>
+          <div style={{ maxHeight: '52vh', overflow: 'auto' }}>
+            <div style={{ minWidth: 820 }}>
+              <div style={{
+                display: 'grid', gridTemplateColumns: '76px 40px minmax(180px,1.6fr) 100px 56px 90px 90px 100px 90px',
+                position: 'sticky', top: 0, zIndex: 2, padding: '9px 18px', background: 'rgba(14,18,14,0.96)',
+                borderBottom: '1px solid var(--glass-border)',
+              }}>
+                {['Code', 'Pack', 'Description', 'Merch grp', 'SOH', 'ROS/day', 'Tier', 'Qty · packs', 'Value'].map((c, i) => (
+                  <span key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 500,
+                    letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--veld-mist)',
+                    textAlign: i >= 4 && i !== 6 ? 'right' : 'left' }}>{c}</span>
+                ))}
+              </div>
+              {lines.map(l => (
+                <DeskRow key={l.product_code} line={l} qty={qty[l.product_code]} isEdited={!!edited[l.product_code]} onQty={onQty} />
+              ))}
+              {lines.length === 0 && (
+                <p style={{ padding: 24, textAlign: 'center', fontFamily: 'var(--font-display)', fontStyle: 'italic', color: 'var(--veld-mist)' }}>
+                  No lines proposed for this store / delivery window.
+                </p>
+              )}
+            </div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14,
+            padding: '16px 24px', borderTop: '1px solid var(--glass-border)', flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)', flex: '1 1 200px' }}>
+              Hover a row for its story (R29) · green ring = door reopen off the sibling rule
+            </span>
+            <Button variant="solid" onClick={exportCsv}>Export CSV</Button>
+          </div>
+        </GlassCard>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // App shell
 // ─────────────────────────────────────────────────────────────────────────────
 export default function BloomPage() {
@@ -402,6 +633,7 @@ export default function BloomPage() {
   const [basis, setBasis] = useState('normal')
   const [daysCover, setDaysCover] = useState(7)
   const [phase, setPhase] = useState('A')
+  const [appMode, setAppMode] = useState('dc') // 'dc' | 'desk' (SB-CC-BLOOM-003 Ship 1, EXPERIMENTAL)
   const [generating, setGenerating] = useState(false)
   const [lines, setLines] = useState([])
   const [qty, setQty] = useState({})
@@ -492,13 +724,22 @@ export default function BloomPage() {
   return (
     <div style={backdrop}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 32px', flexWrap: 'wrap', gap: 12 }}>
-        <span style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 'var(--weight-semi)', color: 'var(--daisy-white)' }}>Bloom</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 'var(--weight-semi)', color: 'var(--daisy-white)' }}>Bloom</span>
+          <SegmentedControl size="sm" value={appMode} onChange={setAppMode}
+            options={[
+              { value: 'dc', label: 'DC' },
+              { value: 'desk', label: 'Desk · beer (EXPERIMENTAL)' },
+            ]} />
+        </div>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em', color: 'var(--veld-mist)', textTransform: 'uppercase' }}>
           orders.socialbrand.africa
         </span>
       </header>
 
-      {phase === 'A' && (
+      {appMode === 'desk' && <DeskMode />}
+
+      {appMode === 'dc' && phase === 'A' && (
         <GenerateForm
           stores={stores} storeCode={storeCode} setStoreCode={setStoreCode}
           deliveryDate={deliveryDate} setDeliveryDate={setDeliveryDate}
@@ -510,7 +751,7 @@ export default function BloomPage() {
         />
       )}
 
-      {phase === 'B' && (
+      {appMode === 'dc' && phase === 'B' && (
         <OrderForm
           store={store} deliveryDate={deliveryDate} nextDeliveryDate={nextDeliveryDate} budget={budget}
           lines={lines} qty={qty} edited={edited}
@@ -521,7 +762,7 @@ export default function BloomPage() {
         />
       )}
 
-      {phase === 'C' && (
+      {appMode === 'dc' && phase === 'C' && (
         <Preview store={store} deliveryDate={deliveryDate} nextDeliveryDate={nextDeliveryDate}
           budget={budget} lines={lines} qty={qty} onNewOrder={() => setPhase('A')} />
       )}
