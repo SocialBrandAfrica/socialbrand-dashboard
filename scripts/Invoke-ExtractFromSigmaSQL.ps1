@@ -112,6 +112,31 @@
            yet open fails = permission problem (waiting will not help); master
            unreachable = instance/login broken, not an EOD lock. The give-up
            error carries the last observed state so push_log names the cause.
+    v1.19: Restored the run-level push_log summary row (push_type='sigma_extractor'),
+           root-caused 2026-07-07. This script never wrote it itself -- the comment
+           at the old exit-0 path said "No error file -> Push-SigmaToSupabase logs
+           sigma_extractor SUCCESS", because that WAS true: the wrapper script,
+           Push-SigmaToSupabase.ps1, was the sole writer of push_type IN ('nightly',
+           'sigma_extractor'), checking extractor_last_error.txt after calling this
+           extractor. When the wrapper was removed from all 5 servers 2026-06-28
+           (SB-CC-PRSSALE-RETIRE-001), that responsibility was orphaned -- nothing
+           replaced it. Confirmed via push_log: 'sigma_extractor' and 'nightly' rows
+           both stop dead at 2026-06-28 21:12, same run, same count (63 each), while
+           v1.10's per-table 'l1_table' rows kept landing every night with zero gaps
+           (data pipeline was never actually broken -- only the run-level version-
+           stamp/audit row was silent). This is the exact gap PM's Gate-2 check
+           couldn't close ("NO sigma_extractor version-stamp row found"). Fix:
+           Send-RunSummary posts ONE push_log row per run (push_type='sigma_extractor',
+           script_version, tac_filename='extractor=vX.Y' matching the R22 convention
+           DB-SCHEMA.md already documents, status, rows_pushed=grand total, elapsed),
+           fired on every exit path -- natural success, the "EOD facts landed, later
+           table tripped" truthful-SUCCESS fallthrough, and genuine FAILURE. Purely
+           additive: the per-table l1_table rows and the fact-table-only truthful-
+           status logic from SB-CC-EXTRACT-002 are UNCHANGED -- this row is a
+           convenience/audit marker, never the source of truth for freshness (that
+           stays owned by check_l1_feed_freshness, per its own header note). Non-
+           fatal, same pattern as Send-TableLog: a failed log write never fails the
+           extraction.
 #>
 param(
     [switch]$FullRefresh,
@@ -142,7 +167,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.18'   # v1.18 (DASH-FINAL item 8, 2026-07-05): HEALTH-aware task self-heal. Register-ExtractDeltaTask now checks Get-ScheduledTaskInfo (stale LastRunTime >2d/never OR logon/launch-failure LastTaskResult forces a fresh re-register) instead of returning as soon as the task exists -- the old check let a task dead on a logon failure (the Dice 30 Jun cause) pass forever. Non-admin fallback: if RunLevel Highest is denied, register Limited (extract needs SQL+HTTPS, not admin) and log the downgrade to push_log (R22). (v1.17 SB-CC-DICE-REPAIR-001: self-healing dw220sdb user mapping repair. v1.16: truthful status, bounded retry)
+$ScriptVersion  = 'v1.19'   # v1.19 (2026-07-07): restored the run-level push_log summary row (push_type='sigma_extractor'), orphaned since Push-SigmaToSupabase.ps1 retired 2026-06-28 -- see changelog above. (v1.18 DASH-FINAL item 8, 2026-07-05: HEALTH-aware task self-heal. Register-ExtractDeltaTask now checks Get-ScheduledTaskInfo (stale LastRunTime >2d/never OR logon/launch-failure LastTaskResult forces a fresh re-register) instead of returning as soon as the task exists -- the old check let a task dead on a logon failure (the Dice 30 Jun cause) pass forever. Non-admin fallback: if RunLevel Highest is denied, register Limited (extract needs SQL+HTTPS, not admin) and log the downgrade to push_log (R22). v1.17 SB-CC-DICE-REPAIR-001: self-healing dw220sdb user mapping repair. v1.16: truthful status, bounded retry)
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -1946,6 +1971,45 @@ function Send-TableLog {
     }
 }
 
+# v1.19: run-level summary row (push_type='sigma_extractor'), restored after
+# Push-SigmaToSupabase.ps1's retirement orphaned this responsibility -- see the
+# v1.19 changelog entry above for the full root cause. tac_filename carries
+# 'extractor=vX.Y' to match the R22 version-proof convention DB-SCHEMA.md
+# already documents. Non-fatal: a failed log write never fails the extraction,
+# and it never gates or overrides the per-table l1_table rows or the fact-table
+# truthful-status logic -- purely an audit/version marker.
+function Send-RunSummary {
+    param([string]$Status, [datetime]$StartTime, [int]$RowsTotal, [string]$ErrorMsg)
+    try {
+        $rec = [ordered]@{
+            store_code       = $StoreCode
+            push_type        = 'sigma_extractor'
+            table_name       = 'sigma_extractor'
+            status           = $Status
+            script_version   = $ScriptVersion
+            tac_filename     = "extractor=$ScriptVersion"
+            rows_pushed      = $RowsTotal
+            duration_seconds = [int]((Get-Date) - $StartTime).TotalSeconds
+            started_at       = $StartTime.ToString('o')
+            completed_at     = (Get-Date -Format 'o')
+        }
+        if ($ErrorMsg) { $rec['error_message'] = $ErrorMsg.Substring(0, [Math]::Min(490, $ErrorMsg.Length)) }
+        $json  = ConvertTo-Json -InputObject $rec -Compress
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+        $hdrs  = @{
+            'apikey'        = $SupabaseKey
+            'Authorization' = "Bearer $SupabaseKey"
+            'Content-Type'  = 'application/json; charset=utf-8'
+            'Prefer'        = 'return=minimal'
+            'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+        }
+        $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log" -Method POST -Headers $hdrs -Body $bytes -TimeoutSec 15
+    }
+    catch {
+        Write-Warning "  push_log sigma_extractor summary row failed (non-fatal): $_"
+    }
+}
+
 function Invoke-LoggedStep {
     param([string]$Name, [string]$Table, [scriptblock]$Step)
     if (-not ($runAll -or $TableName -eq $Name)) { return }
@@ -2025,6 +2089,8 @@ catch {
         }
         catch {}
         Write-Host "FATAL: an EOD fact table did not land -- genuine end-of-day failure." -ForegroundColor Red
+        $grandTotalOnFail = (($totals.Values | Measure-Object -Sum).Sum)
+        Send-RunSummary -Status 'FAILED' -StartTime $startTime -RowsTotal ([int]$grandTotalOnFail) -ErrorMsg $fatalMsg
         exit 1
     }
 }
@@ -2041,3 +2107,9 @@ Write-Host "--------------------------------------------------"
 Write-Host ("  {0,-30} {1,8} rows total" -f 'GRAND TOTAL', $grandTotal)
 Write-Host "=================================================="
 Write-Host " Finished: $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))"
+
+# v1.19: run-level summary row. Reaches here on natural success AND the
+# "EOD facts landed, later table tripped" truthful-SUCCESS fallthrough (the
+# catch block above only exit 1's on a genuine EOD miss) -- both are real
+# completions and both deserve a SUCCESS audit row with the script version.
+Send-RunSummary -Status 'SUCCESS' -StartTime $startTime -RowsTotal ([int]$grandTotal)
