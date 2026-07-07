@@ -1,5 +1,13 @@
 -- =============================================================================
--- v_never_sold.sql
+-- v_never_sold.sql (function: rpc_never_sold)
+-- RETIRED IN PLACE 2026-07-07 (R28 lineage, effective_from 2026-07-07, scope GENERAL).
+--   Zero live consumers verified (grep across src/ and public/: no calls found;
+--   the only hits repo-wide are DEPLOY-LOG.md history and this file). Superseded
+--   by l2_classification PHANTOM_ZERO/DEAD_ZERO buckets (TILL-ONLY K-channel
+--   signal here missed S/L injections -- see CLEANUP-ENGINE-CANON canon).
+--   Kept live (not dropped) as part of the daily_snapshots archive/truncate
+--   clearance (PM ruling 2026-07-07): reads daily_snapshots directly below, so
+--   after truncate it returns 0 rows -- harmless, nothing calls it.
 --
 -- Products that have stock on hand but have NEVER recorded a sale.
 -- last_sales_date_iso IS NULL = Sigma has no sales history for this EAN.

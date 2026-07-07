@@ -1,7 +1,16 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- rpc_lost_sales_timeline
+-- RETIRED IN PLACE 2026-07-07 (R28 lineage, effective_from 2026-07-07, scope GENERAL).
+--   Zero frontend consumers verified (grep: the only match in src/ is the removed-
+--   call comment in page.jsx, "rpc_lost_sales_timeline call removed with
+--   rpc_lost_sales_oos; the RPC stays live in the DB", 2026-07-05 Lost Sales park).
+--   Reads daily_snapshots for STOCK FACTS (soh/oos_bool) below -- kept live
+--   (not dropped) as part of the daily_snapshots archive/truncate clearance
+--   (PM ruling 2026-07-07): after truncate this simply returns empty snap_side
+--   rows, which is harmless since nothing calls it. No successor; if Lost Sales
+--   Timeline is ever un-parked, rebuild sourced off l2_soh_daily, not this file.
 -- Returns day-by-day sold/OOS flags for a list of EANs over a rolling window.
--- Used by: Lost Sales Tracker widget (timeline bar per product row)
+-- Used by: Lost Sales Tracker widget (timeline bar per product row) -- PARKED.
 --
 -- SB-CC-DASH-SOURCE-002 Step 4 (SB-INDEX-005 Phase 2) -- HYBRID migration.
 --   SALES FACT  sold_bool  -> sigma_sales (qty>0 that day, exact + missed-EOD
