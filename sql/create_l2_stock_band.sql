@@ -25,29 +25,41 @@
 -- cycle). Config key, not hardcoded logic -- superseded when cadence-aware
 -- lead time lands, same as the days-cover selector.
 --
--- FORMULA (BLOOM-003 s2b #4):
+-- FORMULA (BLOOM-003 s2b #4, CORRECTED per PM's second review, 2026-07-08 --
+-- see ENG-001 v2 note below; this replaces the first-pass GREATEST clamp):
 --   rhythm_adjusted_demand = l2_stock_position.daily_ros
 --     x this-week's index (from l2_rhythm_profile, W1-W4 by today's
 --       day-of-month, COALESCEd to 1.0 -- EVERYDAY archetype lines are
 --       already near 1.0 by construction so this is a correct no-op there)
 --     x this-month's seasonality factor (l2_seasonality_profile
 --       .current_month_factor, COALESCEd to 1.0 when NULL/never-sold).
---   min = rhythm_adjusted_demand x p_lead_days + safety.
+--   min_band (the REORDER POINT) = rhythm_adjusted_demand x p_lead_days + safety.
 --     safety = safety_days x rhythm_adjusted_demand, safety_days by KVI band
 --     (config kvi_safety_days): Critical=4, Important=2, everything else
 --     (Standard/Long-tail/Consumable-carve)=0 -- "no floor guarantee" per
 --     s2b #4, matches Pieter's law that only true KVIs get a protected floor.
---   max = LEAST of:
---     (a) rhythm_adjusted_demand x p_target_cover_days (config, default 7,
---         same standing cover the DC recipe already uses -- BLOOM-002),
---     (b) shelf-life cap -- SKIPPED, always (L1 does not carry shelf life
---         yet, R23 named DEBT, never silently applied as if it were there;
---         shelf_life_cap_skipped=true on every row, no exceptions),
---     (c) GMROI cap: bottom-GMROI-quartile (l2_gmroi_profile.gmroi_quartile
---         =1) Standard/Long-tail/Consumable-carve lines cap max AT min (no
---         cover build funded on poor-GMROI stock) -- KVI-Critical/Important
---         are NEVER capped this way regardless of GMROI (the floor always
---         wins, s2b #4/#5).
+--   max_band (the ORDER-UP-TO level) = min_band + rhythm_adjusted_demand x
+--     review_days_used. ADDITIVE, not a competing absolute ceiling -- safety
+--     days sit BENEATH the build, they are never a tax deducted from it.
+--     review_days_used = p_target_cover_days (default 7, same standing cover
+--     BLOOM-002 already uses), HALVED (config p_gmroi_cap_review_factor,
+--     default 0.5) for bottom-GMROI-quartile Standard/Long-tail/Consumable
+--     lines -- narrower build, funded less on poor-GMROI stock, but NEVER
+--     zero (PM, 2026-07-08: "gmroi_capped reduces review_period and never
+--     collapses the band"). KVI-Critical/Important are NEVER reduced this
+--     way regardless of GMROI (the floor always wins, s2b #4/#5). This
+--     0.5 factor is CC's own reasonable interim choice, not something PM
+--     specified as an exact number -- flagged for confirmation, not asserted
+--     as settled (R27 s7).
+--   shelf-life cap -- SKIPPED, always (L1 does not carry shelf life yet, R23
+--     named DEBT, never silently applied as if it were there;
+--     shelf_life_cap_skipped=true on every row, no exceptions).
+--   Worked numbers (PM's own reconciliation, both SPAR stores, p_lead_days=
+--   3.5, p_target_cover_days=7): KVI_CRITICAL min=7.5d-equiv, max=14.5d-equiv
+--   (width 7d). KVI_IMPORTANT min=5.5d, max=12.5d (width 7d). STANDARD/
+--   LONG_TAIL min=3.5d, max=10.5d (width 7d, or 3.5d if GMROI-capped).
+--   Every non-GMROI-capped band now has the SAME 7-day width regardless of
+--   KVI tier -- the safety ladder changes the FLOOR, never the BUILD.
 --
 -- BAND_BLOCKED (backtest-added BINDING condition #1, Phase 3 verdict): the
 -- band computes but is flagged untrustworthy when the SOH it nets off is
@@ -59,28 +71,38 @@
 -- surface "band blocked, count first" and route to the stocktake queue
 -- rather than order against the paper SOH.
 --
--- ENG-001 CRITICAL FIX (PM, 2026-07-08): max_band was never floored on
--- min_band. min = demand x (safety_days + lead_days); max = demand x
--- target_cover_days. For KVI_CRITICAL (safety 4d, lead 3.5d default = 7.5d)
--- against the 7-day default cover, min > max on EVERY KVI_CRITICAL line, both
--- SPAR stores, 400/400 -- the KVI floor's own protection window is wider
--- than its own build ceiling, so a recipe filling to max_band would order
--- every protected line to a level BELOW its own reorder point. This is the
--- exact 10116 failure the backtest found (KVIs falling with the store)
--- rebuilt into the engine as a structural bug, not a data problem -- caught
--- by inspecting one worked line (product 198 @ 80175), not by the GMROI-cap
--- check (which is honest and separately correct: all 400 lines are
--- quartile 4 and never GMROI-capped, so that test passed over a band that
--- was already inverted before the cap ran). THE MISSING INVARIANT:
--- max_band >= min_band, always. Fix: max_band = GREATEST(min_band, the
--- previously-computed ceiling), max_floored_to_min=true logs every row where
--- the floor actually fired (R29 -- the reason travels with the number).
--- max_band_uncapped stays the PURE pre-floor cover-target value (unchanged,
--- it is precisely what let this bug surface -- never hide the raw number
--- behind the corrected one). ASSERTED as a post-condition at the end of
--- every refresh: the function RAISES and rolls back if any row of its own
--- output violates the invariant, so this class of bug can never ship silently
--- again.
+-- ENG-001 CRITICAL, v1 FIX REJECTED, v2 FIX BELOW (PM, 2026-07-08):
+-- v1 found: max_band was never floored on min_band -- min = demand x
+-- (safety_days + lead_days); max = demand x target_cover_days. For
+-- KVI_CRITICAL (7.5d min vs 7d cover) min > max on 400/400 lines, both SPAR
+-- stores.
+-- v1 FIX (REJECTED same day, PM re-verified live): `GREATEST(min_band,
+-- cover_candidate)` stops the inversion but LIFTS max ONTO min rather than
+-- above it -- every KVI_CRITICAL line got a ZERO-WIDTH band (order-up-to ==
+-- reorder point), the only band in either store that thin. The recipe would
+-- have ordered each KVI-Critical line exactly back to its trigger, every
+-- drop, never building real cover -- the KVI floor still would not have
+-- functioned, just without the visible inversion. Worse: the post-condition
+-- (max_band >= min_band) could not fail, because GREATEST guarantees it by
+-- construction -- "an assertion that cannot fail is not a proof" (PM, R22).
+-- Root cause restated: target_cover_days was being used as a competing
+-- ABSOLUTE ceiling instead of a BUFFER added on top of the reorder point, so
+-- safety days acted as a tax deducted from cover, not a floor beneath it --
+-- the more critical the line, the thinner its band, exactly backwards.
+-- v2 FIX (this file): max_band = min_band + demand x review_days_used,
+-- ADDITIVE construction -- the invariant max_band >= min_band (in fact
+-- STRICTLY greater whenever demand > 0) holds by the arithmetic itself, not
+-- by a clamp. max_band_uncapped now reports what max WOULD be without any
+-- GMROI reduction (min_band + demand x p_target_cover_days), so the GMROI
+-- effect stays visible and auditable (R29) rather than hidden inside one
+-- number.
+-- ACCEPTANCE, PER PM'S OWN INSTRUCTION: a WIDTH test, not an inversion test
+-- -- no row with rhythm_adjusted_demand > 0 may have max_band = min_band.
+-- ASSERTED as a post-condition at the end of every refresh (both the basic
+-- max>=min invariant AND the width test): the function RAISES and rolls
+-- back if either is violated by its own output, so this class of bug can
+-- never ship silently again -- and this time the width test is a real check,
+-- not a clamp restated as a proof.
 --
 -- ENG-003 FIX (PM, 2026-07-08): this object's pool was an INDEPENDENT query
 -- against l2_stock_position (WHERE class='NORMAL'), not the SAME rows
@@ -128,9 +150,10 @@ GRANT SELECT ON public.l2_stock_band TO anon, authenticated;
 
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.refresh_l2_stock_band(
-  p_store               text,
-  p_lead_days           numeric DEFAULT 3.5,
-  p_target_cover_days   numeric DEFAULT 7
+  p_store                     text,
+  p_lead_days                 numeric DEFAULT 3.5,
+  p_target_cover_days         numeric DEFAULT 7,
+  p_gmroi_cap_review_factor   numeric DEFAULT 0.5
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -140,6 +163,7 @@ DECLARE
   v_dom int;
   v_rows int;
   v_violations int;
+  v_zero_width int;
 BEGIN
   SELECT MAX(sale_date) INTO v_anchor
   FROM public.sigma_sales
@@ -188,7 +212,12 @@ BEGIN
     SELECT product_code, daily_ros, kvi_band,
       COALESCE(week_index_raw, 1.0) AS week_index_used,
       COALESCE(current_month_factor, 1.0) AS month_factor_used,
-      daily_ros * COALESCE(week_index_raw, 1.0) * COALESCE(current_month_factor, 1.0) AS rhythm_adjusted_demand,
+      -- GREATEST(...,0): l2_stock_position.daily_ros can itself be negative
+      -- (a line whose 91d till returns net-exceed its sales) -- caught live,
+      -- 2026-07-08, 6 rows at 10116. Negative demand has no sane meaning for
+      -- an order-quantity formula; a net-returning line is zero demand for
+      -- ordering purposes, not negative demand propagating through min/max.
+      GREATEST(daily_ros * COALESCE(week_index_raw, 1.0) * COALESCE(current_month_factor, 1.0), 0) AS rhythm_adjusted_demand,
       CASE kvi_band WHEN 'KVI_CRITICAL' THEN 4 WHEN 'KVI_IMPORTANT' THEN 2 ELSE 0 END AS safety_days,
       gmroi_quartile,
       (COALESCE(bucket, '') IN ('COUNT', 'AMBIGUOUS')) AS band_blocked,
@@ -198,10 +227,20 @@ BEGIN
   banded AS (
     SELECT product_code, daily_ros, kvi_band, week_index_used, month_factor_used,
       rhythm_adjusted_demand, safety_days, gmroi_quartile, band_blocked, bucket,
+      -- min_band is the REORDER POINT. Unchanged from v1 -- this part was
+      -- always right.
       (rhythm_adjusted_demand * p_lead_days) + (safety_days * rhythm_adjusted_demand) AS min_candidate,
-      rhythm_adjusted_demand * p_target_cover_days AS cover_candidate,
       (COALESCE(gmroi_quartile = 1, false) AND kvi_band NOT IN ('KVI_CRITICAL', 'KVI_IMPORTANT')) AS gmroi_capped
     FROM computed
+  ),
+  reviewed AS (
+    SELECT *,
+      -- review_days_used: the BUILD, added ON TOP of min_candidate, never a
+      -- competing ceiling. GMROI-capped lines get a narrower (halved, not
+      -- zeroed) build -- PM, 2026-07-08: "never collapses the band."
+      CASE WHEN gmroi_capped THEN p_target_cover_days * p_gmroi_cap_review_factor
+           ELSE p_target_cover_days END AS review_days_used
+    FROM banded
   )
   INSERT INTO public.l2_stock_band (
     client_id, store_code, product_code, daily_ros, week_index_used, month_factor_used,
@@ -215,25 +254,28 @@ BEGIN
     p_lead_days,
     min_candidate AS min_band,
     p_target_cover_days,
-    cover_candidate AS max_band_uncapped,
+    -- max_band_uncapped: what max WOULD be with the FULL (non-GMROI-reduced)
+    -- build -- the GMROI effect stays visible as a delta, never hidden.
+    min_candidate + (rhythm_adjusted_demand * p_target_cover_days) AS max_band_uncapped,
     gmroi_quartile,
     gmroi_capped,
     true,
-    -- ENG-001 fix: the invariant, enforced unconditionally. GMROI-capped
-    -- lines already equal min_candidate (by design, s2b #4); everything else
-    -- is floored on min_candidate so max_band can never sit below min_band.
-    GREATEST(min_candidate, CASE WHEN gmroi_capped THEN min_candidate ELSE cover_candidate END) AS max_band,
-    (NOT gmroi_capped AND cover_candidate < min_candidate) AS max_floored_to_min,
+    -- ENG-001 v2 fix: ADDITIVE. max_band >= min_band holds by construction
+    -- (in fact strictly greater whenever demand > 0), never a clamp.
+    min_candidate + (rhythm_adjusted_demand * review_days_used) AS max_band,
+    (rhythm_adjusted_demand * review_days_used) = 0 AS max_floored_to_min,
     band_blocked,
     CASE WHEN band_blocked THEN 'bucket=' || bucket || ': band blocked, count first' ELSE NULL END,
     'v1.0', now()
-  FROM banded;
+  FROM reviewed;
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
 
-  -- POST-CONDITION (PM, 2026-07-08): assert the invariant on THIS store's own
-  -- output before returning success. A future regression fails loudly here,
-  -- transaction rolled back, never a silent inverted band reaching the RPC.
+  -- POST-CONDITIONS (PM, 2026-07-08): two checks, not one. The plain
+  -- inversion check stays as a backstop; the WIDTH test is the real
+  -- acceptance criterion this time -- "no line with rhythm_adjusted_demand
+  -- > 0 may have max_band = min_band." Both RAISE and roll back the
+  -- transaction on violation.
   SELECT COUNT(*) INTO v_violations
   FROM public.l2_stock_band
   WHERE store_code = p_store AND max_band < min_band;
@@ -242,9 +284,17 @@ BEGIN
     RAISE EXCEPTION 'l2_stock_band invariant violated: % row(s) at store % have max_band < min_band', v_violations, p_store;
   END IF;
 
+  SELECT COUNT(*) INTO v_zero_width
+  FROM public.l2_stock_band
+  WHERE store_code = p_store AND rhythm_adjusted_demand > 0 AND max_band = min_band;
+
+  IF v_zero_width > 0 THEN
+    RAISE EXCEPTION 'l2_stock_band width test failed: % row(s) at store % have a zero-width band with real demand', v_zero_width, p_store;
+  END IF;
+
   RETURN jsonb_build_object('store_code', p_store, 'anchor', v_anchor, 'day_of_month', v_dom, 'rows', v_rows);
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.refresh_l2_stock_band(text, numeric, numeric) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.refresh_l2_stock_band(text, numeric, numeric) TO authenticated;
+REVOKE ALL ON FUNCTION public.refresh_l2_stock_band(text, numeric, numeric, numeric) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.refresh_l2_stock_band(text, numeric, numeric, numeric) TO authenticated;
