@@ -2,8 +2,9 @@
 -- create_l2_stock_band.sql
 -- SB-CC-BLOOM-003 Ship 2. L2 pantry object #5 of 5 (BLOOM-003 s2/s2b #4).
 -- Depends on l2_kvi_profile, l2_rhythm_profile, l2_seasonality_profile,
--- l2_gmroi_profile (all built + R22-verified this ship). R28:
--- effective_from 2026-07-07. Formula GENERAL, constants DEMO_CALIBRATION.
+-- l2_gmroi_profile, l2_bloom_ros_pantry. R28: effective_from 2026-07-07,
+-- ENG-004 fix effective_from 2026-07-10. Formula GENERAL, constants
+-- DEMO_CALIBRATION.
 --
 -- ARCHITECTURE: same proven pattern (persistent TABLE, refresh_<name>(p_store),
 -- idempotent).
@@ -25,14 +26,86 @@
 -- cycle). Config key, not hardcoded logic -- superseded when cadence-aware
 -- lead time lands, same as the days-cover selector.
 --
--- FORMULA (BLOOM-003 s2b #4, CORRECTED per PM's second review, 2026-07-08 --
--- see ENG-001 v2 note below; this replaces the first-pass GREATEST clamp):
---   rhythm_adjusted_demand = l2_stock_position.daily_ros
---     x this-week's index (from l2_rhythm_profile, W1-W4 by today's
---       day-of-month, COALESCEd to 1.0 -- EVERYDAY archetype lines are
---       already near 1.0 by construction so this is a correct no-op there)
---     x this-month's seasonality factor (l2_seasonality_profile
---       .current_month_factor, COALESCEd to 1.0 when NULL/never-sold).
+-- ============================== ENG-004 (2026-07-10) ==============================
+-- REPOINTED, folding in the ENG-005 family-draw fix at the same time (the
+-- milk KVI-floor case that started ENG-005 was never actually fixed here --
+-- ENG-005 repointed the DC ORDER's demand; this object, the KVI floor that
+-- STOCK BAND itself computes, still read raw l2_stock_position.daily_ros
+-- until now). Two problems, one fix, per Pieter's standing rulings:
+--
+-- PROBLEM 1 (the original ENG-004 finding): rhythm_adjusted_demand read RAW
+-- l2_stock_position.daily_ros (91d, sigma_sales-based) -- no stockout
+-- correction at all, violating the 2026-07-03 ruling (canon s14 addendum v2:
+-- "CORRECTED ROS DRIVES QUANTITIES, WITH GUARDS"). A phantom-gone-quiet line's
+-- raw ROS decays and the band shrinks to match the decay -- DF-7 written into
+-- the demand input of every band.
+--
+-- PROBLEM 2 (ENG-005's actual gap here): even the CORRECTED scan-side ROS
+-- undercounts a parent-child family (canon s14 v5 / BLOOM-003 s7) -- the same
+-- gap ENG-005 closed in rpc_bloom_order_dc, never closed here. Live proof
+-- carried since ENG-005's own finding: milk (10116/1674) with a 503/day real
+-- family draw against a band built on ~38/day scan-based demand, a KVI floor
+-- of 0.7 days on the store's own biggest KVI-Critical line.
+--
+-- FIX: demand is now resolved from `l2_bloom_ros_pantry`'s 56d window (the
+-- BOR/"standing cadence" window, the closest analogue this cadence-general
+-- object has to a single representative rate -- this object has no ranging
+-- tier of its own to pick 14d/28d/56d by, R27 s7 stated assumption, not one
+-- of the load-bearing confrontations) in TWO stages:
+--   Stage A -- GUARD each side independently (both scan and family-draw carry
+--     their own stockout-correction and their own eligibility, since they are
+--     two independently-computed p_sell_estimate series):
+--     1. Eligibility: KVI_CRITICAL/KVI_IMPORTANT bands are eligible for the
+--        correction BY DEFAULT (signal-rich, protected-floor lines -- the
+--        canon s14 T100/T1000 precedent, adapted from ranging tier to KVI
+--        band since this object has no ranging tier of its own, R27 s7).
+--        STANDARD/LONG_TAIL/CONSUMABLE_CARVE are eligible ONLY via guard 1:
+--        >=8 distinct selling days in the trailing 182d (read directly off
+--        the pantry's own p_sell_estimate x 182 -- that field IS "share of
+--        days with a sale over a 182d lookback", so x182 recovers the day
+--        count with no new computation).
+--     2. Cap: the corrected value used is capped at 2.0x the matching raw
+--        value, on each side independently.
+--     3. Ineligible lines use their raw (uncorrected) value on that side --
+--        never a wrong number standing in for a real one.
+--   Stage B -- GREATEST(scan_side_result, draw_side_result), same governing
+--     law as ENG-005 and BUG-LOG ENG-005B: a real till scan already proves
+--     units moved, so a ledger-side gap never lowers demand below the scan
+--     floor; a real family draw raises it when the scan side loses the
+--     family. `demand_source` names which side won, per row (R29).
+-- The multiplier step (week index x month factor) applies AFTER Stage B,
+-- unchanged from v1 -- rhythm and seasonality adjust the RESOLVED demand,
+-- they do not participate in picking which side (scan/draw) is more real.
+--
+-- ============================ SOH-FLOW POST-CONDITION (2026-07-10) ============================
+-- Folded in per Pieter/PM ruling: a line whose own ledger will not close
+-- against its observed SOH change routes to count, exactly as the stocktake
+-- side of the cascade already does for the same reason (canon s8.5, s11) --
+-- SOH is the claim, the ledger is the evidence, and a claim the ledger can't
+-- explain is unverified, not proven.
+--   Check: soh_start (l2_soh_daily's EARLIEST available snapshot at this
+--   store) + net movements (K sale + R receipt + S adjustment, ALL channels
+--   except I) over that span, compared to soh_end (l2_soh_daily's LATEST
+--   snapshot). A stocktake (I) anywhere in the span legitimately re-anchors
+--   SOH by design -- that is not a mismatch, it is a fresh count, so it
+--   short-circuits the check to "closes".
+--   NAMED L1 GAP (R23, stated not hidden): l2_soh_daily's history is ~29 days
+--   deep at every store as of 2026-07-10 (verified: 10116/21355/80175/80176
+--   28-29 days, 80579 only 15), NOT the 91 days a demand-window-matched check
+--   would ideally use. `soh_flow_window_days` reports the ACTUAL span checked
+--   per store so the confidence of a "closes" verdict is visible, never
+--   implied to be longer than it is. Below 14 days of available history the
+--   check does not run at all (`soh_flow_closes` stays NULL, "not checked" --
+--   never a false pass). Tolerance: GREATEST(2 units, 5% of demand x window
+--   days) -- matches RULE-BOOK R22 s13.2's standing ~1% cross-feed drift
+--   allowance, widened for the shorter window's proportionally larger noise.
+--   A mismatch folds into the EXISTING band_blocked mechanism (previously
+--   only l2_classification.bucket IN ('COUNT','AMBIGUOUS')) with its own
+--   named reason -- one signal, two roads in, the screen already knows how
+--   to render "band blocked, count first" for either.
+--
+-- FORMULA (BLOOM-003 s2b #4, min/max construction UNCHANGED from ENG-001 v2 --
+-- only the demand INPUT changed, ENG-004 above):
 --   min_band (the REORDER POINT) = rhythm_adjusted_demand x p_lead_days + safety.
 --     safety = safety_days x rhythm_adjusted_demand, safety_days by KVI band
 --     (config kvi_safety_days): Critical=4, Important=2, everything else
@@ -41,87 +114,45 @@
 --   max_band (the ORDER-UP-TO level) = min_band + rhythm_adjusted_demand x
 --     review_days_used. ADDITIVE, not a competing absolute ceiling -- safety
 --     days sit BENEATH the build, they are never a tax deducted from it.
---     review_days_used = p_target_cover_days (default 7, same standing cover
---     BLOOM-002 already uses), HALVED (config p_gmroi_cap_review_factor,
---     default 0.5) for bottom-GMROI-quartile Standard/Long-tail/Consumable
---     lines -- narrower build, funded less on poor-GMROI stock, but NEVER
---     zero (PM, 2026-07-08: "gmroi_capped reduces review_period and never
---     collapses the band"). KVI-Critical/Important are NEVER reduced this
---     way regardless of GMROI (the floor always wins, s2b #4/#5). This
---     0.5 factor is CC's own reasonable interim choice, not something PM
---     specified as an exact number -- flagged for confirmation, not asserted
---     as settled (R27 s7).
+--     review_days_used = p_target_cover_days (default 7), HALVED (config
+--     p_gmroi_cap_review_factor, default 0.5) for bottom-GMROI-quartile
+--     Standard/Long-tail/Consumable lines -- narrower build, never zero.
+--     KVI-Critical/Important are NEVER reduced this way regardless of GMROI.
 --   shelf-life cap -- SKIPPED, always (L1 does not carry shelf life yet, R23
 --     named DEBT, never silently applied as if it were there;
 --     shelf_life_cap_skipped=true on every row, no exceptions).
---   Worked numbers (PM's own reconciliation, both SPAR stores, p_lead_days=
---   3.5, p_target_cover_days=7): KVI_CRITICAL min=7.5d-equiv, max=14.5d-equiv
---   (width 7d). KVI_IMPORTANT min=5.5d, max=12.5d (width 7d). STANDARD/
---   LONG_TAIL min=3.5d, max=10.5d (width 7d, or 3.5d if GMROI-capped).
---   Every non-GMROI-capped band now has the SAME 7-day width regardless of
---   KVI tier -- the safety ladder changes the FLOOR, never the BUILD.
 --
--- BAND_BLOCKED (backtest-added BINDING condition #1, Phase 3 verdict): the
--- band computes but is flagged untrustworthy when the SOH it nets off is
--- itself unverified. Uses the same signal as the cascade's own routing:
--- l2_classification.bucket IN ('COUNT','AMBIGUOUS') -- exactly the buckets
--- canon already defines as "claims stock, needs a physical count before it's
--- trusted" (s8.5 lines 2b/3/6/9). band_blocked rows still carry a computed
--- band (never silently dropped, R21 s5) but the Recipe RPC/screen must
--- surface "band blocked, count first" and route to the stocktake queue
--- rather than order against the paper SOH.
---
--- ENG-001 CRITICAL, v1 FIX REJECTED, v2 FIX BELOW (PM, 2026-07-08):
--- v1 found: max_band was never floored on min_band -- min = demand x
--- (safety_days + lead_days); max = demand x target_cover_days. For
--- KVI_CRITICAL (7.5d min vs 7d cover) min > max on 400/400 lines, both SPAR
--- stores.
--- v1 FIX (REJECTED same day, PM re-verified live): `GREATEST(min_band,
--- cover_candidate)` stops the inversion but LIFTS max ONTO min rather than
--- above it -- every KVI_CRITICAL line got a ZERO-WIDTH band (order-up-to ==
--- reorder point), the only band in either store that thin. The recipe would
--- have ordered each KVI-Critical line exactly back to its trigger, every
--- drop, never building real cover -- the KVI floor still would not have
--- functioned, just without the visible inversion. Worse: the post-condition
--- (max_band >= min_band) could not fail, because GREATEST guarantees it by
--- construction -- "an assertion that cannot fail is not a proof" (PM, R22).
--- Root cause restated: target_cover_days was being used as a competing
--- ABSOLUTE ceiling instead of a BUFFER added on top of the reorder point, so
--- safety days acted as a tax deducted from cover, not a floor beneath it --
--- the more critical the line, the thinner its band, exactly backwards.
--- v2 FIX (this file): max_band = min_band + demand x review_days_used,
--- ADDITIVE construction -- the invariant max_band >= min_band (in fact
--- STRICTLY greater whenever demand > 0) holds by the arithmetic itself, not
--- by a clamp. max_band_uncapped now reports what max WOULD be without any
--- GMROI reduction (min_band + demand x p_target_cover_days), so the GMROI
--- effect stays visible and auditable (R29) rather than hidden inside one
--- number.
+-- ENG-001 CRITICAL, v1 FIX REJECTED, v2 FIX (PM, 2026-07-08, UNCHANGED here):
+-- max_band = min_band + demand x review_days_used, ADDITIVE construction --
+-- the invariant max_band >= min_band (in fact STRICTLY greater whenever
+-- demand > 0) holds by the arithmetic itself, not by a clamp.
 -- ACCEPTANCE, PER PM'S OWN INSTRUCTION: a WIDTH test, not an inversion test
 -- -- no row with rhythm_adjusted_demand > 0 may have max_band = min_band.
--- ASSERTED as a post-condition at the end of every refresh (both the basic
--- max>=min invariant AND the width test): the function RAISES and rolls
--- back if either is violated by its own output, so this class of bug can
--- never ship silently again -- and this time the width test is a real check,
--- not a clamp restated as a proof.
+-- ASSERTED as a post-condition at the end of every refresh: the function
+-- RAISES and rolls back if either invariant is violated by its own output.
 --
--- ENG-003 FIX (PM, 2026-07-08): this object's pool was an INDEPENDENT query
--- against l2_stock_position (WHERE class='NORMAL'), not the SAME rows
--- l2_kvi_profile actually profiled -- 70 rows at 80175 existed in this
--- object's pool but not in l2_kvi_profile (refresh-timing drift, ENG-002),
--- and defaulted to kvi_band='STANDARD' via COALESCE -- a hidden L2 choice
--- (R27 s2: "a calculation that needed a choice... is a branch wearing a
--- fact's clothes"), not a derived fact. Fix: pool is now sourced FROM
--- l2_kvi_profile directly (INNER JOIN to l2_stock_position for daily_ros) --
--- a product with no KVI profile yet gets NO stock band yet, rather than a
--- silently-defaulted one. This drift disappears entirely once ENG-002
--- (nightly wiring, all six objects refreshed in one pass) lands.
+-- ENG-003 FIX (PM, 2026-07-08, UNCHANGED here): pool is sourced FROM
+-- l2_kvi_profile directly (INNER JOIN to l2_stock_position) -- no
+-- independent re-query that can drift out of step with what KVI profiled.
 -- =============================================================================
 
-CREATE TABLE IF NOT EXISTS public.l2_stock_band (
-  client_id                text NOT NULL DEFAULT 'socialbrand',
+DROP TABLE IF EXISTS public.l2_stock_band CASCADE;
+
+CREATE TABLE public.l2_stock_band (
+  client_id                 text NOT NULL DEFAULT 'socialbrand',
   store_code                text NOT NULL,
   product_code              bigint NOT NULL,
   daily_ros                 numeric,
+  ros_scan_raw              numeric,
+  ros_scan_used             numeric,
+  scan_eligible             boolean NOT NULL DEFAULT false,
+  scan_eligibility_reason   text,
+  ros_draw_raw              numeric,
+  ros_draw_used             numeric,
+  draw_eligible             boolean NOT NULL DEFAULT false,
+  draw_eligibility_reason  text,
+  demand_source             text NOT NULL DEFAULT 'scan',
+  base_demand               numeric,
   week_index_used           numeric NOT NULL DEFAULT 1.0,
   month_factor_used         numeric NOT NULL DEFAULT 1.0,
   rhythm_adjusted_demand    numeric,
@@ -136,14 +167,17 @@ CREATE TABLE IF NOT EXISTS public.l2_stock_band (
   shelf_life_cap_skipped    boolean NOT NULL DEFAULT true,
   max_band                  numeric,
   max_floored_to_min        boolean NOT NULL DEFAULT false,
+  soh_flow_closes           boolean,
+  soh_flow_window_days      int,
+  soh_flow_reason           text,
   band_blocked              boolean NOT NULL DEFAULT false,
   band_blocked_reason       text,
-  engine_version            text NOT NULL DEFAULT 'v1.0',
+  engine_version            text NOT NULL DEFAULT 'v2.0',
   profiled_at               timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (store_code, product_code)
 );
 
-CREATE INDEX IF NOT EXISTS idx_l2_stock_band_blocked ON public.l2_stock_band (store_code, band_blocked);
+CREATE INDEX idx_l2_stock_band_blocked ON public.l2_stock_band (store_code, band_blocked);
 
 REVOKE ALL ON public.l2_stock_band FROM PUBLIC;
 GRANT SELECT ON public.l2_stock_band TO anon, authenticated;
@@ -184,14 +218,32 @@ BEGIN
     ORDER BY product_code, snapshot_date DESC
   ),
   pool AS (
-    -- ENG-003 fix: pool IS l2_kvi_profile's own rows (INNER JOIN), never an
-    -- independent re-query of l2_stock_position that can drift out of step
-    -- with what KVI actually profiled. No product reaches this table without
-    -- a real, derived kvi_band.
+    -- ENG-003 fix (unchanged): pool IS l2_kvi_profile's own rows.
     SELECT k.product_code, k.kvi_band, sp.daily_ros
     FROM public.l2_kvi_profile k
     JOIN public.l2_stock_position sp ON sp.store_code = k.store_code AND sp.product_code = k.product_code
     WHERE k.store_code = p_store
+  ),
+  soh_window AS (
+    SELECT MIN(snapshot_date) AS win_start, MAX(snapshot_date) AS win_end
+    FROM public.l2_soh_daily WHERE store_code = p_store
+  ),
+  soh_start_snap AS (
+    SELECT sd.product_code, sd.soh AS soh_start
+    FROM public.l2_soh_daily sd, soh_window w
+    WHERE sd.store_code = p_store AND sd.snapshot_date = w.win_start
+  ),
+  soh_end_snap AS (
+    SELECT sd.product_code, sd.soh AS soh_end
+    FROM public.l2_soh_daily sd, soh_window w
+    WHERE sd.store_code = p_store AND sd.snapshot_date = w.win_end
+  ),
+  movement_flow AS (
+    SELECT sm.product_code, SUM(sm.qty) AS net_qty, bool_or(sm.movement_type = 'I') AS had_stocktake
+    FROM public.sigma_movements sm, soh_window w
+    WHERE sm.store_code = p_store AND sm.movement_type IN ('K', 'R', 'S')
+      AND sm.movement_date > w.win_start AND sm.movement_date <= w.win_end
+    GROUP BY sm.product_code
   ),
   joined AS (
     SELECT p.product_code, COALESCE(p.daily_ros, 0) AS daily_ros, p.kvi_band,
@@ -201,81 +253,149 @@ BEGIN
                 ELSE rp.w4_index END AS week_index_raw,
            sea.current_month_factor,
            g.gmroi_quartile,
-           lb.bucket
+           lb.bucket,
+           rop.ros_56d AS scan_raw, rop.ros_56d_corrected AS scan_corrected, rop.p_sell_estimate AS p_sell_scan,
+           rop.ros_draw_56d AS draw_raw, rop.ros_draw_56d_corrected AS draw_corrected, rop.p_sell_estimate_draw AS p_sell_draw,
+           rop.unit_incommensurable,
+           ss.soh_start, se.soh_end, mf.net_qty, mf.had_stocktake,
+           w.win_start, w.win_end
     FROM pool p
     LEFT JOIN public.l2_rhythm_profile rp ON rp.store_code = p_store AND rp.product_code = p.product_code
     LEFT JOIN public.l2_seasonality_profile sea ON sea.store_code = p_store AND sea.product_code = p.product_code
     LEFT JOIN public.l2_gmroi_profile g ON g.store_code = p_store AND g.product_code = p.product_code
     LEFT JOIN latest_bucket lb ON lb.product_code = p.product_code
+    LEFT JOIN public.l2_bloom_ros_pantry rop ON rop.store_code = p_store AND rop.product_code = p.product_code
+    LEFT JOIN soh_start_snap ss ON ss.product_code = p.product_code
+    LEFT JOIN soh_end_snap se ON se.product_code = p.product_code
+    LEFT JOIN movement_flow mf ON mf.product_code = p.product_code
+    CROSS JOIN soh_window w
+  ),
+  guarded AS (
+    -- ENG-004: guard each side (scan, family draw) independently before
+    -- combining. Eligibility default for KVI floor bands, else guard-1
+    -- (>=8 selling days/182d, read off the pantry's own p_sell_estimate).
+    SELECT j.*,
+      COALESCE(j.scan_raw, 0) AS scan_raw_g,
+      COALESCE(j.draw_raw, 0) AS draw_raw_g,
+      ROUND(COALESCE(j.p_sell_scan, 0) * 182) AS scan_selling_days,
+      ROUND(COALESCE(j.p_sell_draw, 0) * 182) AS draw_selling_days,
+      (j.kvi_band IN ('KVI_CRITICAL', 'KVI_IMPORTANT') OR COALESCE(j.p_sell_scan, 0) * 182 >= 8) AS scan_eligible,
+      (NOT COALESCE(j.unit_incommensurable, true)
+        AND (j.kvi_band IN ('KVI_CRITICAL', 'KVI_IMPORTANT') OR COALESCE(j.p_sell_draw, 0) * 182 >= 8)) AS draw_eligible
+    FROM joined j
+  ),
+  capped AS (
+    SELECT g.*,
+      CASE WHEN g.scan_eligible AND g.scan_corrected IS NOT NULL
+           THEN LEAST(g.scan_corrected, 2.0 * g.scan_raw_g)
+           ELSE g.scan_raw_g END AS scan_used,
+      CASE WHEN g.draw_eligible AND g.draw_corrected IS NOT NULL
+           THEN LEAST(g.draw_corrected, 2.0 * g.draw_raw_g)
+           ELSE (CASE WHEN NOT COALESCE(g.unit_incommensurable, true) THEN g.draw_raw_g ELSE NULL END) END AS draw_used
+    FROM guarded g
+  ),
+  resolved AS (
+    SELECT c.*,
+      GREATEST(c.scan_used, COALESCE(c.draw_used, 0)) AS base_demand,
+      (COALESCE(c.draw_used, 0) > c.scan_used) AS demand_from_draw,
+      CASE WHEN c.scan_eligible THEN 'kvi_floor_or_guard1_eligible (' || c.scan_selling_days || 'd/182d)'
+           ELSE 'ineligible_raw_used (' || c.scan_selling_days || 'd/182d, need 8)' END AS scan_eligibility_reason,
+      CASE WHEN COALESCE(c.unit_incommensurable, true) THEN 'unit_incommensurable_no_draw'
+           WHEN c.draw_eligible THEN 'kvi_floor_or_guard1_eligible (' || c.draw_selling_days || 'd/182d)'
+           ELSE 'ineligible_raw_used (' || c.draw_selling_days || 'd/182d, need 8)' END AS draw_eligibility_reason,
+      -- SOH-flow post-condition: window_days is the ACTUAL span l2_soh_daily
+      -- can support at this store, never assumed to be 91.
+      (c.win_end - c.win_start) AS soh_flow_window_days,
+      CASE
+        WHEN (c.win_end - c.win_start) < 14 THEN NULL
+        WHEN c.had_stocktake THEN true
+        WHEN c.soh_start IS NULL OR c.soh_end IS NULL THEN NULL
+        ELSE ABS((c.soh_start + COALESCE(c.net_qty, 0)) - c.soh_end)
+             <= GREATEST(2, 0.05 * GREATEST(c.scan_raw_g, COALESCE(c.draw_raw_g, 0)) * (c.win_end - c.win_start))
+      END AS soh_flow_closes
+    FROM capped c
   ),
   computed AS (
     SELECT product_code, daily_ros, kvi_band,
+      scan_raw_g, scan_used, scan_eligible, scan_eligibility_reason,
+      draw_raw_g, draw_used, draw_eligible, draw_eligibility_reason,
+      base_demand, demand_from_draw,
+      soh_flow_closes, soh_flow_window_days,
       COALESCE(week_index_raw, 1.0) AS week_index_used,
       COALESCE(current_month_factor, 1.0) AS month_factor_used,
-      -- GREATEST(...,0): l2_stock_position.daily_ros can itself be negative
-      -- (a line whose 91d till returns net-exceed its sales) -- caught live,
-      -- 2026-07-08, 6 rows at 10116. Negative demand has no sane meaning for
-      -- an order-quantity formula; a net-returning line is zero demand for
-      -- ordering purposes, not negative demand propagating through min/max.
-      GREATEST(daily_ros * COALESCE(week_index_raw, 1.0) * COALESCE(current_month_factor, 1.0), 0) AS rhythm_adjusted_demand,
+      -- GREATEST(...,0): base_demand is already non-negative by construction
+      -- (both scan_raw_g/draw_raw_g floor at 0 via COALESCE), kept for
+      -- symmetry with the multiplier step which could in principle carry a
+      -- negative factor if a future profile object ever produced one.
+      GREATEST(base_demand * COALESCE(week_index_raw, 1.0) * COALESCE(current_month_factor, 1.0), 0) AS rhythm_adjusted_demand,
       CASE kvi_band WHEN 'KVI_CRITICAL' THEN 4 WHEN 'KVI_IMPORTANT' THEN 2 ELSE 0 END AS safety_days,
       gmroi_quartile,
-      (COALESCE(bucket, '') IN ('COUNT', 'AMBIGUOUS')) AS band_blocked,
-      bucket
-    FROM joined
+      (COALESCE(bucket, '') IN ('COUNT', 'AMBIGUOUS')) AS bucket_blocked,
+      bucket,
+      (soh_flow_closes IS NOT NULL AND NOT soh_flow_closes) AS flow_blocked
+    FROM resolved
   ),
   banded AS (
-    SELECT product_code, daily_ros, kvi_band, week_index_used, month_factor_used,
-      rhythm_adjusted_demand, safety_days, gmroi_quartile, band_blocked, bucket,
-      -- min_band is the REORDER POINT. Unchanged from v1 -- this part was
-      -- always right.
+    SELECT product_code, daily_ros, kvi_band,
+      scan_raw_g, scan_used, scan_eligible, scan_eligibility_reason,
+      draw_raw_g, draw_used, draw_eligible, draw_eligibility_reason,
+      base_demand, demand_from_draw, soh_flow_closes, soh_flow_window_days,
+      week_index_used, month_factor_used,
+      rhythm_adjusted_demand, safety_days, gmroi_quartile,
+      bucket_blocked, flow_blocked, bucket,
       (rhythm_adjusted_demand * p_lead_days) + (safety_days * rhythm_adjusted_demand) AS min_candidate,
       (COALESCE(gmroi_quartile = 1, false) AND kvi_band NOT IN ('KVI_CRITICAL', 'KVI_IMPORTANT')) AS gmroi_capped
     FROM computed
   ),
   reviewed AS (
     SELECT *,
-      -- review_days_used: the BUILD, added ON TOP of min_candidate, never a
-      -- competing ceiling. GMROI-capped lines get a narrower (halved, not
-      -- zeroed) build -- PM, 2026-07-08: "never collapses the band."
       CASE WHEN gmroi_capped THEN p_target_cover_days * p_gmroi_cap_review_factor
            ELSE p_target_cover_days END AS review_days_used
     FROM banded
   )
   INSERT INTO public.l2_stock_band (
-    client_id, store_code, product_code, daily_ros, week_index_used, month_factor_used,
+    client_id, store_code, product_code, daily_ros,
+    ros_scan_raw, ros_scan_used, scan_eligible, scan_eligibility_reason,
+    ros_draw_raw, ros_draw_used, draw_eligible, draw_eligibility_reason,
+    demand_source, base_demand,
+    week_index_used, month_factor_used,
     rhythm_adjusted_demand, kvi_band, safety_days_used, lead_days_used, min_band,
     target_cover_days_used, max_band_uncapped, gmroi_quartile, gmroi_capped,
-    shelf_life_cap_skipped, max_band, max_floored_to_min, band_blocked, band_blocked_reason,
+    shelf_life_cap_skipped, max_band, max_floored_to_min,
+    soh_flow_closes, soh_flow_window_days, soh_flow_reason,
+    band_blocked, band_blocked_reason,
     engine_version, profiled_at
   )
-  SELECT 'socialbrand', p_store, product_code, daily_ros, week_index_used, month_factor_used,
+  SELECT 'socialbrand', p_store, product_code, daily_ros,
+    scan_raw_g, scan_used, scan_eligible, scan_eligibility_reason,
+    draw_raw_g, draw_used, draw_eligible, draw_eligibility_reason,
+    (CASE WHEN demand_from_draw THEN 'family_draw' ELSE 'scan' END), base_demand,
+    week_index_used, month_factor_used,
     rhythm_adjusted_demand, kvi_band, safety_days,
     p_lead_days,
     min_candidate AS min_band,
     p_target_cover_days,
-    -- max_band_uncapped: what max WOULD be with the FULL (non-GMROI-reduced)
-    -- build -- the GMROI effect stays visible as a delta, never hidden.
     min_candidate + (rhythm_adjusted_demand * p_target_cover_days) AS max_band_uncapped,
     gmroi_quartile,
     gmroi_capped,
     true,
-    -- ENG-001 v2 fix: ADDITIVE. max_band >= min_band holds by construction
-    -- (in fact strictly greater whenever demand > 0), never a clamp.
     min_candidate + (rhythm_adjusted_demand * review_days_used) AS max_band,
     (rhythm_adjusted_demand * review_days_used) = 0 AS max_floored_to_min,
-    band_blocked,
-    CASE WHEN band_blocked THEN 'bucket=' || bucket || ': band blocked, count first' ELSE NULL END,
-    'v1.0', now()
+    soh_flow_closes, soh_flow_window_days,
+    (CASE WHEN soh_flow_closes IS NULL THEN 'not_checked_insufficient_history (' || soh_flow_window_days || 'd available, need >=14)'
+          WHEN soh_flow_closes THEN 'closes'
+          ELSE 'mismatch: ledger does not reconcile to observed SOH over ' || soh_flow_window_days || 'd' END) AS soh_flow_reason,
+    (bucket_blocked OR flow_blocked) AS band_blocked,
+    CASE WHEN bucket_blocked AND flow_blocked THEN 'bucket=' || bucket || ' AND soh_flow_mismatch: band blocked, count first'
+         WHEN bucket_blocked THEN 'bucket=' || bucket || ': band blocked, count first'
+         WHEN flow_blocked THEN 'soh_flow_mismatch: band blocked, count first'
+         ELSE NULL END AS band_blocked_reason,
+    'v2.0', now()
   FROM reviewed;
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
 
-  -- POST-CONDITIONS (PM, 2026-07-08): two checks, not one. The plain
-  -- inversion check stays as a backstop; the WIDTH test is the real
-  -- acceptance criterion this time -- "no line with rhythm_adjusted_demand
-  -- > 0 may have max_band = min_band." Both RAISE and roll back the
-  -- transaction on violation.
+  -- POST-CONDITIONS (PM, 2026-07-08, unchanged): two checks, not one.
   SELECT COUNT(*) INTO v_violations
   FROM public.l2_stock_band
   WHERE store_code = p_store AND max_band < min_band;

@@ -174,7 +174,20 @@
       "Bash(grep -rl \"rpc_kitchen\" sql/)",
       "Bash(grep -rl \"fetchKitchen\" public/ src/)",
       "Bash(git check-ignore *)",
-      "Bash(curl -s http://localhost:3000/api/dev-corner/lines)"
+      "Bash(curl -s http://localhost:3000/api/dev-corner/lines)",
+      "Bash(rm -f \"C:\\\\Users\\\\User\\\\Desktop\\\\Daisy\\\\Bloom\\\\2026-07-02\\\\chunk_aa\" \"C:\\\\Users\\\\User\\\\Desktop\\\\Daisy\\\\Bloom\\\\2026-07-02\\\\chunk_ab\" \"C:\\\\Users\\\\User\\\\Desktop\\\\Daisy\\\\Bloom\\\\2026-07-02\\\\chunk_ac\" \"C:\\\\Users\\\\User\\\\Desktop\\\\Daisy\\\\Bloom\\\\2026-07-02\\\\chunk_ad\" \"C:\\\\Users\\\\User\\\\Desktop\\\\Daisy\\\\Bloom\\\\2026-07-02\\\\chunk_ae\" \"C:\\\\Users\\\\User\\\\Desktop\\\\Daisy\\\\Bloom\\\\2026-07-02\\\\reference_insert_values.sql\" *)",
+      "Bash(powershell -Command \"Get-ChildItem -Path 'C:\\\\Users\\\\User\\\\Desktop\\\\Daisy\\\\Bloom' -Recurse -File | Select-Object -First 100 FullName\")",
+      "Bash(awk 'NR>=1 && NR<=40' HANDOVER-CURRENT.md)",
+      "Bash(head -50 scripts/Invoke-ExtractFromSigmaSQL.ps1)",
+      "Bash(git log *)",
+      "Bash(grep -n -i \"deploy\\\\|C:\\\\\\\\\\\\\\\\socialbrand\\\\|github\" scripts/Invoke-ExtractFromSigmaSQL.ps1)",
+      "Bash(grep -n \"l2_bloom_ros_pantry\\\\|^## Materialized\\\\|^## Views$\\\\|^## RPC Functions\" DB-SCHEMA.md)",
+      "Bash(find sql *)",
+      "Bash(grep -oE '.{0,80}\\(ERROR|error_severity|does not exist|canceling statement|ambiguous|syntax error\\).{0,400}' \"C:\\\\Users\\\\User\\\\.claude\\\\projects\\\\C--Users-User-Desktop-Daisy-socialbrand-dashboard\\\\790de87e-f24a-43f7-9f01-38a3e8572b80\\\\tool-results\\\\mcp-supabase-get_logs-1783606176729.txt\")",
+      "Bash(grep -oE 'duration: [0-9.]+ ms  plan:\\\\\\\\nQuery Text: SELECT refresh_l2_bloom_ros_pantry[^\\\\\\\\]*' \"C:\\\\Users\\\\User\\\\.claude\\\\projects\\\\C--Users-User-Desktop-Daisy-socialbrand-dashboard\\\\790de87e-f24a-43f7-9f01-38a3e8572b80\\\\tool-results\\\\mcp-supabase-get_logs-1783606176729.txt\")",
+      "Bash(sort -t' ' -k2 -n -r)",
+      "Bash(grep -oE '.{0,60}\\(ERROR|refresh_l2_bloom_ros_pantry|duration: [0-9.]+ ms  plan\\).{0,300}' \"C:\\\\Users\\\\User\\\\.claude\\\\projects\\\\C--Users-User-Desktop-Daisy-socialbrand-dashboard\\\\790de87e-f24a-43f7-9f01-38a3e8572b80\\\\tool-results\\\\mcp-supabase-get_logs-1783611816327.txt\")",
+      "mcp__96af46e2-d82b-40b0-8a87-01acf0b0e160__apply_migration"
     ],
     "additionalDirectories": [
       "C:\\Users\\User\\Desktop\\Daisy"

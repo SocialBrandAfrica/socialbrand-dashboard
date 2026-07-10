@@ -4,6 +4,38 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-10 -- Ship 2 scope-gate close (ENG-008) + ENG-005 DC demand repoint + ENG-004 stock-band repoint/SOH-flow
+
+**Applied live via MCP migration this session (repo catch-up commit follows this entry -- see commit hash in the next `git log`).** Three of the four ACTIVE-queue items closed 2026-07-10 per HANDOVER-CURRENT, R22-verified x5 stores each:
+
+**Scope-gate (task 2, BUG-LOG ENG-008) CLOSED.** Named-gates acceptance on the Ship-2 KVI/OOS pool: 0 unexplained absences across all 5 stores -- every OOS KVI line is either in the widened `never_sold=false` pool or behind a named gate (non-DC route / non-DC department / expired-suspended Z-link). Capital Tied + KVI band confirmed byte-identical before/after. Surfaced a bank-wide floor debt: 1,988 products with no active Z-supplier-link (10116=1,042, 21355=125, 80175=589, 80176=117, 80579=115) -- Sigma-side renewal, not an engine defect.
+
+**ENG-005 CLOSED (`sql/create_rpc_bloom_order_dc.sql`).** DC order demand repointed to `GREATEST(family draw corrected, scan)` -- closes the parent-child family-draw gap (a pack code that sells but never carries its own stock understated demand on the tracked child code, e.g. 10116 milk 1674: 13.1x understatement). Milk 10116/1674 now returns 775 packs (was 0), `demand_source='family_draw'`. Verified against source at handover time: 775 packs / `ros_used`=660.92/day / `need_units`=4654.33 / 4654.33/660.92 = 7.04d, matching the 7-day target exactly. Lead-time sensitivity noted (order size = lead-days-depletion + target-cover, a pre-existing property of the `gated` CTE, not new from this fix) -- flagged for PM/Pieter to confirm the actual delivery-date pair before the Recipe RPC locks it in (queue item 7).
+
+**ENG-004 CLOSED (`sql/create_l2_stock_band.sql`).** `l2_stock_band`'s own KVI-floor demand now uses the same family-draw-resolved, guarded rate as ENG-005 (was raw, uncorrected `l2_stock_position.daily_ros` -- a DF-7 death-spiral line's own decayed ROS was a valid demand input until this fix). Milk band width now 3,773 units (was inverted/zero). Guards: KVI_CRITICAL/IMPORTANT eligible by default, STANDARD/LONG_TAIL via the 8-selling-day guard, both sides capped at 2x raw. `max_band` additive not clamped (ENG-001 v2, prior commit `46f4cb7`).
+
+**SOH-flow post-condition (queue item 5) folded into the ENG-004 build**, not a separate pass. New `band_blocked` trigger fires when the ledger (K+R+S movements) doesn't reconcile `l2_soh_daily`'s earliest-to-latest snapshot delta, honestly scoped to the ~15-29 days of real history that exist (not a false 91-day claim). Bank-wide ~16% flow-mismatch rate at 10116, a real bounded minority, surfaced via new `soh_flow_closes` / `soh_flow_window_days` / `soh_flow_reason` columns.
+
+**Repo catch-up note:** `sql/create_l2_bloom_ros_pantry.sql` (ENG-005/ENG-005B family-draw source), `sql/create_l2_stock_band.sql` (ENG-004), and `sql/create_rpc_bloom_order_dc.sql` (ENG-005/scope-gate) were live in Supabase but not committed to the repo -- caught up in this commit so `main` matches prod exactly (HANDOVER-CURRENT queue item 10 debt, PM directive 2026-07-10: "get those three live SQL files into the repo now so main equals prod before any pantry surgery"). No new DDL applied by this commit -- pure documentation of already-live state.
+
+**Explicitly NOT done in this pass (PM directive, last-trading-hour caution):** `l2_bloom_ros_pantry` performance rewrite (the ~310s-on-10116 debt) and ENG-002 pipeline wiring are deferred to an off-peak window after 19:00 close, combined with ENG-009 (direct-beer corrected-ROS coverage, 375 lines currently uncovered) as one pass -- avoids reopening the same object twice.
+
+---
+
+## 2026-07-07 -- SB-CC-DBTRUNC-001 (daily_snapshots truncate) + extractor v1.19 audit-trail fix + SB-CC-BLOOM-003 Ship 1
+
+**Commits (main, in order):** `7fe454e` `77e55df` `91477bd` (pushed: `7fe454e`/`77e55df` earlier this session; `91477bd` this handover, PM-greenlit under CC standing authority)
+
+**SB-CC-DBTRUNC-001 (`7fe454e`):** preconditions for the `daily_snapshots` archive/truncate. `create_feed_reconciliation_archive.sql` -- permanent R22 record of the DBUMBA-vs-PRSSALE two-feed reconciliation for the full PRSSALE horizon (2,425 rows, 2025-03-01..2026-06-28), preserved before the table went away. `rpc_feed_health_daily` repointed single-feed (sigma_sales only), zero `daily_snapshots` reference, output contract unchanged. `rpc_lost_sales_timeline` + `v_never_sold` (rpc_never_sold) retired in place (R28 lineage), zero live consumers verified by grep. **The actual TRUNCATE was applied live the same session (not a repo change -- DDL against the live table): DB 16GB -> 7GB (~9.1GB/57% reclaimed), `daily_snapshots` 9,534MB -> 56kB, 21M rows -> 0. Full engine-chain + dashboard survival verified** (all 6 core L2 matviews + classification/anomaly/BT-precompute/search-index sub-steps run clean; `refresh_l2_pipeline` has succeeded on pg_cron every night since, unaffected). Backup coverage: Pro-tier daily physical backup + PITR confirmed by PM before the go (table static since 2026-06-28, existing backups cover it in full).
+
+**Extractor v1.19 (`77e55df`):** restored the run-level `push_log` summary row (`push_type='sigma_extractor'`), orphaned since 2026-06-28 when `Push-SigmaToSupabase.ps1` (the sole writer of that row) was retired. Root-caused by reading the extractor script itself. Adds `Send-RunSummary`, fired on every exit path. Data pipeline itself was never broken (per-table `l1_table` rows + `check_l1_feed_freshness` ran clean throughout) -- this was purely an audit-trail/version-stamp gap. **NOT YET DEPLOYED to the 5 store servers** (`Invoke-DeployExtractor`, server hands-on, Pieter's action) -- code is committed/pushed, live extractor on the servers is still v1.18 until that deploy runs.
+
+**SB-CC-BLOOM-003 Ship 1 (`91477bd`):** the recovery ordering module's first ship -- 82% budget gauge + SAB-equivalent direct-beer proposals for the 3 TOPS stores, behind an EXPERIMENTAL "Desk" mode toggle. New live objects: `bloom_route_config` (behaviour-led origin classifier, never a supplier name), `order_budget_ledger` + `refresh_order_budget_ledger()` (the gauge's real source, seeded from SB-AP-REPAY-001 split by SB-STRAT-002's per-store beer-sales share), `rpc_bloom_order_direct_beer` (canon §14 recipe shape + sibling/family roll-up), `rpc_bloom_direct_beer_flags` (data-quality worklist -- found live that BLACK LABEL CASE at 80176, the brief's own flagship example, and that store's whole `_6` multipack format are Sigma `record_stock_qty=0`/non-deplete). DC mode (Bloom v0) untouched, confirmed via git-stash build comparison. **PM R22-verified independently same day** (ROS/budget-split/route-classifier spot checks all tie to source) -- gate green, push greenlit. Full build record: `Bloom/SB-CC-BLOOM-003-recovery-ordering-module.md`. Ship 1 closes on Pieter's own device DoD walk (R31) -- not yet done.
+
+**Also this session:** dropped the orphaned 5-arg `rpc_bloom_order_dc` overload (pre-`p_days_cover`, PM migration `drop_orphan_rpc_bloom_order_dc_5arg`) -- confirmed live, exactly one overload remains.
+
+---
+
 ## 2026-07-06 -- Bloom v0 gate-1 (SB-CC-BLOOM-001/002) + R30 repair set + SEC-002
 
 **Commits (main, in order):** `592c0b0` `162d990` `190da36` `8e13ef2` `7425d66` `c938749` `ee0920d` `1edc1e1`

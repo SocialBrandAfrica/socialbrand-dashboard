@@ -15,7 +15,7 @@ ToolSearch({
 ```
 Do not skip — these tools are deferred and fail with InputValidationError if called without loading.
 
-**Step 2 — Read the FULL start-load constitution (all eight, in this order — defined once in FILE-GOVERNANCE §0).** A hollow start (loading only some of these) is the documented root of drift and is a governance breach. Read every one, in full:
+**Step 2 — Read the FULL start-load constitution (all ten, in this order — defined once in FILE-GOVERNANCE §0).** A hollow start (loading only some of these) is the documented root of drift and is a governance breach. Read every one, in full:
 ```
 Read("C:\Users\User\Desktop\Daisy\NORTH_STAR.md")
 Read("C:\Users\User\Desktop\Daisy\RULE-BOOK.md")
@@ -25,15 +25,17 @@ Read("C:\Users\User\Desktop\Daisy\SIGMA-CLEANUP-WORKFLOW.md")
 Read("C:\Users\User\Desktop\Daisy\DB-SCHEMA.md")
 Read("C:\Users\User\Desktop\Daisy\FILE-GOVERNANCE.md")
 Read("C:\Users\User\Desktop\Daisy\HANDOVER-CURRENT.md")
+Read("C:\Users\User\Desktop\Daisy\SB-VIS-001_Product_Vision_and_Philosophy.pdf")
+Read("C:\Users\User\Desktop\Daisy\SB-PRIORITY-FRAMEWORK-001.md")
 ```
 There are NO dated handover files in root — ever. If you find one, that is a governance breach: absorb its content into HANDOVER-CURRENT.md (your own section) and move the stray to `archive/handovers/`.
 
-**Step 3 — RECITAL GATE (mandatory, the anti-hollow-start check). Before touching ANY file, running ANY command, or starting ANY task, output a checklist that names each of the eight files above with a ✓ confirming it was read THIS session.** If any line is not a ✓, the start is hollow — stop and read it. This recital is not optional and not satisfied by a context summary. (Added 2026-06-17 after a hollow start nearly shipped — Pieter: "I do NOT want to remind you OR Claude Code again.")
+**Step 3 — RECITAL GATE (mandatory, the anti-hollow-start check). Before touching ANY file, running ANY command, or starting ANY task, output a checklist that names each of the ten files above with a ✓ confirming it was read THIS session.** If any line is not a ✓, the start is hollow — stop and read it. This recital is not optional and not satisfied by a context summary. (Added 2026-06-17 after a hollow start nearly shipped — Pieter: "I do NOT want to remind you OR Claude Code again.")
 
 **Step 4 — Registry + clock gate:**
 FILE-GOVERNANCE §0 (read in Step 2) is the Bible registry. Before creating ANY new file, run the §0 decision tree — if the content fits an existing canonical/log file, update that file in place. New root .md files are sanctioned ONLY as briefs (SB-XX-NNN-*) or PM-approved side-project folders. Take every date stamp from the system clock (`Get-Date` / `date`), never assumed — on 2026-06-07 two CC sessions were future-dated 06-08/06-09 and contaminated canon.
 
-Only after the recital gate shows eight ✓: begin work.
+Only after the recital gate shows ten ✓: begin work.
 
 Mid-session shortcut: `/autopilot` reloads all browser tool schemas if the session lost them.
 

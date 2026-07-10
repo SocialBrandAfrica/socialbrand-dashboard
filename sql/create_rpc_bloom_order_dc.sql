@@ -51,9 +51,81 @@
 -- CLEANUP-ENGINE-CANON §14 at handover). Interim lever -- the durable fix is
 -- cover-to-next-delivery (cadence-aware), parked as a follow-on.
 -- =============================================================================
+-- ENG-005 REOPENED / CLOSED FOR REAL (2026-07-09/10, SB-CC-BLOOM-004 item 1,
+--   PM ruling 2026-07-09). The pantry object (l2_bloom_ros_pantry, ros_draw)
+--   was built and correct (BUG-LOG ENG-005B) but this RPC -- the ACTUAL live
+--   order -- never read it. `rated` computed `ros_used` from its own inline
+--   `sales` CTE (raw scan only); the pantry was only joined later
+--   (`with_corrected`) to expose `ros_used_corrected` as a REPORTED delta --
+--   the quantity math (`need`, `normal_packs`, `geared_packs`) never touched
+--   it. Live proof of the bug: 10116/1674 (SPAR MILK, the family holder)
+--   proposed 0 packs on scan ~33.8/day while the pantry carried ~469-609/day
+--   family draw, depending on window -- the exact ENG-005 gap, un-repointed.
+--
+--   FIX: `base_pool` now LEFT JOINs `l2_bloom_ros_pantry` for
+--   `ros_draw_14d_corrected` / `_28d_corrected` / `_56d_corrected`. `rated`'s
+--   `ros_used` is now GREATEST(scan value, draw-corrected value) on the SAME
+--   window the tier already resolves to (TOP_100 -> 14d, with the existing
+--   q14=0 fallback to 28d carried through to the draw side too; TOP_1000 ->
+--   28d; BOR -> 56d) -- "same window + correction" per the ruling, never a
+--   different window than what scan already picked. LEFT JOIN + COALESCE(
+--   draw,0) means an absent pantry row (population drift, or a weighed line
+--   the pantry correctly excludes) falls back to scan-only, never a wrong
+--   number standing in for a missing one. `ros_used_corrected` (the DF-2
+--   stockout-correction delta column) is UNCHANGED -- still scan-side only,
+--   a separate, already-correct piece of provenance (R29); this fix touches
+--   the DEMAND DRIVER, not that reporting column.
+--
+--   New output column `demand_source` ('scan' | 'family_draw') and a story
+--   suffix name which side won, per row (R29 -- the reason travels with the
+--   number). RETURNS TABLE signature changed -- DROP + CREATE (Postgres does
+--   not allow CREATE OR REPLACE across a return-type change, RULE-BOOK §8
+--   function-change protocol).
+--
+--   Acceptance (PM, 2026-07-09): 10116/1674 proposes >0 packs, ros_used near
+--   the ~480/day family draw, not the ~34-38/day scan; Capital Tied
+--   (v_l2_capital_by_store) and l2_kvi_profile bands unchanged (this fix
+--   touches only the DC recipe's demand math, never l2_classification scope
+--   or the KVI pantry). Roll out and verify all 5 stores.
+-- =============================================================================
+-- SCOPE-GATE (2026-07-10, SB-CC-BLOOM-004 item 2, scoped form -- PM ruling
+--   2026-07-09/10, ordered AFTER the CLEANUP-ENGINE-CANON s13 dependent-list
+--   audit). base_pool's population gate was `COALESCE(q364,0)>0 OR
+--   COALESCE(soh,0)<>0` -- a rolling 364-day scan window. A line that has been
+--   out of stock long enough that its OWN 364-day scan window is empty (soh=0
+--   AND q364=0) fell out of the pool entirely -- absent, not excluded, exactly
+--   the failure mode the brief warned about, though the live culprit here is
+--   the 364-day rolling scan window, not `l2_classification`'s soh<>0 scope
+--   (this RPC never reads `l2_classification` at all; it reads
+--   `l2_item_classification.class='NORMAL'` only, a different, unscoped
+--   object). Live proof: 48 KVI_CRITICAL/KVI_IMPORTANT lines at 10116 are
+--   currently OOS (soh=0); only 17 were visible to this pool, 31 invisible --
+--   all 31 have `l2_stock_position.never_sold=false` (they HAVE sold, just
+--   not inside the current 364-day window).
+--
+--   FIX: population gate repointed to `l2_stock_position.never_sold=false`
+--   (lifetime ever-sold, the SAME gate `l2_bloom_ros_pantry`'s dc_pool already
+--   uses) instead of the rolling-window heuristic. Safe to widen because the
+--   "orderable slice" gate the brief calls for is ALREADY structurally
+--   enforced independently: `base_pool` INNER JOINs `lnk` (an active,
+--   non-suspended Z-supplier link), so a product with no real, current order
+--   route still cannot enter the pool no matter how permissive the sales-
+--   history gate is. `l2_classification`'s own soh<>0 scope (Capital Tied,
+--   the KVI band) is UNTOUCHED -- this migration reads and writes nothing in
+--   that object. Do NOT read this as the full "one verdict, three gates"
+--   lift of the article verdict out of the cascade -- that stays gated
+--   pending Pieter's ruling on the R5.86M vs R7.96M explanation; this is
+--   only the DC recipe's own population filter.
+--
+--   Acceptance: the 31 previously-invisible OOS KVI lines at 10116 now enter
+--   the pool; `v_l2_capital_by_store` and `l2_kvi_profile` band counts
+--   unchanged (verified -- this migration touches neither object).
+-- =============================================================================
 
-CREATE OR REPLACE FUNCTION public.rpc_bloom_order_dc(p_store_code text, p_delivery_date date, p_next_delivery date, p_anchor_date date DEFAULT NULL::date, p_soh_date date DEFAULT NULL::date, p_days_cover integer DEFAULT 7)
- RETURNS TABLE(store_code text, product_code bigint, ean text, description text, dept_name text, tier text, soh numeric, unit_cost numeric, pack_size smallint, pack_cost numeric, ros_window_used text, ros_used numeric, ros_used_corrected numeric, ros_correction_delta numeric, ros_correction_delta_pct numeric, projected_soh numeric, target_days_cover integer, trigger_fired boolean, need_units numeric, normal_packs integer, promo_active boolean, promo_nr bigint, promo_start date, promo_end date, promo_uplift numeric, promo_uplift_source text, geared_packs integer, suggested_packs integer, promo_cost_delta numeric, promo_cost_resolved boolean, story text)
+DROP FUNCTION IF EXISTS public.rpc_bloom_order_dc(text,date,date,date,date,integer);
+
+CREATE FUNCTION public.rpc_bloom_order_dc(p_store_code text, p_delivery_date date, p_next_delivery date, p_anchor_date date DEFAULT NULL::date, p_soh_date date DEFAULT NULL::date, p_days_cover integer DEFAULT 7)
+ RETURNS TABLE(store_code text, product_code bigint, ean text, description text, dept_name text, tier text, soh numeric, unit_cost numeric, pack_size smallint, pack_cost numeric, ros_window_used text, ros_used numeric, ros_used_corrected numeric, ros_correction_delta numeric, ros_correction_delta_pct numeric, demand_source text, projected_soh numeric, target_days_cover integer, trigger_fired boolean, need_units numeric, normal_packs integer, promo_active boolean, promo_nr bigint, promo_start date, promo_end date, promo_uplift numeric, promo_uplift_source text, geared_packs integer, suggested_packs integer, promo_cost_delta numeric, promo_cost_resolved boolean, story text)
  LANGUAGE plpgsql
  SECURITY DEFINER
 AS $function$
@@ -90,6 +162,7 @@ BEGIN
     base_pool AS MATERIALIZED (
       SELECT a.product_code, COALESCE(t.tier,'BOR') AS tier, lnk.ps AS pack_size, lnk.pack_cost AS pack_list_cost,
         COALESCE(so.soh,0) AS soh, COALESCE(s.q14,0) AS q14, COALESCE(s.q28,0) AS q28, COALESCE(s.q56,0) AS q56,
+        rp.ros_draw_14d_corrected AS draw14, rp.ros_draw_28d_corrected AS draw28, rp.ros_draw_56d_corrected AS draw56,
         sp.description, sp.dept_name, sp.unit_cost
       FROM public.sigma_articles a
       JOIN lnk ON lnk.product_code=a.product_code
@@ -98,12 +171,32 @@ BEGIN
       LEFT JOIN sales s ON s.product_code=a.product_code
       LEFT JOIN soh so ON so.product_code=a.product_code
       LEFT JOIN public.l2_stock_position sp ON sp.store_code=a.store_code AND sp.product_code=a.product_code
-      WHERE a.store_code=%1$L AND a.department_nr IN (%5$s) AND (COALESCE(s.q364,0)>0 OR COALESCE(so.soh,0)<>0)
+      LEFT JOIN public.l2_bloom_ros_pantry rp ON rp.store_code=a.store_code AND rp.product_code=a.product_code
+      WHERE a.store_code=%1$L AND a.department_nr IN (%5$s) AND COALESCE(sp.never_sold,true)=false
     ),
     rated AS (
+      -- ENG-005: demand = GREATEST(scan, family draw corrected) on the SAME
+      -- window the tier already resolves to. LEFT JOIN + COALESCE(x,0) means
+      -- a missing pantry row (population drift, or a weighed line the pantry
+      -- correctly excludes) never boosts demand -- it just falls back to the
+      -- pre-existing scan-only value.
       SELECT w.*,
-        CASE w.tier WHEN 'TOP_100' THEN (CASE WHEN w.q14=0 THEN w.q28/28.0 ELSE w.q14/14.0 END)
-          WHEN 'TOP_1000' THEN w.q28/28.0 WHEN 'BOR' THEN w.q56/56.0 ELSE NULL END AS ros_used,
+        CASE w.tier
+          WHEN 'TOP_100' THEN
+            CASE WHEN w.q14=0
+              THEN GREATEST(w.q28/28.0, COALESCE(w.draw28,0))
+              ELSE GREATEST(w.q14/14.0, COALESCE(w.draw14,0))
+            END
+          WHEN 'TOP_1000' THEN GREATEST(w.q28/28.0, COALESCE(w.draw28,0))
+          WHEN 'BOR' THEN GREATEST(w.q56/56.0, COALESCE(w.draw56,0))
+          ELSE NULL
+        END AS ros_used,
+        CASE w.tier
+          WHEN 'TOP_100' THEN (CASE WHEN w.q14=0 THEN COALESCE(w.draw28,0) > w.q28/28.0 ELSE COALESCE(w.draw14,0) > w.q14/14.0 END)
+          WHEN 'TOP_1000' THEN COALESCE(w.draw28,0) > w.q28/28.0
+          WHEN 'BOR' THEN COALESCE(w.draw56,0) > w.q56/56.0
+          ELSE false
+        END AS demand_from_draw,
         %8$s::int AS target_days_cover,
         CASE w.tier WHEN 'TOP_100' THEN (CASE WHEN w.q14=0 THEN 'ros_28d (q14=0 fallback)' ELSE 'ros_14d' END)
           WHEN 'TOP_1000' THEN 'ros_28d' WHEN 'BOR' THEN 'ros_56d' ELSE NULL END AS ros_window_used
@@ -172,15 +265,17 @@ BEGIN
       wc.ros_window_used, ROUND(wc.ros_used,4), ROUND(COALESCE(wc.ros_used_corrected,wc.ros_used),4),
       ROUND(COALESCE(wc.ros_used_corrected,wc.ros_used)-wc.ros_used,4),
       CASE WHEN wc.ros_used>0 THEN ROUND((COALESCE(wc.ros_used_corrected,wc.ros_used)-wc.ros_used)/wc.ros_used*100,2) ELSE NULL END,
+      (CASE WHEN wc.demand_from_draw THEN 'family_draw' ELSE 'scan' END),
       ROUND(wc.proj_soh,2), wc.target_days_cover, wc.fires, ROUND(wc.need,2),
       wc.normal_packs_calc, (wc.promo_nr IS NOT NULL), wc.promo_nr, wc.promo_start, wc.promo_end,
       ROUND(wc.gear,4), (CASE WHEN wc.gear_from_own_promo THEN 'own_promo' ELSE 'default' END), wc.geared_packs_calc,
       CASE WHEN wc.promo_nr IS NOT NULL THEN wc.geared_packs_calc ELSE wc.normal_packs_calc END,
       CASE WHEN wc.promo_status='1' AND wc.promo_unit_cost IS NOT NULL AND wc.promo_unit_cost<>0 THEN ROUND((wc.pack_list_cost/NULLIF(wc.pack_size,0))-wc.promo_unit_cost,4) ELSE NULL END,
       (wc.promo_status='1' AND wc.promo_unit_cost IS NOT NULL AND wc.promo_unit_cost<>0),
-      format('%%s tier, window=%%s raw=%%s, SOH %%s, target %%s days -> proj %%s, need %%s units = %%s packs%%s',
+      format('%%s tier, window=%%s raw=%%s, SOH %%s, target %%s days -> proj %%s, need %%s units = %%s packs%%s%%s',
         wc.tier, wc.ros_window_used, ROUND(wc.ros_used,2), wc.soh, wc.target_days_cover, ROUND(wc.proj_soh,1), ROUND(wc.need,1), wc.normal_packs_calc,
-        CASE WHEN wc.promo_nr IS NOT NULL THEN format(' | promo %%s->%%s gear %%s', wc.promo_start, wc.promo_end, ROUND(wc.gear,2)) ELSE '' END)
+        CASE WHEN wc.promo_nr IS NOT NULL THEN format(' | promo %%s->%%s gear %%s', wc.promo_start, wc.promo_end, ROUND(wc.gear,2)) ELSE '' END,
+        CASE WHEN wc.demand_from_draw THEN ' | family draw used (ledger, not scan)' ELSE '' END)
     FROM with_corrected wc LEFT JOIN ean_map b ON b.product_code=wc.product_code
     ORDER BY wc.tier, wc.ros_used DESC, wc.product_code
   $q$, p_store_code, v_anchor, v_soh_dt, v_lead, v_depts, p_delivery_date, p_next_delivery, p_days_cover);
@@ -188,3 +283,5 @@ END;
 $function$;
 
 GRANT EXECUTE ON FUNCTION public.rpc_bloom_order_dc(text,date,date,date,date,integer) TO anon, authenticated;
+
+SELECT pg_notify('pgrst', 'reload schema');

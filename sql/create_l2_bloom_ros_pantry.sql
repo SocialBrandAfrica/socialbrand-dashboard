@@ -79,12 +79,67 @@
 --     as a separate object so a promo-schema change never forces a rebuild
 --     of the (expensive) stockout-detection table above it.
 --
+-- ENG-005 (2026-07-09, SB-CC-BLOOM-004 item 1, BUG-LOG ENG-005 CRITICAL) --
+--   ros_draw_Xd / ros_draw_Xd_corrected added beside ros_Xd / ros_Xd_corrected
+--   above. ros_scan (the columns above) is keyed on sigma_sales -- the
+--   SCANNED product_code. For a parent-child family (case/six-pack/single
+--   sharing one physical stock position, canon s14 v5 / BLOOM-003 s7) the
+--   scan can post against the PARENT code while the stock depletion posts
+--   against the CHILD's stock position in sigma_movements -- Sigma nets the
+--   family there, not in sigma_sales. ros_draw reads sigma_movements
+--   (movement_type='K', the till-sale channel, canon s1) at the SAME
+--   product_code the pantry already keys on -- no family join, no sibling
+--   lookup. Sigma's own posting already rolls the family's true draw onto
+--   whichever code holds the stock; reading the ledger at that code is
+--   sufficient. Two traps, both live-proven (Pieter, 2026-07-09):
+--     1. NO DOUBLE COUNT. Never add the parent's sigma_sales qty onto the
+--        child's draw -- sigma_movements at the child's own product_code
+--        already carries it. Canon s14 addendum v5 as originally worded would
+--        count the milk twice; this build does not roll anything onto
+--        anything, it just reads a different ledger at the same key.
+--     2. THE UNIT GATE. A weighed (scale) line posts KILOGRAMS on the ledger
+--        and WEIGH-TICKETS at the till -- different measures, not
+--        commensurable (RULE-BOOK s2 Quantity family). ros_draw is computed
+--        ONLY for count-unit lines: `sigma_articles.unit='EA' AND scale_flag
+--        <> '1'` -- BOTH signals required (PM correction, 2026-07-09; the
+--        `unit` text field alone is not reliable: 234 scale_flag='1' lines
+--        bank-wide carry `unit='EA'` in the article master while their
+--        movement ledger posts fractional, weight-shaped quantities, e.g.
+--        10116/3970 "F/L BANANAS LSE", pack_content='P/KG', movements like
+--        8.82/6.32/4.142 units on a line the article master calls each-based
+--        -- these leaked ros_draw before this fix and are now correctly
+--        unit_incommensurable=true). Every gated line stays ros_draw_*=NULL,
+--        never a wrong number standing in for a real one. Proof case: 10116
+--        product 1674 (SPAR MILK L/L F/CREAM, the child/loose code holding
+--        the family's stock) -- ros_draw_28d 478.32/day against ros_28d
+--        38.18/day = **12.53x** (PM-verified figure, report the windowed
+--        ratio, not a blended one -- 14d=16.45x, 56d=13.17x, same story,
+--        different denominators). Closed by reading sigma_movements at 1674
+--        directly. l2_rate_of_sale (9 readers) is NEVER touched by this
+--        change -- ros_draw lives only in this pantry.
+--
+-- DRAW-BELOW-SCAN (found 2026-07-09, PM, BUG-LOG ENG-005B): even after the
+--   scale_flag fix above, ~1,620 genuinely EA (scale_flag='0') lines bank-wide
+--   still show ros_draw < ros_scan in at least one window. Characterized, not
+--   a logic bug: 48/1,676 lines exceed a 0.5 unit/day absolute gap, 14 exceed
+--   1 unit/day, 2 exceed 5 units/day -- the population is dominated by small,
+--   proportionally-larger gaps on slow movers (matches RULE-BOOK R22 s13.2's
+--   standing ~1% cross-feed drift between independently-posted ledgers --
+--   sigma_sales/DBUmBA vs sigma_movements/DBBEBE -- amplified in percentage
+--   terms on a low base, not evidence the ledger draw is wrong). **This
+--   pantry deliberately does NOT resolve it** -- R27: the pantry holds both
+--   variants (ros_scan, ros_draw), the recipe picks. THE RECIPE (item 5,
+--   rpc_bloom_order_recipe, NOT YET BUILT) MUST apply a floor: demand input
+--   = GREATEST(ros_draw_*_corrected, ros_scan_*) per window, never ros_draw
+--   alone -- a real till scan already proves that many units moved, and a
+--   ledger-side timing gap is never grounds to order to less than what the
+--   floor is proven to have sold (same governing law as the OOS safeguard,
+--   canon s14 addendum v2: never under-order a proven seller). Do not build
+--   item 5 without this guard.
+--
 -- REFRESH: `SELECT refresh_l2_bloom_ros_pantry(p_store)` per store, idempotent
 --   (DELETE store rows + re-INSERT). Not yet wired into refresh_l2_pipeline
---   pending PM sign-off on the department-set proposal (bloom_dc_config) --
---   this object has no such dependency and can be wired independently
---   whenever that lands; deliberately NOT touching the shared pipeline
---   function mid-design.
+--   (ENG-002, SB-CC-BLOOM-004 item 4) -- refreshed by hand until that lands.
 --
 -- Rule 19: DROP + clean CREATE.
 -- =============================================================================
@@ -92,27 +147,85 @@
 DROP TABLE IF EXISTS public.l2_bloom_ros_pantry CASCADE;
 
 CREATE TABLE public.l2_bloom_ros_pantry (
-  store_code                 text NOT NULL,
-  product_code                bigint NOT NULL,
-  ean                          text NOT NULL,
-  p_sell_estimate              numeric,
-  p_estimate_basis             text,
-  ros_14d                      numeric,
-  ros_28d                      numeric,
-  ros_56d                      numeric,
-  ros_14d_corrected            numeric,
-  ros_28d_corrected            numeric,
-  ros_56d_corrected            numeric,
-  correction_days_removed_14d  int,
-  correction_days_removed_28d  int,
-  correction_days_removed_56d  int,
-  pantry_refreshed_at          timestamptz NOT NULL DEFAULT now(),
+  store_code                    text NOT NULL,
+  product_code                  bigint NOT NULL,
+  ean                           text NOT NULL,
+  unit                          text,
+  unit_incommensurable          boolean NOT NULL DEFAULT true,
+  p_sell_estimate               numeric,
+  p_estimate_basis              text,
+  ros_14d                       numeric,
+  ros_28d                       numeric,
+  ros_56d                       numeric,
+  ros_14d_corrected             numeric,
+  ros_28d_corrected             numeric,
+  ros_56d_corrected             numeric,
+  correction_days_removed_14d   int,
+  correction_days_removed_28d   int,
+  correction_days_removed_56d   int,
+  p_sell_estimate_draw          numeric,
+  p_estimate_basis_draw         text,
+  ros_draw_14d                  numeric,
+  ros_draw_28d                  numeric,
+  ros_draw_56d                  numeric,
+  ros_draw_14d_corrected        numeric,
+  ros_draw_28d_corrected        numeric,
+  ros_draw_56d_corrected        numeric,
+  draw_correction_days_removed_14d  int,
+  draw_correction_days_removed_28d  int,
+  draw_correction_days_removed_56d  int,
+  pantry_refreshed_at           timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (store_code, product_code)
 );
 
 CREATE INDEX l2_bloom_ros_pantry_ean ON public.l2_bloom_ros_pantry (ean, store_code);
 
 GRANT SELECT ON public.l2_bloom_ros_pantry TO anon, authenticated;
+
+COMMENT ON COLUMN public.l2_bloom_ros_pantry.ros_14d IS
+  'ros_scan (till-scan demand): SUM(sigma_sales.qty)/14 at this product_code. '
+  'Understates a parent-child family when the parent code is what gets scanned '
+  '(ENG-005). Kept for the DC recipe delta report (canon s14, never the tier '
+  'driver) and any consumer that wants pure scan behaviour.';
+COMMENT ON COLUMN public.l2_bloom_ros_pantry.ros_draw_14d IS
+  'ros_draw (ledger demand): SUM(sigma_movements.qty)/14 at this SAME '
+  'product_code, movement_type=K, net of till returns. Sigma nets a '
+  'parent-child family at the stock-holding code''s own ledger, so this '
+  'closes the family gap ros_scan misses (ENG-005) with no sibling join. '
+  'NULL when unit_incommensurable (non-EA unit -- see that column).';
+COMMENT ON COLUMN public.l2_bloom_ros_pantry.unit_incommensurable IS
+  'TRUE when sigma_articles.unit <> ''EA'' (or unmapped): the ledger posts a '
+  'different measure (e.g. KG on weighed lines) than the till''s selling-unit '
+  'count, so a draw-vs-scan comparison is not commensurable. ros_draw_* stays '
+  'NULL rather than publish a number that compares kilograms to units.';
+
+-- PERFORMANCE NOTE (2026-07-09, ENG-005 build): the scan chain and the draw
+-- chain are each materialized into their OWN physical temp table rather than
+-- combined into one ~24-CTE statement. A single-statement combine was tried
+-- first and blew up from the proven 5-8s/store to 22-31 minutes/store (one
+-- store's statement_timeout-canceled outright) -- the planner mis-estimated
+-- across the doubled CTE graph even though each chain alone is cheap. Two
+-- separate `CREATE TEMP TABLE ... AS` statements each get planned against a
+-- real table with real stats (ANALYZE'd immediately after), reproducing the
+-- original's plan shape for both chains independently.
+--   MEASURED AFTER THE SPLIT (2026-07-09, all 5 stores, via pg log durations):
+--   10116 ~22min / 21355 ~26min / 80176 ~27min BEFORE the split; 80175 ~5.2min
+--   (310.9s) AFTER the split -- a large improvement (no more hard
+--   statement_timeout cancellation, all 5 stores now complete and reconcile),
+--   but NOT back to the original 5-8s/store baseline. Root cause not fully
+--   chased down (leading suspect: store_anchor's underlying MAX(sale_date)
+--   scan over sigma_sales -- up to ~1.3M rows/store -- now runs twice, once
+--   per temp-table build, plus the run-length/stockout-detection window
+--   function now runs twice per store instead of once). CORRECT and SAFE to
+--   run (verified R22: 10116/1674 milk ros_draw ~487.9-609.6/day vs ros_scan
+--   ~37/day depending on window, ~13.1x, matching the cited proof; unit gate
+--   holds 0/83 KG-line leaks store-wide on 10116; draw >= scan on all but 4
+--   lines bank-wide, each within ~2% -- explainable feed-timing drift, not a
+--   bug) but this remains a NAMED PERFORMANCE DEBT for ENG-002 (SB-CC-BLOOM-004
+--   item 4): six pantry refreshers landing in refresh_l2_pipeline, and this
+--   one alone costs single-digit minutes per store x5 stores. Revisit at that
+--   wiring step -- do not assume this is fast enough for the nightly window
+--   without re-measuring the full six-refresher chain.
 
 CREATE OR REPLACE FUNCTION public.refresh_l2_bloom_ros_pantry(p_store text)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
@@ -122,29 +235,46 @@ DECLARE
 BEGIN
   DELETE FROM public.l2_bloom_ros_pantry WHERE store_code = p_store;
 
-  WITH dc_pool AS (
-    SELECT DISTINCT ic.store_code, ic.product_code, b.ean
-    FROM public.l2_item_classification ic
-    JOIN public.sigma_supplier_link sl
-      ON sl.store_code = ic.store_code AND sl.product_code = ic.product_code
-    JOIN public.sigma_supplier_master sm
-      ON sm.store_code = sl.store_code AND sm.supplier_nr = sl.supplier_nr AND sm.supplier_type = 'Z'
-    JOIN public.v_ean_bridge b
-      ON b.store_code = ic.store_code AND b.product_code = ic.product_code
-    JOIN public.l2_stock_position sp
-      ON sp.store_code = ic.store_code AND sp.product_code = ic.product_code AND sp.never_sold = false
-    WHERE ic.class = 'NORMAL' AND ic.store_code = p_store
-  ),
-  store_anchor AS (
+  DROP TABLE IF EXISTS pg_temp.tmp_bloom_ros_pool;
+  DROP TABLE IF EXISTS pg_temp.tmp_bloom_ros_scan;
+  DROP TABLE IF EXISTS pg_temp.tmp_bloom_ros_draw;
+
+  -- ===================== POOL (materialized as a real temp table) =====================
+  CREATE TEMP TABLE tmp_bloom_ros_pool AS
+  SELECT DISTINCT ic.store_code, ic.product_code, b.ean,
+         a.unit,
+         (COALESCE(a.unit, '') = 'EA' AND COALESCE(a.scale_flag, '0') <> '1') AS is_draw_eligible
+  FROM public.l2_item_classification ic
+  JOIN public.sigma_supplier_link sl
+    ON sl.store_code = ic.store_code AND sl.product_code = ic.product_code
+  JOIN public.sigma_supplier_master sm
+    ON sm.store_code = sl.store_code AND sm.supplier_nr = sl.supplier_nr AND sm.supplier_type = 'Z'
+  JOIN public.v_ean_bridge b
+    ON b.store_code = ic.store_code AND b.product_code = ic.product_code
+  JOIN public.l2_stock_position sp
+    ON sp.store_code = ic.store_code AND sp.product_code = ic.product_code AND sp.never_sold = false
+  JOIN public.sigma_articles a
+    ON a.store_code = ic.store_code AND a.product_code = ic.product_code
+  WHERE ic.class = 'NORMAL' AND ic.store_code = p_store;
+
+  CREATE UNIQUE INDEX ON tmp_bloom_ros_pool (store_code, product_code);
+  ANALYZE tmp_bloom_ros_pool;
+
+  -- ===================== SCAN chain (sigma_sales) -- unchanged v1 logic, now over the temp pool =====================
+  CREATE TEMP TABLE tmp_bloom_ros_scan AS
+  WITH store_anchor AS (
     SELECT store_code, MAX(sale_date) AS anchor_date
     FROM public.sigma_sales
     WHERE period_kind = 'T' AND txn_kind = 1 AND store_code = p_store
     GROUP BY store_code
   ),
+  windows AS (
+    SELECT * FROM (VALUES (14), (28), (56)) AS w(window_days)
+  ),
   daily_net AS (
     SELECT ss.store_code, ss.product_code, ss.sale_date, SUM(ss.qty) AS net_qty
     FROM public.sigma_sales ss
-    JOIN dc_pool p ON p.store_code = ss.store_code AND p.product_code = ss.product_code
+    JOIN tmp_bloom_ros_pool p ON p.store_code = ss.store_code AND p.product_code = ss.product_code
     JOIN store_anchor sa ON sa.store_code = ss.store_code
     WHERE ss.period_kind = 'T' AND ss.txn_kind = 1 AND ss.store_code = p_store
       AND ss.sale_date >= CURRENT_DATE - INTERVAL '200 days'
@@ -160,7 +290,7 @@ BEGIN
   line_days AS (
     SELECT p.store_code, p.product_code, c.cal_date, c.anchor_date,
            COALESCE(dn.net_qty, 0) AS net_qty
-    FROM dc_pool p
+    FROM tmp_bloom_ros_pool p
     JOIN calendar_182 c ON c.store_code = p.store_code
     LEFT JOIN daily_net dn ON dn.store_code = p.store_code AND dn.product_code = p.product_code AND dn.sale_date = c.cal_date
   ),
@@ -195,14 +325,11 @@ BEGIN
     FROM presumed_stockout_days psd
     CROSS JOIN LATERAL generate_series(psd.run_start, psd.run_end, INTERVAL '1 day') AS gs(d)
   ),
-  windows AS (
-    SELECT * FROM (VALUES (14), (28), (56)) AS w(window_days)
-  ),
   window_calc AS (
     SELECT p.store_code, p.product_code, w.window_days,
            sa.anchor_date - (w.window_days - 1) * INTERVAL '1 day' AS win_start,
            sa.anchor_date AS win_end
-    FROM dc_pool p
+    FROM tmp_bloom_ros_pool p
     JOIN store_anchor sa ON sa.store_code = p.store_code
     CROSS JOIN windows w
   ),
@@ -221,41 +348,182 @@ BEGIN
     LEFT JOIN stockout_day_spine sds ON sds.store_code = wc.store_code AND sds.product_code = wc.product_code
                                      AND sds.stockout_date BETWEEN wc.win_start AND wc.win_end
     GROUP BY wc.store_code, wc.product_code, wc.window_days
-  ),
-  ros_pivot AS (
-    SELECT q.store_code, q.product_code,
-      MAX(CASE WHEN q.window_days=14 THEN ROUND(q.window_net_qty / 14.0, 4) END) AS ros_14d,
-      MAX(CASE WHEN q.window_days=28 THEN ROUND(q.window_net_qty / 28.0, 4) END) AS ros_28d,
-      MAX(CASE WHEN q.window_days=56 THEN ROUND(q.window_net_qty / 56.0, 4) END) AS ros_56d,
-      MAX(CASE WHEN q.window_days=14 AND (14 - so.stockout_days_in_window) > 0
-               THEN ROUND(q.window_net_qty / (14 - so.stockout_days_in_window), 4) END) AS ros_14d_corrected,
-      MAX(CASE WHEN q.window_days=28 AND (28 - so.stockout_days_in_window) > 0
-               THEN ROUND(q.window_net_qty / (28 - so.stockout_days_in_window), 4) END) AS ros_28d_corrected,
-      MAX(CASE WHEN q.window_days=56 AND (56 - so.stockout_days_in_window) > 0
-               THEN ROUND(q.window_net_qty / (56 - so.stockout_days_in_window), 4) END) AS ros_56d_corrected,
-      MAX(CASE WHEN q.window_days=14 THEN so.stockout_days_in_window END) AS correction_days_removed_14d,
-      MAX(CASE WHEN q.window_days=28 THEN so.stockout_days_in_window END) AS correction_days_removed_28d,
-      MAX(CASE WHEN q.window_days=56 THEN so.stockout_days_in_window END) AS correction_days_removed_56d
-    FROM window_qty q
-    JOIN window_stockout so ON so.store_code=q.store_code AND so.product_code=q.product_code AND so.window_days=q.window_days
-    GROUP BY q.store_code, q.product_code
   )
+  SELECT q.store_code, q.product_code,
+    pe.p_sell AS p_sell_estimate,
+    'unconditional_182d_frequency'::text AS p_estimate_basis,
+    MAX(CASE WHEN q.window_days=14 THEN ROUND(q.window_net_qty / 14.0, 4) END) AS ros_14d,
+    MAX(CASE WHEN q.window_days=28 THEN ROUND(q.window_net_qty / 28.0, 4) END) AS ros_28d,
+    MAX(CASE WHEN q.window_days=56 THEN ROUND(q.window_net_qty / 56.0, 4) END) AS ros_56d,
+    MAX(CASE WHEN q.window_days=14 AND (14 - so.stockout_days_in_window) > 0
+             THEN ROUND(q.window_net_qty / (14 - so.stockout_days_in_window), 4) END) AS ros_14d_corrected,
+    MAX(CASE WHEN q.window_days=28 AND (28 - so.stockout_days_in_window) > 0
+             THEN ROUND(q.window_net_qty / (28 - so.stockout_days_in_window), 4) END) AS ros_28d_corrected,
+    MAX(CASE WHEN q.window_days=56 AND (56 - so.stockout_days_in_window) > 0
+             THEN ROUND(q.window_net_qty / (56 - so.stockout_days_in_window), 4) END) AS ros_56d_corrected,
+    MAX(CASE WHEN q.window_days=14 THEN so.stockout_days_in_window END) AS correction_days_removed_14d,
+    MAX(CASE WHEN q.window_days=28 THEN so.stockout_days_in_window END) AS correction_days_removed_28d,
+    MAX(CASE WHEN q.window_days=56 THEN so.stockout_days_in_window END) AS correction_days_removed_56d
+  FROM window_qty q
+  JOIN window_stockout so ON so.store_code=q.store_code AND so.product_code=q.product_code AND so.window_days=q.window_days
+  JOIN p_estimate pe ON pe.store_code = q.store_code AND pe.product_code = q.product_code
+  GROUP BY q.store_code, q.product_code, pe.p_sell;
+
+  CREATE UNIQUE INDEX ON tmp_bloom_ros_scan (store_code, product_code);
+  ANALYZE tmp_bloom_ros_scan;
+
+  -- ===================== DRAW chain (sigma_movements, EA-only) -- ENG-005 =====================
+  CREATE TEMP TABLE tmp_bloom_ros_draw AS
+  WITH ea_pool AS (
+    SELECT store_code, product_code FROM tmp_bloom_ros_pool WHERE is_draw_eligible
+  ),
+  store_anchor AS (
+    SELECT store_code, MAX(sale_date) AS anchor_date
+    FROM public.sigma_sales
+    WHERE period_kind = 'T' AND txn_kind = 1 AND store_code = p_store
+    GROUP BY store_code
+  ),
+  windows AS (
+    SELECT * FROM (VALUES (14), (28), (56)) AS w(window_days)
+  ),
+  daily_net_draw AS (
+    SELECT sm2.store_code, sm2.product_code, sm2.movement_date, SUM(sm2.qty) AS net_qty
+    FROM public.sigma_movements sm2
+    JOIN ea_pool p ON p.store_code = sm2.store_code AND p.product_code = sm2.product_code
+    JOIN store_anchor sa ON sa.store_code = sm2.store_code
+    WHERE sm2.movement_type = 'K' AND sm2.store_code = p_store
+      AND sm2.movement_date >= CURRENT_DATE - INTERVAL '200 days'
+      AND sm2.movement_date >= sa.anchor_date - INTERVAL '181 days'
+      AND sm2.movement_date <= sa.anchor_date
+    GROUP BY sm2.store_code, sm2.product_code, sm2.movement_date
+  ),
+  calendar_182 AS (
+    SELECT sa.store_code, sa.anchor_date, gs.d::date AS cal_date
+    FROM store_anchor sa
+    CROSS JOIN LATERAL generate_series(sa.anchor_date - INTERVAL '181 days', sa.anchor_date, INTERVAL '1 day') AS gs(d)
+  ),
+  line_days_draw AS (
+    SELECT p.store_code, p.product_code, c.cal_date, c.anchor_date,
+           COALESCE(dnd.net_qty, 0) AS net_qty
+    FROM ea_pool p
+    JOIN calendar_182 c ON c.store_code = p.store_code
+    LEFT JOIN daily_net_draw dnd ON dnd.store_code = p.store_code AND dnd.product_code = p.product_code AND dnd.movement_date = c.cal_date
+  ),
+  p_estimate_draw AS (
+    SELECT store_code, product_code,
+           AVG(CASE WHEN net_qty > 0 THEN 1.0 ELSE 0.0 END) AS p_sell
+    FROM line_days_draw
+    GROUP BY store_code, product_code
+  ),
+  runs_draw AS (
+    SELECT store_code, product_code, cal_date, anchor_date, net_qty,
+           CASE WHEN net_qty <= 0 THEN 1 ELSE 0 END AS is_zero_day,
+           cal_date - (ROW_NUMBER() OVER (PARTITION BY store_code, product_code, (CASE WHEN net_qty <= 0 THEN 1 ELSE 0 END)
+                                           ORDER BY cal_date))::int * INTERVAL '1 day' AS run_key
+    FROM line_days_draw
+  ),
+  run_lengths_draw AS (
+    SELECT store_code, product_code, run_key,
+           MIN(cal_date) AS run_start, MAX(cal_date) AS run_end, COUNT(*) AS run_len
+    FROM runs_draw
+    WHERE is_zero_day = 1
+    GROUP BY store_code, product_code, run_key
+  ),
+  presumed_stockout_days_draw AS (
+    SELECT r.store_code, r.product_code, r.run_start, r.run_end, r.run_len
+    FROM run_lengths_draw r
+    JOIN p_estimate_draw pe ON pe.store_code = r.store_code AND pe.product_code = r.product_code
+    WHERE POWER(1.0 - LEAST(GREATEST(pe.p_sell, 0.0001), 0.9999), r.run_len) < 0.05
+  ),
+  stockout_day_spine_draw AS (
+    SELECT psd.store_code, psd.product_code, gs.d::date AS stockout_date
+    FROM presumed_stockout_days_draw psd
+    CROSS JOIN LATERAL generate_series(psd.run_start, psd.run_end, INTERVAL '1 day') AS gs(d)
+  ),
+  window_calc_draw AS (
+    SELECT p.store_code, p.product_code, w.window_days,
+           sa.anchor_date - (w.window_days - 1) * INTERVAL '1 day' AS win_start,
+           sa.anchor_date AS win_end
+    FROM ea_pool p
+    JOIN store_anchor sa ON sa.store_code = p.store_code
+    CROSS JOIN windows w
+  ),
+  window_qty_draw AS (
+    SELECT wc.store_code, wc.product_code, wc.window_days,
+           COALESCE(SUM(dnd.net_qty), 0) AS window_net_qty
+    FROM window_calc_draw wc
+    LEFT JOIN daily_net_draw dnd ON dnd.store_code = wc.store_code AND dnd.product_code = wc.product_code
+                                AND dnd.movement_date BETWEEN wc.win_start AND wc.win_end
+    GROUP BY wc.store_code, wc.product_code, wc.window_days
+  ),
+  window_stockout_draw AS (
+    SELECT wc.store_code, wc.product_code, wc.window_days,
+           COUNT(sds.stockout_date) AS stockout_days_in_window
+    FROM window_calc_draw wc
+    LEFT JOIN stockout_day_spine_draw sds ON sds.store_code = wc.store_code AND sds.product_code = wc.product_code
+                                          AND sds.stockout_date BETWEEN wc.win_start AND wc.win_end
+    GROUP BY wc.store_code, wc.product_code, wc.window_days
+  )
+  SELECT q.store_code, q.product_code,
+    pe.p_sell AS p_sell_estimate_draw,
+    'unconditional_182d_frequency_ledger_draw'::text AS p_estimate_basis_draw,
+    MAX(CASE WHEN q.window_days=14 THEN ROUND(q.window_net_qty / 14.0, 4) END) AS ros_draw_14d,
+    MAX(CASE WHEN q.window_days=28 THEN ROUND(q.window_net_qty / 28.0, 4) END) AS ros_draw_28d,
+    MAX(CASE WHEN q.window_days=56 THEN ROUND(q.window_net_qty / 56.0, 4) END) AS ros_draw_56d,
+    MAX(CASE WHEN q.window_days=14 AND (14 - so.stockout_days_in_window) > 0
+             THEN ROUND(q.window_net_qty / (14 - so.stockout_days_in_window), 4) END) AS ros_draw_14d_corrected,
+    MAX(CASE WHEN q.window_days=28 AND (28 - so.stockout_days_in_window) > 0
+             THEN ROUND(q.window_net_qty / (28 - so.stockout_days_in_window), 4) END) AS ros_draw_28d_corrected,
+    MAX(CASE WHEN q.window_days=56 AND (56 - so.stockout_days_in_window) > 0
+             THEN ROUND(q.window_net_qty / (56 - so.stockout_days_in_window), 4) END) AS ros_draw_56d_corrected,
+    MAX(CASE WHEN q.window_days=14 THEN so.stockout_days_in_window END) AS draw_correction_days_removed_14d,
+    MAX(CASE WHEN q.window_days=28 THEN so.stockout_days_in_window END) AS draw_correction_days_removed_28d,
+    MAX(CASE WHEN q.window_days=56 THEN so.stockout_days_in_window END) AS draw_correction_days_removed_56d
+  FROM window_qty_draw q
+  JOIN window_stockout_draw so ON so.store_code=q.store_code AND so.product_code=q.product_code AND so.window_days=q.window_days
+  JOIN p_estimate_draw pe ON pe.store_code = q.store_code AND pe.product_code = q.product_code
+  GROUP BY q.store_code, q.product_code, pe.p_sell;
+
+  CREATE UNIQUE INDEX ON tmp_bloom_ros_draw (store_code, product_code);
+  ANALYZE tmp_bloom_ros_draw;
+
+  -- ===================== COMBINE (cheap: two small, indexed, ANALYZE'd temp tables) =====================
   INSERT INTO public.l2_bloom_ros_pantry (
-    store_code, product_code, ean, p_sell_estimate, p_estimate_basis,
+    store_code, product_code, ean, unit, unit_incommensurable,
+    p_sell_estimate, p_estimate_basis,
     ros_14d, ros_28d, ros_56d, ros_14d_corrected, ros_28d_corrected, ros_56d_corrected,
-    correction_days_removed_14d, correction_days_removed_28d, correction_days_removed_56d
+    correction_days_removed_14d, correction_days_removed_28d, correction_days_removed_56d,
+    p_sell_estimate_draw, p_estimate_basis_draw,
+    ros_draw_14d, ros_draw_28d, ros_draw_56d,
+    ros_draw_14d_corrected, ros_draw_28d_corrected, ros_draw_56d_corrected,
+    draw_correction_days_removed_14d, draw_correction_days_removed_28d, draw_correction_days_removed_56d
   )
   SELECT
-    p.store_code, p.product_code, p.ean,
-    pe.p_sell, 'unconditional_182d_frequency',
-    rp.ros_14d, rp.ros_28d, rp.ros_56d,
-    rp.ros_14d_corrected, rp.ros_28d_corrected, rp.ros_56d_corrected,
-    rp.correction_days_removed_14d, rp.correction_days_removed_28d, rp.correction_days_removed_56d
-  FROM dc_pool p
-  JOIN p_estimate pe ON pe.store_code = p.store_code AND pe.product_code = p.product_code
-  JOIN ros_pivot rp ON rp.store_code = p.store_code AND rp.product_code = p.product_code;
+    p.store_code, p.product_code, p.ean, p.unit, NOT p.is_draw_eligible,
+    s.p_sell_estimate, s.p_estimate_basis,
+    s.ros_14d, s.ros_28d, s.ros_56d, s.ros_14d_corrected, s.ros_28d_corrected, s.ros_56d_corrected,
+    s.correction_days_removed_14d, s.correction_days_removed_28d, s.correction_days_removed_56d,
+    d.p_sell_estimate_draw, d.p_estimate_basis_draw,
+    d.ros_draw_14d, d.ros_draw_28d, d.ros_draw_56d,
+    d.ros_draw_14d_corrected, d.ros_draw_28d_corrected, d.ros_draw_56d_corrected,
+    d.draw_correction_days_removed_14d, d.draw_correction_days_removed_28d, d.draw_correction_days_removed_56d
+  FROM tmp_bloom_ros_pool p
+  JOIN tmp_bloom_ros_scan s ON s.store_code = p.store_code AND s.product_code = p.product_code
+  LEFT JOIN tmp_bloom_ros_draw d ON d.store_code = p.store_code AND d.product_code = p.product_code;
 
+  -- GET DIAGNOSTICS must read the INSERT's row count HERE, before any further
+  -- statement runs -- it captures the MOST RECENTLY EXECUTED command, and the
+  -- three DROP TABLEs below all report ROW_COUNT=0. Moving this call after
+  -- them (as an earlier draft did) made every return value read 'rows: 0'
+  -- even on a fully correct refresh -- caught 2026-07-09 when 80176 showed
+  -- 'rows: 0' from the function but the table's own pantry_refreshed_at and
+  -- unit_incommensurable count had genuinely moved. Cosmetic only, but a
+  -- diagnostic nobody can trust is a diagnostic that shouldn't ship (R22).
   GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+  DROP TABLE IF EXISTS pg_temp.tmp_bloom_ros_pool;
+  DROP TABLE IF EXISTS pg_temp.tmp_bloom_ros_scan;
+  DROP TABLE IF EXISTS pg_temp.tmp_bloom_ros_draw;
 
   RETURN jsonb_build_object(
     'store_code', p_store,
