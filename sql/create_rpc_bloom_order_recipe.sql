@@ -1,111 +1,120 @@
 -- =============================================================================
 -- create_rpc_bloom_order_recipe.sql
--- SB-CC-BLOOM-004 item 5 (+ items 7/8, §3b) -- the profile-driven Recipe RPC.
+-- SB-CC-BLOOM-004 item 5 -- the profile-driven Recipe RPC.
 --
--- =========================== SB-CC-BLOOM-007 REWRITE (2026-07-11) ==========
--- Pieter walked the shipped Recipe screen and it missed the mark -- not the
--- maths, the wrapping. Corrective rulings: CLEANUP-ENGINE-CANON SS14
--- ADDENDUM v7. Brief: Bloom/SB-CC-BLOOM-007-order-desks-and-deviation-
--- corrections.md. Five deviations corrected here (items 2-6 of that brief),
--- NO formula changes to the 8-step engine itself -- every change below is
--- scope, inputs or an additive leg, per the brief's own governing constraint.
+-- =========================== BLOOM-007 MONDAY-LIST REWRITE (2026-07-11) =====
+-- PM's order-audit walk found six more defects after the first BLOOM-007
+-- pass landed. BUG-LOG ENG-012/013/014/015/016 + CLEANUP-ENGINE-CANON SS14
+-- ADDENDUM v7 item 4's corrected wording (item 4 "FOCUS AFTER GENERATION",
+-- superseded same evening). No new formulas -- every fix below reuses an
+-- ALREADY-PROVEN pattern from rpc_bloom_order_direct_beer (ENG-009) or
+-- l2_stock_band's own refresh function, applied where it was missing.
 --
--- ITEM 2 -- ROUTE SCOPE (was: no route scope, pool mixed ambient/TOPS/beer).
---   New REQUIRED param p_route ('DC_AMBIENT'|'DC_TOPS'|'DIRECT_BEER'). A
---   call without it is a defect (canon v7 item 1), so it errors loudly
---   rather than silently defaulting. DC_AMBIENT/DC_TOPS read
---   bloom_dc_config.dc_cycle_dept_nrs (validated against the store's own
---   format_group -- calling DC_AMBIENT on a TOPS store is also a defect).
---   DIRECT_BEER reads bloom_route_config exactly as rpc_bloom_order_direct_
---   beer already does (merch_group_nrs + excluded_supplier_types) -- same
---   lnk pattern ported verbatim, not reinvented.
+-- ENG-012 -- ORDER-TIME BAND RECOMPUTE. l2_stock_band's min_band/max_band
+--   are nightly facts built on FIXED lead=3.5/review=7 (uniform, every
+--   line, every store). BLOOM-007's first pass fed the calendar-derived
+--   drop cover into the SOH projection (lead_days_used) but left min_band/
+--   max_band on the stale nightly figures -- milk 10116/1674 kept ordering
+--   off a 7.5d/14.5d band on an actual 2-day drop, ~15% over. Fixed: the
+--   recipe now recomputes min_band/max_band AT ORDER TIME using v_lead
+--   (the calendar drop cover, or the anchor-gap fallback) as BOTH the lead
+--   and the review period -- "the drop window as the review period" per
+--   canon v7 item 2. Same formula l2_stock_band already uses
+--   (min = demand*lead + safety_days*demand; max = min + demand*review,
+--   gmroi-capped lines get review*0.5), just re-derived with the real
+--   per-order lead instead of the nightly constant. l2_stock_band itself
+--   is UNTOUCHED (still the standing nightly fact, still feeds Capital
+--   Tied/KPIs) -- only this RPC's own order-time working figures change.
 --
--- ITEM 3 -- DROP COVER (was: p_next_delivery accepted but never read, a
---   fixed anchor-to-delivery gap used instead). v_lead (the recipe's own
---   SOH-projection lead, output as lead_days_used) now reads
---   GREATEST(p_next_delivery - p_delivery_date, 0) -- "days from this
---   delivery to the next on the same route" per canon v7 item 2 -- when the
---   caller supplies p_next_delivery (the desk screen always will, prepop'd
---   from rpc_bloom_next_deliveries). Falls back to the old anchor-gap
---   constant only when p_next_delivery is NULL (legacy/manual calls).
---   lead_days_source names which per row (R29).
---   NOTE, scope boundary named plainly: l2_stock_band's OWN internal
---   lead_days_used/target_cover_days_used columns are a SEPARATE, currently
---   flat (3.5/7 uniform) constant baked into that matview's own formula --
---   "the band formulas (ENG-001 v2 form stands)" is explicitly protected
---   in the brief's own build-order table, and l2_stock_band has 24+ proven
---   dependents (CLEANUP-ENGINE-CANON SS13) -- touching its refresh is a much
---   larger, separate-session change. This rewrite only touches THIS
---   function's own local lead variable, which is what the brief's proof
---   point tests (a row's own lead_days_used output). Named gap, not silent.
+-- ENG-013 -- SAB DESK ROUTES THROUGH THE RECIPE, ROUTE BUDGET CORRECT.
+--   The DIRECT_BEER route already worked structurally (BLOOM-007 item 2)
+--   but read the DC weekly budget row for its Fit-to-Budget ceiling --
+--   wrong route's money. Fixed: the ledger route key is now
+--   `p_route IN ('DC_AMBIENT','DC_TOPS') -> 'DC'`, `'DIRECT_BEER' ->
+--   'DIRECT_BEER'` (a real, separate route in order_budget_ledger since
+--   Ship 1). rpc_bloom_order_direct_beer retires with lineage (see its own
+--   file) -- the recipe is now the only order path for every desk.
 --
--- ITEM 4 -- COUNT_FIRST REVERSION (was: WHERE b.band_blocked=false excluded
---   the line from the pool entirely). Removed. A band_blocked line now
---   orders with soh_raw forced to 0 (conservative SOH per canon v7 item 5)
---   and carries count_first=true + band_blocked_reason on the row -- the
---   count list "rides the response" as these flagged rows, not a separate
---   table (matches the existing COUNT-FIRST pink-wash pattern already used
---   for selling-negative lines on the DC screen).
+-- ENG-014 -- COUNT_FIRST SPLITS BY CLAIM SIGN. The first pass zeroed SOH
+--   for EVERY band_blocked line regardless of sign, over-buying positive
+--   claims that were never proven wrong (KOO BEANS 137585, LION MATCHES
+--   5847 -- both claim real positive stock, canon only mandates zero-SOH
+--   for the NEGATIVE-claim case, S14 SS9 DF-5 selling-negative). Fixed:
+--   soh_used = (band_blocked AND soh_raw < 0) ? 0 : soh_raw. count_first
+--   still flags every band_blocked line regardless of sign (the count
+--   list rides the response either way) -- only the QUANTITY math changes.
 --
--- ITEM 5 -- 21-DAY WEEKLY MINIMUM on the order_essentials preset (was: flat
---   10-day override always). New order_budget_ledger.cash_constrained
---   column (added this migration set, see create_order_budget_ledger_
---   cash_constrained.sql) is read for the store's current DC week: FALSE
---   (default, 82%-forecast basis) -> 21-day cover; TRUE (80% cash-
---   constrained week) -> flat 10-day preset cover, per canon v7 item 3.
---   catch_up's 21-day target is UNCHANGED (already 21, not touched).
+-- ENG-015 -- DEMAND WINDOW RESOLVES PER TIER, the ENG-005 precedent ported
+--   VERBATIM from rpc_bloom_order_dc (NOT rpc_bloom_order_direct_beer's
+--   capped/guarded ENG-009 pattern -- an earlier draft of this fix used
+--   that one and it suppressed milk's real family-draw magnitude down to
+--   2x its own near-zero scan rate, caught in R22 verification before
+--   commit and corrected): T100 = ros_14d (28d fallback when q14=0),
+--   T1000 = ros_28d, BOR = ros_56d. ros_final = GREATEST(scan_raw,
+--   draw_corrected) -- scan is UNCAPPED, UNGUARDED (matches DC exactly);
+--   draw only enters the GREATEST when the line clears the SAME
+--   eligibility gate l2_stock_band already uses (KVI-floor bands trust it
+--   by construction, everything else needs >=8 selling days/182d off the
+--   pantry's own p_sell_estimate) -- this eligibility GATE, not a
+--   magnitude cap, is the ENG-015 "story test" that keeps a consumable-
+--   class line like LION MATCHES 5847 off an untrustworthy draw signal
+--   while leaving milk's genuine family-draw magnitude untouched. This
+--   value (`ros_final`) REPLACES l2_stock_band's flat 56d-only
+--   `rhythm_adjusted_demand` as the demand rate driving both the order-
+--   time band recompute (ENG-012) and the need/pack calc. The promo gear
+--   multiplier was always correct in isolation -- once its base demand is
+--   the real tier-resolved rate, the geared quantity regains the DC form's
+--   own magnitude.
 --
--- ITEM 6 -- NORMAL VS GEARED (was: no promo leg at all). Ported verbatim
---   from rpc_bloom_order_dc's own promo_match/gear_calc pattern: a line
---   inside an active-or-adjacent promo window gears its demand (promo ROS
---   / pre-promo baseline ROS, clamped [1.0,5.0], default 2.0 with no own-
---   promo history), computes geared packs alongside normal packs using the
---   SAME target_level, and suggested_packs = promo_active ? geared : normal
---   -- exactly DC's own rule, never reinvented.
+-- ENG-016 -- BUDGET-WEEK ATTRIBUTION. order_budget_ledger.year_month IS
+--   the week-commencing Saturday (WC-11-Jul = 2026-07-11, itself a
+--   Saturday) -- the DC payment cycle's own boundary (canon v7 item 7).
+--   The recipe now computes the Saturday on-or-before p_delivery_date and
+--   looks up that EXACT week's ledger row (falls back to the most recent
+--   PAST week, never a future one, when the exact week isn't seeded yet --
+--   flagged in the story) for both the essentials cash-basis gate and the
+--   Fit-to-Budget ceiling. An order consumes the budget of its DELIVERY
+--   week, never the week it was placed -- was reading "most recent seeded
+--   week" regardless of delivery date.
 --
--- Reuses the pantry built in items 1-4 -- reuse before rewrite (governing
--- constraint 1). Tier is NOT a demand input (BLOOM-004 §3 item 5) --
--- l2_stock_position.tier is read here ONLY as a preset pool-filter signal.
+-- Presets (order_essentials/catch_up) already filter the POOL itself to
+-- the focus set (KVI/BT/tier) -- this was already correct in the first
+-- BLOOM-007 pass and needed no change: three presets already return three
+-- different line sets. What changed is the DESK SCREEN's own handling of
+-- a preset call (replace the order, never merge) -- see page.jsx.
 -- =============================================================================
 --
--- ORDER MODE (BLOOM-003 §2b.5): mode is a property of the DROP, geared per
---   line by archetype. EVERYDAY never gears (always targets min_band).
---   MONTH_END/EARLY_MONTH gear to 'build' (target max_band) inside a
---   day-of-month run-up window, else 'minimum' (target min_band). Manual
---   override: p_days_cover_override (or a preset's own flat target)
---   REPLACES mode/band targeting entirely.
+-- ITEM 2 -- ROUTE SCOPE (BLOOM-007, unchanged this pass). p_route REQUIRED
+--   (DC_AMBIENT/DC_TOPS/DIRECT_BEER), validated against the store's own
+--   bloom_dc_config.format_group. DC routes filter the pool on
+--   bloom_dc_config.dc_cycle_dept_nrs; DIRECT_BEER filters on
+--   bloom_route_config.merch_group_nrs, lnk pattern ported from
+--   rpc_bloom_order_direct_beer.
 --
--- KVI FLOOR: enforced by construction (minimum mode targets min_band, which
---   bakes in the KVI safety-days floor) AND by the budget-fit allocator
---   (KVI_CRITICAL/IMPORTANT lines never trimmed, protected first).
+-- ITEM 3 -- DROP COVER (BLOOM-007, unchanged this pass). v_lead reads
+--   GREATEST(p_next_delivery - p_delivery_date, 0) when supplied, else
+--   the anchor-gap fallback. lead_days_source names which per row (R29).
 --
--- GMROI FILL: l2_stock_band.gmroi_quartile/gmroi_capped surfaced not
---   recomputed; the Fit-to-Budget allocator spends remaining budget in
---   GMROI-rank order, best return first.
+-- ITEM 6 -- NORMAL VS GEARED (BLOOM-007, unchanged this pass, now correct
+--   per ENG-015). Ported from rpc_bloom_order_dc's promo_match/gear_calc.
 --
--- FIT TO BUDGET: p_fit_to_budget boolean, off by default. When on: every
---   KVI_CRITICAL/KVI_IMPORTANT line's packs are NEVER trimmed (protected
---   spend, summed first); the remaining weekly DC budget (order_budget_
---   ledger, route_key='DC', grain='weekly', most recent week, less
---   committed_amount) is spent down GMROI rank via a running-cumulative
---   window function. budget_fit_reason names which per row: protected_kvi /
---   fits / trimmed_partial / trimmed_to_zero. packs_before_fit keeps the
---   pre-trim (promo-resolved) figure for audit.
+-- KVI FLOOR: enforced by construction (minimum mode targets min_band) AND
+--   by the budget-fit allocator (KVI_CRITICAL/IMPORTANT never trimmed).
 --
--- PRESETS: order_essentials = item-5 cover (21 or 10, cash-basis-gated) +
---   pool filter (KVI_CRITICAL/IMPORTANT OR l2_bt_heroes OR tier IN
---   TOP_100/TOP_1000). catch_up = flat 21-day target, same pool filter,
---   band-capped at p_catchup_band_cap_multiple x max_band, Fit-to-Budget
---   FORCED ON. Frozen focus is not yet an engine set (BLOOM-004 item 7,
---   trails into next week per the landing window) -- frozen_focus_pending
---   flags this honestly per row when either preset is active.
+-- FIT TO BUDGET: p_fit_to_budget boolean, off by default. KVI_CRITICAL/
+--   IMPORTANT lines never trimmed (protected spend, summed first); the
+--   remaining weekly budget (route-correct per ENG-013, week-correct per
+--   ENG-016) is spent down GMROI rank. budget_fit_reason per row:
+--   protected_kvi / fits / trimmed_partial / trimmed_to_zero.
 --
--- POOL: l2_stock_band (sourced FROM l2_kvi_profile) INNER JOIN an active
---   supplier link matching the route (Z for DC routes, non-excluded types
---   for DIRECT_BEER).
+-- PRESETS: order_essentials = 21-day cover (10-day when the delivery
+--   week's ledger row is cash_constrained, canon v7 item 3) + pool filter
+--   (KVI_CRITICAL/IMPORTANT OR l2_bt_heroes OR tier IN TOP_100/TOP_1000).
+--   catch_up = flat 21-day target, same pool filter, band-capped at
+--   p_catchup_band_cap_multiple x max_band, Fit-to-Budget FORCED ON.
 -- =============================================================================
 
-DROP FUNCTION IF EXISTS public.rpc_bloom_order_recipe(text,date,date,date,text,numeric,boolean,integer,integer,integer,numeric);
+DROP FUNCTION IF EXISTS public.rpc_bloom_order_recipe(text,date,date,date,text,numeric,boolean,integer,integer,integer,numeric,text);
 
 CREATE FUNCTION public.rpc_bloom_order_recipe(
   p_store_code text,
@@ -123,8 +132,8 @@ CREATE FUNCTION public.rpc_bloom_order_recipe(
 )
 RETURNS TABLE(
   store_code text, product_code bigint, ean text, description text, dept_name text,
-  route text, kvi_band text, archetype text, mode text, mode_reason text,
-  demand_source text, rhythm_adjusted_demand numeric,
+  route text, kvi_band text, archetype text, tier text, mode text, mode_reason text,
+  demand_source text, ros_window_used text, rhythm_adjusted_demand numeric,
   min_band numeric, max_band numeric, target_level numeric,
   soh numeric, lead_days_used integer, lead_days_source text, projected_soh numeric,
   count_first boolean, band_blocked_reason text,
@@ -134,7 +143,8 @@ RETURNS TABLE(
   packs_before_fit integer, suggested_packs integer, value numeric,
   gmroi_quartile integer, gmroi_capped boolean, gmroi_rank integer,
   budget_fit_applied boolean, budget_fit_reason text,
-  tier text, is_bt_hero boolean, preset_applied text, frozen_focus_pending boolean,
+  budget_week_start date, budget_week_source text,
+  is_bt_hero boolean, preset_applied text, frozen_focus_pending boolean,
   story text
 )
 LANGUAGE plpgsql
@@ -148,17 +158,18 @@ DECLARE
   v_pool_filter_active boolean;
   v_preset_applied text;
   v_fit_to_budget boolean;
-  v_weekly_dc_budget numeric;
+  v_weekly_budget numeric;
   v_next_delivery date;
   v_format_group text;
   v_dept_nrs smallint[];
   v_cash_constrained boolean;
   v_essentials_days numeric;
+  v_ledger_route text;
+  v_week_start date;
+  v_week_source text;
 BEGIN
   SET LOCAL statement_timeout = '30s';
 
-  -- ITEM 2: route scope is mandatory (canon v7 item 1 -- a call without a
-  -- route is a defect, not a wider order).
   IF p_route IS NULL OR p_route NOT IN ('DC_AMBIENT','DC_TOPS','DIRECT_BEER') THEN
     RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS or DIRECT_BEER (canon SS14 v7 item 1)';
   END IF;
@@ -175,12 +186,15 @@ BEGIN
     END IF;
   END IF;
 
+  -- ENG-013: ledger route key. DC_AMBIENT/DC_TOPS share the DC weekly
+  -- budget; DIRECT_BEER reads its own separate route budget (live in
+  -- order_budget_ledger since Ship 1) -- never DC's money for SAB.
+  v_ledger_route := CASE WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER' ELSE 'DC' END;
+
   SELECT MAX(ss.sale_date) INTO v_anchor FROM sigma_sales ss WHERE ss.store_code=p_store_code AND ss.period_kind='T' AND ss.txn_kind=1;
   SELECT COALESCE(p_soh_date, MAX(sd.snapshot_date)) INTO v_soh_dt FROM l2_soh_daily sd WHERE sd.store_code=p_store_code;
   v_dom := EXTRACT(DAY FROM p_delivery_date)::int;
 
-  -- ITEM 3: drop cover replaces the fixed anchor-gap lead where the caller
-  -- supplies the real next-delivery date (the desk screen always will).
   IF p_next_delivery IS NOT NULL THEN
     v_next_delivery := p_next_delivery;
     v_lead := GREATEST(p_next_delivery - p_delivery_date, 0);
@@ -191,19 +205,42 @@ BEGIN
     v_lead_source := 'fallback_anchor_gap';
   END IF;
 
+  -- ENG-016: the budget week is the Saturday on-or-before the DELIVERY
+  -- date (canon v7 item 7, DC payment cycle boundary) -- an order
+  -- consumes the budget of its delivery week, never the week it was
+  -- placed. ISODOW: Mon=1..Sun=7, Saturday=6.
+  v_week_start := p_delivery_date - ((EXTRACT(ISODOW FROM p_delivery_date)::int + 1) % 7);
+
+  SELECT obl.year_month INTO v_week_start
+  FROM order_budget_ledger obl
+  WHERE obl.store_code = p_store_code AND obl.route_key = v_ledger_route AND obl.grain = 'weekly'
+    AND obl.year_month = v_week_start
+  LIMIT 1;
+
+  IF v_week_start IS NOT NULL THEN
+    v_week_source := 'delivery_week_exact';
+  ELSE
+    -- fallback: the exact delivery week isn't seeded yet -- use the most
+    -- recent PAST week rather than silently picking a future one.
+    v_week_start := p_delivery_date - ((EXTRACT(ISODOW FROM p_delivery_date)::int + 1) % 7);
+    SELECT obl.year_month INTO v_week_start
+    FROM order_budget_ledger obl
+    WHERE obl.store_code = p_store_code AND obl.route_key = v_ledger_route AND obl.grain = 'weekly'
+      AND obl.year_month <= v_week_start
+    ORDER BY obl.year_month DESC LIMIT 1;
+    v_week_source := CASE WHEN v_week_start IS NOT NULL THEN 'nearest_past_week_fallback' ELSE 'no_ledger_row' END;
+  END IF;
+
   v_preset_essentials := COALESCE(p_preset = 'order_essentials', false);
   v_preset_catchup := COALESCE(p_preset = 'catch_up', false);
   v_pool_filter_active := v_preset_essentials OR v_preset_catchup;
   v_preset_applied := COALESCE(p_preset, 'standard');
 
-  -- ITEM 5: the 21-day weekly minimum on order_essentials, gated on the
-  -- week's cash basis (canon v7 item 3). catch_up's 21-day target is
-  -- unchanged (not gated -- it is already the flat target by definition).
   IF v_preset_essentials THEN
     SELECT COALESCE(obl.cash_constrained, false) INTO v_cash_constrained
     FROM order_budget_ledger obl
-    WHERE obl.store_code = p_store_code AND obl.route_key = 'DC' AND obl.grain = 'weekly'
-    ORDER BY obl.year_month DESC LIMIT 1;
+    WHERE obl.store_code = p_store_code AND obl.route_key = v_ledger_route AND obl.grain = 'weekly'
+      AND obl.year_month = v_week_start;
     v_essentials_days := CASE WHEN COALESCE(v_cash_constrained, false) THEN 10 ELSE 21 END;
   END IF;
 
@@ -214,11 +251,11 @@ BEGIN
   END;
   v_fit_to_budget := COALESCE(p_fit_to_budget, false) OR v_preset_catchup;
 
-  SELECT COALESCE(obl.budget_amount,0) - COALESCE(obl.committed_amount,0) INTO v_weekly_dc_budget
+  SELECT COALESCE(obl.budget_amount,0) - COALESCE(obl.committed_amount,0) INTO v_weekly_budget
   FROM order_budget_ledger obl
-  WHERE obl.store_code=p_store_code AND obl.route_key='DC' AND obl.grain='weekly'
-  ORDER BY obl.year_month DESC LIMIT 1;
-  v_weekly_dc_budget := COALESCE(v_weekly_dc_budget, 0);
+  WHERE obl.store_code=p_store_code AND obl.route_key=v_ledger_route AND obl.grain='weekly'
+    AND obl.year_month = v_week_start;
+  v_weekly_budget := COALESCE(v_weekly_budget, 0);
 
   RETURN QUERY EXECUTE format($q$
     WITH route_beer_cfg AS (
@@ -226,9 +263,6 @@ BEGIN
       FROM bloom_route_config rc WHERE rc.store_code=%1$L AND rc.route_key='DIRECT_BEER'
     ),
     lnk AS (
-      -- ITEM 2: route-aware supplier link. DC routes stay Z-supplier-link
-      -- scoped exactly as before; DIRECT_BEER ports rpc_bloom_order_direct_
-      -- beer's own lnk pattern verbatim (non-excluded active link types).
       SELECT DISTINCT ON (sl.product_code) sl.product_code,
         GREATEST(COALESCE(sl.pack_size,1),1)::smallint AS ps, sl.list_cost AS pack_cost
       FROM sigma_supplier_link sl
@@ -243,79 +277,144 @@ BEGIN
     ),
     soh AS (SELECT sd.product_code, sd.soh FROM l2_soh_daily sd WHERE sd.store_code=%1$L AND sd.snapshot_date=%2$L::date),
     bt AS (SELECT DISTINCT product_code FROM l2_bt_heroes WHERE store_code=%1$L),
+    -- ENG-015: raw per-window scan units, the ENG-005 precedent's own base.
+    sales AS (
+      SELECT s.product_code,
+        SUM(s.qty) FILTER (WHERE s.sale_date > %2$L::date - 14) AS q14,
+        SUM(s.qty) FILTER (WHERE s.sale_date > %2$L::date - 28) AS q28,
+        SUM(s.qty) FILTER (WHERE s.sale_date > %2$L::date - 56) AS q56
+      FROM sigma_sales s
+      WHERE s.store_code = %1$L AND s.period_kind='T' AND s.txn_kind=1
+        AND s.sale_date > %2$L::date - 56 AND s.sale_date <= %2$L::date
+      GROUP BY s.product_code
+    ),
     pool AS MATERIALIZED (
       SELECT b.store_code, b.product_code,
-        b.kvi_band, b.demand_source, b.rhythm_adjusted_demand, b.min_band, b.max_band,
-        b.gmroi_quartile, b.gmroi_capped, b.band_blocked, b.band_blocked_reason,
+        b.kvi_band, b.gmroi_quartile, b.gmroi_capped, b.band_blocked, b.band_blocked_reason,
         r.archetype,
         lnk.ps, lnk.pack_cost,
         sp.description, sp.dept_name, sp.tier, sp.department_nr, sp.merch_group_nr,
         COALESCE(so.soh,0) AS soh_raw,
-        (bt.product_code IS NOT NULL) AS is_bt_hero
+        (bt.product_code IS NOT NULL) AS is_bt_hero,
+        COALESCE(sa.q14,0) AS q14, COALESCE(sa.q28,0) AS q28, COALESCE(sa.q56,0) AS q56,
+        rop.ros_14d_corrected, rop.ros_28d_corrected, rop.ros_56d_corrected,
+        rop.ros_draw_14d_corrected, rop.ros_draw_28d_corrected, rop.ros_draw_56d_corrected,
+        rop.p_sell_estimate AS p_sell_scan, rop.p_sell_estimate_draw AS p_sell_draw,
+        COALESCE(rop.unit_incommensurable, true) AS unit_incommensurable
       FROM l2_stock_band b
       JOIN lnk ON lnk.product_code = b.product_code
       LEFT JOIN l2_rhythm_profile r ON r.store_code=b.store_code AND r.product_code=b.product_code
       LEFT JOIN l2_stock_position sp ON sp.store_code=b.store_code AND sp.product_code=b.product_code
       LEFT JOIN soh so ON so.product_code=b.product_code
       LEFT JOIN bt ON bt.product_code=b.product_code
+      LEFT JOIN sales sa ON sa.product_code=b.product_code
+      LEFT JOIN l2_bloom_ros_pantry rop ON rop.store_code=b.store_code AND rop.product_code=b.product_code
       WHERE b.store_code=%1$L
-        -- ITEM 2: route-scoped pool. DC routes filter on the ambient dept
-        -- cycle (bloom_dc_config); DIRECT_BEER filters on the beer merch
-        -- groups (bloom_route_config) -- never both, never neither.
         AND (
           (%15$L::text IN ('DC_AMBIENT','DC_TOPS') AND sp.department_nr = ANY(%16$L::smallint[]))
           OR (%15$L::text = 'DIRECT_BEER' AND sp.merch_group_nr IN (SELECT unnest(merch_group_nrs) FROM route_beer_cfg))
         )
-        -- ITEM 4: band_blocked=false exclusion REMOVED (COUNT_FIRST
-        -- reversion) -- band_blocked lines stay in the pool, handled below.
         AND (NOT %3$L::boolean
              OR b.kvi_band IN ('KVI_CRITICAL','KVI_IMPORTANT')
              OR bt.product_code IS NOT NULL
              OR sp.tier IN ('TOP_100','TOP_1000'))
     ),
-    moded AS (
+    -- ENG-015: per-tier window selection (T100 14d/28d-fallback, T1000
+    -- 28d, BOR 56d), ros_final = GREATEST(scan_raw, draw_corrected) -- the
+    -- ENG-005 precedent ported VERBATIM from rpc_bloom_order_dc (not the
+    -- capped/guarded rpc_bloom_order_direct_beer pattern, an earlier draft
+    -- of this fix wrongly used that one and it suppressed milk's real
+    -- family-draw magnitude down to 2x its own near-zero scan rate --
+    -- caught in R22 verification, corrected). scan is UNCAPPED, UNGUARDED
+    -- (matches DC exactly). draw is the ENG-015 "story test": it only
+    -- participates in the GREATEST when the line clears the SAME
+    -- eligibility gate l2_stock_band already uses (KVI-floor bands
+    -- trust it by construction, everything else needs >=8 selling
+    -- days/182d off the pantry's own p_sell_estimate) -- "scan governs
+    -- where the story fails" is this gate, not a magnitude cap.
+    tiered AS (
       SELECT p.*,
-        CASE
-          WHEN p.archetype = 'MONTH_END' AND %4$s BETWEEN %5$s AND %6$s THEN 'build'
-          WHEN p.archetype = 'EARLY_MONTH' AND %4$s >= %7$s THEN 'build'
-          ELSE 'minimum'
-        END AS mode
+        CASE p.tier WHEN 'TOP_100' THEN (CASE WHEN p.q14=0 THEN p.q28/28.0 ELSE p.q14/14.0 END)
+          WHEN 'TOP_1000' THEN p.q28/28.0 ELSE p.q56/56.0 END AS scan_raw,
+        CASE p.tier WHEN 'TOP_100' THEN (CASE WHEN p.q14=0 THEN p.ros_draw_28d_corrected ELSE p.ros_draw_14d_corrected END)
+          WHEN 'TOP_1000' THEN p.ros_draw_28d_corrected ELSE p.ros_draw_56d_corrected END AS draw_corrected,
+        (CASE p.tier WHEN 'TOP_100' THEN (CASE WHEN p.q14=0 THEN 'ros_28d (q14=0 fallback)' ELSE 'ros_14d' END)
+          WHEN 'TOP_1000' THEN 'ros_28d' ELSE 'ros_56d' END) AS ros_window_used
       FROM pool p
     ),
-    targeted AS (
-      SELECT m.*,
+    guarded AS (
+      SELECT t.*,
+        ROUND(COALESCE(t.p_sell_draw,0) * 182) AS draw_selling_days,
+        (NOT t.unit_incommensurable
+          AND (t.kvi_band IN ('KVI_CRITICAL','KVI_IMPORTANT') OR COALESCE(t.p_sell_draw,0)*182 >= 8)) AS draw_eligible
+      FROM tiered t
+    ),
+    demand_resolved AS (
+      SELECT g.*,
+        (CASE WHEN g.draw_eligible THEN g.draw_corrected ELSE NULL END) AS draw_used,
+        GREATEST(g.scan_raw, COALESCE((CASE WHEN g.draw_eligible THEN g.draw_corrected ELSE NULL END),0)) AS ros_final,
+        (g.draw_eligible AND COALESCE(g.draw_corrected,0) > g.scan_raw) AS demand_from_draw
+      FROM guarded g
+    ),
+    moded AS (
+      SELECT d.*,
         CASE
-          WHEN %8$L IS NOT NULL AND %11$L::boolean THEN LEAST(m.rhythm_adjusted_demand * %8$L::numeric, m.max_band * %12$s)
-          WHEN %8$L IS NOT NULL THEN m.rhythm_adjusted_demand * %8$L::numeric
-          WHEN m.mode='build' THEN m.max_band
-          ELSE m.min_band
+          WHEN d.archetype = 'MONTH_END' AND %4$s BETWEEN %5$s AND %6$s THEN 'build'
+          WHEN d.archetype = 'EARLY_MONTH' AND %4$s >= %7$s THEN 'build'
+          ELSE 'minimum'
+        END AS mode,
+        CASE d.kvi_band WHEN 'KVI_CRITICAL' THEN 4 WHEN 'KVI_IMPORTANT' THEN 2 ELSE 0 END AS safety_days
+      FROM demand_resolved d
+    ),
+    -- ENG-012: order-time band recompute. v_lead (calendar drop cover, or
+    -- the anchor-gap fallback) is used as BOTH the lead and the review
+    -- period -- same additive formula l2_stock_band's own refresh
+    -- function uses (min = demand*lead + safety*demand; max = min +
+    -- demand*review, gmroi-capped lines get review*0.5) -- re-derived
+    -- with the real per-order lead, never the nightly 3.5/7 constant.
+    banded AS (
+      SELECT m.*,
+        (m.ros_final * %9$s) + (m.safety_days * m.ros_final) AS min_band_ot,
+        (CASE WHEN m.gmroi_capped THEN %9$s * 0.5 ELSE %9$s END) AS review_days_ot
+      FROM moded m
+    ),
+    targeted AS (
+      SELECT b.*,
+        (b.min_band_ot + (b.ros_final * b.review_days_ot)) AS max_band_ot,
+        CASE
+          WHEN %8$L IS NOT NULL AND %11$L::boolean THEN LEAST(b.ros_final * %8$L::numeric, (b.min_band_ot + (b.ros_final * b.review_days_ot)) * %12$s)
+          WHEN %8$L IS NOT NULL THEN b.ros_final * %8$L::numeric
+          WHEN b.mode='build' THEN (b.min_band_ot + (b.ros_final * b.review_days_ot))
+          ELSE b.min_band_ot
         END AS target_level,
         CASE
           WHEN %8$L IS NOT NULL AND %11$L::boolean THEN 'catch-up: 21-day target, band-capped'
           WHEN %8$L IS NOT NULL THEN format('flat %%s-day cover override', %8$L::text)
-          WHEN m.mode='build' THEN 'build: anticipatory, targets max_band ahead of the archetype peak'
-          ELSE 'minimum: targets min_band (KVI-safety reorder point)'
+          WHEN b.mode='build' THEN 'build: anticipatory, targets max_band ahead of the archetype peak'
+          ELSE 'minimum: targets min_band (order-time, calendar lead+review)'
         END AS mode_reason
-      FROM moded m
+      FROM banded b
     ),
     needc AS (
       SELECT t.*,
-        -- ITEM 4: COUNT_FIRST reversion -- band_blocked lines project on a
-        -- conservative (zero) SOH, never on the (untrusted) raw figure.
-        (t.band_blocked AND t.soh_raw <> 0) AS count_first,
-        CASE WHEN t.band_blocked THEN 0 ELSE t.soh_raw END AS soh_used,
-        GREATEST(CASE WHEN t.band_blocked THEN 0 ELSE t.soh_raw END,0) - t.rhythm_adjusted_demand * %9$s AS proj,
-        GREATEST(t.target_level - (GREATEST(CASE WHEN t.band_blocked THEN 0 ELSE t.soh_raw END,0) - t.rhythm_adjusted_demand * %9$s), 0) AS needu
+        -- ENG-014: COUNT_FIRST splits by claim sign. A NEGATIVE claim is
+        -- an impossible value -- zero it (canon's existing selling-
+        -- negative rule). A POSITIVE claim is not disproven by
+        -- band_blocked alone -- order on it, never a forced buy; the
+        -- count still rides to settle it next drop.
+        t.band_blocked AS count_first,
+        (CASE WHEN t.band_blocked AND t.soh_raw < 0 THEN 0 ELSE t.soh_raw END) AS soh_used,
+        GREATEST((CASE WHEN t.band_blocked AND t.soh_raw < 0 THEN 0 ELSE t.soh_raw END),0) - t.ros_final * %9$s AS proj,
+        GREATEST(t.target_level - (GREATEST((CASE WHEN t.band_blocked AND t.soh_raw < 0 THEN 0 ELSE t.soh_raw END),0) - t.ros_final * %9$s), 0) AS needu
       FROM targeted t
     ),
     packs AS (
       SELECT n.*,
-        CASE WHEN n.rhythm_adjusted_demand<=0 THEN 0
+        CASE WHEN n.ros_final<=0 THEN 0
              WHEN n.needu>0 THEN GREATEST(FLOOR(n.needu/n.ps),1)
              ELSE 0 END::int AS normal_packs_calc
       FROM needc n
     ),
-    -- ITEM 6: normal vs geared, ported verbatim from rpc_bloom_order_dc.
     promo_match AS (
       SELECT DISTINCT ON (pk.product_code) pk.product_code, pa.promo_nr, pa.start_date, pa.end_date, pa.status, pa.list_cost AS promo_unit_cost
       FROM packs pk JOIN public.sigma_promotion_articles pa ON pa.store_code=%1$L AND pa.product_code=pk.product_code
@@ -343,13 +442,13 @@ BEGIN
     ),
     geared_calc AS (
       SELECT wg.*,
-        GREATEST(wg.soh_used,0) - (wg.rhythm_adjusted_demand*wg.gear) * %9$s AS proj_geared,
-        GREATEST(wg.target_level - (GREATEST(wg.soh_used,0) - (wg.rhythm_adjusted_demand*wg.gear) * %9$s), 0) AS needu_geared
+        GREATEST(wg.soh_used,0) - (wg.ros_final*wg.gear) * %9$s AS proj_geared,
+        GREATEST(wg.target_level - (GREATEST(wg.soh_used,0) - (wg.ros_final*wg.gear) * %9$s), 0) AS needu_geared
       FROM with_gear wg
     ),
     geared AS (
       SELECT g.*,
-        CASE WHEN g.rhythm_adjusted_demand<=0 THEN 0
+        CASE WHEN g.ros_final<=0 THEN 0
              WHEN g.needu_geared>0 THEN GREATEST(FLOOR(g.needu_geared/g.ps),1)
              ELSE 0 END::int AS geared_packs_calc
       FROM geared_calc g
@@ -374,12 +473,6 @@ BEGIN
     budgeted AS (
       SELECT r.*,
         SUM(CASE WHEN r.is_protected THEN r.resolved_packs_calc*r.pack_cost ELSE 0 END) OVER () AS protected_spend,
-        -- COALESCE(...,0): the window frame has no preceding rows for the
-        -- FIRST row in gmroi_rank order, so the bare SUM(...) OVER(...)
-        -- returns NULL there -- which would otherwise propagate through
-        -- every CASE comparison below and silently resolve via GREATEST's
-        -- NULL-ignoring behavior, wrongly zero-capping the single BEST-
-        -- ranked line on every fit-to-budget run.
         COALESCE(SUM(CASE WHEN NOT r.is_protected THEN r.resolved_packs_calc*r.pack_cost ELSE 0 END)
           OVER (ORDER BY r.gmroi_rank NULLS LAST, r.product_code
                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS running_before
@@ -408,9 +501,10 @@ BEGIN
       %1$L::text, pk.product_code,
       COALESCE(eb.ean, lpad(%1$L,5,'0')||lpad(pk.product_code::text,8,'0')),
       pk.description, pk.dept_name, %15$L::text,
-      pk.kvi_band, pk.archetype, pk.mode, pk.mode_reason,
-      pk.demand_source, ROUND(pk.rhythm_adjusted_demand,4),
-      ROUND(pk.min_band,2), ROUND(pk.max_band,2), ROUND(pk.target_level,2),
+      pk.kvi_band, pk.archetype, pk.tier, pk.mode, pk.mode_reason,
+      (CASE WHEN pk.demand_from_draw THEN 'family_draw' ELSE 'scan' END), pk.ros_window_used,
+      ROUND(pk.ros_final,4),
+      ROUND(pk.min_band_ot,2), ROUND(pk.max_band_ot,2), ROUND(pk.target_level,2),
       pk.soh_raw, %9$s::int, %17$L::text, ROUND(pk.proj,2),
       pk.count_first, pk.band_blocked_reason,
       ROUND(pk.needu,2), pk.ps, ROUND(pk.pack_cost,2),
@@ -419,21 +513,23 @@ BEGIN
       pk.resolved_packs_calc, pk.final_packs, ROUND((pk.final_packs*pk.pack_cost)::numeric,2),
       pk.gmroi_quartile, pk.gmroi_capped, pk.gmroi_rank,
       pk.fit_applied, pk.fit_reason,
-      pk.tier, pk.is_bt_hero, %10$L::text, %3$L::boolean,
-      format('%%s tier KVI=%%s, archetype=%%s -> %%s (%%s), band [%%s|%%s], SOH %%s, lead %%s(%%s) -> proj %%s, need %%s = %%s packs%%s%%s%%s',
+      %19$L::date, %20$L::text,
+      pk.is_bt_hero, %10$L::text, %3$L::boolean,
+      format('%%s tier KVI=%%s, archetype=%%s -> %%s (%%s), window=%%s demand=%%s, band [%%s|%%s], SOH %%s, lead %%s(%%s) -> proj %%s, need %%s = %%s packs%%s%%s%%s',
         COALESCE(pk.tier,'-'), COALESCE(pk.kvi_band,'-'), COALESCE(pk.archetype,'EVERYDAY(default)'), pk.mode, pk.mode_reason,
-        ROUND(pk.min_band,1), ROUND(pk.max_band,1), pk.soh_raw, %9$s, %17$L::text, ROUND(pk.proj,1), ROUND(pk.needu,1), pk.resolved_packs_calc,
-        CASE WHEN pk.count_first THEN ' | COUNT_FIRST: band_blocked, SOH treated as 0' ELSE '' END,
+        pk.ros_window_used, ROUND(pk.ros_final,2),
+        ROUND(pk.min_band_ot,1), ROUND(pk.max_band_ot,1), pk.soh_raw, %9$s, %17$L::text, ROUND(pk.proj,1), ROUND(pk.needu,1), pk.resolved_packs_calc,
+        CASE WHEN pk.count_first THEN format(' | COUNT_FIRST: %%s', CASE WHEN pk.soh_raw < 0 THEN 'negative claim, SOH treated as 0' ELSE 'positive claim, ordered on it, count still rides' END) ELSE '' END,
         CASE WHEN pk.promo_nr IS NOT NULL THEN format(' | promo %%s->%%s gear %%s', pk.promo_start, pk.promo_end, ROUND(pk.gear,2)) ELSE '' END,
         CASE WHEN pk.fit_applied THEN format(' | budget fit: %%s (%%s -> %%s packs)', pk.fit_reason, pk.resolved_packs_calc, pk.final_packs) ELSE '' END)
     FROM finalp pk
     LEFT JOIN v_ean_bridge eb ON eb.store_code=%1$L AND eb.product_code=pk.product_code
-    ORDER BY pk.kvi_band NULLS LAST, pk.rhythm_adjusted_demand DESC, pk.product_code
+    ORDER BY pk.ros_final DESC, pk.product_code
   $q$, p_store_code, v_soh_dt, v_pool_filter_active, v_dom,
        p_month_end_build_start_day, p_month_end_build_end_day, p_early_month_build_start_day,
        v_override, v_lead, v_preset_applied,
-       v_preset_catchup, p_catchup_band_cap_multiple, v_fit_to_budget, v_weekly_dc_budget,
-       p_route, v_dept_nrs, v_lead_source, v_next_delivery);
+       v_preset_catchup, p_catchup_band_cap_multiple, v_fit_to_budget, v_weekly_budget,
+       p_route, v_dept_nrs, v_lead_source, v_next_delivery, v_week_start, v_week_source);
 END;
 $function$;
 
