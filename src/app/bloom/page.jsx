@@ -622,6 +622,433 @@ function DeskMode() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Recipe mode — SB-CC-BLOOM-004 (EXPERIMENTAL). The profile-driven recipe:
+// life gate -> rhythm-adjusted demand -> stock band -> per-line automatic
+// mode (minimum/build) -> KVI floor -> GMROI fill -> Fit-to-Budget -> story
+// per row (R29), via rpc_bloom_order_recipe. Budget gauge reads the REAL
+// weekly order_budget_ledger (route_key='DC'), never a manual field -- this
+// is what distinguishes Recipe mode from the DC baseline's typed budget.
+// DC mode above is untouched (R30) -- this is a third, parallel, opt-in
+// surface, same pattern as Desk mode.
+// =============================================================================
+const KVI_LABEL = {
+  KVI_CRITICAL: 'KVI Critical', KVI_IMPORTANT: 'KVI Important',
+  STANDARD: 'Standard', CONSUMABLE_CARVE: 'Consumable', LONG_TAIL: 'Long tail',
+}
+const MODE_LABEL = { minimum: 'Minimum', build: 'Build ahead' }
+const PRESET_OPTIONS = [
+  { value: 'standard', label: 'Standard' },
+  { value: 'order_essentials', label: 'Order Essentials' },
+  { value: 'catch_up', label: 'Catch-up' },
+]
+const FIT_REASON_LABEL = {
+  protected_kvi: 'Protected · KVI floor', fits: 'Fits budget',
+  trimmed_partial: 'Trimmed to fit', trimmed_to_zero: 'Trimmed to zero',
+}
+
+function RecipeGenerateForm({ stores, storeCode, setStoreCode, deliveryDate, setDeliveryDate,
+  nextDeliveryDate, setNextDeliveryDate, preset, setPreset, fitToBudget, setFitToBudget,
+  daysCoverOverride, setDaysCoverOverride, onGenerate, generating, error }) {
+  const inputStyle = {
+    fontFamily: 'var(--font-mono)', fontSize: 14, color: 'var(--daisy-white)',
+    background: 'rgba(0,0,0,0.28)', border: '1px solid var(--glass-border)',
+    borderRadius: 'var(--radius-chip)', padding: '11px 13px', outline: 'none', width: '100%',
+  }
+  const field = (label, node) => (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+      <Label>{label}</Label>{node}
+    </label>
+  )
+  const catchUpForced = preset === 'catch_up'
+  return (
+    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
+      <GlassCard style={{ width: 'min(480px, 100%)', padding: '30px' }}>
+        <div style={{ marginBottom: 22, display: 'flex', flexDirection: 'column' }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 'var(--weight-semi)', color: 'var(--daisy-white)' }}>Bloom</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.14em', color: 'var(--growth-green)' }}>
+            recipe · life gate · KVI floor · GMROI fill
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {field('Store', (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {stores.map(s => (
+                <Chip key={s.store_code} active={storeCode === s.store_code} onClick={() => setStoreCode(s.store_code)}>
+                  {s.store_code} · {s.store_name}
+                </Chip>
+              ))}
+            </div>
+          ))}
+          {field('Delivery date', (
+            <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} style={inputStyle} />
+          ))}
+          {field('Following delivery', (
+            <input type="date" value={nextDeliveryDate} onChange={e => setNextDeliveryDate(e.target.value)} style={inputStyle} />
+          ))}
+          {field('Preset', (
+            <SegmentedControl value={preset} onChange={v => { setPreset(v); if (v === 'catch_up') setFitToBudget(true) }}
+              options={PRESET_OPTIONS} />
+          ))}
+          {field('Fit to budget', (
+            <SegmentedControl value={(catchUpForced || fitToBudget) ? 'on' : 'off'}
+              onChange={v => { if (!catchUpForced) setFitToBudget(v === 'on') }}
+              options={[{ value: 'off', label: 'Off' }, { value: 'on', label: 'On' }]} />
+          ))}
+          {catchUpForced && (
+            <p style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)' }}>
+              Catch-up forces Fit to Budget on — part of the preset's own definition.
+            </p>
+          )}
+          {field('Days-cover override (optional)', (
+            <input value={daysCoverOverride} onChange={e => setDaysCoverOverride(e.target.value)} inputMode="numeric"
+              placeholder="auto — per-line mode/band" style={inputStyle} />
+          ))}
+          {error && (
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: '#fca5a5',
+              background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 8, padding: '8px 12px' }}>
+              {error}
+            </div>
+          )}
+          <Button variant="daisy" onClick={onGenerate} style={{ marginTop: 6, width: '100%', textAlign: 'center', padding: '13px', fontSize: 14 }}
+            {...(generating ? { disabled: true } : {})}>
+            {generating ? 'Running engine …' : 'Generate Recipe order'}
+          </Button>
+          <p style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)', textAlign: 'center' }}>
+            The engine runs server-side — rpc_bloom_order_recipe
+          </p>
+        </div>
+      </GlassCard>
+    </div>
+  )
+}
+
+function RecipeRow({ line, qty, isEdited, onQty, fitActive }) {
+  const code = line.product_code
+  const value = (qty ?? 0) * (Number(line.pack_cost) || 0)
+  const protectedKvi = line.kvi_band === 'KVI_CRITICAL' || line.kvi_band === 'KVI_IMPORTANT'
+  const wash = protectedKvi
+    ? 'linear-gradient(90deg, rgba(255,179,0,0.13), rgba(255,179,0,0.02))'
+    : line.mode === 'build'
+      ? 'linear-gradient(90deg, rgba(149,117,255,0.12), rgba(149,117,255,0.02))'
+      : 'transparent'
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: '76px 44px minmax(160px,1.6fr) 110px 96px 84px 56px 64px 110px 100px',
+      alignItems: 'center', gap: 0, padding: '9px 18px', background: wash,
+      borderBottom: '1px solid var(--hairline)', fontSize: 12, fontFamily: 'var(--font-mono)',
+      fontVariantNumeric: 'tabular-nums',
+    }} title={line.story}>
+      <span style={{ color: 'var(--veld-mist)' }}>{String(line.product_code)}</span>
+      <span style={{ color: 'var(--veld-mist)' }}>{line.pack_size ?? '—'}</span>
+      <span style={{ color: 'var(--daisy-white)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {line.description}
+        {line.is_bt_hero && (
+          <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--growth-green)', border: '1px solid var(--growth-green)',
+            borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>BT HERO</span>
+        )}
+      </span>
+      <span style={{ color: 'var(--veld-mist)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{line.dept_name ?? '—'}</span>
+      <span style={{ color: protectedKvi ? 'var(--core-yellow)' : 'var(--veld-mist)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {KVI_LABEL[line.kvi_band] ?? line.kvi_band ?? '—'}
+      </span>
+      <span style={{ color: 'var(--veld-mist)' }}>{MODE_LABEL[line.mode] ?? line.mode ?? '—'}</span>
+      <span style={{ textAlign: 'right', color: Number(line.soh) < 0 ? 'var(--data-neg)' : 'var(--veld-mist)' }}>
+        {line.soh == null ? '—' : Number.isInteger(Number(line.soh)) ? line.soh : num(line.soh)}
+      </span>
+      <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>{num(line.need_units)}</span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
+        <input type="number" min="0" value={qty ?? 0}
+          onChange={e => onQty(code, Math.max(0, parseInt(e.target.value || '0', 10)))}
+          style={{
+            width: 56, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12.5,
+            color: 'var(--daisy-white)', padding: '5px 7px', background: 'rgba(0,0,0,0.28)',
+            borderRadius: 'var(--radius-chip)', border: '1px solid var(--glass-border)', outline: 'none',
+            boxShadow: isEdited ? '0 0 0 2px rgba(255,209,0,0.35)' : 'none',
+          }} />
+        {fitActive && line.budget_fit_reason && line.budget_fit_reason !== 'fits' && (
+          <span title={FIT_REASON_LABEL[line.budget_fit_reason] ?? line.budget_fit_reason}
+            style={{ fontSize: 9, color: line.budget_fit_reason === 'protected_kvi' ? 'var(--core-yellow)' : 'var(--data-warn)', cursor: 'help' }}>
+            {line.budget_fit_reason === 'protected_kvi' ? '🛡' : '✂'}
+          </span>
+        )}
+      </span>
+      <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>{zar(value, 2)}</span>
+    </div>
+  )
+}
+
+function RecipeOrderForm({ store, deliveryDate, nextDeliveryDate, budgetRow, lines, qty, edited,
+  onQty, total, filter, setFilter, fitActive, onExportCsv, onExportTlx, onSubmit }) {
+  const orderedCount = lines.filter(l => (l.suggested_packs ?? 0) > 0).length
+  const shown = filter === 'ordered' ? lines.filter(l => (l.suggested_packs ?? 0) > 0) : lines
+  const cols = ['Code', 'Pack', 'Description', 'Dept', 'KVI', 'Mode', 'SOH', 'Need', 'Qty · packs', 'Value']
+  const gridCols = '76px 44px minmax(160px,1.6fr) 110px 96px 84px 56px 64px 110px 100px'
+  const budgetTotal = Number(budgetRow?.budget_amount) || 0
+  const committed = Number(budgetRow?.committed_amount) || 0
+  return (
+    <GlassCard style={{ margin: '20px 32px', padding: 0, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, justifyContent: 'space-between',
+        alignItems: 'flex-start', padding: '18px 24px', borderBottom: '1px solid var(--glass-border)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 'var(--weight-semi)', color: 'var(--daisy-white)' }}>
+            {store?.store_code} · {store?.store_name}
+          </span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)' }}>
+            Recipe · deliver {deliveryDate} · next {nextDeliveryDate}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 28, flexWrap: 'wrap' }}>
+          <KpiCard label="Running total" value={zar(total)} sub={`${orderedCount} lines`} style={{ padding: 0 }} />
+          <BudgetGauge total={committed + total} budget={budgetTotal} />
+        </div>
+      </div>
+      {!budgetRow && (
+        <div style={{ padding: '8px 24px', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--veld-mist)',
+          borderBottom: '1px solid var(--hairline)' }}>
+          No weekly DC budget row found for this store — order_budget_ledger.
+        </div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 24px', borderBottom: '1px solid var(--hairline)', flexWrap: 'wrap' }}>
+        <Label style={{ color: 'var(--veld-mist)' }}>Sorted by value · protected KVI lines never trimmed</Label>
+        <div style={{ flex: 1 }} />
+        <SegmentedControl size="sm" value={filter} onChange={setFilter}
+          options={[{ value: 'ordered', label: `Ordered ${orderedCount}` }, { value: 'all', label: `All ${lines.length}` }]} />
+      </div>
+
+      <div style={{ maxHeight: '52vh', overflow: 'auto' }}>
+        <div style={{ minWidth: 920 }}>
+          <div style={{
+            display: 'grid', gridTemplateColumns: gridCols, position: 'sticky', top: 0, zIndex: 2,
+            padding: '9px 18px', background: 'rgba(14,18,14,0.96)', borderBottom: '1px solid var(--glass-border)',
+          }}>
+            {cols.map((c, i) => (
+              <span key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 500,
+                letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--veld-mist)',
+                textAlign: i >= 6 ? 'right' : 'left' }}>{c}</span>
+            ))}
+          </div>
+          {shown.map(l => (
+            <RecipeRow key={l.product_code} line={l} qty={qty[l.product_code]}
+              isEdited={!!edited[l.product_code]} onQty={onQty} fitActive={fitActive} />
+          ))}
+          {shown.length === 0 && (
+            <p style={{ padding: 24, textAlign: 'center', fontFamily: 'var(--font-display)', fontStyle: 'italic', color: 'var(--veld-mist)' }}>
+              No lines in this filter.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14,
+        padding: '16px 24px', borderTop: '1px solid var(--glass-border)', flexWrap: 'wrap' }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)', flex: '1 1 200px' }}>
+          Hover a row for its story (R29) · edited cells ringed
+        </span>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <Button variant="solid" onClick={onExportCsv}>StockFlow CSV</Button>
+          <Button variant="solid" onClick={onExportTlx}>TLX</Button>
+          <Button variant="daisy" onClick={onSubmit}>Submit order</Button>
+        </div>
+      </div>
+    </GlassCard>
+  )
+}
+
+function RecipePreview({ store, deliveryDate, nextDeliveryDate, budgetRow, lines, qty, fitActive, onNewOrder }) {
+  const rows = useMemo(() => lines.filter(l => (qty[l.product_code] ?? 0) > 0).map(l => ({
+    ...l, value: (qty[l.product_code] ?? 0) * (Number(l.pack_cost) || 0),
+  })), [lines, qty])
+  const grand = rows.reduce((s, r) => s + r.value, 0)
+  const budgetTotal = Number(budgetRow?.budget_amount) || 0
+  const committed = Number(budgetRow?.committed_amount) || 0
+  const overBudget = budgetTotal > 0 && (committed + grand) > budgetTotal
+
+  const byMode = useMemo(() => {
+    const m = {}
+    for (const r of rows) { const k = MODE_LABEL[r.mode] ?? r.mode ?? '—'; m[k] = (m[k] ?? 0) + r.value }
+    return Object.entries(m).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1])
+  }, [rows])
+  const modeMax = Math.max(...byMode.map(([, v]) => v), 1)
+
+  const byKvi = useMemo(() => {
+    const m = {}
+    for (const r of rows) { const k = KVI_LABEL[r.kvi_band] ?? r.kvi_band ?? '—'; m[k] = (m[k] ?? 0) + r.value }
+    return Object.entries(m).sort((a, b) => b[1] - a[1])
+  }, [rows])
+  const kviMax = Math.max(...byKvi.map(([, v]) => v), 1)
+
+  const protectedCount = rows.filter(r => r.budget_fit_reason === 'protected_kvi').length
+  const trimmedCount = rows.filter(r => r.budget_fit_reason === 'trimmed_partial' || r.budget_fit_reason === 'trimmed_to_zero').length
+
+  const movers = [...rows].sort((a, b) => b.value - a.value).slice(0, 8)
+  const moverMax = movers[0]?.value || 1
+
+  return (
+    <div style={{ margin: '20px 32px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <GlassCard style={{ padding: '22px 26px' }}>
+        <span style={{ fontFamily: 'var(--font-display)', fontSize: 19, fontWeight: 'var(--weight-semi)', color: 'var(--daisy-white)' }}>
+          Order locked · {store?.store_code} {store?.store_name}
+        </span>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)', marginTop: 4 }}>
+          deliver {deliveryDate} · next {nextDeliveryDate}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 28, flexWrap: 'wrap', marginTop: 14 }}>
+          <KpiCard label="Order value" value={zar(grand)} sub={`${rows.length} lines`}
+            tone={overBudget ? 'warn' : 'default'} style={{ padding: 0 }} />
+          <BudgetGauge total={committed + grand} budget={budgetTotal} />
+        </div>
+        {fitActive && (
+          <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--veld-mist)' }}>
+            Fit to budget: {protectedCount} KVI-protected · {trimmedCount} trimmed
+          </div>
+        )}
+      </GlassCard>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <GlassCard title="By mode">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {byMode.map(([m, v]) => <Bar key={m} label={m} value={zar(v)} share={(v / modeMax) * 100} sub={pct((v / grand) * 100)} />)}
+          </div>
+        </GlassCard>
+        <GlassCard title="By KVI band">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {byKvi.map(([k, v]) => <Bar key={k} label={k} value={zar(v)} share={(v / kviMax) * 100} sub={pct((v / grand) * 100)} />)}
+          </div>
+        </GlassCard>
+        <GlassCard title="Biggest movers" style={{ gridColumn: '1 / -1' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {movers.map(m => <Bar key={m.product_code} label={m.description} value={zar(m.value)} share={(m.value / moverMax) * 100} />)}
+          </div>
+        </GlassCard>
+      </div>
+
+      <GlassCard style={{ padding: '16px 22px', display: 'flex', justifyContent: 'flex-end' }}>
+        <Button variant="solid" onClick={onNewOrder}>New order</Button>
+      </GlassCard>
+    </div>
+  )
+}
+
+function RecipeMode({ stores }) {
+  const [storeCode, setStoreCode] = useState('')
+  const [deliveryDate, setDeliveryDate] = useState(todayIso(1))
+  const [nextDeliveryDate, setNextDeliveryDate] = useState(todayIso(4))
+  const [preset, setPreset] = useState('standard')
+  const [fitToBudget, setFitToBudget] = useState(false)
+  const [daysCoverOverride, setDaysCoverOverride] = useState('')
+  const [phase, setPhase] = useState('A')
+  const [generating, setGenerating] = useState(false)
+  const [lines, setLines] = useState([])
+  const [qty, setQty] = useState({})
+  const [edited, setEdited] = useState({})
+  const [filter, setFilter] = useState('ordered')
+  const [budgetRow, setBudgetRow] = useState(null)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (stores?.length && !storeCode) setStoreCode(stores[0].store_code)
+  }, [stores, storeCode])
+
+  useEffect(() => {
+    if (!storeCode) return
+    let cancelled = false
+    supabase.from('order_budget_ledger').select('*')
+      .eq('store_code', storeCode).eq('route_key', 'DC')
+      .order('year_month', { ascending: false }).limit(1).maybeSingle()
+      .then(({ data, error: err }) => { if (!cancelled) setBudgetRow(err ? null : data) })
+    return () => { cancelled = true }
+  }, [storeCode])
+
+  const store = stores.find(s => s.store_code === storeCode)
+  const fitActive = preset === 'catch_up' ? true : fitToBudget
+
+  async function generate() {
+    if (!storeCode || !deliveryDate) { setError('Pick a store and delivery date.'); return }
+    setError(null); setGenerating(true)
+    const override = daysCoverOverride === '' ? null : Number(daysCoverOverride)
+    const PAGE = 1000
+    let all = [], offset = 0
+    for (;;) {
+      const { data, error: err } = await supabase.rpc('rpc_bloom_order_recipe', {
+        p_store_code: storeCode, p_delivery_date: deliveryDate,
+        p_next_delivery: nextDeliveryDate || null,
+        p_preset: preset === 'standard' ? null : preset,
+        p_days_cover_override: override,
+        p_fit_to_budget: fitActive,
+      }).range(offset, offset + PAGE - 1)
+      if (err) { setGenerating(false); setError(err.message); return }
+      all = all.concat(data ?? [])
+      if (!data || data.length < PAGE) break
+      offset += PAGE
+    }
+    setGenerating(false)
+    const rows = all.sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
+    const q = {}
+    for (const r of rows) q[r.product_code] = r.suggested_packs ?? 0
+    setLines(rows); setQty(q); setEdited({}); setFilter('ordered'); setPhase('B')
+  }
+
+  function onQty(code, v) {
+    setQty(q => ({ ...q, [code]: v }))
+    setEdited(e => ({ ...e, [code]: true }))
+  }
+
+  const total = useMemo(() => lines.reduce((s, l) => s + (qty[l.product_code] ?? 0) * (Number(l.pack_cost) || 0), 0), [lines, qty])
+
+  function exportCsv() {
+    const header = 'product_code,description,pack_size,qty_packs,pack_cost,line_value\n'
+    const body = lines.filter(l => (qty[l.product_code] ?? 0) > 0).map(l => {
+      const q = qty[l.product_code] ?? 0
+      const v = q * (Number(l.pack_cost) || 0)
+      const desc = String(l.description ?? '').replace(/"/g, '""')
+      return `${l.product_code},"${desc}",${l.pack_size ?? ''},${q},${l.pack_cost ?? ''},${v.toFixed(2)}`
+    }).join('\n')
+    downloadText(`${storeCode}_recipe_order_${deliveryDate}.csv`, header + body)
+  }
+
+  function exportTlx() {
+    const parts = []
+    for (const l of lines) {
+      const q = qty[l.product_code] ?? 0
+      if (q <= 0 || !l.ean) continue
+      const units = q * (l.pack_size ?? 1)
+      parts.push(`${l.ean}+${units}`)
+    }
+    downloadText(`${storeCode}.tlx`, `${storeCode}++${parts.join('+')}`)
+  }
+
+  return (
+    <div>
+      {phase === 'A' && (
+        <RecipeGenerateForm
+          stores={stores} storeCode={storeCode} setStoreCode={setStoreCode}
+          deliveryDate={deliveryDate} setDeliveryDate={setDeliveryDate}
+          nextDeliveryDate={nextDeliveryDate} setNextDeliveryDate={setNextDeliveryDate}
+          preset={preset} setPreset={setPreset}
+          fitToBudget={fitToBudget} setFitToBudget={setFitToBudget}
+          daysCoverOverride={daysCoverOverride} setDaysCoverOverride={setDaysCoverOverride}
+          onGenerate={generate} generating={generating} error={error}
+        />
+      )}
+      {phase === 'B' && (
+        <RecipeOrderForm
+          store={store} deliveryDate={deliveryDate} nextDeliveryDate={nextDeliveryDate} budgetRow={budgetRow}
+          lines={lines} qty={qty} edited={edited} onQty={onQty} total={total}
+          filter={filter} setFilter={setFilter} fitActive={fitActive}
+          onExportCsv={exportCsv} onExportTlx={exportTlx}
+          onSubmit={() => setPhase('C')}
+        />
+      )}
+      {phase === 'C' && (
+        <RecipePreview store={store} deliveryDate={deliveryDate} nextDeliveryDate={nextDeliveryDate}
+          budgetRow={budgetRow} lines={lines} qty={qty} fitActive={fitActive} onNewOrder={() => setPhase('A')} />
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // App shell
 // ─────────────────────────────────────────────────────────────────────────────
 export default function BloomPage() {
@@ -730,6 +1157,7 @@ export default function BloomPage() {
             options={[
               { value: 'dc', label: 'DC' },
               { value: 'desk', label: 'Desk · beer (EXPERIMENTAL)' },
+              { value: 'recipe', label: 'Recipe (EXPERIMENTAL)' },
             ]} />
         </div>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em', color: 'var(--veld-mist)', textTransform: 'uppercase' }}>
@@ -738,6 +1166,7 @@ export default function BloomPage() {
       </header>
 
       {appMode === 'desk' && <DeskMode />}
+      {appMode === 'recipe' && <RecipeMode stores={stores} />}
 
       {appMode === 'dc' && phase === 'A' && (
         <GenerateForm
