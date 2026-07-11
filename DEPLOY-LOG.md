@@ -4,6 +4,22 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-11 -- SB-CC-BLOOM-004/PARITY-001 item 3: orders header + order_items, write-RPCs, user_profiles policies, delivery schedule
+
+**Commit (main):** `95cb0fa`
+
+**What shipped (Supabase only, no frontend change):** Phase-1 prerequisites for PG's standalone Replit app (SB-RA-BLOOM-001). `orders` redesigned from an unused Phase-1 shell into a proper header (0 rows, no dependents, verified before the DROP); new `order_items` child table. `rpc_bloom_submit_order` / `rpc_bloom_order_status` (SECURITY DEFINER) are the only write path in -- role-gated (branch_manager drafts, admin/town_manager self-confirm), legal-transition graph enforced. `user_profiles` RLS was enabled with zero policies (locked by default, blocking the Replit app's own login) -- added own-row SELECT, revoked a stray anon PII grant. New `bloom_delivery_schedule` config table (route-config/delivery-days read, section 13), seeded from HANDOVER-CURRENT's GRV-derived cadence; 80579 carries no DIRECT_BEER row (named gap -- IBT-fed, no SAB receipts of its own).
+
+**Caught live via `get_advisors` before commit:** Supabase's default-privilege auto-grant gives `anon` EXECUTE on new functions and SELECT on new tables independent of `PUBLIC` -- a plain `REVOKE ALL FROM PUBLIC` doesn't touch it (same class as the documented PUBLIC-grant-revoke trap, previously only known for tables, now confirmed for functions too). Fixed with explicit `REVOKE ... FROM anon` on both write-RPCs and on `orders`/`order_items`, re-verified clean via a second `get_advisors` pass.
+
+**Gate status (status ledger rule, FILE-GOVERNANCE 0d):**
+- **SQL R22: CLOSED.** Live via `get_advisors` + `information_schema` grant checks; auth-guard behaviourally confirmed (unauthenticated calls correctly rejected). Full write-path round-trip needs a real `user_profiles`-seeded account or the Replit app's first submission -- zero consumers exist today, named as an honest limit, not a corner cut.
+- **Named gap, not done:** Replit app URL into the auth redirect allowlist -- blocked, the URL doesn't exist yet (Phase 1 not deployed by Pieter/PG).
+
+**Also:** `DB-SCHEMA.md` updated in place (Daisy root, not this repo) with full object documentation.
+
+---
+
 ## 2026-07-11 15:39 SAST -- Bloom Recipe screen (SB-CC-BLOOM-004 item 6)
 
 **Commit (main):** `cdd4429`
