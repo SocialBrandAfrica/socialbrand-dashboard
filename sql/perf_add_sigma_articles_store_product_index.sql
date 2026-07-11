@@ -1,0 +1,35 @@
+-- =============================================================================
+-- perf_add_sigma_articles_store_product_index.sql
+-- SB-CC-BLOOM-005 perf fix (2026-07-10), found diagnosing the l2_bloom_ros_
+-- pantry ~310s debt on 10116.
+-- =============================================================================
+-- ROOT CAUSE: sigma_articles carried only two indexes -- a synthetic `id`
+-- primary key, and a composite UNIQUE on (client_id, store_code, product_code)
+-- with client_id LEADING. Every join to sigma_articles by (store_code,
+-- product_code) alone -- l2_bloom_ros_pantry's pool build, and very likely
+-- others across the codebase -- could not use the composite index's leading
+-- column, forcing something close to a near-full-index-scan per lookup.
+--
+-- MEASURED (EXPLAIN ANALYZE, 2026-07-10): the pool join at 80176 (a small,
+-- 803-row pool) alone accounted for ~22s of the function's ~42s total, with
+-- a single nested-loop step against sigma_articles racking up 5.3 MILLION
+-- buffer hits for what should have been a handful of precise btree seeks.
+-- After this index: the SAME pool query for 10116 (the largest store, 8,483+
+-- row pool) dropped to 603ms end to end; the full refresh_l2_bloom_ros_pantry
+-- run for 10116 dropped from >130s (unfinished, aborted rather than forced
+-- through mid-trading) to 13-14s.
+--
+-- This was misdiagnosed at first as a query-shape problem (the 182-day
+-- calendar-spine cross join) -- that WAS also rewritten (gaps-and-islands,
+-- see create_l2_bloom_ros_pantry.sql) but measured negligible improvement
+-- alone on a small store (80176: 43.3s -> 41.9s). This index is what actually
+-- closed the gap; the query rewrite still stands on its own merits (bounded
+-- row counts instead of pool_size x 182, correctness-preserving, R22-
+-- regression-verified 0 diffs against the pre-rewrite formula).
+--
+-- Pure additive index -- zero behaviour change, benefits every existing
+-- correct query that joins sigma_articles by (store_code, product_code).
+-- =============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_sigma_articles_store_product
+  ON public.sigma_articles (store_code, product_code);

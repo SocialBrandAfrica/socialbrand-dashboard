@@ -187,7 +187,11 @@
       "Bash(grep -oE 'duration: [0-9.]+ ms  plan:\\\\\\\\nQuery Text: SELECT refresh_l2_bloom_ros_pantry[^\\\\\\\\]*' \"C:\\\\Users\\\\User\\\\.claude\\\\projects\\\\C--Users-User-Desktop-Daisy-socialbrand-dashboard\\\\790de87e-f24a-43f7-9f01-38a3e8572b80\\\\tool-results\\\\mcp-supabase-get_logs-1783606176729.txt\")",
       "Bash(sort -t' ' -k2 -n -r)",
       "Bash(grep -oE '.{0,60}\\(ERROR|refresh_l2_bloom_ros_pantry|duration: [0-9.]+ ms  plan\\).{0,300}' \"C:\\\\Users\\\\User\\\\.claude\\\\projects\\\\C--Users-User-Desktop-Daisy-socialbrand-dashboard\\\\790de87e-f24a-43f7-9f01-38a3e8572b80\\\\tool-results\\\\mcp-supabase-get_logs-1783611816327.txt\")",
-      "mcp__96af46e2-d82b-40b0-8a87-01acf0b0e160__apply_migration"
+      "mcp__96af46e2-d82b-40b0-8a87-01acf0b0e160__apply_migration",
+      "mcp__96af46e2-d82b-40b0-8a87-01acf0b0e160__get_logs",
+      "Bash(grep -oE \"duration: [0-9.]+ ms  plan:\\\\\\\\\\\\\\\\nQuery Text: SELECT refresh_l2_bloom_ros_pantry\\\\\\('80175'\\\\\\)[^\\\\\\\\\\\\\\\\]*\" \"C:\\\\Users\\\\User\\\\.claude\\\\projects\\\\C--Users-User-Desktop-Daisy-socialbrand-dashboard\\\\790de87e-f24a-43f7-9f01-38a3e8572b80\\\\tool-results\\\\mcp-96af46e2-d82b-40b0-8a87-01acf0b0e160-get_logs-1783749202218.txt\")",
+      "Bash(rm \"Bloom.dc \\(1\\).html\" \"bloom-data \\(1\\).jsx\" \"bloom-logo \\(1\\).svg\" \"bloom-logo-mono \\(1\\).svg\" \"bloom-preview \\(1\\).jsx\" \"bloom-states \\(1\\).jsx\" \"image-slot \\(1\\).js\")",
+      "Bash(mv \"README \\(1\\).md\" \"README.md\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\User\\Desktop\\Daisy"
