@@ -4,6 +4,28 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-11 -- SB-CC-BLOOM-007: Order Desks + deviation corrections (Monday landing window)
+
+**Commits (main, in order):** `c6784c2` (item 1) `98253ea` (items 2-6) `20f9006` (item 8)
+
+**Context:** Pieter walked the shipped Recipe screen (`cdd4429`) same day and it missed the mark -- not the maths, the wrapping: no route scope (pool mixed ambient/TOPS/beer), the calendar unused, `band_blocked` lines excluded from the pool, no geared leg, focus selected before generation instead of after. Corrective rulings: CLEANUP-ENGINE-CANON SS14 ADDENDUM v7. Brief: `Bloom/SB-CC-BLOOM-007-order-desks-and-deviation-corrections.md`. Landing window: items 1-6 + the desk screen (item 8) live by Sunday EOD for Pieter's dummy-order session Monday 13 Jul. Item 7 (frozen-focus set, Deduct Last Order) explicitly trails into next week per the brief. No formula changes anywhere in this brief -- every item applies an existing rule or config, confirmed against the brief's own governing constraint before each change.
+
+**Item 1 -- `supplier_calendar` + `rpc_bloom_next_deliveries` (`c6784c2`).** Config table (route_key IN DC_AMBIENT/DC_TOPS/DIRECT_BEER, `delivery_dows[]`), seeded from the verified GRV cadence. R22: next-deliveries proof internally consistent for all 7 store/route pairs against 2026-07-11 (a Saturday) as anchor.
+
+**Items 2-6 -- `rpc_bloom_order_recipe` rewrite (`98253ea`).** Route scope (`p_route` now REQUIRED, validated against the store's own format), drop cover (`lead_days_used` now calendar-derived when the caller supplies `p_next_delivery`), COUNT_FIRST reversion (`band_blocked` lines back in the pool, SOH forced to 0, `count_first` flagged), the 21-day weekly minimum on `order_essentials` gated on a new `order_budget_ledger.cash_constrained` column, and normal/geared ported verbatim from `rpc_bloom_order_dc`. **Bug caught before commit:** the DIRECT_BEER `lnk` CTE originally `CROSS JOIN`ed `bloom_route_config`, which silently emptied the entire pool for every DC-route store (no DIRECT_BEER config row = zero rows from the cross join) -- fixed to `LEFT JOIN ... ON true`. R22 per item verified live, full figures in the commit message; item 4's proof point matches the brief's own named example exactly (10116/1674 SPAR milk: 793 packs + COUNT_FIRST instead of vanishing).
+
+**Item 8 -- the desk screen (`20f9006`).** New "Desks (EXPERIMENTAL)" mode in `src/app/bloom/page.jsx`, store -> desk (SPAR DC Ambient / TOPS DC / SAB Direct; 80579 gets no SAB desk), dates prepopulated from `rpc_bloom_next_deliveries`, focus (Order Essentials/Catch-up) selected WITHIN the results via a second scoped RPC call that re-cuts only the KVI/BT/tier subset, non-focus lines stay at their generated minimums. The existing "Recipe" tab is NOT removed or redesigned -- relabelled "(superseded)", stays in place until the DoD walk passes per canon v7 + the brief's own retirement rule. **Gate note:** static review only (bracket-balance, component-definition, logic read-through) -- did not get a live screenshot. Bypassing `src/middleware.js`'s auth gate for local verification was attempted, immediately self-corrected and reverted (this session already reasoned through and rejected that exact move for the Recipe screen, and PM praised the restraint) -- consistency over expedience.
+
+**Gate status (status ledger rule, FILE-GOVERNANCE 0d), all items:**
+- **CC build R22: CLOSED**, item-by-item, live-verified (see individual commits for full figures).
+- **Screen R22 (owner PM):** OPEN. Per-desk, per-preset, per-store reconciliation against direct SQL, logged in, per the brief's own acceptance criteria.
+- **DoD (R31, owner Pieter):** OPEN. The Monday 13 Jul dummy-order session (10116 SPAR DC ambient vs StockFlow order 2313, a TOPS DC dummy at 21355, a SAB dummy at 80176).
+- **Item 7 (frozen focus + Deduct Last Order):** explicitly deferred, trails into next week per the brief and the landing window ruling. Not started this session.
+
+Vercel confirmed green after each push (fresh `age: 0` response on `orders.socialbrand.africa` post-deploy).
+
+---
+
 ## 2026-07-11 -- SB-CC-FORGE-MAP-001 item 12: schema shells + SAB BEES catalogue reference (BLOCKED on the algorithm)
 
 **Commit (main):** `707e2c8`
