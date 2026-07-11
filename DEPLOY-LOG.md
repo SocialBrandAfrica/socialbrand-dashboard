@@ -4,6 +4,23 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-11 15:39 SAST -- Bloom Recipe screen (SB-CC-BLOOM-004 item 6)
+
+**Commit (main):** `cdd4429`
+
+**What shipped:** `src/app/bloom/page.jsx` gets a third mode, "Recipe (EXPERIMENTAL)", alongside DC and Desk. Generate/Order/Preview 3-state screen sourced from `rpc_bloom_order_recipe` (the 8-step recipe RPC: life gate, rhythm-adjusted demand, stock band, per-line automatic mode, KVI floor, GMROI fill, Fit-to-Budget, story). Preset switcher (standard/order_essentials/catch_up), Fit-to-Budget toggle (forced+locked on when Catch-up is picked -- part of that preset's own definition), per-row story (R29) on hover, KVI-floor wash, BT-hero badge, `budget_fit_reason` indicator. Budget gauge reads the real weekly `order_budget_ledger` row (`route_key='DC'`), never a manual field -- the distinguishing feature vs DC mode's typed budget. DC baseline untouched (R30) -- Desk and Recipe are parallel opt-in surfaces, same pattern. Also: `.claude/launch.json` gets `autoPort: true` (local dev port-conflict fix, harmless, kept).
+
+**Gate status (status ledger rule, FILE-GOVERNANCE 0d):**
+- **SQL R22: CLOSED** (x5, prior session -- `rpc_bloom_order_recipe`, weekly `order_budget_ledger`, Fit-to-Budget, both 5b presets, commits `908e63a`/`9c25fe4`).
+- **Screen R22: OPEN (owner PM).** Reconcile on-screen totals per preset per store against direct SQL, logged in as a real user.
+- **DoD (R31): OPEN (owner Pieter).** Phone walk on orders.socialbrand.africa -- generate/edit a real order, budget gauge moves, every row explains itself.
+
+**Verification this session:** RPC signature and live output shape confirmed by direct SQL against 10116 across all three presets + Fit-to-Budget on/off (see BUG-LOG/HANDOVER for figures). Dev server compiled clean, no errors. Did not get a live authenticated screenshot -- the real Google auth gate (`src/middleware.js`) was not bypassed, since that file is shared with a concurrently-running session and the on-device walk is explicitly PM's/Pieter's step (R31), not CC's. Bracket-balance + component-wiring statically reviewed in its place.
+
+**Next:** PM screen-level R22 walk, then Pieter's R31 phone walk closes Ship 2 for Recipe mode.
+
+---
+
 ## 2026-07-10/11 -- SB-CC-BLOOM-005 independent build session (CC) -- reconciled with a parallel session
 
 **Commits (main, in order):** `4987a1b` (this session's own commit; the SB-CC-BLOOM-005 query rewrite + wiring itself was pulled into the repo by a separate execution context's commit `2201032`, verified to source before pulling)
