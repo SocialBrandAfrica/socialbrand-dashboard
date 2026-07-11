@@ -20,6 +20,7 @@
 // =============================================================================
 
 import { useState, useEffect, useMemo } from 'react'
+import * as XLSX from 'xlsx'
 import { supabase } from '@/lib/supabase'
 import { zar, pct, num } from '@/lib/format'
 import { Button, Chip, SegmentedControl, GlassCard, KpiCard } from '@/components/ds'
@@ -1083,6 +1084,10 @@ const DESK_PRESET_OPTIONS = [
   { value: 'order_essentials', label: 'Order Essentials' },
   { value: 'catch_up', label: 'Catch-up' },
 ]
+const SCENARIO_LABEL = {
+  full: 'Full need', fitted: 'Fitted to budget',
+  order_essentials: 'Order Essentials', catch_up: 'Catch-up',
+}
 
 // The preserved DC row, adapted to the recipe's own fields. Same grid, same
 // ten columns, same ringed-input pattern as OrderRow above -- the only
@@ -1174,6 +1179,9 @@ function OrderDesksMode() {
   const [error, setError] = useState(null)
   const [generated, setGenerated] = useState(false)
   const [submitted, setSubmitted] = useState(false)
+  const [overview, setOverview] = useState([])
+  const [overviewLoading, setOverviewLoading] = useState(false)
+  const [overviewError, setOverviewError] = useState(null)
 
   const desks = STORE_DESKS[storeCode] || []
 
@@ -1207,6 +1215,27 @@ function OrderDesksMode() {
     setGenerated(false); setLines([]); setQty({}); setEdited({}); setSubmitted(false)
     return () => { cancelled = true }
   }, [storeCode, desk])
+
+  // UX-003 landing board: the scenario overview + 7-day-yardstick sanity
+  // strip (canon v7 item 9) load BEFORE Generate -- one published call,
+  // R22-equal to what each scenario's own Generate press would return
+  // (rpc_bloom_scenario_overview literally runs the same recipe RPC per
+  // scenario server-side and aggregates, never a client-side estimate).
+  useEffect(() => {
+    if (!storeCode || !desk || !deliveryDate) { setOverview([]); return }
+    let cancelled = false
+    setOverviewLoading(true); setOverviewError(null)
+    supabase.rpc('rpc_bloom_scenario_overview', {
+      p_store_code: storeCode, p_delivery_date: deliveryDate,
+      p_next_delivery: nextDeliveryDate || null, p_route: desk,
+    }).then(({ data, error: err }) => {
+      if (cancelled) return
+      setOverviewLoading(false)
+      if (err) { setOverviewError(err.message); setOverview([]); return }
+      setOverview(data ?? [])
+    })
+    return () => { cancelled = true }
+  }, [storeCode, desk, deliveryDate, nextDeliveryDate])
 
   async function generate() {
     if (!deliveryDate || !nextDeliveryDate) { setError('Dates not ready yet — wait for the calendar to load.'); return }
@@ -1249,42 +1278,77 @@ function OrderDesksMode() {
   const trimmedCount = lines.filter(l => l.budget_fit_reason === 'trimmed_partial' || l.budget_fit_reason === 'trimmed_to_zero').length
   const protectedCount = lines.filter(l => l.budget_fit_reason === 'protected_kvi').length
 
-  // UX-003: each order exports its OWN regular + geared/promo file pair --
-  // never one blended file. Regular = every ordered line at its resolved
-  // qty; the promo/geared companion = the promo subset only, at its geared
-  // figure, so the buy-in decision is a document on its own (matches the
-  // Bloom brief's own "promo Excel accompanies either export route").
+  // Canon v7 item 11 -- THE EXPORT CONTRACT, three files per order:
+  // (1) CSV = EVERYTHING, StockFlow benchmark format (Bloom/BENCHMARK_
+  //     order_2314_10116_2026-07-11.csv), promo lines flagged but never
+  //     excluded. (2) TLX = the NORMAL order ONLY -- promo lines and
+  //     unresolvable (no-EAN) lines never ride it (BLOOM-001 SS5).
+  // (3) Promo sheet = the PROMO order ONLY, geared quantities, EXACT
+  //     format of Bloom/EXPORT-TEMPLATE_Promo-Order-Capture-Sheet.xlsx
+  //     (title row merged A1:E1 "Promo Order - <Store> - <date>", header
+  //     Product Code/Description/Size/Order Qty/Promo Suffix, Total
+  //     Items/Total Qty footer). Promo naming uses promo_suffix (the DC
+  //     code parsed server-side from sigma_promotions.description,
+  //     ENG-017 sibling) with the promo_nr fallback surfaced, never
+  //     guessed, when promo_naming_gap is true.
   function exportCsv() {
-    const header = 'product_code,description,pack_size,qty_packs,pack_cost,line_value\n'
-    const body = lines.filter(l => (qty[l.product_code] ?? 0) > 0).map(l => {
+    const header = ['Rank','Product Code','EAN','Description','Size','Pack Size','List Cost',
+      'Opening Stock','Avg Daily Sales','Units Needed','Order Qty','Closing Stock','Stock Days',
+      'Order Value','Line Category','Ranking','Current Promo','Next Promo','Is Promo'].join(',') + '\n'
+    const ordered = [...lines].sort((a, b) => (b.rhythm_adjusted_demand ?? 0) - (a.rhythm_adjusted_demand ?? 0))
+    const body = ordered.map((l, i) => {
       const q = qty[l.product_code] ?? 0
-      const v = q * (Number(l.pack_cost) || 0)
+      const unitCost = l.pack_size ? (Number(l.pack_cost) || 0) / l.pack_size : (Number(l.pack_cost) || 0)
+      const closing = (Number(l.projected_soh) || 0) + q * (l.pack_size ?? 1)
+      const demand = Number(l.rhythm_adjusted_demand) || 0
+      const stockDays = demand > 0 ? (closing / demand) : 0
+      const value = q * (Number(l.pack_cost) || 0)
       const desc = String(l.description ?? '').replace(/"/g, '""')
-      return `${l.product_code},"${desc}",${l.pack_size ?? ''},${q},${l.pack_cost ?? ''},${v.toFixed(2)}`
+      return [
+        i + 1, l.product_code, l.ean ?? '', `"${desc}"`, '', l.pack_size ?? '',
+        unitCost.toFixed(6), l.soh ?? 0, demand.toFixed(2), l.need_units ?? 0, q,
+        closing.toFixed(2), stockDays.toFixed(2), value.toFixed(2), '', l.tier ?? '',
+        l.promo_active ? (l.promo_suffix ?? (l.promo_naming_gap ? `#${l.promo_nr}` : '')) : '',
+        '', l.promo_active ? 'Yes' : 'No',
+      ].join(',')
     }).join('\n')
-    downloadText(`${storeCode}_${desk}_${preset}_${deliveryDate}_regular.csv`, header + body)
+    downloadText(`${storeCode}_${desk}_${preset}_${deliveryDate}.csv`, header + body)
   }
 
-  function exportPromoCsv() {
-    const header = 'product_code,description,pack_size,geared_packs,pack_cost,line_value,promo_start,promo_end\n'
-    const body = lines.filter(l => l.promo_active && (l.geared_packs ?? 0) > 0).map(l => {
-      const q = l.geared_packs ?? 0
-      const v = q * (Number(l.pack_cost) || 0)
-      const desc = String(l.description ?? '').replace(/"/g, '""')
-      return `${l.product_code},"${desc}",${l.pack_size ?? ''},${q},${l.pack_cost ?? ''},${v.toFixed(2)},${l.promo_start ?? ''},${l.promo_end ?? ''}`
-    }).join('\n')
-    downloadText(`${storeCode}_${desk}_${preset}_${deliveryDate}_promo_geared.csv`, header + body)
-  }
-
+  // TLX: NORMAL order only. Promo lines and no-EAN lines never ride it.
   function exportTlx() {
     const parts = []
     for (const l of lines) {
       const q = qty[l.product_code] ?? 0
-      if (q <= 0 || !l.ean) continue
+      if (q <= 0 || !l.ean || l.promo_active) continue
       const units = q * (l.pack_size ?? 1)
       parts.push(`${l.ean}+${units}`)
     }
-    downloadText(`${storeCode}.tlx`, `${storeCode}++${parts.join('+')}`)
+    downloadText(`${storeCode}_${desk}_${preset}_${deliveryDate}.tlx`, `${storeCode}++${parts.join('+')}`)
+  }
+
+  // Promo capture sheet: PROMO order only, geared quantities, the exact
+  // Pieter-supplied template layout (title merged row, 5-col header,
+  // Total Items/Total Qty footer) via the xlsx lib already used elsewhere
+  // in this codebase (src/app/page.jsx report export).
+  function exportPromoSheet() {
+    const promoLines = lines.filter(l => l.promo_active && (l.geared_packs ?? 0) > 0)
+    const title = `Promo Order - ${storeCode} - ${deliveryDate}`
+    const aoa = [
+      [title, '', '', '', ''],
+      ['Product Code', 'Description', 'Size', 'Order Qty', 'Promo Suffix'],
+      ...promoLines.map(l => [
+        l.product_code, l.description ?? '', '', l.geared_packs ?? 0,
+        l.promo_suffix ?? (l.promo_naming_gap ? `#${l.promo_nr}` : ''),
+      ]),
+      ['Total Items:', promoLines.length, '', 'Total Qty:', promoLines.reduce((s, l) => s + (l.geared_packs ?? 0), 0)],
+    ]
+    const ws = XLSX.utils.aoa_to_sheet(aoa)
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }]
+    ws['!cols'] = [{ wch: 15 }, { wch: 45 }, { wch: 12 }, { wch: 12 }, { wch: 15 }]
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Promo Order')
+    XLSX.writeFile(wb, `${storeCode}_${desk}_${preset}_${deliveryDate}_promo.xlsx`)
   }
 
   const inputStyle = {
@@ -1365,6 +1429,50 @@ function OrderDesksMode() {
         )}
       </GlassCard>
 
+      {/* UX-003 landing board: scenario overview + 7-day-yardstick sanity strip,
+          visible BEFORE Generate, one server call (rpc_bloom_scenario_overview),
+          R22-equal to what pressing Generate on each scenario would return. */}
+      <GlassCard style={{ margin: '0 32px 20px', padding: '16px 22px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <Label style={{ color: 'var(--veld-mist)' }}>Scenario overview {overviewLoading ? '· loading …' : ''}</Label>
+        </div>
+        {overviewError && (
+          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#fca5a5' }}>{overviewError}</p>
+        )}
+        {!overviewError && overview.length > 0 && (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+              {overview.map(s => (
+                <div key={s.scenario} style={{
+                  padding: '10px 12px', borderRadius: 'var(--radius-chip)',
+                  border: s.yardstick_flag === 'DEFECT_SIGNAL' ? '1px solid rgba(239,83,80,0.55)' : '1px solid var(--hairline)',
+                  background: s.yardstick_flag === 'DEFECT_SIGNAL' ? 'rgba(239,83,80,0.08)' : 'rgba(255,255,255,0.02)',
+                }}>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--veld-mist)' }}>
+                    {SCENARIO_LABEL[s.scenario] ?? s.scenario}
+                  </div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 15, color: 'var(--daisy-white)', marginTop: 2 }}>
+                    {zar(basis === 'geared' ? s.value_geared : s.value_normal)}
+                  </div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)', marginTop: 2 }}>
+                    {s.lines} lines · {s.promo_lines} promo · {s.count_first_lines} count-first
+                    {s.trimmed_lines > 0 && ` · ${s.trimmed_lines} trimmed`}
+                  </div>
+                  {s.yardstick_flag === 'DEFECT_SIGNAL' && (
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--data-neg)', marginTop: 4 }}>
+                      DEFECT SIGNAL — {s.yardstick_deviation_pct}% off yardstick
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p style={{ margin: '10px 0 0', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)' }}>
+              7-day yardstick (canon v7 item 9): {zar(overview[0]?.yardstick_value ?? 0)} · flag never blocks · computed {overview[0]?.computed_at ? new Date(overview[0].computed_at).toLocaleTimeString() : '—'}
+            </p>
+          </>
+        )}
+      </GlassCard>
+
       {generated && (
         <GlassCard style={{ margin: '0 32px 32px', padding: 0, overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 24px', borderBottom: '1px solid var(--hairline)', flexWrap: 'wrap' }}>
@@ -1405,8 +1513,8 @@ function OrderDesksMode() {
             </span>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <Button variant="solid" onClick={exportCsv}>StockFlow CSV</Button>
-              <Button variant="solid" onClick={exportPromoCsv}>Promo/Geared CSV</Button>
               <Button variant="solid" onClick={exportTlx}>TLX</Button>
+              <Button variant="solid" onClick={exportPromoSheet}>Promo Sheet</Button>
               <Button variant="daisy" onClick={() => setSubmitted(true)} {...(submitted ? { disabled: true } : {})}>
                 {submitted ? 'Submitted' : 'Submit order'}
               </Button>

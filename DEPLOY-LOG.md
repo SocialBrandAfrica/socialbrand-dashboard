@@ -4,6 +4,62 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-11 -- BUG-LOG Monday-list-v2 amendments: ENG-017 + UX-003 22:0x-22:5x (scenario board, export contract, promo naming)
+
+**Commits (main):** SQL objects applied live via Supabase migrations same evening (`supplier_calendar_promo_buyin_lead`, `rpc_bloom_order_recipe_eng017_promo_buyin_and_band_invariants` + 2 follow-up fix passes, `create_rpc_bloom_scenario_overview` + 3 follow-up fix passes), repo commit follows this entry.
+
+**Context:** further same-night amendments after the first Monday-list round shipped -- Pieter kept walking the live site and dictated seven more rulings (canon v7 items 9-11, BUG-LOG ENG-017, UX-003 amended five more times: 22:0x scenario overview, 22:2x sanity strip, 22:3x breakdown panel, 22:4x promo capture sheet + buy-in toy, 22:5x exact templates supplied).
+
+**D3 resolved FIRST, live, before ENG-017 touched any formula (R23/R25 -- never assume):** reconciled RG2 on 17471 @10116 (`sigma_promotions` start_date=2026-07-08) against its own ledger. GRV receipts land 2026-06-27 and 2026-07-02, both BEFORE start_date; independently, the 07-11 BENCHMARK extract shows 17471 `Current Promo=RG2` while inside [07-08,07-22]. Both signals agree: `sigma_promotions` dates are the SHELF/SELL-active window, not a DC order-window passthrough -- the buy-in-window FORMULA applies.
+
+**ENG-017 -- the promo buy-in window.** `supplier_calendar` gains `promo_buyin_lead_days` (DEMO_CALIBRATION, default 7). `rpc_bloom_order_recipe`'s `promo_match` CTE now gates on `p_delivery_date >= (active_start - buyin_lead_days) AND p_delivery_date <= (last calendar delivery <= active_end)`, computed via a bounded `generate_series` backward scan -- outside the window a line orders NORMAL even if the promo is still shelf-active. R22 (10116/DC_AMBIENT/2026-07-16): live promos RG1/RG2/RG4 all correctly gated and named, zero false-positive promo-eligible lines against an independent manual re-derivation of the same window (0/1341). Population swept across all 7 live store/route pairs -- runs clean everywhere, naming gaps surfaced honestly (8-25 per store, never guessed).
+
+**Promo naming.** `promo_suffix`/`promo_naming_gap` added to the RPC's output, parsed from `sigma_promotions.description` (trailing parenthetical anchor first, "DC Promotion Number <CODE>" fallback). Live-verified: RG1/RG2/RG4 all resolve correctly.
+
+**Canon v7 item 9 -- band invariants, population-level, flag never block.** The dynamic result materializes into a session-temp table so a cheap aggregate can `RAISE WARNING` before rows return. **Caught and fixed before ship:** an unscoped check false-positived on 615/619 rows on both `catch_up` and `order_essentials` runs -- both presets deliberately override the band with a flat day-cover target (that's the whole point of the 21-day-minimum and catch-up-band-cap presets, not a defect). Fixed: the invariant now only fires when `p_days_cover_override` is NULL (i.e. no preset/manual override active) -- re-verified 0/0 violations on standard, `catch_up`'s own 3x-multiple ceiling stays intentionally exempt.
+
+**`rpc_bloom_scenario_overview` -- the landing board (UX-003 22:0x/22:2x/22:3x), NEW.** One published call runs `rpc_bloom_order_recipe` internally once per scenario (full/fitted/order_essentials/catch_up) and aggregates the SAME rows Generate would show -- R22 by construction, never a parallel formula. Returns per scenario: lines/promo_lines/count_first_lines, value_normal/value_geared, protected/trimmed counts, budget_amount, and jsonb breakdowns by KVI band/mode/tier. The 7-day yardstick reuses the UNCHANGED, still-live `rpc_bloom_order_dc(p_days_cover=7)` for DC_AMBIENT/DC_TOPS ("the retired flat-7-day DC calc stays alive as the permanent reference line", canon v7 item 9) -- R22 exact match to BUG-LOG's own cited DC-form figure (R1,410,144.28 vs the walk's R1,410,144). DIRECT_BEER has no DC-form equivalent; its yardstick uses the recipe RPC's own `p_days_cover_override=7` as a flagged, honestly-labelled proxy. `yardstick_flag='DEFECT_SIGNAL'` fires only on the `full` scenario beyond `yardstick_tolerance_pct` (config, default 20) -- **live-verified it independently re-caught the same standard/full value gap flagged in the prior round** (10116/DC_AMBIENT: full R767,763 vs yardstick R1,410,144, -45.6%, DEFECT_SIGNAL) via a completely different mechanism, corroborating that gap is real and not a one-off artifact.
+
+**Export contract (canon v7 item 11), desk screen.** CSV now matches the full StockFlow BENCHMARK column set (19 columns) rather than the prior 6-column stub; two fields (`Size`, `Line Category`) left blank rather than guessed -- not available server-side, R21. TLX now excludes promo lines (`l.promo_active` guard added) -- normal order only, matching "TLX for the normal order... quantities in UNITS". New `exportPromoSheet()` writes a REAL `.xlsx` via the `xlsx` package (already a project dependency, same pattern as `src/app/page.jsx`'s report export) matching Pieter's supplied template exactly: merged title row `Promo Order - <Store> - <date>`, header `Product Code/Description/Size/Order Qty/Promo Suffix`, `Total Items:`/`Total Qty:` footer.
+
+**Promo buy-in toy (BLOOM-001 §6) -- gap confirmed, not built this round.** Grepped the full file: no profit-value/sell-through/margin-at-normal-selling calculation exists anywhere on the grid, only a stale v0 planning comment. Reported honestly per BUG-LOG's own instruction rather than silently claimed; not built this round given the scope already landed -- flagged as the next open item.
+
+**Gate status:**
+- **CC build R22: CLOSED** for ENG-017, promo naming, band invariants, scenario overview, export contract -- all population-verified live against production data (figures above).
+- **Promo buy-in toy (BLOOM-001 §6): OPEN, confirmed absent, not started.**
+- **Screen R22 (owner PM):** OPEN -- this round has not had a live screenshot walk (auth-gate bypass stays off-limits, this session's own standing rule).
+- **Line-level R22 audit against every named BUG-LOG test case (task #25 from the prior round): still OPEN**, partially covered by this round's population sweeps but not a full per-line named-case walk.
+
+Static review only (bracket-balance pass, dead-symbol grep for `exportPromoCsv`) -- no live-browser verification, consistent with this session's standing rule against bypassing `middleware.js`.
+
+---
+
+## 2026-07-11 -- BUG-LOG Monday list: ENG-011 through ENG-016 + UX-003 (desk-screen rebuild)
+
+**Commits (main, in order):** `01fa4e8` (ENG-011) `16eadee` (ENG-012/013/014/015/016) `bfc61d0` (ENG-013 lineage) `59f06be` (UX-003)
+
+**Context:** second same-evening walk, after BLOOM-007's items 1-6+8 shipped. Six defects (ENG-011 through ENG-016) plus one UX defect (UX-003), logged with named product/store test cases and acceptance figures in `BUG-LOG.md`, ruled against CLEANUP-ENGINE-CANON SS14 ADDENDUM v7 (moved three times same evening -- re-read in full before this round per PM's explicit instruction). No formula changes -- every item applies an existing rule or config.
+
+**ENG-011 -- strictly-future deliveries (`01fa4e8`).** `rpc_bloom_next_deliveries`'s search now starts at `anchor + order_cutoff_days` (default 2) instead of the anchor itself -- a call placed Monday no longer offers Monday's own truck. R22: 21355/DC_TOPS anchor=2026-07-13 (Mon) now returns delivery=2026-07-16 (Thu), matching the walk scenario exactly.
+
+**ENG-012/013/014/015/016 -- `rpc_bloom_order_recipe` rewrite (`16eadee`).** Order-time band bounds now recompute against the calendar drop cover rather than a stale snapshot (ENG-012). SAB desk routes through the recipe path (`p_route='DIRECT_BEER'`), budget ledger lookup keyed `DIRECT_BEER` vs `DC` per route (ENG-013). COUNT_FIRST now splits by claim sign -- negative claims order at SOH 0, positive claims trust the claim with the count riding, never a forced buy (ENG-014); beans 137585 and matches 5847 verified exact 0+count_first. Demand window resolution corrected to the true ENG-005 precedent (T100 14d->28d fallback, T1000 28d, BOR 56d, `GREATEST(scan_raw, draw_corrected)`, uncapped) after a caught-before-ship bug where the first draft wrongly ported `rpc_bloom_order_direct_beer`'s capped/guarded ENG-009 pattern onto scan, suppressing 10116/1674 milk's real demand to 55.29/day; re-verified exact match to PM's cited 621.36/day (ENG-015). Fit/budget strip now read the ledger row of the DELIVERY week (Sat-Fri COB, canon v7 item 7), never the placement week (ENG-016). R22 verified per named test case live against production data; ENG-012's exact "~669 packs" target could not be bit-for-bit reproduced because the underlying SOH snapshot had genuinely moved between PM's audit and this verification run -- documented as data drift, not forced to match.
+
+**ENG-013 lineage -- `rpc_bloom_order_direct_beer` retired (`bfc61d0`).** Function kept live, never dropped (R28) -- header comment + live `COMMENT ON FUNCTION` mark it superseded by `rpc_bloom_order_recipe(p_route='DIRECT_BEER')`.
+
+**UX-003 -- desk screen rebuilt as the preserved DC grid, one landing (`59f06be`).** The prior desk screen (BLOOM-007 item 8) was a mixed compromise -- wrong columns, wrong tabs, focus-merged-into-standing-order, one blended export, no Normal/Geared selector. Rebuilt so the grid, sort, ringed-qty editing, and export set are carried over unchanged from the original DC order screen; only the brain (per-route recipe RPC) and header (desk/date/preset/basis/fit controls) are new. Presets now trigger a fresh scoped generate() call per canon v7 item 4's corrected wording -- three DIFFERENT orders, not a recut-merge. Nav collapsed to a single "Desks" option; DC/Desk-beer/Recipe modes stay in the file, reachable in code, not offered in the visible nav (R28). R22 (outcome audit) live at 10116/DC_AMBIENT/2026-07-16: standard 1,751 ordered lines R816,612 (12,617-line pool, 11 depts); order_essentials 560 lines R1,120,263 (209 lines not present in standard's ordered set at all); catch_up 287 lines R849,724 (entirely a subset of essentials) -- structurally three distinct line sets, essentials/catch_up land close to PM's cited ~R1.14M/~R850k. **Flagged, not force-matched:** standard's R816,612 is well under PM's cited ~R1.87M full-pool figure -- same class of live-SOH-drift explanation documented for ENG-012, needs PM's own re-walk to confirm which figure is current.
+
+**Gate status (status ledger rule, FILE-GOVERNANCE 0d), all items:**
+- **CC build R22: CLOSED**, item-by-item, outcome-audited against BUG-LOG's named test cases (see individual commits for full figures).
+- **Screen R22 (owner PM):** OPEN. PM re-walks to the order-audit standard (line audits per desk per store per selection) next.
+- **DoD (R31, owner Pieter):** OPEN. Dummy orders Monday 13 Jul.
+- **Standard/full value gap at 10116 (R816,612 vs PM's cited ~R1.87M):** OPEN, flagged to PM -- needs a fresh live-data re-walk to confirm whether this is data drift or a real gap.
+- **Item 7 (frozen focus + Deduct Last Order):** still explicitly deferred, trails into next week. Not started.
+- **Product-Mapper toolkit (item 12 unblock):** ruled to start only after this round lands. Not started.
+
+Live-browser verification blocked by the auth gate for local checks (this session's standing self-imposed rule, reinforced by the harness itself refusing a middleware.js bypass earlier in the evening) -- static review only (bracket-balance pass, dead-symbol grep, live-SQL outcome audits against the shipped RPCs).
+
+---
+
 ## 2026-07-11 -- SB-CC-BLOOM-007: Order Desks + deviation corrections (Monday landing window)
 
 **Commits (main, in order):** `c6784c2` (item 1) `98253ea` (items 2-6) `20f9006` (item 8)

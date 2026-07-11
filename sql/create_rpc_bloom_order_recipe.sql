@@ -84,6 +84,42 @@
 -- a preset call (replace the order, never merge) -- see page.jsx.
 -- =============================================================================
 --
+-- =========================== ENG-017 / CANON v7 ITEMS 9-11 (2026-07-11 night)
+-- ENG-017 -- THE PROMO BUY-IN WINDOW governs promo ORDERING eligibility
+--   (canon v7 item 10), replacing the old loose "active between today and
+--   next delivery" overlap test. D3 resolved FIRST, live, before this was
+--   built (never assumed): reconciled RG2 on 17471 @10116
+--   (sigma_promotions start_date=2026-07-08) against its ledger -- GRV
+--   receipts land 2026-06-27 and 2026-07-02, both BEFORE start_date, and
+--   the 07-11 BENCHMARK extract independently shows 17471 with
+--   Current Promo=RG2 while inside [07-08,07-22] -- StockFlow's own
+--   "current" read sits INSIDE the sigma_promotions window, confirming
+--   start_date/end_date ARE the shelf/sell-active dates, not a DC
+--   order-window passthrough. The buy-in-window FORMULA applies: a
+--   promo's geared/promo-sheet eligibility for a given delivery date runs
+--   from (active_start - promo_buyin_lead_days) through the LAST
+--   supplier_calendar delivery on or before active_end -- outside that
+--   window the line orders NORMAL even if the promo is still shelf-active.
+--   promo_buyin_lead_days lives on supplier_calendar (DEMO_CALIBRATION,
+--   default 7, see create_supplier_calendar_promo_buyin.sql).
+--
+-- Promo naming (UX-003, ENG-017 sibling): every promo surfaces its DC
+--   suffix code (RG1/RG2/PF1...) parsed from sigma_promotions.description
+--   ("DC Promotion Number <CODE> - ... (<CODE>)"), read off the trailing
+--   parenthetical first (most reliable anchor), falling back to the
+--   "Number <CODE>" token. A promo row that resolves neither is a NAMING
+--   GAP -- surfaced (promo_naming_gap=true), never guessed; the caller
+--   falls back to promo_nr for display.
+--
+-- Canon v7 item 9 -- BAND INVARIANTS asserted POPULATION-LEVEL on every
+--   generate (no ordered target may exceed its order-time max, no
+--   triggered line may target below its min). Flag, never block: the
+--   dynamic result materializes into a session-temp table so a single
+--   cheap aggregate can RAISE WARNING with the violation count before the
+--   rows return -- this is a diagnostic signal for the landing sanity
+--   strip's DEFECT SIGNAL, not a gate on the order itself.
+-- =============================================================================
+--
 -- ITEM 2 -- ROUTE SCOPE (BLOOM-007, unchanged this pass). p_route REQUIRED
 --   (DC_AMBIENT/DC_TOPS/DIRECT_BEER), validated against the store's own
 --   bloom_dc_config.format_group. DC routes filter the pool on
@@ -139,7 +175,8 @@ RETURNS TABLE(
   count_first boolean, band_blocked_reason text,
   need_units numeric, pack_size smallint, pack_cost numeric,
   normal_packs integer, promo_active boolean, promo_nr bigint, promo_start date, promo_end date,
-  promo_uplift numeric, promo_uplift_source text, geared_packs integer,
+  promo_uplift numeric, promo_uplift_source text, promo_suffix text, promo_naming_gap boolean,
+  geared_packs integer,
   packs_before_fit integer, suggested_packs integer, value numeric,
   gmroi_quartile integer, gmroi_capped boolean, gmroi_rank integer,
   budget_fit_applied boolean, budget_fit_reason text,
@@ -167,6 +204,10 @@ DECLARE
   v_ledger_route text;
   v_week_start date;
   v_week_source text;
+  v_dows smallint[];
+  v_buyin_lead_days int;
+  v_band_violations int;
+  v_sql text;
 BEGIN
   SET LOCAL statement_timeout = '30s';
 
@@ -190,6 +231,17 @@ BEGIN
   -- budget; DIRECT_BEER reads its own separate route budget (live in
   -- order_budget_ledger since Ship 1) -- never DC's money for SAB.
   v_ledger_route := CASE WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER' ELSE 'DC' END;
+
+  -- ENG-017: buy-in window inputs. v_dows feeds the "last calendar
+  -- delivery <= active_end" closing bound; a missing calendar row
+  -- degrades gracefully to every-day (no calendar constraint, config
+  -- default lead) rather than raising -- supplier_calendar is fully
+  -- seeded for all 7 live store/route pairs, this is a defensive
+  -- fallback only, never expected live.
+  SELECT sc.delivery_dows, sc.promo_buyin_lead_days INTO v_dows, v_buyin_lead_days
+  FROM supplier_calendar sc WHERE sc.store_code = p_store_code AND sc.route_key = p_route;
+  v_dows := COALESCE(v_dows, ARRAY[1,2,3,4,5,6,7]::smallint[]);
+  v_buyin_lead_days := COALESCE(v_buyin_lead_days, 7);
 
   SELECT MAX(ss.sale_date) INTO v_anchor FROM sigma_sales ss WHERE ss.store_code=p_store_code AND ss.period_kind='T' AND ss.txn_kind=1;
   SELECT COALESCE(p_soh_date, MAX(sd.snapshot_date)) INTO v_soh_dt FROM l2_soh_daily sd WHERE sd.store_code=p_store_code;
@@ -257,7 +309,7 @@ BEGIN
     AND obl.year_month = v_week_start;
   v_weekly_budget := COALESCE(v_weekly_budget, 0);
 
-  RETURN QUERY EXECUTE format($q$
+  v_sql := format($q$
     WITH route_beer_cfg AS (
       SELECT rc.merch_group_nrs, rc.excluded_supplier_types
       FROM bloom_route_config rc WHERE rc.store_code=%1$L AND rc.route_key='DIRECT_BEER'
@@ -415,10 +467,22 @@ BEGIN
              ELSE 0 END::int AS normal_packs_calc
       FROM needc n
     ),
+    -- ENG-017: buy-in window eligibility, anchored on THIS order's
+    -- delivery date (%23), not today. Eligible when the delivery falls
+    -- on/after (active_start - buyin_lead_days) AND on/before the last
+    -- calendar delivery on/before active_end -- outside that, the promo
+    -- is not a candidate for THIS order at all (falls through to normal).
     promo_match AS (
-      SELECT DISTINCT ON (pk.product_code) pk.product_code, pa.promo_nr, pa.start_date, pa.end_date, pa.status, pa.list_cost AS promo_unit_cost
-      FROM packs pk JOIN public.sigma_promotion_articles pa ON pa.store_code=%1$L AND pa.product_code=pk.product_code
-        AND pa.start_date < %18$L::date AND pa.end_date >= %2$L::date
+      SELECT DISTINCT ON (pk.product_code) pk.product_code, pa.promo_nr, pa.start_date, pa.end_date, pa.status,
+        pa.list_cost AS promo_unit_cost, sp2.description AS promo_description
+      FROM packs pk
+      JOIN public.sigma_promotion_articles pa ON pa.store_code=%1$L AND pa.product_code=pk.product_code
+      LEFT JOIN public.sigma_promotions sp2 ON sp2.store_code=%1$L AND sp2.promo_nr=pa.promo_nr
+      WHERE %23$L::date >= (pa.start_date - %22$L::int)
+        AND %23$L::date <= (
+          SELECT MAX(gs) FROM generate_series(pa.end_date - 6, pa.end_date, interval '1 day') gs
+          WHERE EXTRACT(ISODOW FROM gs)::smallint = ANY(%21$L::smallint[])
+        )
       ORDER BY pk.product_code, (pa.status='1') DESC, pa.end_date DESC
     ),
     gear_source AS (
@@ -454,7 +518,15 @@ BEGIN
       FROM geared_calc g
     ),
     with_promo AS (
-      SELECT g.*, pm.promo_nr, pm.start_date AS promo_start, pm.end_date AS promo_end, pm.status AS promo_status, pm.promo_unit_cost
+      SELECT g.*, pm.promo_nr, pm.start_date AS promo_start, pm.end_date AS promo_end, pm.status AS promo_status,
+        pm.promo_unit_cost, pm.promo_description,
+        -- ENG-017 naming: trailing parenthetical is the reliable anchor
+        -- ("... (RG2)"), "Number <CODE>" is the fallback reading; neither
+        -- resolving is a surfaced naming gap, never guessed (R21/R22).
+        COALESCE(
+          substring(pm.promo_description from '\(([A-Za-z0-9]+)\)\s*$'),
+          substring(pm.promo_description from 'DC Promotion Number\s+(\S+)')
+        ) AS promo_suffix_calc
       FROM geared g LEFT JOIN promo_match pm ON pm.product_code=g.product_code
     ),
     resolved AS (
@@ -498,38 +570,68 @@ BEGIN
       FROM budgeted b
     )
     SELECT
-      %1$L::text, pk.product_code,
-      COALESCE(eb.ean, lpad(%1$L,5,'0')||lpad(pk.product_code::text,8,'0')),
-      pk.description, pk.dept_name, %15$L::text,
-      pk.kvi_band, pk.archetype, pk.tier, pk.mode, pk.mode_reason,
-      (CASE WHEN pk.demand_from_draw THEN 'family_draw' ELSE 'scan' END), pk.ros_window_used,
-      ROUND(pk.ros_final,4),
-      ROUND(pk.min_band_ot,2), ROUND(pk.max_band_ot,2), ROUND(pk.target_level,2),
-      pk.soh_raw, %9$s::int, %17$L::text, ROUND(pk.proj,2),
-      pk.count_first, pk.band_blocked_reason,
-      ROUND(pk.needu,2), pk.ps, ROUND(pk.pack_cost,2),
-      pk.normal_packs_calc, (pk.promo_nr IS NOT NULL), pk.promo_nr, pk.promo_start, pk.promo_end,
-      ROUND(pk.gear,4), (CASE WHEN pk.gear_from_own_promo THEN 'own_promo' ELSE 'default' END), pk.geared_packs_calc,
-      pk.resolved_packs_calc, pk.final_packs, ROUND((pk.final_packs*pk.pack_cost)::numeric,2),
-      pk.gmroi_quartile, pk.gmroi_capped, pk.gmroi_rank,
-      pk.fit_applied, pk.fit_reason,
-      %19$L::date, %20$L::text,
-      pk.is_bt_hero, %10$L::text, %3$L::boolean,
+      %1$L::text AS store_code, pk.product_code AS product_code,
+      COALESCE(eb.ean, lpad(%1$L,5,'0')||lpad(pk.product_code::text,8,'0')) AS ean,
+      pk.description AS description, pk.dept_name AS dept_name, %15$L::text AS route,
+      pk.kvi_band AS kvi_band, pk.archetype AS archetype, pk.tier AS tier, pk.mode AS mode, pk.mode_reason AS mode_reason,
+      (CASE WHEN pk.demand_from_draw THEN 'family_draw' ELSE 'scan' END) AS demand_source, pk.ros_window_used AS ros_window_used,
+      ROUND(pk.ros_final,4) AS rhythm_adjusted_demand,
+      ROUND(pk.min_band_ot,2) AS min_band, ROUND(pk.max_band_ot,2) AS max_band, ROUND(pk.target_level,2) AS target_level,
+      pk.soh_raw AS soh, %9$s::int AS lead_days_used, %17$L::text AS lead_days_source, ROUND(pk.proj,2) AS projected_soh,
+      pk.count_first AS count_first, pk.band_blocked_reason AS band_blocked_reason,
+      ROUND(pk.needu,2) AS need_units, pk.ps AS pack_size, ROUND(pk.pack_cost,2) AS pack_cost,
+      pk.normal_packs_calc AS normal_packs, (pk.promo_nr IS NOT NULL) AS promo_active, pk.promo_nr AS promo_nr, pk.promo_start AS promo_start, pk.promo_end AS promo_end,
+      ROUND(pk.gear,4) AS promo_uplift, (CASE WHEN pk.gear_from_own_promo THEN 'own_promo' ELSE 'default' END) AS promo_uplift_source,
+      pk.promo_suffix_calc AS promo_suffix, (pk.promo_nr IS NOT NULL AND pk.promo_suffix_calc IS NULL) AS promo_naming_gap,
+      pk.geared_packs_calc AS geared_packs,
+      pk.resolved_packs_calc AS packs_before_fit, pk.final_packs AS suggested_packs, ROUND((pk.final_packs*pk.pack_cost)::numeric,2) AS value,
+      pk.gmroi_quartile AS gmroi_quartile, pk.gmroi_capped AS gmroi_capped, pk.gmroi_rank AS gmroi_rank,
+      pk.fit_applied AS budget_fit_applied, pk.fit_reason AS budget_fit_reason,
+      %19$L::date AS budget_week_start, %20$L::text AS budget_week_source,
+      pk.is_bt_hero AS is_bt_hero, %10$L::text AS preset_applied, %3$L::boolean AS frozen_focus_pending,
       format('%%s tier KVI=%%s, archetype=%%s -> %%s (%%s), window=%%s demand=%%s, band [%%s|%%s], SOH %%s, lead %%s(%%s) -> proj %%s, need %%s = %%s packs%%s%%s%%s',
         COALESCE(pk.tier,'-'), COALESCE(pk.kvi_band,'-'), COALESCE(pk.archetype,'EVERYDAY(default)'), pk.mode, pk.mode_reason,
         pk.ros_window_used, ROUND(pk.ros_final,2),
         ROUND(pk.min_band_ot,1), ROUND(pk.max_band_ot,1), pk.soh_raw, %9$s, %17$L::text, ROUND(pk.proj,1), ROUND(pk.needu,1), pk.resolved_packs_calc,
         CASE WHEN pk.count_first THEN format(' | COUNT_FIRST: %%s', CASE WHEN pk.soh_raw < 0 THEN 'negative claim, SOH treated as 0' ELSE 'positive claim, ordered on it, count still rides' END) ELSE '' END,
         CASE WHEN pk.promo_nr IS NOT NULL THEN format(' | promo %%s->%%s gear %%s', pk.promo_start, pk.promo_end, ROUND(pk.gear,2)) ELSE '' END,
-        CASE WHEN pk.fit_applied THEN format(' | budget fit: %%s (%%s -> %%s packs)', pk.fit_reason, pk.resolved_packs_calc, pk.final_packs) ELSE '' END)
+        CASE WHEN pk.fit_applied THEN format(' | budget fit: %%s (%%s -> %%s packs)', pk.fit_reason, pk.resolved_packs_calc, pk.final_packs) ELSE '' END) AS story
     FROM finalp pk
     LEFT JOIN v_ean_bridge eb ON eb.store_code=%1$L AND eb.product_code=pk.product_code
-    ORDER BY pk.ros_final DESC, pk.product_code
   $q$, p_store_code, v_soh_dt, v_pool_filter_active, v_dom,
        p_month_end_build_start_day, p_month_end_build_end_day, p_early_month_build_start_day,
        v_override, v_lead, v_preset_applied,
        v_preset_catchup, p_catchup_band_cap_multiple, v_fit_to_budget, v_weekly_budget,
-       p_route, v_dept_nrs, v_lead_source, v_next_delivery, v_week_start, v_week_source);
+       p_route, v_dept_nrs, v_lead_source, v_next_delivery, v_week_start, v_week_source,
+       v_dows, v_buyin_lead_days, p_delivery_date);
+
+  EXECUTE 'DROP TABLE IF EXISTS _bloom_recipe_out';
+  EXECUTE format('CREATE TEMP TABLE _bloom_recipe_out AS %s', v_sql);
+
+  -- Canon v7 item 9: band invariants, population-level, flag never block.
+  -- The invariant only applies to the BAND-DRIVEN target (min_band_ot for
+  -- 'minimum' mode, max_band_ot-anchored for 'build' mode) -- v_override
+  -- IS NULL exactly when no flat day-cover override is in play. Both
+  -- presets deliberately override the band with a flat day-cover target
+  -- (order_essentials' 21/10-day minimum, canon v7 item 3; catch_up's
+  -- 21-day floor band-capped at p_catchup_band_cap_multiple x max_band,
+  -- BLOOM-004 5b) -- that is the preset's OWN named, PM-ruled ceiling,
+  -- not a defect, so the check is scoped to standard runs only. Verified
+  -- live 2026-07-11: an unscoped check false-positived on 615/619 rows on
+  -- a catch_up run and 615/619 on essentials before this fix -- both were
+  -- override rows behaving exactly as designed, not real violations.
+  IF v_override IS NULL THEN
+    EXECUTE 'SELECT count(*) FROM _bloom_recipe_out WHERE target_level > max_band + 0.01
+               OR (need_units > 0 AND target_level < min_band - 0.01)'
+      INTO v_band_violations;
+    IF v_band_violations > 0 THEN
+      RAISE WARNING 'canon v7 item 9: band invariant violated on % row(s) (store=%, route=%, delivery=%, preset=%)',
+        v_band_violations, p_store_code, p_route, p_delivery_date, v_preset_applied;
+    END IF;
+  END IF;
+
+  RETURN QUERY EXECUTE 'SELECT * FROM _bloom_recipe_out ORDER BY rhythm_adjusted_demand DESC, product_code';
+  EXECUTE 'DROP TABLE IF EXISTS _bloom_recipe_out';
 END;
 $function$;
 
