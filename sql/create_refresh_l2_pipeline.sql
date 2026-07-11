@@ -1,7 +1,16 @@
 -- =============================================================================
 -- create_refresh_l2_pipeline.sql
--- Canonical source for refresh_l2_pipeline(). Synced to LIVE 2026-06-13;
+-- Canonical source for refresh_l2_pipeline(). Synced to LIVE 2026-07-11;
 -- de-hardcoded 2026-06-17 (SB-CC-RECONCILE-001 Phase 1).
+-- =============================================================================
+-- 2026-07-11 SYNC NOTE: the SB-CC-BLOOM-005/ENG-002 Ship-2 pantry chain wiring
+--   below (landed live 2026-07-10 by a separate execution context) had not
+--   been pulled into this repo file -- caught up now, no behaviour change,
+--   pure sync. Re-verified live before pulling: `pg_get_functiondef` confirms
+--   the six-object chain wired exactly as shown; all six objects' own
+--   timestamp columns (`pantry_refreshed_at`/`profiled_at`) stamped
+--   identically `2026-07-10 20:15:00.105977+00` at 80176, proving one nightly
+--   run produced all six together (BUG-LOG ENG-002 acceptance, verified R22).
 -- =============================================================================
 -- ROOT CAUSE THIS FIXES (found 2026-06-10 dashboard evaluation):
 --   NOTHING refreshed the L2 MV chain nightly. The handover's "nightly REFRESH
@@ -117,6 +126,103 @@ BEGIN
       v_result := v_result || jsonb_build_object('anomaly_error_' || v_store, SQLERRM);
     END;
   END LOOP;
+  v_result := v_result || jsonb_build_object('anomaly_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+
+  -- l2_last_counted (BUG-LOG ENG-006, SB-CC-BLOOM-004 wiring session 2026-07-11):
+  -- ledger-true last-count fact (sigma_movements I-channel), replaces the stale
+  -- l2_stock_position.last_inv_date/last_inv_soh summary fields as the source
+  -- Forge's rpc_forge_count_list/rpc_forge_integrity read. Depends only on L1
+  -- (sigma_movements), not on the L2 chain above -- order here is not load-bearing.
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_last_counted(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('last_counted_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+  v_result := v_result || jsonb_build_object('last_counted_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+
+  -- ===================== SB-CC-BLOOM-005 / ENG-002: Ship-2 pantry chain =====================
+  -- l2_bloom_ros_pantry FIRST -- l2_stock_band (last in this chain) depends on
+  -- it, and it is the most expensive object here even after the perf rewrite.
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_bloom_ros_pantry(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('bloom_ros_pantry_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+  v_result := v_result || jsonb_build_object('bloom_ros_pantry_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_bloom_promo_pantry(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('bloom_promo_pantry_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_kvi_profile(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('kvi_profile_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+
+  -- Cross-store exception layer -- runs ONCE, after both SPAR stores'
+  -- l2_kvi_profile rows are fresh (it reads them, never averages, canon
+  -- s2b#6 / SB-STRAT-001 s8: TOPS trio deliberately excluded).
+  BEGIN
+    PERFORM refresh_l2_kvi_cross_store();
+  EXCEPTION WHEN OTHERS THEN
+    v_result := v_result || jsonb_build_object('kvi_cross_store_error', SQLERRM);
+  END;
+
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_rhythm_profile(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('rhythm_profile_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_seasonality_profile(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('seasonality_profile_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_gmroi_profile(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('gmroi_profile_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+
+  -- l2_stock_band LAST -- depends on ros_pantry, kvi_profile, rhythm_profile,
+  -- seasonality_profile and gmroi_profile all being fresh (ENG-004 family-
+  -- draw-resolved demand + guards read all five).
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_stock_band(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('stock_band_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+  v_result := v_result || jsonb_build_object('bloom_pantry_chain_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+  -- ===================== end SB-CC-BLOOM-005 / ENG-002 =====================
 
   -- BT out-event logging (SB-CC-BT-FIX-001: moved from read RPC to nightly pipeline).
   -- Guarded so it can never abort the chain.
@@ -170,7 +276,9 @@ $$;
 
 COMMENT ON FUNCTION refresh_l2_pipeline() IS
   'Nightly L2 engine refresh: L2 chain -> consignment(10116) -> classification x(active) '
-  '-> Family 3 anomaly x(active) -> BT out-event logging -> BT precompute (SB-CC-BT-003) '
+  '-> Family 3 anomaly x(active) -> Ship-2 pantry chain (ros_pantry -> promo_pantry -> '
+  'kvi_profile -> kvi_cross_store -> rhythm -> seasonality -> gmroi -> stock_band, '
+  'SB-CC-BLOOM-005/ENG-002) -> BT out-event logging -> BT precompute (SB-CC-BT-003) '
   '-> mv_kpi_by_date + mv_rate_of_sale + search index. '
   'Fleet sourced from stores WHERE is_active (R25). Scheduled via pg_cron refresh-l2-pipeline (20:15 UTC).';
 
