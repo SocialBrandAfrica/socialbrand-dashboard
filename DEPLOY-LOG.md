@@ -4,6 +4,20 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-11 -- SB-CC-FORGE-MAP-001 item 12: schema shells + SAB BEES catalogue reference (BLOCKED on the algorithm)
+
+**Commit (main):** `707e2c8`
+
+**What shipped:** the safe, judgment-free half of item 12. `bloom_supplier_catalogue` (generalised reference table, any direct supplier's own order file loads here), seeded with the 146-SKU SAB BEES catalogue (row count reconciled 146=146 against `Bloom/SAB-BEES-catalogue_2026-07-10.csv`). `l2_product_map` (section 6 data model, the human-confirmed resolution layer, subsumes the planned `l2_link_codes_queue`). `l2_product_resolution` (section 6b, the per-store nightly pantry fact shell -- `family_key`, `level`, `is_keeper`, the 7-verdict enum, cost-cascade, deposit classification, rand+story columns all present).
+
+**Deliberately NOT built: the refresh function (the family/level/keeper resolution algorithm, section 4b).** Section 4 of the brief is explicit -- *"Nothing is written without a human decision"* -- the engine is meant to propose family/keeper candidates for confirmation via the Product-Mapper toolkit (section 5), which does not exist yet. This object feeds Capital Tied directly (Tier 1, RULE-BOOK R22). Auto-deciding ambiguous family/keeper matches without that human-confirmation loop would contradict the brief's own canon, not just cut a corner -- flagged to PM/Pieter rather than guessed past.
+
+**Gate status (status ledger rule, FILE-GOVERNANCE 0d):**
+- **Schema R22: CLOSED.** Catalogue row count reconciled, anon-grant hygiene re-verified clean via `get_advisors` (same trap as item 3, checked proactively this time, zero findings).
+- **Verdict algorithm: BLOCKED, owner PM/Pieter.** Needs either (a) the Product-Mapper toolkit built first so a human confirms each family/keeper match, or (b) an explicit ruling that the engine may propose verdicts engine-only, pending confirmation, before any toolkit exists. Named in HANDOVER-CURRENT's ACTIVE queue.
+
+---
+
 ## 2026-07-11 -- SB-CC-BLOOM-004/PARITY-001 item 3: orders header + order_items, write-RPCs, user_profiles policies, delivery schedule
 
 **Commit (main):** `95cb0fa`
