@@ -1,4 +1,13 @@
 -- =============================================================================
+-- RETIRED 2026-07-11 (BUG-LOG ENG-013, R28 lineage). Superseded_by:
+-- rpc_bloom_order_recipe(p_route='DIRECT_BEER'), which carries the full
+-- canon SS14 machinery (band/KVI floor/build mode/order-time recompute)
+-- this Ship-1 interim never had. Two order paths on the same desk gave
+-- 5x-apart totals (R20,937 here vs R107,616 on the recipe path at 80176) --
+-- the recipe path is now the SAB desk's only caller. Kept live in the
+-- database, never dropped (COMMENT ON FUNCTION carries the same note) --
+-- do not wire any new caller to this function.
+-- =============================================================================
 -- rpc_bloom_order_direct_beer -- SB-CC-BLOOM-003 Ship 1.
 -- The direct-beer route recipe: SAME tier/ROS/life-gate shape as canon §14 /
 -- rpc_bloom_order_dc (raw ROS, no rhythm/KVI yet -- that is Ship 2), scoped to
