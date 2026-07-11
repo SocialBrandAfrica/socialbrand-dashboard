@@ -93,6 +93,63 @@ function BudgetGauge({ total, budget }) {
   )
 }
 
+// KVI / core / tail pie -- scenario-board request (Pieter, mid-session
+// amendment): each scenario's ORDERED-LINE mix at a glance. Grouped from
+// the recipe's own kvi_band, by LINE COUNT (never rand value -- "percentage
+// of lines ordered"): KVI = KVI_CRITICAL + KVI_IMPORTANT, core = STANDARD +
+// CONSUMABLE_CARVE, tail = LONG_TAIL. Groups with zero lines are dropped
+// from both the ring and the legend ("if those are the only ones") rather
+// than drawn as an empty slice. Hand-rolled SVG, no new chart dependency.
+const PIE_GROUPS = [
+  { key: 'kvi', label: 'KVI', color: 'var(--core-yellow)', bands: ['KVI_CRITICAL', 'KVI_IMPORTANT'] },
+  { key: 'core', label: 'Core', color: 'var(--data-pos)', bands: ['STANDARD', 'CONSUMABLE_CARVE'] },
+  { key: 'tail', label: 'Tail', color: 'var(--veld-mist)', bands: ['LONG_TAIL'] },
+]
+function kviCoreTailSplit(byKviBandLines) {
+  const src = byKviBandLines ?? {}
+  return PIE_GROUPS.map(g => ({
+    ...g, count: g.bands.reduce((s, b) => s + (Number(src[b]) || 0), 0),
+  })).filter(g => g.count > 0)
+}
+function KviPie({ byKviBandLines, size = 46 }) {
+  const groups = kviCoreTailSplit(byKviBandLines)
+  const total = groups.reduce((s, g) => s + g.count, 0)
+  if (total === 0) return null
+  const r = size / 2
+  let angle = -90
+  const slices = groups.map(g => {
+    const frac = g.count / total
+    const start = angle
+    angle += frac * 360
+    const end = angle
+    const large = (end - start) > 180 ? 1 : 0
+    const toXY = a => [r + r * Math.cos(a * Math.PI / 180), r + r * Math.sin(a * Math.PI / 180)]
+    const [x1, y1] = toXY(start)
+    const [x2, y2] = toXY(end)
+    const path = groups.length === 1
+      ? null // single group = full circle, drawn separately below
+      : `M ${r},${r} L ${x1},${y1} A ${r},${r} 0 ${large} 1 ${x2},${y2} Z`
+    return { ...g, path, pct: Math.round(frac * 100) }
+  })
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0 }}>
+        {slices.length === 1
+          ? <circle cx={r} cy={r} r={r} fill={slices[0].color} />
+          : slices.map(s => <path key={s.key} d={s.path} fill={s.color} stroke="var(--backdrop)" strokeWidth={0.5} />)}
+      </svg>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        {slices.map(s => (
+          <span key={s.key} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--veld-mist)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 6, height: 6, borderRadius: 2, background: s.color, display: 'inline-block' }} />
+            {s.label} {s.pct}% ({s.count})
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // State A — the generate form
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1458,6 +1515,9 @@ function OrderDesksMode() {
                     {s.lines} lines · {s.promo_lines} promo · {s.count_first_lines} count-first
                     {s.trimmed_lines > 0 && ` · ${s.trimmed_lines} trimmed`}
                   </div>
+                  <div style={{ marginTop: 8 }}>
+                    <KviPie byKviBandLines={s.by_kvi_band_lines} />
+                  </div>
                   {s.yardstick_flag === 'DEFECT_SIGNAL' && (
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--data-neg)', marginTop: 4 }}>
                       DEFECT SIGNAL — {s.yardstick_deviation_pct}% off yardstick
@@ -1468,6 +1528,9 @@ function OrderDesksMode() {
             </div>
             <p style={{ margin: '10px 0 0', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)' }}>
               7-day yardstick (canon v7 item 9): {zar(overview[0]?.yardstick_value ?? 0)} · flag never blocks · computed {overview[0]?.computed_at ? new Date(overview[0].computed_at).toLocaleTimeString() : '—'}
+            </p>
+            <p style={{ margin: '4px 0 0', fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--veld-mist)', opacity: 0.75 }}>
+              Pie = ordered-line mix (KVI/Core/Tail by count). Also computed server-side per scenario, not yet visualized here: value by mode (minimum/build/month-end), value by tier (T100/T1000/BOR) — available on the same call (`by_mode`, `by_tier`) for a future breakdown panel.
             </p>
           </>
         )}

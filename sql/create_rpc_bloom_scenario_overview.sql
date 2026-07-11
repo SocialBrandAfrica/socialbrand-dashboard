@@ -50,7 +50,7 @@ RETURNS TABLE(
   budget_amount numeric, budget_week_start date,
   yardstick_value numeric, yardstick_source text,
   yardstick_deviation_pct numeric, yardstick_flag text,
-  by_kvi_band jsonb, by_mode jsonb, by_tier jsonb,
+  by_kvi_band jsonb, by_mode jsonb, by_tier jsonb, by_kvi_band_lines jsonb,
   computed_at timestamptz
 )
 LANGUAGE plpgsql
@@ -115,6 +115,15 @@ BEGIN
     FROM scenarios s GROUP BY s.scenario_key, COALESCE(s.kvi_band,'NONE')
   ),
   kvi_json AS (SELECT scenario_key, jsonb_object_agg(k, ROUND(v,2)) AS by_kvi_band FROM kvi_agg GROUP BY scenario_key),
+  -- Line-COUNT breakdown by KVI band (pie-chart source: percentage of
+  -- ORDERED LINES, never rand value) -- only lines with suggested_packs>0
+  -- count as "ordered", same population the pie chart labels "ordered".
+  kvi_lines_agg AS (
+    SELECT s.scenario_key, COALESCE(s.kvi_band,'NONE') AS k, count(*) AS c
+    FROM scenarios s WHERE s.suggested_packs > 0
+    GROUP BY s.scenario_key, COALESCE(s.kvi_band,'NONE')
+  ),
+  kvi_lines_json AS (SELECT scenario_key, jsonb_object_agg(k, c) AS by_kvi_band_lines FROM kvi_lines_agg GROUP BY scenario_key),
   mode_agg AS (
     SELECT s.scenario_key, COALESCE(s.mode,'NONE') AS m, SUM(s.suggested_packs * s.pack_cost) AS v
     FROM scenarios s GROUP BY s.scenario_key, COALESCE(s.mode,'NONE')
@@ -147,12 +156,13 @@ BEGIN
          THEN 'DEFECT_SIGNAL'
        ELSE NULL
      END),
-    kj.by_kvi_band, mj.by_mode, tj.by_tier,
+    kj.by_kvi_band, mj.by_mode, tj.by_tier, klj.by_kvi_band_lines,
     v_now
   FROM agg a
   LEFT JOIN kvi_json kj ON kj.scenario_key = a.scenario_key
   LEFT JOIN mode_json mj ON mj.scenario_key = a.scenario_key
   LEFT JOIN tier_json tj ON tj.scenario_key = a.scenario_key
+  LEFT JOIN kvi_lines_json klj ON klj.scenario_key = a.scenario_key
   ORDER BY CASE a.scenario_key WHEN 'full' THEN 1 WHEN 'fitted' THEN 2 WHEN 'order_essentials' THEN 3 WHEN 'catch_up' THEN 4 END;
 END;
 $function$;

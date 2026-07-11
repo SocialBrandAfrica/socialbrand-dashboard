@@ -4,6 +4,20 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-11 -- Scenario board: KVI/Core/Tail pie per scenario (Pieter follow-up ask)
+
+**What shipped:** `rpc_bloom_scenario_overview` gains `by_kvi_band_lines jsonb` -- the same population as `by_kvi_band` (value) but by ORDERED-LINE COUNT, since the pie asks "percentage of lines ordered", never rand. `src/app/bloom/page.jsx` gains a hand-rolled SVG `KviPie` (no new chart dependency) rendered on each of the 4 scenario cards on the landing board, grouped KVI = KVI_CRITICAL+KVI_IMPORTANT, Core = STANDARD+CONSUMABLE_CARVE, Tail = LONG_TAIL -- a zero-count group is dropped from the ring and legend rather than drawn empty ("if those are the only ones").
+
+**Count correction, flagged not silently matched:** Pieter's ask referenced "the 6 scenarios" -- the landing board has 4 (full/fitted/order_essentials/catch_up), not 6. Built for the 4 that exist; PM to confirm whether a 6-scenario split (e.g. normal/geared as separate cards) was intended before any redesign.
+
+**R22:** live-checked at 10116/DC_AMBIENT/2026-07-16 -- `full` scenario STANDARD 1587 + CONSUMABLE_CARVE 35 (core) + KVI_CRITICAL 40 + KVI_IMPORTANT 86 (kvi) + LONG_TAIL 32 (tail) sums to exactly 1780, the scenario's own `lines` total.
+
+**Noted for PM, per the ask ("so PM can also see it exists"):** the overview call already computes `by_mode` (minimum/build/month-end) and `by_tier` (T100/T1000/BOR) value breakdowns and `protected_lines`/`trimmed_lines` counts -- none of these are visualized yet beyond the KVI pie and the plain counts already on each card. A caption on the board now states this explicitly so it isn't mistaken for missing data.
+
+**Gate status:** CC build R22 CLOSED (figures above). Screen R22 (PM) OPEN, same as the rest of this evening's rounds -- no live screenshot, static review only (bracket-balance, dead-symbol grep).
+
+---
+
 ## 2026-07-11 -- BUG-LOG Monday-list-v2 amendments: ENG-017 + UX-003 22:0x-22:5x (scenario board, export contract, promo naming)
 
 **Commits (main):** SQL objects applied live via Supabase migrations same evening (`supplier_calendar_promo_buyin_lead`, `rpc_bloom_order_recipe_eng017_promo_buyin_and_band_invariants` + 2 follow-up fix passes, `create_rpc_bloom_scenario_overview` + 3 follow-up fix passes), repo commit follows this entry.
