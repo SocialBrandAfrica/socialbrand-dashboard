@@ -4,6 +4,20 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-10/11 -- SB-CC-BLOOM-005 independent build session (CC) -- reconciled with a parallel session
+
+**Commits (main, in order):** `4987a1b` (this session's own commit; the SB-CC-BLOOM-005 query rewrite + wiring itself was pulled into the repo by a separate execution context's commit `2201032`, verified to source before pulling)
+
+**Context:** this session built SB-CC-BLOOM-005 (ros-pantry perf + beer coverage + pipeline wiring + direct-beer demand repoint) independently and in parallel with another active session working the same area, unaware of it until partway through -- see BUG-LOG ENG-010 for the full account, including a near-miss where a stale deploy from this session briefly overwrote the other session's more complete `rpc_bloom_order_direct_beer` fix. Caught and reverted before anything downstream read it; final live state combines both sessions' fixes correctly (verified against BUG-LOG's own documented figures, exact match).
+
+**This session's net new contribution, not previously found by anyone:**
+- **`idx_sigma_articles_store_product`** (`sql/perf_add_sigma_articles_store_product_index.sql`) -- the actual root cause of the ~310s ros-pantry debt. `sigma_articles` had no index usable for a bare `(store_code, product_code)` join (only a `client_id`-leading composite), forcing a near-full-index-scan per lookup (measured: 5.3M buffer hits on an 803-row pool join). This index alone took 10116's full pantry refresh from >130s unfinished to 13-14s. Pure additive, benefits any other query joining the same way.
+- **BUG-LOG ENG-010** -- a Postgres `LEAST()`/`GREATEST()` NULL-handling bug in the ros-pantry query rewrite (both this session's and, per their own commit message, independently caught by the parallel session too) that silently flagged entire ROS windows as stockout when zero real stockout runs existed nearby. Caught by R22 regression before any recipe consumed the corrected values.
+
+**Verification performed this session:** R22 regression check (0 diffs across 1,500+ products, 3 stores) of the ros-pantry rewrite against a pinned-anchor reference re-implementation of the original calendar-spine formula; confirmed the scheduled 20:15 UTC pg_cron `refresh_l2_pipeline` run on 2026-07-10 succeeded end to end (15m16s, all six Ship-2 pantry objects x5 stores stamped with an identical timestamp); confirmed the restored `rpc_bloom_order_direct_beer` matches BUG-LOG ENG-009's documented figures exactly (80176/24169 BLACK LABEL RB: 37.5714 ros_used, 17 packs, R3,140.58).
+
+---
+
 ## 2026-07-10 -- Ship 2 scope-gate close (ENG-008) + ENG-005 DC demand repoint + ENG-004 stock-band repoint/SOH-flow
 
 **Applied live via MCP migration this session (repo catch-up commit follows this entry -- see commit hash in the next `git log`).** Three of the four ACTIVE-queue items closed 2026-07-10 per HANDOVER-CURRENT, R22-verified x5 stores each:
