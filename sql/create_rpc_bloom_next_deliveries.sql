@@ -1,14 +1,18 @@
 -- create_rpc_bloom_next_deliveries.sql
 -- SB-CC-BLOOM-007 item 1: one interface every consumer reads for delivery
 -- dates (R30) -- the desk screen's date prepopulation and any future caller.
--- Returns the next two delivery dates on a route's calendar, inclusive of
--- p_anchor_date (today counts as "next" if today is itself a delivery day).
+-- Returns the next two delivery dates on a route's calendar.
 --
--- R22 proof (2026-07-11, anchor 2026-07-11 a Saturday): 10116 DC_AMBIENT ->
--- (11 Jul, 16 Jul); 80175 DC_AMBIENT -> (11 Jul, 15 Jul); 21355/80579
--- DC_TOPS -> (13 Jul, 16 Jul); 80176 DC_TOPS -> (11 Jul, 15 Jul); 21355
--- DIRECT_BEER -> (17 Jul, 24 Jul); 80176 DIRECT_BEER -> (14 Jul, 21 Jul).
--- All internally consistent with the seeded delivery_dows.
+-- BUG-LOG ENG-011 (2026-07-11, found during the PM walk): the original
+-- version searched inclusive of the anchor date, so a call placed ON a
+-- delivery day (or too close to one) offered a delivery that has already
+-- run, or one closer than the route's real order lead -- verified live:
+-- 21355/DC_TOPS on Monday 2026-07-13 returned delivery 2026-07-13 itself,
+-- Monday's own truck, uncatchable. Fixed: the search now starts at
+-- anchor + order_cutoff_days (supplier_calendar, DEMO_CALIBRATION, default
+-- 2 -- "one must order 2 days in advance at least", Pieter 2026-07-11),
+-- never at the anchor itself. Reverified against the exact walk scenario:
+-- anchor=2026-07-13 (Monday) now returns delivery=2026-07-16 (Thursday).
 
 DROP FUNCTION IF EXISTS public.rpc_bloom_next_deliveries(text,text,date);
 
@@ -24,10 +28,11 @@ AS $function$
 DECLARE
   v_anchor date := COALESCE(p_anchor_date, CURRENT_DATE);
   v_dows smallint[];
+  v_cutoff smallint;
   v_dates date[];
   d date;
 BEGIN
-  SELECT sc.delivery_dows INTO v_dows
+  SELECT sc.delivery_dows, sc.order_cutoff_days INTO v_dows, v_cutoff
   FROM public.supplier_calendar sc
   WHERE sc.store_code = p_store_code AND sc.route_key = p_route;
 
@@ -36,14 +41,14 @@ BEGIN
   END IF;
 
   v_dates := ARRAY[]::date[];
-  d := v_anchor;
+  d := v_anchor + COALESCE(v_cutoff, 2);
   WHILE array_length(v_dates,1) IS NULL OR array_length(v_dates,1) < 2 LOOP
     IF EXTRACT(ISODOW FROM d)::smallint = ANY(v_dows) THEN
       v_dates := v_dates || d;
     END IF;
     d := d + 1;
-    IF d > v_anchor + 21 THEN
-      RAISE EXCEPTION 'no two delivery dates found within 21 days for store % route %', p_store_code, p_route;
+    IF d > v_anchor + 28 THEN
+      RAISE EXCEPTION 'no two delivery dates found within 28 days for store % route %', p_store_code, p_route;
     END IF;
   END LOOP;
 

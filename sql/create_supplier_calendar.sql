@@ -14,6 +14,7 @@ CREATE TABLE public.supplier_calendar (
   store_code text NOT NULL,
   route_key text NOT NULL CHECK (route_key IN ('DC_AMBIENT','DC_TOPS','DIRECT_BEER')),
   delivery_dows smallint[] NOT NULL, -- ISO weekday, 1=Mon .. 7=Sun
+  order_cutoff_days smallint NOT NULL DEFAULT 2, -- BUG-LOG ENG-011: minimum lead between order date and delivery date
   scope text NOT NULL DEFAULT 'DEMO_CALIBRATION',
   effective_from date NOT NULL,
   source_note text,
