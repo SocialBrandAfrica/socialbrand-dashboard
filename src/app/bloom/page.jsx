@@ -1049,6 +1049,340 @@ function RecipeMode({ stores }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Order Desks — SB-CC-BLOOM-007 item 8. Corrects the five build deviations
+// the mixed Recipe tab shipped with (no route scope, calendar unused,
+// band_blocked excluded, no geared leg, focus before generation). One desk
+// per supply route, dates prepopulated from rpc_bloom_next_deliveries,
+// focus selected AFTER generation and re-cut WITHIN the results (never a
+// separate generate path), KVI floors never trimmed. The mixed "Recipe
+// (EXPERIMENTAL)" tab above is NOT touched -- canon v7 + the brief are
+// explicit it retires into these desks only after the DoD walk passes, not
+// before (R28, retired with a successor).
+// =============================================================================
+const STORE_DESKS = {
+  '10116': [{ value: 'DC_AMBIENT', label: 'SPAR DC Ambient' }],
+  '80175': [{ value: 'DC_AMBIENT', label: 'SPAR DC Ambient' }],
+  '21355': [{ value: 'DC_TOPS', label: 'TOPS DC' }, { value: 'DIRECT_BEER', label: 'SAB Direct' }],
+  '80176': [{ value: 'DC_TOPS', label: 'TOPS DC' }, { value: 'DIRECT_BEER', label: 'SAB Direct' }],
+  '80579': [{ value: 'DC_TOPS', label: 'TOPS DC' }],
+}
+const DESK_STORES = [
+  { store_code: '10116', store_name: 'SPAR Delareyville' },
+  { store_code: '80175', store_name: 'SPAR Roosville' },
+  { store_code: '21355', store_name: 'TOPS Delareyville' },
+  { store_code: '80176', store_name: 'TOPS Roosville' },
+  { store_code: '80579', store_name: 'TOPS Dice' },
+]
+const FOCUS_OPTIONS = [
+  { value: '', label: 'Standard (no focus)' },
+  { value: 'order_essentials', label: 'Order Essentials' },
+  { value: 'catch_up', label: 'Catch-up' },
+]
+
+function DeskRowV2({ line, qty, isEdited, onQty, isFocusRecut }) {
+  const code = line.product_code
+  const value = (qty ?? 0) * (Number(line.pack_cost) || 0)
+  const protectedKvi = line.kvi_band === 'KVI_CRITICAL' || line.kvi_band === 'KVI_IMPORTANT'
+  const wash = line.count_first
+    ? 'linear-gradient(90deg, rgba(239,83,80,0.14), rgba(239,83,80,0.02))'
+    : protectedKvi
+      ? 'linear-gradient(90deg, rgba(255,179,0,0.13), rgba(255,179,0,0.02))'
+      : line.promo_active
+        ? 'linear-gradient(90deg, rgba(149,117,255,0.12), rgba(149,117,255,0.02))'
+        : 'transparent'
+  const hasGeared = line.promo_active && line.geared_packs != null && line.geared_packs !== line.normal_packs
+  const selected = hasGeared && qty === line.geared_packs ? 'geared' : 'normal'
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: '76px 44px minmax(160px,1.5fr) 100px 90px 96px 56px 64px 80px 120px 100px',
+      alignItems: 'center', gap: 0, padding: '9px 18px', background: wash,
+      borderBottom: '1px solid var(--hairline)', fontSize: 12, fontFamily: 'var(--font-mono)',
+      fontVariantNumeric: 'tabular-nums',
+    }} title={line.story}>
+      <span style={{ color: line.count_first ? 'var(--data-neg)' : 'var(--veld-mist)' }}>
+        {line.count_first ? '# ' : ''}{String(line.product_code)}
+      </span>
+      <span style={{ color: 'var(--veld-mist)' }}>{line.pack_size ?? '—'}</span>
+      <span style={{ color: 'var(--daisy-white)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {line.description}
+        {line.is_bt_hero && (
+          <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--growth-green)', border: '1px solid var(--growth-green)',
+            borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>BT HERO</span>
+        )}
+        {isFocusRecut && (
+          <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--core-yellow)', border: '1px solid var(--core-yellow)',
+            borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>FOCUS</span>
+        )}
+      </span>
+      <span style={{ color: 'var(--veld-mist)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{line.dept_name ?? '—'}</span>
+      <span style={{ color: protectedKvi ? 'var(--core-yellow)' : 'var(--veld-mist)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {KVI_LABEL[line.kvi_band] ?? line.kvi_band ?? '—'}
+      </span>
+      <span style={{ color: 'var(--veld-mist)' }}>{MODE_LABEL[line.mode] ?? line.mode ?? '—'}</span>
+      <span style={{ textAlign: 'right', color: line.count_first ? 'var(--data-neg)' : 'var(--veld-mist)' }} title={line.count_first ? 'Selling negative or SOH untrusted — count first' : undefined}>
+        {line.soh == null ? '—' : Number.isInteger(Number(line.soh)) ? line.soh : num(line.soh)}
+      </span>
+      <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>{num(line.need_units)}</span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
+        <input type="number" min="0" value={qty ?? 0}
+          onChange={e => onQty(code, Math.max(0, parseInt(e.target.value || '0', 10)))}
+          style={{
+            width: 52, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12.5,
+            color: 'var(--daisy-white)', padding: '5px 6px', background: 'rgba(0,0,0,0.28)',
+            borderRadius: 'var(--radius-chip)', border: '1px solid var(--glass-border)', outline: 'none',
+            boxShadow: isEdited ? '0 0 0 2px rgba(255,209,0,0.35)' : 'none',
+          }} />
+        {hasGeared && (
+          <select value={selected}
+            onChange={e => onQty(code, e.target.value === 'geared' ? line.geared_packs : line.normal_packs)}
+            style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)',
+              background: 'rgba(0,0,0,0.28)', border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-chip)', padding: '4px 3px' }}>
+            <option value="normal">N {line.normal_packs}</option>
+            <option value="geared">G {line.geared_packs}</option>
+          </select>
+        )}
+      </span>
+      <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>{zar(value, 2)}</span>
+    </div>
+  )
+}
+
+function OrderDesksMode() {
+  const [storeCode, setStoreCode] = useState(DESK_STORES[0].store_code)
+  const [desk, setDesk] = useState(STORE_DESKS[DESK_STORES[0].store_code][0].value)
+  const [deliveryDate, setDeliveryDate] = useState('')
+  const [nextDeliveryDate, setNextDeliveryDate] = useState('')
+  const [datesLoading, setDatesLoading] = useState(false)
+  const [budgetRow, setBudgetRow] = useState(null)
+  const [fitToBudget, setFitToBudget] = useState(false)
+  const [generating, setGenerating] = useState(false)
+  const [lines, setLines] = useState([])
+  const [qty, setQty] = useState({})
+  const [edited, setEdited] = useState({})
+  const [recutCodes, setRecutCodes] = useState({})
+  const [focus, setFocus] = useState('')
+  const [focusBusy, setFocusBusy] = useState(false)
+  const [filter, setFilter] = useState('ordered')
+  const [error, setError] = useState(null)
+  const [generated, setGenerated] = useState(false)
+
+  const desks = STORE_DESKS[storeCode] || []
+
+  // Store change -> reset desk to the first available on that store, reset order state.
+  useEffect(() => {
+    const first = STORE_DESKS[storeCode]?.[0]?.value
+    if (first) setDesk(first)
+    setGenerated(false); setLines([]); setQty({}); setEdited({}); setFocus(''); setRecutCodes({})
+  }, [storeCode])
+
+  // Desk change -> prepopulate dates from the calendar (item 1), reset order state.
+  useEffect(() => {
+    if (!storeCode || !desk) return
+    let cancelled = false
+    setDatesLoading(true)
+    supabase.rpc('rpc_bloom_next_deliveries', { p_store_code: storeCode, p_route: desk })
+      .then(({ data, error: err }) => {
+        if (cancelled) return
+        setDatesLoading(false)
+        if (err || !data?.[0]) { setError(err?.message ?? 'no calendar row for this desk'); return }
+        setDeliveryDate(data[0].delivery_date); setNextDeliveryDate(data[0].following_date)
+      })
+    supabase.from('order_budget_ledger').select('*')
+      .eq('store_code', storeCode).eq('route_key', 'DC').order('year_month', { ascending: false }).limit(1).maybeSingle()
+      .then(({ data }) => { if (!cancelled) setBudgetRow(data ?? null) })
+    setGenerated(false); setLines([]); setQty({}); setEdited({}); setFocus(''); setRecutCodes({})
+    return () => { cancelled = true }
+  }, [storeCode, desk])
+
+  async function generate() {
+    if (!deliveryDate || !nextDeliveryDate) { setError('Dates not ready yet — wait for the calendar to load.'); return }
+    setError(null); setGenerating(true); setFocus(''); setRecutCodes({})
+    const PAGE = 1000
+    let all = [], offset = 0
+    for (;;) {
+      const { data, error: err } = await supabase.rpc('rpc_bloom_order_recipe', {
+        p_store_code: storeCode, p_delivery_date: deliveryDate, p_next_delivery: nextDeliveryDate,
+        p_route: desk, p_fit_to_budget: fitToBudget,
+      }).range(offset, offset + PAGE - 1)
+      if (err) { setGenerating(false); setError(err.message); return }
+      all = all.concat(data ?? [])
+      if (!data || data.length < PAGE) break
+      offset += PAGE
+    }
+    setGenerating(false)
+    const rows = all.sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
+    const q = {}
+    for (const r of rows) q[r.product_code] = r.suggested_packs ?? 0
+    setLines(rows); setQty(q); setEdited({}); setFilter('ordered'); setGenerated(true)
+  }
+
+  // Focus is selected WITHIN the results (canon v7 item 4) -- it re-cuts
+  // ONLY the lines already in the focus pool (KVI/BT/tier, same signals the
+  // standard call already returned), never a fresh full-pool generate.
+  // Non-focus lines are untouched, already at their standard minimums.
+  async function applyFocus(newFocus) {
+    setFocus(newFocus)
+    if (!newFocus) { setRecutCodes({}); return }
+    setFocusBusy(true); setError(null)
+    const PAGE = 1000
+    let all = [], offset = 0
+    for (;;) {
+      const { data, error: err } = await supabase.rpc('rpc_bloom_order_recipe', {
+        p_store_code: storeCode, p_delivery_date: deliveryDate, p_next_delivery: nextDeliveryDate,
+        p_route: desk, p_fit_to_budget: fitToBudget, p_preset: newFocus,
+      }).range(offset, offset + PAGE - 1)
+      if (err) { setFocusBusy(false); setError(err.message); return }
+      all = all.concat(data ?? [])
+      if (!data || data.length < PAGE) break
+      offset += PAGE
+    }
+    setFocusBusy(false)
+    setQty(q => {
+      const next = { ...q }
+      for (const r of all) next[r.product_code] = r.suggested_packs ?? 0
+      return next
+    })
+    const marks = {}
+    for (const r of all) marks[r.product_code] = true
+    setRecutCodes(marks)
+  }
+
+  function onQty(code, v) {
+    setQty(q => ({ ...q, [code]: v }))
+    setEdited(e => ({ ...e, [code]: true }))
+  }
+
+  const total = useMemo(() => lines.reduce((s, l) => s + (qty[l.product_code] ?? 0) * (Number(l.pack_cost) || 0), 0), [lines, qty])
+  const budgetTotal = Number(budgetRow?.budget_amount) || 0
+  const committed = Number(budgetRow?.committed_amount) || 0
+  const orderedCount = lines.filter(l => (qty[l.product_code] ?? 0) > 0).length
+  const shown = filter === 'ordered' ? lines.filter(l => (qty[l.product_code] ?? 0) > 0) : lines
+  const cols = ['Code', 'Pack', 'Description', 'Dept', 'KVI', 'Mode', 'SOH', 'Need', 'Qty · packs', 'Value']
+  const gridCols = '76px 44px minmax(160px,1.5fr) 100px 90px 96px 56px 64px 80px 120px 100px'
+
+  function exportCsv() {
+    const header = 'product_code,description,pack_size,qty_packs,pack_cost,line_value\n'
+    const body = lines.filter(l => (qty[l.product_code] ?? 0) > 0).map(l => {
+      const q = qty[l.product_code] ?? 0
+      const v = q * (Number(l.pack_cost) || 0)
+      const desc = String(l.description ?? '').replace(/"/g, '""')
+      return `${l.product_code},"${desc}",${l.pack_size ?? ''},${q},${l.pack_cost ?? ''},${v.toFixed(2)}`
+    }).join('\n')
+    downloadText(`${storeCode}_${desk}_${deliveryDate}.csv`, header + body)
+  }
+
+  const inputStyle = {
+    fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--daisy-white)',
+    background: 'rgba(0,0,0,0.28)', border: '1px solid var(--glass-border)',
+    borderRadius: 'var(--radius-chip)', padding: '9px 11px', outline: 'none',
+  }
+
+  return (
+    <div>
+      <GlassCard style={{ margin: '20px 32px', padding: '18px 24px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end', marginBottom: 14 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <Label>Store</Label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {DESK_STORES.map(s => (
+                <Chip key={s.store_code} active={storeCode === s.store_code} onClick={() => setStoreCode(s.store_code)}>
+                  {s.store_code} · {s.store_name}
+                </Chip>
+              ))}
+            </div>
+          </label>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Label>Desk</Label>
+              <SegmentedControl value={desk} onChange={setDesk} options={desks} />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Label>Delivery date</Label>
+              <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)}
+                style={inputStyle} disabled={datesLoading} />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Label>Following delivery</Label>
+              <input type="date" value={nextDeliveryDate} onChange={e => setNextDeliveryDate(e.target.value)}
+                style={inputStyle} disabled={datesLoading} />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Label>Fit to budget</Label>
+              <SegmentedControl size="sm" value={fitToBudget ? 'on' : 'off'} onChange={v => setFitToBudget(v === 'on')}
+                options={[{ value: 'off', label: 'Off' }, { value: 'on', label: 'On' }]} />
+            </label>
+            <Button variant="daisy" onClick={generate} {...(generating || datesLoading ? { disabled: true } : {})}>
+              {generating ? 'Running engine …' : datesLoading ? 'Loading calendar …' : 'Generate order'}
+            </Button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 24, flexWrap: 'wrap' }}>
+            <KpiCard label="Running total" value={zar(total)} sub={`${orderedCount} lines`} style={{ padding: 0 }} />
+            <BudgetGauge total={committed + total} budget={budgetTotal} />
+          </div>
+        </div>
+        <p style={{ margin: '10px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)' }}>
+          Weekly DC budget (82% basis) {zar(budgetTotal)} · basis flag on `order_budget_ledger.cash_constrained` (10-day essentials cover when a week is cash-constrained, 21-day otherwise) · Deduct Last Order trails to next week (item 7)
+        </p>
+        {error && (
+          <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: '#fca5a5',
+            background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 8, padding: '8px 12px' }}>
+            {error}
+          </div>
+        )}
+      </GlassCard>
+
+      {generated && (
+        <GlassCard style={{ margin: '0 32px 32px', padding: 0, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 24px', borderBottom: '1px solid var(--glass-border)', flexWrap: 'wrap' }}>
+            <Label style={{ color: 'var(--veld-mist)' }}>Focus (selected within the results — re-cuts the KVI/BT/Top-1000 subset only)</Label>
+            <SegmentedControl size="sm" value={focus} onChange={applyFocus} options={FOCUS_OPTIONS} />
+            {focusBusy && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)' }}>re-cutting …</span>}
+            <div style={{ flex: 1 }} />
+            <SegmentedControl size="sm" value={filter} onChange={setFilter}
+              options={[{ value: 'ordered', label: `Ordered ${orderedCount}` }, { value: 'all', label: `All ${lines.length}` }]} />
+          </div>
+
+          <div style={{ maxHeight: '52vh', overflow: 'auto' }}>
+            <div style={{ minWidth: 960 }}>
+              <div style={{
+                display: 'grid', gridTemplateColumns: gridCols, position: 'sticky', top: 0, zIndex: 2,
+                padding: '9px 18px', background: 'rgba(14,18,14,0.96)', borderBottom: '1px solid var(--glass-border)',
+              }}>
+                {cols.map((c, i) => (
+                  <span key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 500,
+                    letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--veld-mist)',
+                    textAlign: i >= 6 ? 'right' : 'left' }}>{c}</span>
+                ))}
+              </div>
+              {shown.map(l => (
+                <DeskRowV2 key={l.product_code} line={l} qty={qty[l.product_code]}
+                  isEdited={!!edited[l.product_code]} onQty={onQty}
+                  isFocusRecut={!!recutCodes[l.product_code]} />
+              ))}
+              {shown.length === 0 && (
+                <p style={{ padding: 24, textAlign: 'center', fontFamily: 'var(--font-display)', fontStyle: 'italic', color: 'var(--veld-mist)' }}>
+                  No lines in this filter.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14,
+            padding: '16px 24px', borderTop: '1px solid var(--glass-border)', flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)', flex: '1 1 200px' }}>
+              Hover a row for its story (R29) · # = count first (SOH untrusted) · FOCUS = re-cut by the selected preset
+            </span>
+            <Button variant="solid" onClick={exportCsv}>StockFlow CSV</Button>
+          </div>
+        </GlassCard>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // App shell
 // ─────────────────────────────────────────────────────────────────────────────
 export default function BloomPage() {
@@ -1157,7 +1491,8 @@ export default function BloomPage() {
             options={[
               { value: 'dc', label: 'DC' },
               { value: 'desk', label: 'Desk · beer (EXPERIMENTAL)' },
-              { value: 'recipe', label: 'Recipe (EXPERIMENTAL)' },
+              { value: 'recipe', label: 'Recipe (superseded)' },
+              { value: 'desks', label: 'Desks (EXPERIMENTAL)' },
             ]} />
         </div>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em', color: 'var(--veld-mist)', textTransform: 'uppercase' }}>
@@ -1167,6 +1502,7 @@ export default function BloomPage() {
 
       {appMode === 'desk' && <DeskMode />}
       {appMode === 'recipe' && <RecipeMode stores={stores} />}
+      {appMode === 'desks' && <OrderDesksMode />}
 
       {appMode === 'dc' && phase === 'A' && (
         <GenerateForm
