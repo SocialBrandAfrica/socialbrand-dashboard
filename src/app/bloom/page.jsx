@@ -1566,8 +1566,18 @@ function OrderDesksMode() {
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--veld-mist)' }}>
                     {SCENARIO_LABEL[s.scenario] ?? s.scenario}
                   </div>
+                  {/* PM ruling 2026-07-12: normal/geared is a VALUE PAIR on
+                      each card, never separate cards -- closes CC's own
+                      flagged "4 vs 6 scenarios" question. value_normal is the
+                      TRUE fit-applied order value (what Generate submits);
+                      value_geared is the pre-fit "fully geared" comparison
+                      (informational -- see the RPC's own header note). Both
+                      always visible, never toggled away. */}
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 15, color: 'var(--daisy-white)', marginTop: 2 }}>
-                    {zar(basis === 'geared' ? s.value_geared : s.value_normal)}
+                    {zar(s.value_normal)}
+                  </div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--veld-mist)', marginTop: 1 }}>
+                    geared basis {zar(s.value_geared)}
                   </div>
                   {/* Board honesty pass (canon v9 item 5): each card states its
                       own objective in plain terms -- what the code actually
