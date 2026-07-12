@@ -1515,6 +1515,12 @@ function OrderDesksMode() {
                     {s.lines} lines · {s.promo_lines} promo · {s.count_first_lines} count-first
                     {s.trimmed_lines > 0 && ` · ${s.trimmed_lines} trimmed`}
                   </div>
+                  {/* UX-004: ordered-set count-first (above) is never the whole
+                      pool -- the pool figure rides separately, labelled, so the
+                      two are never read as the same number again. */}
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--veld-mist)', opacity: 0.7, marginTop: 1 }}>
+                    ({s.count_first_pool} count-first in the whole pool, band_blocked)
+                  </div>
                   <div style={{ marginTop: 8 }}>
                     <KviPie byKviBandLines={s.by_kvi_band_lines} />
                   </div>
