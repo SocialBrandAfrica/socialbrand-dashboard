@@ -1145,6 +1145,20 @@ const SCENARIO_LABEL = {
   full: 'Full need', fitted: 'Fitted to budget',
   order_essentials: 'Order Essentials', catch_up: 'Catch-up',
 }
+// Board honesty pass (canon v9 item 5, Pieter ruling 2026-07-12): each
+// card states its own objective in plain terms, so the screen never
+// implies more precision than the FORMULA FREEZE-era build actually has.
+// Canon v9 names four objective TAGS (BUDGET/MAX PROFIT/BASIC DEMANDS/
+// AVAILABILITY) but "PM owns the screen-text walk" for the exact wording
+// -- these captions describe what each scenario's CODE actually does
+// today (verifiable against rpc_bloom_order_recipe), not a guess at PM's
+// four-word taxonomy mapping. Swap for PM's exact copy when it lands.
+const SCENARIO_OBJECTIVE = {
+  full: 'Whole pool at per-line minimums -- the unconstrained need.',
+  fitted: 'Full need, trimmed to this week’s budget (KVI protected first).',
+  order_essentials: 'Selection only: KVI + BT heroes + top-tier lines -- not the whole store.',
+  catch_up: 'Priority basket lifted toward the store-wide floor, fit forced on.',
+}
 
 // The preserved DC row, adapted to the recipe's own fields. Same grid, same
 // ten columns, same ringed-input pattern as OrderRow above -- the only
@@ -1555,15 +1569,27 @@ function OrderDesksMode() {
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 15, color: 'var(--daisy-white)', marginTop: 2 }}>
                     {zar(basis === 'geared' ? s.value_geared : s.value_normal)}
                   </div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)', marginTop: 2 }}>
-                    {s.lines} lines · {s.promo_lines} promo · {s.count_first_lines} count-first
+                  {/* Board honesty pass (canon v9 item 5): each card states its
+                      own objective in plain terms -- what the code actually
+                      does, not a guess at PM's four-word taxonomy (BUDGET/MAX
+                      PROFIT/BASIC DEMANDS/AVAILABILITY) -- PM owns that exact
+                      copy on the walk. Fitted specifically says "= full need,
+                      no trim required" when full already sits inside budget
+                      (the mechanical reason full==fitted can be legitimate). */}
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)', marginTop: 3, lineHeight: 1.4 }}>
+                    {s.scenario === 'fitted' && Number(s.value_normal) <= Number(s.budget_amount)
+                      ? '= full need, no trim required (already inside budget).'
+                      : SCENARIO_OBJECTIVE[s.scenario]}
+                  </div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)', marginTop: 4 }}>
+                    {s.lines} lines · {s.promo_lines} promo · {s.count_first_lines} count-first (ordered)
                     {s.trimmed_lines > 0 && ` · ${s.trimmed_lines} trimmed`}
                   </div>
                   {/* UX-004: ordered-set count-first (above) is never the whole
                       pool -- the pool figure rides separately, labelled, so the
                       two are never read as the same number again. */}
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--veld-mist)', opacity: 0.7, marginTop: 1 }}>
-                    ({s.count_first_pool} count-first in the whole pool, band_blocked)
+                    {s.count_first_pool} count-first across the WHOLE POOL (band_blocked, includes lines not ordered)
                   </div>
                   <div style={{ marginTop: 8 }}>
                     <KviPie byKviBandLines={s.by_kvi_band_lines} />
