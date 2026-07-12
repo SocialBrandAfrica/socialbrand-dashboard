@@ -4,6 +4,24 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-12 -- THE ACCURACY-GATE VERIFICATION RUN (canon v9 item 8, offline queries, no code changed)
+
+Population checks on the LIVE recipe, standard preset, at Monday 13 Jul's three walk stores: 10116/DC_AMBIENT (delivery 2026-07-16), 21355/DC_TOPS (2026-07-16), 80176/DIRECT_BEER (2026-07-21) -- each store's own next real delivery off `rpc_bloom_next_deliveries` anchored 2026-07-13.
+
+**1. Band invariants (0 violations expected):** `target_level > max_band` or `(need_units>0 AND target_level<min_band)`, population count. **10116: 0/12,615. 21355: 0/2,582. 80176: 0/216. ALL CLEAN.**
+
+**2. 35-day ceiling baseline (all over-35d lines expected pack-forced):** post-order cover `= (soh + suggested_packs*pack_size) / rhythm_adjusted_demand`; a line is "pack-forced" when `suggested_packs=1` (the minimum valid pack count) pushes it past 35d on its own, never a real multi-pack over-order. **10116: 519/519 pack-forced -- EXACT match to PM's own previously-cited baseline figure.** **21355: 74/74 pack-forced.** **80176: 2/3 pack-forced -- ONE exception found:** product 158253 CASTLE DRAUGHT LITE CAN 500ML, promo_active, geared to 7 packs (not the pack-forced minimum of 1), lands at 39.4d post-order. Not a band-invariant violation and not silently wrong -- a promo-geared line legitimately buying in past 35d, exactly the kind of overshoot BLOOM-008 item 5's gearing cap (ON HOLD until after Monday) is meant to bound. Flagged, not fixed -- the freeze holds.
+
+**3. Demand-window-per-tier mismatches (0 expected):** T100 must read `ros_14d`/`ros_28d (q14=0 fallback)`, T1000 must read `ros_28d`, BOR must read `ros_56d`, population count of anything else. **10116: 0. 21355: 0. 80176: 0. ALL CLEAN.**
+
+**4. Budget strip reads the delivery week's ledger row:** **10116 and 21355 both resolve `delivery_week_exact` correctly (week_start 2026-07-11, the Saturday before their Thursday drop).** **80176 resolves `no_ledger_row` -- NO row at all, not even a stale fallback.** Traced to source: `order_budget_ledger` for `route_key='DIRECT_BEER'` carries ONLY `grain='monthly'` rows (6 months seeded, Jul-Dec 2026) -- **zero `grain='weekly'` rows exist for ANY of the three DIRECT_BEER stores (21355, 80176, 80579), confirmed by population count, not just 80176.** **This means the budget strip and Fit-to-Budget will show empty/no-budget on every SAB desk during Monday's walk unless weekly rows get seeded before then.** Not fixed this pass -- seeding the weekly split of an existing monthly SAB budget is a real decision (which weeks, whether it's a flat 1/4-split or rhythm-weighted) that belongs to PM/Pieter, not a silent default.
+
+**Verdict:** 10116 and 21355 (DC routes) are clean on all four checks and ready for Monday's walk as-is. 80176 (and the SAB route generally) has one minor, explainable gearing overshoot (#2) and one real, walk-blocking gap (#4, no weekly budget ledger rows) that needs a PM/Pieter decision before Monday, not a CC guess.
+
+**Gate status:** Verification CLOSED, all figures above are live population counts, not samples. Item 4's SAB weekly-ledger gap is OPEN, needs a ruling, flagged here rather than silently seeded.
+
+---
+
 ## 2026-07-12 -- SB-CC-BLOOM-008 item 8: BT per-store overview
 
 **What shipped:** `rpc_bt_store_overview(p_month)` -- reuses `l2_bt_monthly`/`l2_bt_baseline` exactly as `rpc_bt_scorecard` does (R21, same GP formula, grouped by `store_code` instead of collapsed across the whole BT scope). `public/bt.html` gets a new "Per-store overview" panel under the existing scorecard, same month selector, own reload.
