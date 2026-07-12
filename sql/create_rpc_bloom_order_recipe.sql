@@ -540,9 +540,20 @@ BEGIN
         ) AS promo_suffix_calc
       FROM geared g LEFT JOIN promo_match pm ON pm.product_code=g.product_code
     ),
+    -- WALK-FINDINGS W2 (Pieter, live walk 2026-07-12, freeze lifted): the
+    -- order_essentials preset NEVER gears -- suggested_packs = normal_packs
+    -- always on this preset, even for promo-active lines. Promo lines keep
+    -- their promo-sheet routing (promo_active stays true, driven by
+    -- promo_nr IS NOT NULL, untouched below) but at the NORMAL quantity,
+    -- qty-only per the capture-sheet template -- essentials is meant to be
+    -- the strict-KVI/basic-demands selection, never a buy-in vehicle.
     resolved AS (
       SELECT wp.*,
-        CASE WHEN wp.promo_nr IS NOT NULL THEN wp.geared_packs_calc ELSE wp.normal_packs_calc END AS resolved_packs_calc
+        CASE
+          WHEN %24$L::boolean THEN wp.normal_packs_calc
+          WHEN wp.promo_nr IS NOT NULL THEN wp.geared_packs_calc
+          ELSE wp.normal_packs_calc
+        END AS resolved_packs_calc
       FROM with_promo wp
     ),
     gmroi AS (
@@ -614,7 +625,7 @@ BEGIN
        v_override, v_lead, v_preset_applied,
        v_preset_catchup, p_catchup_band_cap_multiple, v_fit_to_budget, v_weekly_budget,
        p_route, v_dept_nrs, v_lead_source, v_next_delivery, v_week_start, v_week_source,
-       v_dows, v_buyin_lead_days, p_delivery_date);
+       v_dows, v_buyin_lead_days, p_delivery_date, v_preset_essentials);
 
   EXECUTE 'DROP TABLE IF EXISTS _bloom_recipe_out';
   EXECUTE format('CREATE TEMP TABLE _bloom_recipe_out AS %s', v_sql);
