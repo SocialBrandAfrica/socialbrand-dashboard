@@ -4,6 +4,22 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-12 -- WALK-FINDING W2: order_essentials preset never gears (FORMULA FREEZE LIFTED mid-walk)
+
+**Context:** Pieter's Monday walk (2026-07-13) started early -- freeze lifted live mid-walk 2026-07-12 ("cc can build"), build order handed down: essentials-normal fix first, manual-budget override second, then directs and the delivery chain/month picture.
+
+**What shipped:** `rpc_bloom_order_recipe`'s `resolved` CTE now forces `resolved_packs_calc = normal_packs_calc` whenever `p_preset='order_essentials'`, regardless of `promo_nr` -- previously every preset (including essentials) geared promo-active lines identically, contradicting essentials' own purpose as the strict-KVI/basic-demands selection, never a buy-in vehicle. Promo-sheet routing is untouched (`promo_active` still driven purely by `promo_nr IS NOT NULL`) -- promo lines still surface on the promo sheet, just at normal quantity. Gated on the pre-existing `v_preset_essentials` plpgsql variable, passed as the format() call's new 24th arg (`%24$L::boolean`). Input signature unchanged (body-only fix, `CREATE OR REPLACE` pattern).
+
+**R22, live (10116/DC_AMBIENT, delivery 2026-07-16, next 2026-07-18):**
+- Essentials total value: R1,102,326.62 -> R1,040,660.66 (-R61,665.96), line count unchanged at 615.
+- Geared-promo lines (`suggested_packs=geared_packs<>normal_packs` while `promo_active`): 48 -> 0.
+- All 201 `promo_active` lines confirmed still flagged true AND at normal qty (`suggested_packs=normal_packs`) -- promo-sheet export routing intact, only the quantity math changed.
+- Standard preset (no preset arg) confirmed UNAFFECTED as a control: 12,615 lines, 83 geared-promo lines, unchanged from before this fix -- the change is scoped exactly to `order_essentials`.
+
+**Gate status:** CC build R22 CLOSED. First item of the post-freeze build order; W5 (manual budget override) next.
+
+---
+
 ## 2026-07-12 -- SAB weekly-budget seed (canonical file, PM's live fix) + real bug caught: value_normal ignored Fit-to-Budget
 
 **SAB weekly-budget seed, canonicalized.** PM applied the fix live to close the accuracy-gate's walk-blocking finding (no `grain='weekly'` rows for any DIRECT_BEER store): 21355 R41,541.86, 80176 R77,732.83, 80579 R36,258.41, each store's own figure split by that store's own LY beer rhythm for the week, not a flat divide. New file `sql/create_order_budget_ledger_sab_weekly_seed.sql` records this canonically (`ON CONFLICT DO NOTHING`, verified as a true no-op against what PM already applied) so the repo doesn't drift from live, per PM's own flag. **Second flag from PM, NOT fixed here (hygiene pass after Monday's walk, explicitly deferred):** the same stores also carry `route_key='DIRECT'` weekly rows for the same week (10116 R366,210 / 21355 R63,544 / 80175 R200,362 / 80176 R95,500 / 80579 R913) -- confirmed live, "look like the same money on two keys." Left untouched; needs Pieter's ruling on which key is authoritative before any merge/cleanup.
