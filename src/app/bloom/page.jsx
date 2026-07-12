@@ -1260,6 +1260,7 @@ function OrderDesksMode() {
   const [stockStateError, setStockStateError] = useState(null)
   const [deliveryChain, setDeliveryChain] = useState(null)
   const [deliveryChainError, setDeliveryChainError] = useState(null)
+  const [monthProjection, setMonthProjection] = useState(null)
 
   const desks = STORE_DESKS[storeCode] || []
 
@@ -1354,6 +1355,20 @@ function OrderDesksMode() {
         if (cancelled) return
         if (err) { setDeliveryChainError(err.message); setDeliveryChain(null); return }
         setDeliveryChain(data?.[0] ?? null)
+      })
+    return () => { cancelled = true }
+  }, [storeCode, desk])
+
+  // SB-CC-BLOOM-008 item 16(b) -- THE MONTH PICTURE. Read-only, chained off
+  // the same recipe/simulated-SOH mechanism as the two-drop teaser above,
+  // walked forward through every remaining drop in the calendar month.
+  useEffect(() => {
+    if (!storeCode || !desk) { setMonthProjection(null); return }
+    let cancelled = false
+    supabase.rpc('rpc_bloom_month_projection', { p_store_code: storeCode, p_route: desk })
+      .then(({ data, error: err }) => {
+        if (cancelled || err) return
+        setMonthProjection((data ?? []).find(r => r.row_kind === 'MONTH_SUMMARY') ?? null)
       })
     return () => { cancelled = true }
   }, [storeCode, desk])
@@ -1714,7 +1729,7 @@ function OrderDesksMode() {
           BLOOM-002 item 6: "If this lands Thu, Sat's order runs ~R..." Reads
           the buyer's own on-screen qty once Generate has run (fire-and-forget
           refetch above), the recipe's raw suggested_packs before that. */}
-      {(deliveryChain || deliveryChainError) && (
+      {(deliveryChain || deliveryChainError || monthProjection) && (
         <GlassCard style={{ margin: '0 32px 20px', padding: '16px 22px' }}>
           <Label style={{ color: 'var(--veld-mist)' }}>Delivery chain</Label>
           {deliveryChainError && (
@@ -1731,6 +1746,14 @@ function OrderDesksMode() {
                 {' · '}needs {deliveryChain.d3} for its own cover
               </p>
             </>
+          )}
+          {monthProjection && (
+            <p style={{ margin: '10px 0 0', paddingTop: 8, borderTop: '1px solid var(--hairline)', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)' }}>
+              Month: landed {zar(monthProjection.month_to_date_landed)} + projected = {zar(monthProjection.month_purchases_projected_total)}
+              {monthProjection.route_budget_amount != null && <>{' · '}route budget {zar(monthProjection.route_budget_amount)}</>}
+              {monthProjection.drops_capped && <> · drops beyond 8 not shown</>}
+              {' · '}<span title={monthProjection.sales_target_note}>no sales target configured yet</span>
+            </p>
           )}
         </GlassCard>
       )}
