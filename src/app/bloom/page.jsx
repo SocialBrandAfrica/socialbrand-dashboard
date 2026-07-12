@@ -1258,6 +1258,8 @@ function OrderDesksMode() {
   const [overviewError, setOverviewError] = useState(null)
   const [stockState, setStockState] = useState([])
   const [stockStateError, setStockStateError] = useState(null)
+  const [deliveryChain, setDeliveryChain] = useState(null)
+  const [deliveryChainError, setDeliveryChainError] = useState(null)
 
   const desks = STORE_DESKS[storeCode] || []
 
@@ -1334,6 +1336,28 @@ function OrderDesksMode() {
     return () => { cancelled = true }
   }, [storeCode, desk])
 
+  // SB-CC-BLOOM-008 item 16(a) -- THE DELIVERY CHAIN TEASER. Fetched once
+  // per desk/store selection (the recipe's own raw suggested_packs, no
+  // buyer overrides) -- re-fetched with the buyer's own on-screen qty as
+  // p_order1_overrides right after Generate, so the teaser reflects what's
+  // actually about to be submitted rather than a stale pre-edit guess.
+  // Not wired to recompute per keystroke (unlike stock-days above) --
+  // a genuine second recipe run per edit would be a real round-trip cost,
+  // documented limitation, same class as the promo toy's own live-reactivity
+  // gap noted elsewhere in this file.
+  useEffect(() => {
+    if (!storeCode || !desk) { setDeliveryChain(null); return }
+    let cancelled = false
+    setDeliveryChainError(null)
+    supabase.rpc('rpc_bloom_delivery_chain', { p_store_code: storeCode, p_route: desk })
+      .then(({ data, error: err }) => {
+        if (cancelled) return
+        if (err) { setDeliveryChainError(err.message); setDeliveryChain(null); return }
+        setDeliveryChain(data?.[0] ?? null)
+      })
+    return () => { cancelled = true }
+  }, [storeCode, desk])
+
   // Days-after per group = current stock-days + (this order's added value
   // in that group / the group's own daily_cost_demand) -- pure client-side
   // arithmetic off `lines`+`qty` already in memory, recomputes on every
@@ -1379,6 +1403,18 @@ function OrderDesksMode() {
     const q = {}
     for (const r of rows) q[r.product_code] = lineQty(r, basis)
     setLines(rows); setQty(q); setEdited({}); setFilter('all'); setGenerated(true)
+
+    // item 16(a): re-run the teaser against the buyer's OWN on-screen qty
+    // (the just-set `q`) rather than the recipe's raw suggested_packs, so
+    // "drop 2's order will be ~R..." reflects what's actually about to be
+    // submitted. Fire-and-forget -- desk stays usable while this resolves.
+    const overrides = {}
+    for (const r of rows) overrides[r.product_code] = q[r.product_code] ?? 0
+    supabase.rpc('rpc_bloom_delivery_chain', { p_store_code: storeCode, p_route: desk, p_order1_overrides: overrides })
+      .then(({ data, error: err }) => {
+        if (err) { setDeliveryChainError(err.message); return }
+        setDeliveryChain(data?.[0] ?? null)
+      })
   }
 
   function onQty(code, v) {
@@ -1673,6 +1709,31 @@ function OrderDesksMode() {
           </p>
         )}
       </GlassCard>
+
+      {/* SB-CC-BLOOM-008 item 16(a) -- THE DELIVERY CHAIN TEASER, per CD-SPEC-
+          BLOOM-002 item 6: "If this lands Thu, Sat's order runs ~R..." Reads
+          the buyer's own on-screen qty once Generate has run (fire-and-forget
+          refetch above), the recipe's raw suggested_packs before that. */}
+      {(deliveryChain || deliveryChainError) && (
+        <GlassCard style={{ margin: '0 32px 20px', padding: '16px 22px' }}>
+          <Label style={{ color: 'var(--veld-mist)' }}>Delivery chain</Label>
+          {deliveryChainError && (
+            <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#fca5a5', marginTop: 8 }}>{deliveryChainError}</p>
+          )}
+          {deliveryChain && (
+            <>
+              <p style={{ margin: '8px 0 0', fontFamily: 'var(--font-display)', fontSize: 15, color: 'var(--daisy-white)' }}>
+                {deliveryChain.story}
+              </p>
+              <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)' }}>
+                Order 1 ({deliveryChain.d1}): {deliveryChain.order1_lines} lines, {zar(deliveryChain.order1_value)}
+                {' · '}Order 2 projected ({deliveryChain.d2}): {deliveryChain.order2_projected_lines} lines, {zar(deliveryChain.order2_projected_value)}
+                {' · '}needs {deliveryChain.d3} for its own cover
+              </p>
+            </>
+          )}
+        </GlassCard>
+      )}
 
       {generated && (
         <GlassCard style={{ margin: '0 32px 32px', padding: 0, overflow: 'hidden' }}>
