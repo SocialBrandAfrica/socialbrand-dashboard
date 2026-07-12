@@ -4,6 +4,20 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-12 -- SB-CC-BLOOM-008 item 16 CLOSED: the delivery chain + month picture, frontend wired
+
+Final piece of item 16 -- (a) two-drop chain and (b) month picture (both shipped as their own backend commits earlier today) are now visible on the desk landing, between the stock-state strip and the order grid.
+
+**Frontend:** new "Delivery chain" `GlassCard` in `DeskMode` (`src/app/bloom/page.jsx`). Reads `rpc_bloom_delivery_chain` once per desk/store selection (recipe's own raw `suggested_packs`), re-fetched fire-and-forget with the buyer's own on-screen qty as `p_order1_overrides` right after Generate -- the story text reflects what's actually about to be submitted, not a stale pre-edit guess. `rpc_bloom_month_projection`'s `MONTH_SUMMARY` row rides the same card: month-to-date landed + projected total, route budget (explicitly labelled as budget, never target), a drops-capped flag, and an honest "no sales target configured yet" note (hover shows the full reason) rather than a guessed number.
+
+**Not wired to recompute per keystroke** -- a genuine second recipe run per edit would be a real server round-trip; same documented-limitation class as the promo buy-in toy's own live-reactivity gap noted earlier this session.
+
+**Verification:** `/bloom` is auth-gated (Google login) and this session holds a standing rule against bypassing `middleware.js`, so this was verified statically -- JSX brace/ternary balance re-read twice, dev-server compile log checked clean after each edit, new state/effect symbols grepped for duplicate declarations (none found).
+
+**Item 16 is now CLOSED end to end:** 16(c) landed leg fixed (two real bugs: route scoping + the weekly-grain matching bug found during the fix), 16(a) two-drop chain built + R22'd (order1 value matches the standalone recipe to the cent, override causality confirmed), 16(b) month picture built + R22'd (chains consistently with 16a's own output), all three wired onto the desk screen.
+
+---
+
 ## 2026-07-12 -- SB-CC-BLOOM-009: Coca-Cola direct desk, 10116 + 80175 (priority 1)
 
 **What shipped:** first desk of the direct-supplier-desks brief, Coca-Cola per the brief's own build priority (item 6). New `bloom_route_config.direct_supplier_nrs`/`direct_cycle_weeks`/`direct_min_order_value` (RULED config rows for 10116 + 80175). `supplier_calendar` CHECK relaxed to accept `DIRECT_<brand>` route keys. `rpc_bloom_order_recipe` extended with a third route branch (validation, ledger routing to the existing shared `'DIRECT'` weekly ledger row, `lnk`/`pool` CTEs scoped by supplier link) -- zero change to any existing route's own formula. `rpc_bloom_stock_state` and `rpc_bloom_scenario_overview` (both auto-called on desk selection, before Generate) needed the identical route-guard + ledger-routing extension or the new desk would error the moment it's selected; `stock_state`'s dept-wide-vs-orderable gap concept doesn't apply to a supplier-defined pool so it honestly folds to the pool itself (gap=0) rather than inventing a comparison set.
