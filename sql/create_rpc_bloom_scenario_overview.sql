@@ -115,8 +115,8 @@ DECLARE
 BEGIN
   SET LOCAL statement_timeout = '45s';
 
-  IF p_route IS NULL OR p_route NOT IN ('DC_AMBIENT','DC_TOPS','DIRECT_BEER') THEN
-    RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS or DIRECT_BEER';
+  IF p_route IS NULL OR (p_route NOT IN ('DC_AMBIENT','DC_TOPS','DIRECT_BEER') AND p_route NOT LIKE 'DIRECT\_%' ESCAPE '\') THEN
+    RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS, DIRECT_BEER or a RULED DIRECT_<brand> desk';
   END IF;
 
   -- ENG-018 re-anchor: lead forced to 0 (p_next_delivery=p_delivery_date)
@@ -206,7 +206,13 @@ BEGIN
     SELECT COALESCE(obl.budget_amount,0) AS budget_amt
     FROM order_budget_ledger obl
     WHERE obl.store_code = p_store_code
-      AND obl.route_key = (CASE WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER' ELSE 'DC' END)
+      -- SB-CC-BLOOM-009: mirrors rpc_bloom_order_recipe's own v_ledger_route
+      -- CASE exactly -- must stay in lockstep with it, R21.
+      AND obl.route_key = (CASE
+        WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER'
+        WHEN p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN 'DIRECT'
+        ELSE 'DC'
+      END)
       AND obl.grain = 'weekly'
       AND obl.year_month = (SELECT MAX(a.budget_week_start) FROM agg a)
   )

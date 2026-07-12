@@ -1123,8 +1123,11 @@ function RecipeMode({ stores }) {
 // (canon v7 item 4, corrected wording 2026-07-11 evening).
 // =============================================================================
 const STORE_DESKS = {
-  '10116': [{ value: 'DC_AMBIENT', label: 'SPAR DC Ambient' }],
-  '80175': [{ value: 'DC_AMBIENT', label: 'SPAR DC Ambient' }],
+  // SB-CC-BLOOM-009: Coca-Cola direct desk, priority 1 (10116 + 80175 first,
+  // "SPAR pair carries ~85% of the direct rand"). Remaining brands/stores
+  // follow the same pattern in later passes.
+  '10116': [{ value: 'DC_AMBIENT', label: 'SPAR DC Ambient' }, { value: 'DIRECT_COCACOLA', label: 'Coca-Cola Direct' }],
+  '80175': [{ value: 'DC_AMBIENT', label: 'SPAR DC Ambient' }, { value: 'DIRECT_COCACOLA', label: 'Coca-Cola Direct' }],
   '21355': [{ value: 'DC_TOPS', label: 'TOPS DC' }, { value: 'DIRECT_BEER', label: 'SAB Direct' }],
   '80176': [{ value: 'DC_TOPS', label: 'TOPS DC' }, { value: 'DIRECT_BEER', label: 'SAB Direct' }],
   '80579': [{ value: 'DC_TOPS', label: 'TOPS DC' }],
@@ -1278,7 +1281,10 @@ function OrderDesksMode() {
         if (err || !data?.[0]) { setError(err?.message ?? 'no calendar row for this desk'); return }
         setDeliveryDate(data[0].delivery_date); setNextDeliveryDate(data[0].following_date)
       })
-    const ledgerRoute = desk === 'DIRECT_BEER' ? 'DIRECT_BEER' : 'DC'
+    // SB-CC-BLOOM-009: DIRECT_<brand> desks share the generic 'DIRECT'
+    // weekly ledger row (mirrors rpc_bloom_order_recipe's own v_ledger_route
+    // CASE -- must stay in lockstep with it, R21).
+    const ledgerRoute = desk === 'DIRECT_BEER' ? 'DIRECT_BEER' : desk.startsWith('DIRECT_') ? 'DIRECT' : 'DC'
     supabase.from('order_budget_ledger').select('*')
       .eq('store_code', storeCode).eq('route_key', ledgerRoute).order('year_month', { ascending: false }).limit(1).maybeSingle()
       .then(({ data }) => { if (!cancelled) setBudgetRow(data ?? null) })

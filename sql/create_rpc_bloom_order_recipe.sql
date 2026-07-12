@@ -208,6 +208,7 @@ DECLARE
   v_buyin_lead_days int;
   v_band_violations int;
   v_sql text;
+  v_direct_supplier_nrs bigint[];
 BEGIN
   SET LOCAL statement_timeout = '30s';
 
@@ -222,8 +223,8 @@ BEGIN
   p_month_end_build_end_day := COALESCE(p_month_end_build_end_day, 24);
   p_early_month_build_start_day := COALESCE(p_early_month_build_start_day, 25);
 
-  IF p_route IS NULL OR p_route NOT IN ('DC_AMBIENT','DC_TOPS','DIRECT_BEER') THEN
-    RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS or DIRECT_BEER (canon SS14 v7 item 1)';
+  IF p_route IS NULL THEN
+    RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS, DIRECT_BEER or a RULED DIRECT_<brand> desk (canon SS14 v7 item 1 / v9 item 7)';
   END IF;
 
   IF p_route IN ('DC_AMBIENT','DC_TOPS') THEN
@@ -236,12 +237,35 @@ BEGIN
        OR (p_route = 'DC_TOPS' AND v_format_group <> 'TOPS') THEN
       RAISE EXCEPTION 'p_route % does not match store % (format %)', p_route, p_store_code, v_format_group;
     END IF;
+  ELSIF p_route = 'DIRECT_BEER' THEN
+    NULL; -- existing route, no config lookup needed here (route_beer_cfg CTE handles it)
+  ELSIF p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN
+    -- SB-CC-BLOOM-009: direct-supplier desks. Pool membership is
+    -- behaviour-led (each product's own active non-Z sigma_supplier_link
+    -- row, matched below) -- direct_supplier_nrs only says WHICH
+    -- supplier_nr(s) constitute this brand desk, a curated/RULED mapping,
+    -- never a hardcoded product list.
+    SELECT rc.direct_supplier_nrs INTO v_direct_supplier_nrs
+    FROM bloom_route_config rc WHERE rc.store_code = p_store_code AND rc.route_key = p_route AND rc.status = 'RULED';
+    IF v_direct_supplier_nrs IS NULL THEN
+      RAISE EXCEPTION 'no RULED bloom_route_config row for store % route %', p_store_code, p_route;
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS, DIRECT_BEER or a RULED DIRECT_<brand> desk (canon SS14 v7 item 1 / v9 item 7)';
   END IF;
 
   -- ENG-013: ledger route key. DC_AMBIENT/DC_TOPS share the DC weekly
   -- budget; DIRECT_BEER reads its own separate route budget (live in
   -- order_budget_ledger since Ship 1) -- never DC's money for SAB.
-  v_ledger_route := CASE WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER' ELSE 'DC' END;
+  -- SB-CC-BLOOM-009: every DIRECT_<brand> desk at a store shares the SAME
+  -- generic 'DIRECT' weekly ledger row (already seeded, e.g. 10116
+  -- R366,210/wk) -- one direct budget, many brand desks drawing on it,
+  -- by design (canon v9 item 7 background).
+  v_ledger_route := CASE
+    WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER'
+    WHEN p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN 'DIRECT'
+    ELSE 'DC'
+  END;
 
   -- ENG-017: buy-in window inputs. v_dows feeds the "last calendar
   -- delivery <= active_end" closing bound; a missing calendar row
@@ -335,6 +359,7 @@ BEGIN
         AND (
           (%15$L::text IN ('DC_AMBIENT','DC_TOPS') AND sm.supplier_type='Z')
           OR (%15$L::text = 'DIRECT_BEER' AND sm.status='A' AND NOT (sm.supplier_type = ANY(rbc.excluded_supplier_types)))
+          OR (%15$L::text LIKE 'DIRECT\_%%' ESCAPE '\' AND %15$L::text <> 'DIRECT_BEER' AND sl.supplier_nr = ANY(%25$L::bigint[]))
         )
       ORDER BY sl.product_code, (sl.supplier_nr=1339) DESC, sl.cost_date DESC NULLS LAST
     ),
@@ -376,6 +401,11 @@ BEGIN
         AND (
           (%15$L::text IN ('DC_AMBIENT','DC_TOPS') AND sp.department_nr = ANY(%16$L::smallint[]))
           OR (%15$L::text = 'DIRECT_BEER' AND sp.merch_group_nr IN (SELECT unnest(merch_group_nrs) FROM route_beer_cfg))
+          -- SB-CC-BLOOM-009: DIRECT_<brand> pool membership is entirely
+          -- decided by the lnk join above (product has an active,
+          -- non-suspended link to one of this desk's supplier_nr(s)) --
+          -- no further department/merch-group restriction applies.
+          OR (%15$L::text LIKE 'DIRECT\_%%' ESCAPE '\' AND %15$L::text <> 'DIRECT_BEER')
         )
         AND (NOT %3$L::boolean
              OR b.kvi_band IN ('KVI_CRITICAL','KVI_IMPORTANT')
@@ -625,7 +655,7 @@ BEGIN
        v_override, v_lead, v_preset_applied,
        v_preset_catchup, p_catchup_band_cap_multiple, v_fit_to_budget, v_weekly_budget,
        p_route, v_dept_nrs, v_lead_source, v_next_delivery, v_week_start, v_week_source,
-       v_dows, v_buyin_lead_days, p_delivery_date, v_preset_essentials);
+       v_dows, v_buyin_lead_days, p_delivery_date, v_preset_essentials, v_direct_supplier_nrs);
 
   EXECUTE 'DROP TABLE IF EXISTS _bloom_recipe_out';
   EXECUTE format('CREATE TEMP TABLE _bloom_recipe_out AS %s', v_sql);
