@@ -1239,6 +1239,8 @@ function OrderDesksMode() {
   const [overview, setOverview] = useState([])
   const [overviewLoading, setOverviewLoading] = useState(false)
   const [overviewError, setOverviewError] = useState(null)
+  const [stockState, setStockState] = useState([])
+  const [stockStateError, setStockStateError] = useState(null)
 
   const desks = STORE_DESKS[storeCode] || []
 
@@ -1293,6 +1295,48 @@ function OrderDesksMode() {
     })
     return () => { cancelled = true }
   }, [storeCode, desk, deliveryDate, nextDeliveryDate])
+
+  // SB-CC-BLOOM-008 item 7 -- THE STOCK-STATE INSTRUMENT. Read-only, keyed
+  // on store/desk only (current SOH, not a delivery-date scenario). Days-
+  // after per group recomputes CLIENT-SIDE below (stockStateWithDaysAfter)
+  // from this call's daily_cost_demand plus the live qty state -- never a
+  // server round-trip per edit.
+  useEffect(() => {
+    if (!storeCode || !desk) { setStockState([]); return }
+    let cancelled = false
+    setStockStateError(null)
+    supabase.rpc('rpc_bloom_stock_state', { p_store_code: storeCode, p_route: desk })
+      .then(({ data, error: err }) => {
+        if (cancelled) return
+        if (err) { setStockStateError(err.message); setStockState([]); return }
+        setStockState(data ?? [])
+      })
+    return () => { cancelled = true }
+  }, [storeCode, desk])
+
+  // Days-after per group = current stock-days + (this order's added value
+  // in that group / the group's own daily_cost_demand) -- pure client-side
+  // arithmetic off `lines`+`qty` already in memory, recomputes on every
+  // qty edit with no network round-trip ("recomputing live as quantities
+  // edit", canon v8 item 7).
+  const stockStateWithDaysAfter = useMemo(() => {
+    const groups = stockState.filter(s => s.group_name !== 'TOTAL')
+    if (!groups.length) return []
+    const addedByGroup = { KVI: 0, CORE: 0, TAIL: 0 }
+    for (const l of lines) {
+      const q = qty[l.product_code] ?? 0
+      if (q <= 0) continue
+      const grp = ['KVI_CRITICAL', 'KVI_IMPORTANT'].includes(l.kvi_band) ? 'KVI'
+        : l.kvi_band === 'LONG_TAIL' ? 'TAIL' : 'CORE'
+      addedByGroup[grp] += q * (Number(l.pack_cost) || 0)
+    }
+    return groups.map(g => ({
+      ...g,
+      daysAfter: g.daily_cost_demand > 0
+        ? Math.round(((Number(g.stock_at_cost) + addedByGroup[g.group_name]) / Number(g.daily_cost_demand)) * 10) / 10
+        : null,
+    }))
+  }, [stockState, lines, qty])
 
   async function generate() {
     if (!deliveryDate || !nextDeliveryDate) { setError('Dates not ready yet — wait for the calendar to load.'); return }
@@ -1539,6 +1583,48 @@ function OrderDesksMode() {
               Pie = ordered-line mix (KVI/Core/Tail by count). Also computed server-side per scenario, not yet visualized here: value by mode (minimum/build/month-end), value by tier (T100/T1000/BOR) — available on the same call (`by_mode`, `by_tier`) for a future breakdown panel.
             </p>
           </>
+        )}
+      </GlassCard>
+
+      {/* SB-CC-BLOOM-008 item 7 -- THE STOCK-STATE INSTRUMENT. Read-only,
+          zero formula risk (FORMULA FREEZE holds until after Pieter's
+          Monday walk) -- current SOH in stock-days by KVI/Core/Tail, plus
+          days-after recomputing live off the desk's own in-memory qty
+          state as the buyer edits, no server round-trip per keystroke. */}
+      <GlassCard style={{ margin: '0 32px 20px', padding: '16px 22px' }}>
+        <Label style={{ color: 'var(--veld-mist)' }}>Stock now — where the store stands</Label>
+        {stockStateError && (
+          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#fca5a5', marginTop: 8 }}>{stockStateError}</p>
+        )}
+        {!stockStateError && stockStateWithDaysAfter.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginTop: 10 }}>
+            {stockStateWithDaysAfter.map(g => (
+              <div key={g.group_name} style={{ padding: '10px 12px', borderRadius: 'var(--radius-chip)', border: '1px solid var(--hairline)', background: 'rgba(255,255,255,0.02)' }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--veld-mist)' }}>
+                  {g.group_name}
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 20, color: 'var(--daisy-white)', marginTop: 2 }}>
+                  {g.stock_days ?? '—'}d <span style={{ fontSize: 11, color: 'var(--veld-mist)' }}>now</span>
+                </div>
+                {generated && (
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--data-pos)', marginTop: 2 }}>
+                    → {g.daysAfter ?? '—'}d <span style={{ fontSize: 10, color: 'var(--veld-mist)' }}>after this order</span>
+                  </div>
+                )}
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)', marginTop: 4 }}>
+                  {g.lines} lines ({g.selling_lines} selling) · stock {zar(g.stock_at_cost)} · daily {zar(g.daily_cost_demand)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {stockState.find(s => s.group_name === 'TOTAL') && (
+          <p style={{ margin: '10px 0 0', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)' }}>
+            {(() => {
+              const t = stockState.find(s => s.group_name === 'TOTAL')
+              return `Dept demand ${zar(t.weekly_demand_dept)}/wk = orderable ${zar(t.weekly_demand_orderable)} + ${zar(t.weekly_demand_gap)} (${t.weekly_demand_gap_lines} lines, ${t.weekly_demand_gap_label} -- no active DC supplier link, ENG-008)`
+            })()}
+          </p>
         )}
       </GlassCard>
 

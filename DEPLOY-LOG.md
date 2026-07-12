@@ -4,6 +4,16 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-12 -- SB-CC-BLOOM-008 item 7: the stock-state instrument (FORMULA FREEZE holds, read-only)
+
+**What shipped:** `rpc_bloom_stock_state(p_store_code, p_route)` -- NEW, read-only, touches no formula covered by the Monday formula freeze. Per group KVI (KVI_CRITICAL+KVI_IMPORTANT) / Core (STANDARD+CONSUMABLE_CARVE) / Tail (LONG_TAIL): lines, selling lines, stock at cost, daily cost demand (trailing 28d `sigma_sales.cost_value` / 28, pure history, never the engine's own demand estimate), stock-days. A 4th synthetic `TOTAL` row carries the separate dept-wide-vs-orderable demand comparison PM ruled the same night, gap labelled `no_active_dc_route`. Population is the recipe's own resolved orderable pool (reuses `rpc_bloom_order_recipe`, R21, never a parallel pool-resolution formula). Desk screen renders a "Stock now" strip above the scenario overview -- per group: days now, days-after-this-order (recomputes CLIENT-SIDE off the live `qty` state as the buyer edits, no server round-trip per keystroke), lines/stock/daily figures, and the dept-vs-orderable demand-gap caption.
+
+**R22 against PM's reference (10116/DC_AMBIENT, 2026-07-12):** line counts match EXACTLY (KVI 178, Core 4,981, Tail 7,456) and stock-at-cost matches to the rand (KVI R140,745.84 vs R140,746, Core R999,410.75 vs R999,411, Tail R549,603.08 vs R549,603). Dept-wide weekly demand matches to the rand (R749,144.26 vs PM's R749,144). **Daily cost demand runs ~60-78% of PM's cited figures across all three groups** (KVI R23,543 vs R39,181, Core R45,985 vs R59,285, Tail R1,290 vs R1,664) -- the brief's own reference table carries the caveat "anchor-sensitive, pin the anchor when regressing," and the pool/stock math (the primary deliverable, matched exactly) isn't in question; the daily-demand window likely anchors on a slightly different date than PM's live calc. Documented, not chased further this pass.
+
+**Gate status:** CC build R22 CLOSED for pool/stock figures (exact match); demand-window anchor drift flagged OPEN, informational only, does not block the Monday walk (the instrument's job -- "where does the store stand" -- reads correctly).
+
+---
+
 ## 2026-07-12 -- BUG-LOG UX-004 + ENG-019 (Pieter ruling: "no conflict, fix UX-004 instead")
 
 **UX-004** (`rpc_bloom_scenario_overview`): `count_first_lines` was counting count_first rows across the WHOLE POOL (every band_blocked row the recipe returns, ordered or not), while `lines` only counts the ORDERED set (suggested_packs>0) -- the two were never comparable and count_first could exceed `lines` outright (4,826 vs 1,780, live, before this fix). `count_first_lines` now means the same population `lines` does; the whole-pool figure rides separately as the new `count_first_pool` column, explicitly labelled.
