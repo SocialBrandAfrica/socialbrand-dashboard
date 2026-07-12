@@ -63,6 +63,24 @@
 -- rows that ARE in the ordered set. The whole-pool figure rides separately
 -- as `count_first_pool`, explicitly labelled, never blended with the
 -- ordered count again.
+--
+-- ⭐ REAL BUG CAUGHT 2026-07-12 (CC, during the SAB weekly-budget-seed
+-- verification, not named in any brief): `value_normal` summed
+-- `normal_packs` -- the recipe's PRE-FIT quantity -- on every scenario,
+-- including 'fitted'. Fit-to-Budget's own final answer lives in
+-- `suggested_packs` (`final_packs`), which is what Generate actually
+-- submits -- the overview was silently ignoring it, so 'Fitted' always
+-- showed the exact same total as 'Full' regardless of whether a real
+-- trim happened underneath (the "= full need, no trim required" caption
+-- and the yardstick deviation calc were both reading the wrong number
+-- too). Fixed: `value_normal` now sums `suggested_packs` -- the TRUE,
+-- fit-applied, promo-resolved order value, matching what Generate would
+-- actually produce, for every scenario. This is an aggregation-layer fix
+-- inside THIS function only -- rpc_bloom_order_recipe's own quantity
+-- logic, gearing legs and presets are untouched (FORMULA FREEZE holds).
+-- `value_geared` stays a PRE-FIT normal-vs-geared comparison (informational
+-- only, "what would this cost fully geared before any budget trim") --
+-- never the number a fit-applied scenario's own caption reasons about.
 -- =============================================================================
 
 DROP FUNCTION IF EXISTS public.rpc_bloom_scenario_overview(text,date,date,text,numeric);
@@ -136,7 +154,9 @@ BEGIN
       -- UX-004: ordered-set count_first (matches `lines`' own population).
       count(*) FILTER (WHERE s.count_first AND s.suggested_packs > 0) AS count_first_lines,
       count(*) FILTER (WHERE s.count_first) AS count_first_pool,
-      SUM(s.normal_packs * s.pack_cost) AS value_normal,
+      -- TRUE fit-applied order value -- what Generate actually submits.
+      SUM(s.suggested_packs * s.pack_cost) AS value_normal,
+      -- PRE-fit informational comparison only (see header note).
       SUM((CASE WHEN s.promo_active THEN s.geared_packs ELSE s.normal_packs END) * s.pack_cost) AS value_geared,
       count(*) FILTER (WHERE s.budget_fit_reason = 'protected_kvi') AS protected_lines,
       count(*) FILTER (WHERE s.budget_fit_reason IN ('trimmed_partial','trimmed_to_zero')) AS trimmed_lines,

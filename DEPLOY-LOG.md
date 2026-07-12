@@ -4,6 +4,20 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-12 -- SAB weekly-budget seed (canonical file, PM's live fix) + real bug caught: value_normal ignored Fit-to-Budget
+
+**SAB weekly-budget seed, canonicalized.** PM applied the fix live to close the accuracy-gate's walk-blocking finding (no `grain='weekly'` rows for any DIRECT_BEER store): 21355 R41,541.86, 80176 R77,732.83, 80579 R36,258.41, each store's own figure split by that store's own LY beer rhythm for the week, not a flat divide. New file `sql/create_order_budget_ledger_sab_weekly_seed.sql` records this canonically (`ON CONFLICT DO NOTHING`, verified as a true no-op against what PM already applied) so the repo doesn't drift from live, per PM's own flag. **Second flag from PM, NOT fixed here (hygiene pass after Monday's walk, explicitly deferred):** the same stores also carry `route_key='DIRECT'` weekly rows for the same week (10116 R366,210 / 21355 R63,544 / 80175 R200,362 / 80176 R95,500 / 80579 R913) -- confirmed live, "look like the same money on two keys." Left untouched; needs Pieter's ruling on which key is authoritative before any merge/cleanup.
+
+**Real bug caught during the seed's own verification (CC, not named in any brief):** `rpc_bloom_scenario_overview.value_normal` summed `normal_packs` -- the recipe's PRE-FIT quantity -- on every scenario, including `fitted`. The recipe's own fit-applied final answer lives in `suggested_packs`, which is what Generate actually submits -- the overview was silently ignoring Fit-to-Budget's own output the entire session. This is why `full` always equalled `fitted` on the board even after the ENG-018 yardstick re-anchor: not because full was genuinely under budget every time, but because the overview never read the fit result at all. Also fed the wrong number into `yardstick_deviation_pct`/`yardstick_flag` and the "= full need, no trim required" caption shipped earlier tonight.
+
+**Fixed:** `value_normal` now sums `suggested_packs * pack_cost` -- the true, fit-applied, promo-resolved order value, for every scenario. Aggregation-layer fix inside `rpc_bloom_scenario_overview` only -- `rpc_bloom_order_recipe`'s own quantity logic, gearing legs and presets are untouched (FORMULA FREEZE holds; this is a downstream reporting bug, not a recipe formula change). `value_geared` stays a pre-fit informational comparison, documented as such.
+
+**R22, live:** 80176/DIRECT_BEER now shows `full` R91,153.39 vs `fitted` R87,885.88 -- genuinely different, fitted correctly trims non-protected spend but stays above the R77,732.83 ceiling because KVI-protected lines are never trimmed (by design). 10116/DC_AMBIENT still shows `full`==`fitted` (R819,986.27), but now for the CORRECT reason -- full is genuinely under the R850,435 budget, so there's nothing to trim, verified via the real fit-applied number rather than assumed.
+
+**Gate status:** CC build R22 CLOSED for the value_normal fix (figures above). SAB weekly-ledger seed CLOSED (PM's own action, canonicalized). DIRECT-vs-DIRECT_BEER duplicate-key question OPEN, deferred to post-Monday hygiene pass per PM's own instruction.
+
+---
+
 ## 2026-07-12 -- THE ACCURACY-GATE VERIFICATION RUN (canon v9 item 8, offline queries, no code changed)
 
 Population checks on the LIVE recipe, standard preset, at Monday 13 Jul's three walk stores: 10116/DC_AMBIENT (delivery 2026-07-16), 21355/DC_TOPS (2026-07-16), 80176/DIRECT_BEER (2026-07-21) -- each store's own next real delivery off `rpc_bloom_next_deliveries` anchored 2026-07-13.
