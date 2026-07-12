@@ -150,6 +150,7 @@
 --   p_catchup_band_cap_multiple x max_band, Fit-to-Budget FORCED ON.
 -- =============================================================================
 
+DROP FUNCTION IF EXISTS public.rpc_bloom_order_recipe(text,date,date,date,text,numeric,boolean,integer,integer,integer,numeric,text,jsonb);
 DROP FUNCTION IF EXISTS public.rpc_bloom_order_recipe(text,date,date,date,text,numeric,boolean,integer,integer,integer,numeric,text);
 
 CREATE FUNCTION public.rpc_bloom_order_recipe(
@@ -164,7 +165,16 @@ CREATE FUNCTION public.rpc_bloom_order_recipe(
   p_month_end_build_end_day integer DEFAULT 24,
   p_early_month_build_start_day integer DEFAULT 25,
   p_catchup_band_cap_multiple numeric DEFAULT 3.0,
-  p_route text DEFAULT NULL::text
+  p_route text DEFAULT NULL::text,
+  -- SB-CC-BLOOM-008 item 16(a): the delivery chain's own simulated-SOH
+  -- input. {product_code: simulated_soh} -- when a product_code is a key
+  -- here, its soh_raw is THIS value instead of the real l2_soh_daily
+  -- snapshot; every other product (and every call that omits this param,
+  -- i.e. every existing caller) is completely unaffected. Lets
+  -- rpc_bloom_delivery_chain project drop 2/3/... through the SAME engine
+  -- (R21, never a parallel formula) instead of re-deriving band/gearing
+  -- math by hand.
+  p_soh_override jsonb DEFAULT NULL::jsonb
 )
 RETURNS TABLE(
   store_code text, product_code bigint, ean text, description text, dept_name text,
@@ -364,6 +374,13 @@ BEGIN
       ORDER BY sl.product_code, (sl.supplier_nr=1339) DESC, sl.cost_date DESC NULLS LAST
     ),
     soh AS (SELECT sd.product_code, sd.soh FROM l2_soh_daily sd WHERE sd.store_code=%1$L AND sd.snapshot_date=%2$L::date),
+    -- SB-CC-BLOOM-008 item 16(a): simulated SOH for the delivery chain's
+    -- projected drops -- overrides the real snapshot per product_code when
+    -- present, empty for every ordinary call (COALESCE to '{}' below).
+    soh_override AS (
+      SELECT (kv.key)::bigint AS product_code, (kv.value)::numeric AS soh
+      FROM jsonb_each_text(COALESCE(%26$L::jsonb, '{}'::jsonb)) kv
+    ),
     bt AS (SELECT DISTINCT product_code FROM l2_bt_heroes WHERE store_code=%1$L),
     -- ENG-015: raw per-window scan units, the ENG-005 precedent's own base.
     sales AS (
@@ -382,7 +399,7 @@ BEGIN
         r.archetype,
         lnk.ps, lnk.pack_cost,
         sp.description, sp.dept_name, sp.tier, sp.department_nr, sp.merch_group_nr,
-        COALESCE(so.soh,0) AS soh_raw,
+        COALESCE(sov.soh, so.soh, 0) AS soh_raw,
         (bt.product_code IS NOT NULL) AS is_bt_hero,
         COALESCE(sa.q14,0) AS q14, COALESCE(sa.q28,0) AS q28, COALESCE(sa.q56,0) AS q56,
         rop.ros_14d_corrected, rop.ros_28d_corrected, rop.ros_56d_corrected,
@@ -394,6 +411,7 @@ BEGIN
       LEFT JOIN l2_rhythm_profile r ON r.store_code=b.store_code AND r.product_code=b.product_code
       LEFT JOIN l2_stock_position sp ON sp.store_code=b.store_code AND sp.product_code=b.product_code
       LEFT JOIN soh so ON so.product_code=b.product_code
+      LEFT JOIN soh_override sov ON sov.product_code=b.product_code
       LEFT JOIN bt ON bt.product_code=b.product_code
       LEFT JOIN sales sa ON sa.product_code=b.product_code
       LEFT JOIN l2_bloom_ros_pantry rop ON rop.store_code=b.store_code AND rop.product_code=b.product_code
@@ -655,7 +673,7 @@ BEGIN
        v_override, v_lead, v_preset_applied,
        v_preset_catchup, p_catchup_band_cap_multiple, v_fit_to_budget, v_weekly_budget,
        p_route, v_dept_nrs, v_lead_source, v_next_delivery, v_week_start, v_week_source,
-       v_dows, v_buyin_lead_days, p_delivery_date, v_preset_essentials, v_direct_supplier_nrs);
+       v_dows, v_buyin_lead_days, p_delivery_date, v_preset_essentials, v_direct_supplier_nrs, p_soh_override);
 
   EXECUTE 'DROP TABLE IF EXISTS _bloom_recipe_out';
   EXECUTE format('CREATE TEMP TABLE _bloom_recipe_out AS %s', v_sql);
@@ -687,7 +705,7 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.rpc_bloom_order_recipe(text,date,date,date,text,numeric,boolean,integer,integer,integer,numeric,text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.rpc_bloom_order_recipe(text,date,date,date,text,numeric,boolean,integer,integer,integer,numeric,text) TO anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_bloom_order_recipe(text,date,date,date,text,numeric,boolean,integer,integer,integer,numeric,text,jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.rpc_bloom_order_recipe(text,date,date,date,text,numeric,boolean,integer,integer,integer,numeric,text,jsonb) TO anon, authenticated;
 
 SELECT pg_notify('pgrst', 'reload schema');
