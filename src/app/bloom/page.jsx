@@ -1385,6 +1385,10 @@ function OrderDesksMode() {
   const committed = Number(budgetRow?.committed_amount) || 0
   const cash80Group = Number(allBudgetRow?.budget_80pct_cash) || 0
   const cashConstrained = !!budgetRow?.cash_constrained
+  // WALK-FINDINGS W5: a manual budget insert overrides the 82%/80% basis
+  // label -- independent of cash_constrained, which still governs the
+  // order_essentials day-cover on its own (unaffected by this flag).
+  const budgetManualOverride = !!budgetRow?.budget_manual_override
   const promoCount = lines.filter(l => l.promo_active).length
   const shown = filter === 'all' ? lines : lines.filter(l => l.promo_active)
   const cols = ['Code', 'Pack', 'Description', 'Dept', 'SOH', 'ROS/day', 'Tier', 'Promo', 'Qty · packs', 'Value']
@@ -1527,11 +1531,11 @@ function OrderDesksMode() {
           </div>
         </div>
         <div style={{ marginTop: 10, display: 'flex', gap: 18, flexWrap: 'wrap', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--veld-mist)' }}>
-          <span>Basis this week: <strong style={{ color: cashConstrained ? 'var(--core-yellow)' : 'var(--data-pos)' }}>
-            {cashConstrained ? '80% CASH-CONSTRAINED (10d essentials)' : '82% FORECAST (21d essentials)'}
+          <span>Basis this week: <strong style={{ color: budgetManualOverride ? 'var(--daisy-white)' : cashConstrained ? 'var(--core-yellow)' : 'var(--data-pos)' }}>
+            {budgetManualOverride ? 'MANUAL' : cashConstrained ? '80% CASH-CONSTRAINED (10d essentials)' : '82% FORECAST (21d essentials)'}
           </strong></span>
-          <span>Route budget (82%): {zar(budgetTotal)}</span>
-          {cash80Group > 0 && <span>Group 80%-cash reference: {zar(cash80Group)}</span>}
+          <span>Route budget{budgetManualOverride ? '' : ' (82%)'}: {zar(budgetTotal)}</span>
+          {!budgetManualOverride && cash80Group > 0 && <span>Group 80%-cash reference: {zar(cash80Group)}</span>}
           {generated && fitToBudget && (
             <span>Fit: {zar(beforeFitTotal)} → {zar(total)} · {protectedCount} protected · {trimmedCount} trimmed</span>
           )}
