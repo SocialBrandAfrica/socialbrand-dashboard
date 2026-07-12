@@ -52,6 +52,17 @@
 -- Breakdowns (Pieter 22:3x): by KVI band, by mode, by tier, count-first
 -- line count, protected/trimmed counts (fit outcome) -- all read straight
 -- off the same aggregated rows, jsonb per scenario.
+--
+-- BUG-LOG UX-004 (Pieter ruled 2026-07-12, "no conflict, ENG-014 stands --
+-- fix UX-004 instead"): count_first_lines was counting count_first ACROSS
+-- THE WHOLE POOL (every band_blocked row the recipe returns, ordered or
+-- not) while `lines` only counts the ORDERED set (suggested_packs>0) --
+-- the two numbers were never comparable and count_first could exceed
+-- `lines` outright (4,826 vs 1,780 lines, live, before this fix).
+-- `count_first_lines` now means the SAME thing `lines` does -- count_first
+-- rows that ARE in the ordered set. The whole-pool figure rides separately
+-- as `count_first_pool`, explicitly labelled, never blended with the
+-- ordered count again.
 -- =============================================================================
 
 DROP FUNCTION IF EXISTS public.rpc_bloom_scenario_overview(text,date,date,text,numeric);
@@ -73,6 +84,7 @@ RETURNS TABLE(
   yardstick_deviation_pct numeric, yardstick_flag text,
   by_kvi_band jsonb, by_mode jsonb, by_tier jsonb, by_kvi_band_lines jsonb,
   demonstrated_weekly_demand numeric,
+  count_first_pool integer,
   computed_at timestamptz
 )
 LANGUAGE plpgsql
@@ -121,7 +133,9 @@ BEGIN
       s.scenario_key,
       count(*) FILTER (WHERE s.suggested_packs > 0) AS lines,
       count(*) FILTER (WHERE s.promo_active) AS promo_lines,
-      count(*) FILTER (WHERE s.count_first) AS count_first_lines,
+      -- UX-004: ordered-set count_first (matches `lines`' own population).
+      count(*) FILTER (WHERE s.count_first AND s.suggested_packs > 0) AS count_first_lines,
+      count(*) FILTER (WHERE s.count_first) AS count_first_pool,
       SUM(s.normal_packs * s.pack_cost) AS value_normal,
       SUM((CASE WHEN s.promo_active THEN s.geared_packs ELSE s.normal_packs END) * s.pack_cost) AS value_geared,
       count(*) FILTER (WHERE s.budget_fit_reason = 'protected_kvi') AS protected_lines,
@@ -191,6 +205,7 @@ BEGIN
      END),
     kj.by_kvi_band, mj.by_mode, tj.by_tier, klj.by_kvi_band_lines,
     ROUND((SELECT v FROM demonstrated), 2),
+    a.count_first_pool::int,
     v_now
   FROM agg a
   LEFT JOIN kvi_json kj ON kj.scenario_key = a.scenario_key

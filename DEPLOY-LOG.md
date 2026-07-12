@@ -4,6 +4,18 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-12 -- BUG-LOG UX-004 + ENG-019 (Pieter ruling: "no conflict, fix UX-004 instead")
+
+**UX-004** (`rpc_bloom_scenario_overview`): `count_first_lines` was counting count_first rows across the WHOLE POOL (every band_blocked row the recipe returns, ordered or not), while `lines` only counts the ORDERED set (suggested_packs>0) -- the two were never comparable and count_first could exceed `lines` outright (4,826 vs 1,780, live, before this fix). `count_first_lines` now means the same population `lines` does; the whole-pool figure rides separately as the new `count_first_pool` column, explicitly labelled.
+
+**ENG-019** (`rpc_bloom_order_recipe`): latent NULL-guard. `format()`'s `%s` renders a NULL argument as an empty string, not an error at format-time -- a caller passing `p_month_end_build_start_day`/`_end_day`/`p_early_month_build_start_day` explicitly as NULL (rather than omitting them) silently produced `BETWEEN  AND 24` in the `moded` CTE, a syntax error only at EXECUTE time. Never triggered by this repo's own callers (all pass the three explicitly) -- guarded with COALESCE-to-default reassignment regardless, since PM asked for it "when touching the board."
+
+**R22, live at 10116/DC_AMBIENT/2026-07-16:** `full` scenario now reads `count_first_lines=1,662` (was 4,826, now correctly <= `lines`=1,777), `count_first_pool=4,866` separate. **New finding, flagged not diagnosed:** `order_essentials`/`catch_up` show 100% of ordered lines as count_first (558/558, 328/328) -- the underlying pool is 612/615 lines (99.5%) `band_blocked`. Worth PM's attention as a possible data-quality concentration on 10116's highest-priority (KVI+BT+Top-tier) population -- not investigated further this pass, outside UX-004's own scope.
+
+**Gate status:** CC build R22 CLOSED, both fixes verified live, figures above.
+
+---
+
 ## 2026-07-12 -- BUG-LOG ENG-018 yardstick re-anchor + SAB tab restore (Pieter rulings on CC's 3 open points)
 
 **Context:** Pieter caught two live-site issues in chat and ruled on all three points CC had flagged in the prior handover entry.

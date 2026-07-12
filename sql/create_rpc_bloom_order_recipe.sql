@@ -211,6 +211,17 @@ DECLARE
 BEGIN
   SET LOCAL statement_timeout = '30s';
 
+  -- BUG-LOG ENG-019: format()'s %s renders a NULL argument as an empty
+  -- string, not an error at format()-time -- a caller passing any of
+  -- these three explicitly as NULL (rather than omitting them, which
+  -- takes the declared DEFAULT) silently produced "BETWEEN  AND 24"
+  -- (missing left operand) in the moded CTE, a syntax error only at
+  -- EXECUTE time. Latent (never triggered by this repo's own callers,
+  -- which always pass the three explicitly), guarded here regardless.
+  p_month_end_build_start_day := COALESCE(p_month_end_build_start_day, 15);
+  p_month_end_build_end_day := COALESCE(p_month_end_build_end_day, 24);
+  p_early_month_build_start_day := COALESCE(p_early_month_build_start_day, 25);
+
   IF p_route IS NULL OR p_route NOT IN ('DC_AMBIENT','DC_TOPS','DIRECT_BEER') THEN
     RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS or DIRECT_BEER (canon SS14 v7 item 1)';
   END IF;
