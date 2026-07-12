@@ -561,6 +561,27 @@ table.det-tbl td.id-cell{font-family:var(--font-mono),monospace;font-size:9.5px;
       <span class="k"><span class="sw" style="background:var(--data-neg)"></span> below baseline</span>
       <span class="k"><span class="daisy-dot"></span> no baseline yet</span>
     </div>
+
+    <!-- SB-CC-BLOOM-008 item 8: per-store overview, Pieter ask 2026-07-12.
+         The scorecard above collapses GP across every store in BT scope --
+         this splits it. rpc_bt_store_overview reuses l2_bt_monthly/
+         l2_bt_baseline exactly (R21, same GP formula, just grouped by
+         store_code); R22 verified the split sums to the scorecard's own
+         basket total to the cent. -->
+    <div class="glass-panel" id="sto-panel" style="margin-top:20px">
+      <div class="glass-panel-h">
+        <span class="glass-panel-t">Per-store overview</span>
+        <span class="glass-panel-m" id="sto-panel-m">awaiting feed</span>
+      </div>
+      <div class="sc-body" style="position:relative">
+        <div class="colhead sc-cols">
+          <span>Store</span>
+          <span class="r">GP (ex-VAT)</span>
+          <span class="r">vs baseline</span>
+        </div>
+        <div id="sto-rows"><div class="loading-state">fetching per-store overview&hellip;</div></div>
+      </div>
+    </div>
   </div>
 
   <!-- ====== PANEL 2: HEROES ====== -->
@@ -880,12 +901,46 @@ async function loadScorecard() {
   panel.setAttribute('data-loading','false');
 }
 
-document.getElementById('sc-reload').addEventListener('click', loadScorecard);
-document.getElementById('month-sel').addEventListener('change', loadScorecard);
-// Stagger loads to prevent DB contention. Scorecard + Heroes fire
-// immediately (fast). Buying waits 2s, Prune waits 4s.
+/* SB-CC-BLOOM-008 item 8: per-store overview. Same month selector as the
+   scorecard above, own RPC (rpc_bt_store_overview), reloads alongside it. */
+async function loadStoreOverview() {
+  const month = document.getElementById('month-sel').value;
+  const rowsEl = document.getElementById('sto-rows');
+  const panelM = document.getElementById('sto-panel-m');
+
+  rowsEl.innerHTML = '<div class="loading-state">fetching per-store overview&hellip;</div>';
+
+  const { data, error } = await db.rpc('rpc_bt_store_overview', { p_month: month });
+
+  if (error) {
+    rowsEl.innerHTML = `<div class="err-state">RPC error: ${error.message}</div>`;
+    panelM.textContent = 'error';
+    return;
+  }
+  if (!data || !data.length) {
+    rowsEl.innerHTML = '<div class="sc-empty">No sales data for <b>' + month + '</b> in the BT scope.</div>';
+    panelM.textContent = 'no data';
+    return;
+  }
+
+  rowsEl.innerHTML = data.map(r => {
+    const tn = scorecardTone(r.delta_gp_pct);
+    return `<div class="trow sc-cols">
+      <span class="cell-name">${r.store_code}</span>
+      <span class="cell-num">${zar(r.gp)}</span>
+      <span style="justify-self:end"><span class="chip ${tn}">${fmtDelta(r.delta_gp_pct)}</span></span>
+    </div>`;
+  }).join('');
+  panelM.textContent = data.length + ' stores · ' + month;
+}
+
+document.getElementById('sc-reload').addEventListener('click', () => { loadScorecard(); loadStoreOverview(); });
+document.getElementById('month-sel').addEventListener('change', () => { loadScorecard(); loadStoreOverview(); });
+// Stagger loads to prevent DB contention. Scorecard + store overview +
+// Heroes fire immediately (fast). Buying waits 2s, Prune waits 4s.
 // Each panel reveals independently as its own query completes.
 loadScorecard();
+loadStoreOverview();
 loadHeroes();
 setTimeout(loadBuying, 2000);
 setTimeout(loadPrune, 4000);

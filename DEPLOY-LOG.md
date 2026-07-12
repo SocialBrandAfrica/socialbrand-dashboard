@@ -4,6 +4,16 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-12 -- SB-CC-BLOOM-008 item 8: BT per-store overview
+
+**What shipped:** `rpc_bt_store_overview(p_month)` -- reuses `l2_bt_monthly`/`l2_bt_baseline` exactly as `rpc_bt_scorecard` does (R21, same GP formula, grouped by `store_code` instead of collapsed across the whole BT scope). `public/bt.html` gets a new "Per-store overview" panel under the existing scorecard, same month selector, own reload.
+
+**R22:** split sums to the cent against the existing scorecard's own basket total (R75,099.6517 = R65,748.4210 @10116 + R9,351.2307 @80175, 2026-06). **Live-browser-verified** (this page is NOT behind the auth gate -- `/bt` is explicitly public in `middleware.js`, unlike `/bloom`) at `localhost:3000/bt`: panel renders "2 stores · 2026-06", 10116 R65,748/-3.8%, 80175 R9,351/+14.7% -- matches the SQL check exactly, zero console errors.
+
+**Gate status:** CC build R22 CLOSED, live-verified (real browser check, not static review).
+
+---
+
 ## 2026-07-12 -- SB-CC-BLOOM-008 item 7: the stock-state instrument (FORMULA FREEZE holds, read-only)
 
 **What shipped:** `rpc_bloom_stock_state(p_store_code, p_route)` -- NEW, read-only, touches no formula covered by the Monday formula freeze. Per group KVI (KVI_CRITICAL+KVI_IMPORTANT) / Core (STANDARD+CONSUMABLE_CARVE) / Tail (LONG_TAIL): lines, selling lines, stock at cost, daily cost demand (trailing 28d `sigma_sales.cost_value` / 28, pure history, never the engine's own demand estimate), stock-days. A 4th synthetic `TOTAL` row carries the separate dept-wide-vs-orderable demand comparison PM ruled the same night, gap labelled `no_active_dc_route`. Population is the recipe's own resolved orderable pool (reuses `rpc_bloom_order_recipe`, R21, never a parallel pool-resolution formula). Desk screen renders a "Stock now" strip above the scenario overview -- per group: days now, days-after-this-order (recomputes CLIENT-SIDE off the live `qty` state as the buyer edits, no server round-trip per keystroke), lines/stock/daily figures, and the dept-vs-orderable demand-gap caption.
