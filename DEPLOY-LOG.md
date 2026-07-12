@@ -4,6 +4,18 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-12 -- WALK-FINDING W5: manual budget override, strip labels MANUAL
+
+**What shipped:** new column `order_budget_ledger.budget_manual_override` (boolean, default false, `sql/create_order_budget_ledger_manual_override.sql`) -- an ad-hoc weekly budget figure now has a third, explicit state distinct from the existing `cash_constrained` boolean (which governs an unrelated thing: the `order_essentials` preset's day-cover, 21d vs 10d, canon v7 item 3 -- deliberately untouched by this flag). Desk strip (`src/app/bloom/page.jsx`, `DeskMode`): when `budgetRow.budget_manual_override` is true, the basis label reads **MANUAL** instead of "82% FORECAST"/"80% CASH-CONSTRAINED", the "Route budget" caption drops its "(82%)" suffix, and the group 80%-cash reference figure (not applicable to an ad-hoc number) is hidden.
+
+**No formula change.** `budget_amount` was already always a seeded/manual plan figure -- `refresh_order_budget_ledger()` never writes it (per DB-SCHEMA.md) -- so Fit-to-Budget and every quantity/gearing calculation are completely unaffected; this is a labelling-correctness fix only, scoped to the desk strip's own display logic.
+
+**R22/verification:** column added live, all 18 existing `grain='weekly'` rows across all 5 stores confirmed still `budget_manual_override=false` (zero drift on the fix's own deploy). `/bloom` is auth-gated (Google login) and this session holds a standing rule against bypassing `middleware.js`, so verification was static: JSX brace/ternary balance re-read twice, `--daisy-white` confirmed as an existing design token already used ~10+ times elsewhere in the same file, dev-server error log checked clean post-edit.
+
+**Gate status:** CC build CLOSED. Second item of the post-freeze build order (W2 essentials-normal fix shipped immediately prior). Next: BLOOM-009 direct desks, then BLOOM-008 item 16 delivery chain/month picture.
+
+---
+
 ## 2026-07-12 -- WALK-FINDING W2: order_essentials preset never gears (FORMULA FREEZE LIFTED mid-walk)
 
 **Context:** Pieter's Monday walk (2026-07-13) started early -- freeze lifted live mid-walk 2026-07-12 ("cc can build"), build order handed down: essentials-normal fix first, manual-budget override second, then directs and the delivery chain/month picture.
