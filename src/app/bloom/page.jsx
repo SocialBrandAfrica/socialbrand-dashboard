@@ -1700,6 +1700,7 @@ export default function BloomPage() {
           <SegmentedControl size="sm" value={appMode} onChange={setAppMode}
             options={[
               { value: 'desks', label: 'Desks' },
+              { value: 'desk', label: 'SAB Direct (beer)' },
             ]} />
         </div>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em', color: 'var(--veld-mist)', textTransform: 'uppercase' }}>

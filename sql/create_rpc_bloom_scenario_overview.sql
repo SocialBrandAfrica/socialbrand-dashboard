@@ -13,15 +13,36 @@
 -- SAME rows the desk screen's own Generate button would show, never a
 -- parallel/duplicate formula (R21).
 --
--- Canon v7 item 9 -- THE 7-DAY YARDSTICK GUARDRAIL: "the retired flat-7-
--- day DC calculation stays alive as the permanent REFERENCE LINE... the
--- old formula unchanged." Reused literally: for DC_AMBIENT/DC_TOPS this
--- calls the UNCHANGED, still-live rpc_bloom_order_dc(p_days_cover=>7) and
--- sums suggested_packs*pack_cost -- the exact retired flat-7-day DC calc,
--- not a re-derivation. DIRECT_BEER never had a DC-form equivalent, so its
--- yardstick uses this same recipe RPC with a flat 7-day override
--- (p_days_cover_override=>7) as the closest available proxy -- flagged
--- honestly in yardstick_source, not silently treated as identical.
+-- ⭐ BUG-LOG ENG-018 (2026-07-11 night, Pieter ruled) -- THE YARDSTICK
+-- RE-ANCHORED. The old flat-7-day DC-form reference (rpc_bloom_order_dc)
+-- embedded a stale anchor->delivery lead on top of its own 7-day cover
+-- AND geared promo lines up to 5x -- it was ITSELF the defect, not the
+-- desk (desk standard R767,763 ties demonstrated 28d/4 weekly cost
+-- demand to 0.07%, live-verified). Old DC-form reference RETIRED WITH
+-- LINEAGE as this function's yardstick source (rpc_bloom_order_dc itself
+-- stays live, still used by the DC tab -- only this function stops
+-- reading it).
+--
+-- NEW yardstick formula, PM's exact wording: "pure tier-window demand x7
+-- - clamp(soh,0), ungeared promo-flat, with demonstrated weekly demand
+-- (28d/4) beside it." Built by reusing rpc_bloom_order_recipe itself
+-- (R21, never a parallel formula) called with p_next_delivery=
+-- p_delivery_date (forces v_lead=0, so the override branch's own
+-- target_level - proj resolves to EXACTLY demand*7 - GREATEST(soh,0),
+-- no anchor-lead inflation) and p_days_cover_override=7, summed on
+-- normal_packs*pack_cost (never geared_packs, never promo_unit_cost --
+-- "ungeared, promo-flat" per the ruling, same flat basis for every
+-- line regardless of promo_active).
+--
+-- "demonstrated weekly demand (28d/4)" is a SEPARATE, independent
+-- cross-check -- real trailing-28-day sales cost (sigma_sales.cost_value,
+-- not the engine's own demand estimate at all) over the SAME resolved
+-- route pool (product_code list from the 'full' scenario run), divided
+-- by 4. Never used to compute yardstick_deviation_pct/yardstick_flag --
+-- informational only, so PM/Pieter can eyeball the engine's tier-window
+-- yardstick against a pure sales-history number with no engine logic in
+-- either direction.
+--
 -- yardstick_flag only fires DEFECT_SIGNAL on the 'full' scenario (the
 -- whole-pool-at-minimums run) -- fitted/essentials/catch_up are SUPPOSED
 -- to diverge from the flat rule (canon: "the desk's whole purpose is to
@@ -51,6 +72,7 @@ RETURNS TABLE(
   yardstick_value numeric, yardstick_source text,
   yardstick_deviation_pct numeric, yardstick_flag text,
   by_kvi_band jsonb, by_mode jsonb, by_tier jsonb, by_kvi_band_lines jsonb,
+  demonstrated_weekly_demand numeric,
   computed_at timestamptz
 )
 LANGUAGE plpgsql
@@ -67,15 +89,13 @@ BEGIN
     RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS or DIRECT_BEER';
   END IF;
 
-  IF p_route IN ('DC_AMBIENT','DC_TOPS') THEN
-    SELECT COALESCE(SUM(d.suggested_packs * d.pack_cost), 0) INTO v_yardstick
-    FROM rpc_bloom_order_dc(p_store_code, p_delivery_date, COALESCE(p_next_delivery, p_delivery_date + 7), NULL, NULL, 7) d;
-    v_yardstick_source := 'rpc_bloom_order_dc(p_days_cover=7), the retired flat-7-day DC calc, unchanged';
-  ELSE
-    SELECT COALESCE(SUM(r.suggested_packs * r.pack_cost), 0) INTO v_yardstick
-    FROM rpc_bloom_order_recipe(p_store_code, p_delivery_date, p_next_delivery, NULL, NULL, 7, false, 15, 24, 25, 3.0, p_route) r;
-    v_yardstick_source := 'rpc_bloom_order_recipe(p_days_cover_override=7) -- DIRECT_BEER has no DC-form equivalent, this is the closest proxy, flagged not silently treated as identical';
-  END IF;
+  -- ENG-018 re-anchor: lead forced to 0 (p_next_delivery=p_delivery_date)
+  -- so the override branch resolves to exactly demand*7 - clamp(soh,0),
+  -- summed on normal_packs (never geared) -- same formula for every route,
+  -- DIRECT_BEER no longer needs an apologetic proxy footnote.
+  SELECT COALESCE(SUM(r.normal_packs * r.pack_cost), 0) INTO v_yardstick
+  FROM rpc_bloom_order_recipe(p_store_code, p_delivery_date, p_delivery_date, NULL, NULL, 7, false, 15, 24, 25, 3.0, p_route) r;
+  v_yardstick_source := 'tier-window demand x7 - clamp(soh,0), ungeared/promo-flat (BUG-LOG ENG-018 re-anchor, canon v7 item 9) -- rpc_bloom_order_recipe(lead=0, p_days_cover_override=7), summed on normal_packs*pack_cost';
 
   RETURN QUERY
   WITH full_run AS (
@@ -134,6 +154,19 @@ BEGIN
     FROM scenarios s GROUP BY s.scenario_key, COALESCE(s.tier,'NONE')
   ),
   tier_json AS (SELECT scenario_key, jsonb_object_agg(t, ROUND(v,2)) AS by_tier FROM tier_agg GROUP BY scenario_key),
+  -- ENG-018: demonstrated weekly demand, PURE sales history (sigma_sales.
+  -- cost_value, never the engine's own demand estimate), trailing 28d/4,
+  -- scoped to the SAME resolved route pool ('full' scenario's own
+  -- product_code list) -- an independent cross-check beside the yardstick,
+  -- never fed into yardstick_deviation_pct/yardstick_flag.
+  full_products AS (SELECT DISTINCT product_code FROM full_run),
+  demonstrated AS (
+    SELECT COALESCE(SUM(ss.cost_value), 0) / 4.0 AS v
+    FROM sigma_sales ss
+    WHERE ss.store_code = p_store_code AND ss.period_kind = 'T' AND ss.txn_kind = 1
+      AND ss.sale_date > CURRENT_DATE - 28 AND ss.sale_date <= CURRENT_DATE
+      AND ss.product_code IN (SELECT product_code FROM full_products)
+  ),
   -- weekly budget: one lookup, same for every scenario at this desk/week.
   budget AS (
     SELECT COALESCE(obl.budget_amount,0) AS budget_amt
@@ -157,6 +190,7 @@ BEGIN
        ELSE NULL
      END),
     kj.by_kvi_band, mj.by_mode, tj.by_tier, klj.by_kvi_band_lines,
+    ROUND((SELECT v FROM demonstrated), 2),
     v_now
   FROM agg a
   LEFT JOIN kvi_json kj ON kj.scenario_key = a.scenario_key

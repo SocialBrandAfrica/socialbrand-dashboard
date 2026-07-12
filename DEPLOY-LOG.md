@@ -4,6 +4,24 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-12 -- BUG-LOG ENG-018 yardstick re-anchor + SAB tab restore (Pieter rulings on CC's 3 open points)
+
+**Context:** Pieter caught two live-site issues in chat and ruled on all three points CC had flagged in the prior handover entry.
+
+**(1) SAB Direct (beer) tab restored** (`src/app/bloom/page.jsx`) -- Pieter: his live call governs, the tab stays visible until the SAB desk card inside Desks passes his own walk, retires with lineage only then, on his word. One-line nav restore, `DeskMode` component itself was never touched.
+
+**(2) count_first: no code change -- confirmed correct as shipped.** Pieter ruled ENG-014 stands: the 2,842 zero-quantity count_first lines on trusted positive claims ARE the rule working (0 packs + count riding); a phantom claim gets caught and ordered on the NEXT drop once a count disproves it -- a bounded one-drop under-order, by design, the count is the resolver. LION MATCHES 5847 stays correct at 0.
+
+**(3) Yardstick RE-ANCHORED** (`rpc_bloom_scenario_overview`) -- BUG-LOG ENG-018. Old reference (`rpc_bloom_order_dc(p_days_cover=7)`) retired WITH LINEAGE as this function's yardstick source (the function itself stays live, still used by the DC tab). New formula, PM's exact wording: "pure tier-window demand x7 - clamp(soh,0), ungeared promo-flat, with demonstrated weekly demand (28d/4) beside it." Built by reusing `rpc_bloom_order_recipe` itself (R21, never a parallel formula) called with `p_next_delivery=p_delivery_date` (forces lead=0, so the override branch resolves to exactly demand*7-clamp(soh,0), no anchor-lead inflation) and `p_days_cover_override=7`, summed on `normal_packs*pack_cost` (never geared -- "ungeared, promo-flat"). New output column `demonstrated_weekly_demand` -- pure `sigma_sales.cost_value` over the trailing 28 days on the SAME resolved route pool, divided by 4, informational only, never fed into the deviation/flag calc.
+
+**R22, live at 10116/DC_AMBIENT/2026-07-16:** `full` scenario now shows `yardstick_deviation_pct=-3.6`, `yardstick_flag=null` -- the false-alarm DEFECT_SIGNAL is GONE, matching Pieter's own ENG-018 finding that desk standard was correct all along. `essentials`/`catch_up` deviate +33.0%/+16.3% as expected (never flagged, by design -- only `full` is checked).
+
+**Not yet reconciled, flagged not hidden:** the new `demonstrated_weekly_demand` (pure sales-history cross-check) computes to **R495,727** live, not Pieter's cited **R767,203**. My method: `sigma_sales.cost_value` summed over the trailing 28 days ending `CURRENT_DATE`, scoped to the exact product_code list the `full` scenario's own recipe run resolved, divided by 4. Whatever produced Pieter's R767,203 either scoped the pool differently or anchored the 28-day window on a different date -- needs reconciling before this second figure is trusted on the board. The PRIMARY fix (the re-anchored yardstick itself, and the DEFECT_SIGNAL clearing) is R22-verified and not in question; this is specifically about the SECOND, informational-only cross-check number.
+
+**Gate status:** CC build R22 CLOSED for points 1 and 3 (figures above); point 2 required no build, ruling recorded. `demonstrated_weekly_demand` reconciliation OPEN.
+
+---
+
 ## 2026-07-11 -- Scenario board: KVI/Core/Tail pie per scenario (Pieter follow-up ask)
 
 **What shipped:** `rpc_bloom_scenario_overview` gains `by_kvi_band_lines jsonb` -- the same population as `by_kvi_band` (value) but by ORDERED-LINE COUNT, since the pie asks "percentage of lines ordered", never rand. `src/app/bloom/page.jsx` gains a hand-rolled SVG `KviPie` (no new chart dependency) rendered on each of the 4 scenario cards on the landing board, grouped KVI = KVI_CRITICAL+KVI_IMPORTANT, Core = STANDARD+CONSUMABLE_CARVE, Tail = LONG_TAIL -- a zero-count group is dropped from the ring and legend rather than drawn empty ("if those are the only ones").
