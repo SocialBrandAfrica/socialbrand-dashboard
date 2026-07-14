@@ -4,6 +4,16 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-14 -- PUSH-HARDEN-001 follow-up: scrubbed PRSSALE references, renamed retired cleanup script (`ecf8db8`)
+
+Pieter follow-up ("rename the file and scrub the comments anyway") after confirming behaviour is unaffected either way. `Remove-PrssalePushTasks.ps1` -> `Remove-LegacyScheduledTasks.ps1` (git mv, history preserved); its header/banner reworded generically. `Invoke-ExtractFromSigmaSQL.ps1` v1.22: one historical-changelog mention of the retired brief's own code name now points at canon instead of repeating it inline; the cross-reference to the renamed cleanup script updated.
+
+**Deliberately scoped to exactly what was asked, not wider:** other historical scripts still reference the retired mechanism by name (`Push-SigmaToSupabase.ps1`, `Create-SundayPushTask.ps1`, `Discover-SigmaTables*.ps1`, `store_funnel.py`) -- several are entirely ABOUT the retired mechanism and would need gutting/rewriting rather than scrubbing a comment, which is a different, bigger call. Flagged to Pieter, not touched here. This DEPLOY-LOG's own prior entries (including the one naming the old filename) are also untouched on purpose -- that's the platform's own audit trail of what was actually built and named at the time; a new dated entry records the change, the old one is not rewritten.
+
+Verified: zero "prssale" (any case) remaining in either touched file, ASCII-only, PowerShell parser clean. Not yet executed on any server -- same as the rest of this brief.
+
+---
+
 ## 2026-07-14 -- PUSH-HARDEN-001 fix: ACL was Read+Execute, needed Modify (`2766b72`)
 
 Pieter's own question ("are all files in the SocialBrand folder covered?") prompted a re-check that surfaced a real bug: the extractor writes AND deletes inside its own script folder while running (`extractor_last_error.txt` on failure/clean-exit, `<table>_badrows.log` on bad rows) -- the ACL step had granted the run-as account Read+Execute only, which would have broken the very next error write and every subsequent clean-run cleanup after the lock. Fixed to Modify. Scope confirmed correct separately -- the lock covers the whole `C:\SocialBrand` folder (Object+Container Inherit), every file today and anything added later, not just the one script. Not yet executed on any server.
