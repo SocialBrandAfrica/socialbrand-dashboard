@@ -4,6 +4,12 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-14 -- BUG-LOG ENG-018 same-day correction: single-reference flag (`e0eadd5`)
+
+PM corrected canon item 9 the same day as the entry below, after CC's own R22 showed the dual-reference version (7-day yardstick AND demonstrated demand) fires on ~100% of live orders under v10 -- "a flag that always fires means nothing." `fitted`'s `DEFECT_SIGNAL` now judges against `demonstrated_weekly_demand` alone; the 7-day yardstick stays on every card as a computed display reference, flags nothing. `cash_constrained` remains the one stored exemption. R22 re-verified on the same 3 store/route pairs -- still flag in this test set, but now for a legitimate reason (fitted==full, budget doesn't bind, a genuinely large order vs real trailing sales), not an artifact of the unfair flat-line comparison. `next build` clean.
+
+---
+
 ## 2026-07-14 -- BUG-LOG ENG-018 v10 re-anchor: yardstick flag moves full -> fitted (`9d6cfd7`)
 
 PM ruled (under Pieter's delegated authority) on CC's own open flag from the BLOOM-008 v10 ship: canon SS14 v7 item 9 re-anchored -- under v10 FULL is the luxury order by definition and is EXPECTED to exceed the 7-day yardstick, so it never trips `DEFECT_SIGNAL` any more (closes the ~500% false read). The flag moves to FITTED (the order actually sent): fires only when fitted deviates beyond `p_yardstick_tolerance_pct` from BOTH the 7-day yardstick AND demonstrated weekly demand, with no named scenario reason.
