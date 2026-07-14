@@ -4,6 +4,12 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-14 -- Floor report: TLX export was writing units, must be pack qty (`a002b1c`)
+
+`OrderDesksMode`'s `exportTlx` (the live desk screen) multiplied the buyer's on-screen qty by `pack_size` before writing the TLX line -- Sigma's TLX order import reads pack quantity, not each. Fixed to write the pack qty directly. Scoped to the live component only -- the same units-multiplication exists in two other `exportTlx` copies (`DeskMode`, the old SAB beer tab; a legacy DC-mode block) but both are retired-in-place, hidden from nav (R28 lineage), unreachable from orders.socialbrand.africa -- left untouched. `next build` clean.
+
+---
+
 ## 2026-07-14 -- SB-CC-BLOOM-011 item 1: l2_sales_budget, the NEEDS budget foundation (`846b17a`)
 
 New rolling 6-month sales projection per store per budget week (canon SS14 ADDENDUM v11 item 2). Full detail in DB-SCHEMA.md's own `l2_sales_budget` section -- summary here.
