@@ -2,8 +2,9 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Removes the PRSSALE push scheduled tasks now that daily_snapshots is retired
-    as a dashboard data source (SB-CC-PRSSALE-RETIRE-001, 2026-06-28).
+    Removes scheduled tasks left over from a retired legacy push mechanism,
+    now that a newer data source is in place (retirement history in canon,
+    2026-06-28).
 
 .DESCRIPTION
     Removes these two tasks on this server:
@@ -21,7 +22,7 @@
     Safe to run multiple times. Reports what it found and removed.
 
 .EXAMPLE
-    powershell.exe -ExecutionPolicy Bypass -File ".\Remove-PrssalePushTasks.ps1"
+    powershell.exe -ExecutionPolicy Bypass -File ".\Remove-LegacyScheduledTasks.ps1"
 #>
 
 Set-StrictMode -Version Latest
@@ -31,10 +32,10 @@ $KeeperTask   = 'WindowsDataSync-SB_Daily'
 $RemoveByName = @('SocialBrand Nightly Push', 'SocialBrand Sunday Push')
 
 Write-Host ""
-Write-Host "=== Remove-PrssalePushTasks ===" -ForegroundColor Cyan
+Write-Host "=== Remove-LegacyScheduledTasks ===" -ForegroundColor Cyan
 Write-Host "Server : $env:COMPUTERNAME"
 Write-Host "Date   : $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
-Write-Host "Reason : daily_snapshots retired as dashboard data source (SB-CC-PRSSALE-RETIRE-001)"
+Write-Host "Reason : retired legacy push mechanism, newer data source now in place"
 Write-Host ""
 
 $removed = 0
