@@ -1162,6 +1162,12 @@ const SCENARIO_OBJECTIVE = {
   order_essentials: 'Selection only: KVI + BT heroes + top-tier lines -- not the whole store.',
   catch_up: 'Priority basket lifted toward the store-wide floor, fit forced on.',
 }
+// Canon v7 item 9, v10 re-anchor (2026-07-14): the reason a card's
+// deviation is not a defect, surfaced (R29) even when there's no flag.
+const YARDSTICK_REASON_LABEL = {
+  full_is_luxury_by_definition: 'Full is the luxury order by definition -- expected to exceed the 7-day yardstick, never a defect.',
+  cash_constrained: 'This week runs cash-constrained -- deviation from the yardstick is expected, not flagged.',
+}
 
 // The preserved DC row, adapted to the recipe's own fields. Same grid, same
 // ten columns, same ringed-input pattern as OrderRow above -- the only
@@ -1776,6 +1782,14 @@ function OrderDesksMode() {
                   {s.yardstick_flag === 'DEFECT_SIGNAL' && (
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--data-neg)', marginTop: 4 }}>
                       DEFECT SIGNAL — {s.yardstick_deviation_pct}% off yardstick
+                    </div>
+                  )}
+                  {/* R29 -- the reason travels with the number, even when there's
+                      no flag (canon v7 item 9 v10 re-anchor: full's deviation is
+                      permanent and expected, never a defect). */}
+                  {s.yardstick_reason && (
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--veld-mist)', opacity: 0.75, marginTop: 3 }}>
+                      {YARDSTICK_REASON_LABEL[s.yardstick_reason] ?? s.yardstick_reason}
                     </div>
                   )}
                 </div>

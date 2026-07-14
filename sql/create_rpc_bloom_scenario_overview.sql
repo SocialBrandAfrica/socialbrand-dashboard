@@ -43,11 +43,37 @@
 -- yardstick against a pure sales-history number with no engine logic in
 -- either direction.
 --
--- yardstick_flag only fires DEFECT_SIGNAL on the 'full' scenario (the
--- whole-pool-at-minimums run) -- fitted/essentials/catch_up are SUPPOSED
--- to diverge from the flat rule (canon: "the desk's whole purpose is to
--- better the flat rule by altering the MIX per scenario, not the
--- magnitude"), so their deviation is informational only, never flagged.
+-- ⭐ v10 RE-ANCHOR OF THE DEVIATION TARGET (canon SS14 v7 item 9, PM ruling
+-- under Pieter's delegated authority, 2026-07-14 -- supersedes ONLY which
+-- scenario the flag judges; the formula itself is unchanged). Under v10
+-- FULL is the luxury order by definition (v8 item 2) and is EXPECTED to
+-- exceed any 7-day reference -- flagging it was the ~500% false read CC
+-- caught at the v10 ship. FULL never trips DEFECT_SIGNAL any more; its
+-- deviation now carries a PERMANENT named reason (`full_is_luxury_by_
+-- definition`, R29 -- the reason travels with the number even when there
+-- is no flag). The flag MOVES to FITTED -- the order actually sent: it
+-- fires only when fitted deviates beyond `p_yardstick_tolerance_pct` from
+-- BOTH references (the 7-day yardstick AND demonstrated weekly demand)
+-- AND no named scenario reason explains it. Essentials/catch_up are
+-- unchanged by this ruling -- still never flagged, still no reason column
+-- populated (they are deliberately not flat-rule scenarios).
+--
+-- NAMED-REASON EXEMPTIONS -- honestly scoped, not guessed. The ruling
+-- names three: cash constraint, catch-up, month-end build. Only CASH
+-- CONSTRAINT has a clean, already-stored, unambiguous per-week signal
+-- (`order_budget_ledger.cash_constrained`) -- used here. CATCH-UP has no
+-- stored "this store is mid catch-up" flag (catch_up is computed on
+-- demand as its own scenario, never a standing weekly state) and
+-- MONTH-END BUILD is a per-LINE fact (archetype x day-of-month), not a
+-- single store-level boolean -- translating either into an auto-detected
+-- exemption would mean inventing a threshold with no ruling behind it.
+-- Both are left OUT of the auto-exemption on purpose (R27 SS7: confront
+-- on ambiguity, do not silently resolve a policy call). Net effect: a
+-- genuine month-end-build or catch-up week may show DEFECT_SIGNAL on
+-- fitted a bit more often than the ruling's full intent -- flag never
+-- blocks (R29), so the cost of this gap is a visible caption, not a
+-- wrong order. Flagged to PM/Pieter for either a stored signal or an
+-- explicit threshold before this is closed out.
 --
 -- Breakdowns (Pieter 22:3x): by KVI band, by mode, by tier, count-first
 -- line count, protected/trimmed counts (fit outcome) -- all read straight
@@ -99,7 +125,7 @@ RETURNS TABLE(
   protected_lines integer, trimmed_lines integer,
   budget_amount numeric, budget_week_start date,
   yardstick_value numeric, yardstick_source text,
-  yardstick_deviation_pct numeric, yardstick_flag text,
+  yardstick_deviation_pct numeric, yardstick_flag text, yardstick_reason text,
   by_kvi_band jsonb, by_mode jsonb, by_tier jsonb, by_kvi_band_lines jsonb,
   demonstrated_weekly_demand numeric,
   count_first_pool integer,
@@ -202,8 +228,10 @@ BEGIN
       AND ss.product_code IN (SELECT product_code FROM full_products)
   ),
   -- weekly budget: one lookup, same for every scenario at this desk/week.
+  -- cash_constrained rides along -- the ONE clean, already-stored named
+  -- reason this week can carry (see header note on the other two).
   budget AS (
-    SELECT COALESCE(obl.budget_amount,0) AS budget_amt
+    SELECT COALESCE(obl.budget_amount,0) AS budget_amt, COALESCE(obl.cash_constrained,false) AS cash_constrained
     FROM order_budget_ledger obl
     WHERE obl.store_code = p_store_code
       -- SB-CC-BLOOM-009: mirrors rpc_bloom_order_recipe's own v_ledger_route
@@ -223,10 +251,21 @@ BEGIN
     COALESCE((SELECT budget_amt FROM budget), 0), a.budget_week_start,
     ROUND(v_yardstick,2), v_yardstick_source,
     (CASE WHEN v_yardstick > 0 THEN ROUND(((a.value_normal - v_yardstick) / v_yardstick) * 100, 1) ELSE NULL END),
+    -- v10 re-anchor: full never flags; fitted flags only on a dual-reference
+    -- breach with no named reason (cash_constrained is the only one auto-
+    -- detected -- see header note).
     (CASE
-       WHEN a.scenario_key <> 'full' THEN NULL
-       WHEN v_yardstick > 0 AND ABS(((a.value_normal - v_yardstick) / v_yardstick) * 100) > p_yardstick_tolerance_pct
+       WHEN a.scenario_key = 'fitted'
+         AND v_yardstick > 0 AND (SELECT v FROM demonstrated) > 0
+         AND ABS(((a.value_normal - v_yardstick) / v_yardstick) * 100) > p_yardstick_tolerance_pct
+         AND ABS(((a.value_normal - (SELECT v FROM demonstrated)) / (SELECT v FROM demonstrated)) * 100) > p_yardstick_tolerance_pct
+         AND NOT COALESCE((SELECT cash_constrained FROM budget), false)
          THEN 'DEFECT_SIGNAL'
+       ELSE NULL
+     END),
+    (CASE
+       WHEN a.scenario_key = 'full' THEN 'full_is_luxury_by_definition'
+       WHEN a.scenario_key = 'fitted' AND COALESCE((SELECT cash_constrained FROM budget), false) THEN 'cash_constrained'
        ELSE NULL
      END),
     kj.by_kvi_band, mj.by_mode, tj.by_tier, klj.by_kvi_band_lines,
