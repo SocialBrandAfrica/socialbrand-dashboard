@@ -68,12 +68,22 @@
 -- single store-level boolean -- translating either into an auto-detected
 -- exemption would mean inventing a threshold with no ruling behind it.
 -- Both are left OUT of the auto-exemption on purpose (R27 SS7: confront
--- on ambiguity, do not silently resolve a policy call). Net effect: a
--- genuine month-end-build or catch-up week may show DEFECT_SIGNAL on
--- fitted a bit more often than the ruling's full intent -- flag never
--- blocks (R29), so the cost of this gap is a visible caption, not a
--- wrong order. Flagged to PM/Pieter for either a stored signal or an
--- explicit threshold before this is closed out.
+-- on ambiguity, do not silently resolve a policy call). Flagged to
+-- PM/Pieter for either a stored signal or an explicit threshold.
+--
+-- ⭐ CORRECTED SAME DAY (PM ruling, 2026-07-14, after CC's R22 above proved
+-- the dual-reference flag fires on ~100% of live orders under v10's band-
+-- depth model -- "a flag that always fires means nothing"). Judging fitted
+-- against the 7-day yardstick was the wrong comparison in the first place:
+-- under v10 fitted's own MAGNITUDE is governed by the budget (Fit-to-
+-- Budget scales to it), so the flat 7-day tier-window line can never be a
+-- fair yardstick for it -- only DEMONSTRATED WEEKLY DEMAND (real trailing
+-- sales history, 28d/4) can legitimately call fitted wrong. `yardstick_flag`
+-- now judges fitted against demonstrated demand ALONE. The 7-day yardstick
+-- stays on every card as a DISPLAY REFERENCE LINE ONLY (`yardstick_value`/
+-- `yardstick_deviation_pct` unchanged, still computed and shown) -- it
+-- flags nothing any more. `cash_constrained` remains the one stored
+-- exemption; the catch-up/month-end signal gap above still stands.
 --
 -- Breakdowns (Pieter 22:3x): by KVI band, by mode, by tier, count-first
 -- line count, protected/trimmed counts (fit outcome) -- all read straight
@@ -251,13 +261,13 @@ BEGIN
     COALESCE((SELECT budget_amt FROM budget), 0), a.budget_week_start,
     ROUND(v_yardstick,2), v_yardstick_source,
     (CASE WHEN v_yardstick > 0 THEN ROUND(((a.value_normal - v_yardstick) / v_yardstick) * 100, 1) ELSE NULL END),
-    -- v10 re-anchor: full never flags; fitted flags only on a dual-reference
-    -- breach with no named reason (cash_constrained is the only one auto-
-    -- detected -- see header note).
+    -- Same-day correction: full never flags; fitted flags ONLY against
+    -- demonstrated weekly demand (the 7-day yardstick is display-only --
+    -- see header note), with no named reason (cash_constrained is the
+    -- only one auto-detected).
     (CASE
        WHEN a.scenario_key = 'fitted'
-         AND v_yardstick > 0 AND (SELECT v FROM demonstrated) > 0
-         AND ABS(((a.value_normal - v_yardstick) / v_yardstick) * 100) > p_yardstick_tolerance_pct
+         AND (SELECT v FROM demonstrated) > 0
          AND ABS(((a.value_normal - (SELECT v FROM demonstrated)) / (SELECT v FROM demonstrated)) * 100) > p_yardstick_tolerance_pct
          AND NOT COALESCE((SELECT cash_constrained FROM budget), false)
          THEN 'DEFECT_SIGNAL'
