@@ -4,6 +4,22 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-14 -- SB-CC-PUSH-HARDEN-001: unbrand task + protect script -- CODE READY, NOT YET EXECUTED (`e0dbc1d`)
+
+Server-side hardening, floor-side execution -- this entry records what's built and pushed to the repo; the actual change on the 5 store servers has NOT happened yet and won't show in push_log until Pieter runs it.
+
+Pieter ruling: rename the daily scheduled task from the identifying `SocialBrand-ExtractDelta` to the neutral `WindowsDataSync-SB_Daily`, and ACL-lock the push script folder (`C:\SocialBrand`) to SYSTEM + Administrators + the run-as service account only. BINDING retention constraint: SPAR's 10 July letter requested records/logs/configurations be retained pending its review, so this cannot proceed rename-first -- a dated reference copy is mandatory before anything changes.
+
+**The self-heal trap, caught before it could bite:** `Invoke-ExtractFromSigmaSQL.ps1` self-registers its own scheduled task on every run, using a hardcoded task name -- if the live task were renamed on a server without updating that hardcoded value, the extractor's own self-heal logic would silently recreate a task under the OLD identifying name on its very next run, undoing the hardening within 24 hours with nobody noticing. Fixed by updating the name in three places that must agree: the extractor's own `$taskName` (v1.21), the fresh-box bootstrap script's `$TaskName`, and the retired-tasks cleanup script's `$KeeperTask` reference.
+
+**New `Migrate-PushHarden.ps1`** -- one-time per-server migration, retention-first and hard-gated: refuses to touch the task or the script folder until a dated reference copy (task XML export + full script folder) is written and verified non-empty. Registers the new task from the exact preserved XML (trigger/action/settings/principal copied verbatim), verifies it matches the old task byte-for-byte before removing the old one (auto-rolls back and stops on any mismatch), then ACL-locks the folder. Never touches `push_log`/`push_errors`/any push history -- no network calls, pure local Task Scheduler + filesystem state. `-DryRun` makes zero changes.
+
+`STORE-ONBOARDING-RECIPE.md` updated so the new name is documented (R25 portability) rather than tribal knowledge -- a fresh store #6 bootstraps under the new name directly, nothing to migrate there.
+
+**Verification performed:** PowerShell parser syntax check (zero errors, all 4 files) and an ASCII-only grep (clean) -- this session has no network path to the store SQL servers (confirmed earlier the same day), so none of this can be exercised live from here. Execution, including the acceptance proof (next scheduled run stamps `push_log` after the ACL change), is Pieter's/floor's to perform and confirm.
+
+---
+
 ## 2026-07-14 -- Floor report: TLX export was writing units, must be pack qty (`a002b1c`)
 
 `OrderDesksMode`'s `exportTlx` (the live desk screen) multiplied the buyer's on-screen qty by `pack_size` before writing the TLX line -- Sigma's TLX order import reads pack quantity, not each. Fixed to write the pack qty directly. Scoped to the live component only -- the same units-multiplication exists in two other `exportTlx` copies (`DeskMode`, the old SAB beer tab; a legacy DC-mode block) but both are retired-in-place, hidden from nav (R28 lineage), unreachable from orders.socialbrand.africa -- left untouched. `next build` clean.
