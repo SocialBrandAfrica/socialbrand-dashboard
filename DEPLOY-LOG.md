@@ -4,6 +4,28 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-14 -- Repo catch-up: BLOOM-008 v10 recipe rewrite + l2_range_state committed (`1ba862b`)
+
+`sql/create_rpc_bloom_order_recipe.sql` had a real gap between the repo and live: HANDOVER-CURRENT/DB-SCHEMA both documented the BLOOM-008 items 1-4 rewrite (range state, universal max-band ceiling, scope-over-states scenarios, floor-protected fit-to-cash) as SHIPPED + R22-CLOSED on 2026-07-12 19:10, but the last git commit touching that file was `1bfbe0c` (the earlier W2 fix). The working tree carried the v10 rewrite uncommitted, and `sql/create_l2_range_state.sql` was untracked entirely -- both applied live via MCP in a prior session, never pushed.
+
+Verified before committing (not assumed): `pg_get_functiondef` on the live `rpc_bloom_order_recipe` matches the local file's signature, columns (`range_state`, `pack_forced_review`, `hero_pack_over_max`, `p_store_target_days`, `p_max_order_stock_days`) and body exactly; `l2_range_state` exists live with 174,449 rows. No new work -- closing a documented repo-drift gap ahead of SB-CC-BLOOM-010.
+
+---
+
+## 2026-07-14 -- SB-CC-BLOOM-010: ENG-021 promo-export fix + order round-trip import (`5bfe251`)
+
+**Item 1 (BUG-LOG ENG-021, HIGH):** `exportPromoSheet` in `src/app/bloom/page.jsx` (desk screen) was exporting raw `l.geared_packs` while the CSV and TLX exporters both correctly read the buyer's live `qty[l.product_code]` -- a zeroed promo line was still exporting at full geared qty. Fixed to read the same `qty` state as the other two exports; the promo-line filter and the Total Qty footer now compute from it too.
+
+**Item 2 (canon SS14 v7 item 11b, the round-trip rule):** new Import button on the desk, phase B, beside the three export buttons. Accepts the desk's own `.csv`/`.xlsx` export format. Quantities only -- matches on `Product Code`, consumes `Order Qty`, ignores every other column (pack size, EAN, promo routing, demand, story all stay from the generated lines). The engine owns pool membership: a code in the file but not in the generated order is never added, surfaces in the import report as unknown; a code in the order but absent from the file is left unchanged; an explicit `0` zeroes the line. Rejects per row (non-numeric or negative `Order Qty`), never per file -- the rest of a file still applies. A filename-derived store/delivery-date guard warns (never blocks) when the chosen file looks like it belongs to a different order. Applied quantities land in the same `qty`/`edited` state a manual on-screen edit uses, so the running total, the stock-state days-after, and all three exports (promo sheet included, after item 1) recompute with zero extra wiring. Visible, non-blocking import report banner: N changed / N unchanged / N unknown (listed) / N rejected (listed with reason).
+
+**Real bug caught during verification, fixed before ship:** the filename-mismatch guard's first draft split the stem on `_` and read the delivery date off a fixed index (`parts[3]`) -- broke silently whenever `desk` or `preset` themselves contain underscores (`DC_AMBIENT`, `DIRECT_BEER`, `order_essentials`), which is every desk except the plain DC ones, producing false-positive mismatch warnings on perfectly matching files. Replaced with a first-token store match + a trailing-ISO-date regex match, both independent of how many underscores the desk/preset names carry.
+
+**Verification:** standalone Node functional test of the parse+reconcile logic (`parseCsvGrid` + the row-reconciliation loop, copied verbatim from the shipped code) against the brief's own acceptance scenario -- raise one line, lower one, zero one promo line, one bogus code, one junk-qty row -- plus two dedicated filename-guard cases (genuine store mismatch, genuine date mismatch, both against a multi-underscore desk/preset). 12/12 assertions passed after the filename-guard fix (first run caught the bug above, 9/10 passed before the fix). `next build` clean both before and after the fix. `/bloom` remains auth-gated (Google login) and this session holds the same standing rule against bypassing `middleware.js` as every prior Bloom session -- no live-browser screenshot exists for either item; confirmed the deploy itself is live (orders.socialbrand.africa serves 200s post-push, redirects cleanly to `/login`, no error page).
+
+**Gate status:** CC build R22/functional-verified and DEPLOYED (pushed, Vercel serving). Pieter's own DoD interaction (generate → export → edit in Excel → import → re-export, on his own device) is the remaining gate per the brief's own override ("DoD: DEPLOYED... the standing R22 proof remains the floor beneath it") -- not claimed as closed here.
+
+---
+
 ## 2026-07-12 -- SB-CC-BLOOM-008 item 16 CLOSED: the delivery chain + month picture, frontend wired
 
 Final piece of item 16 -- (a) two-drop chain and (b) month picture (both shipped as their own backend commits earlier today) are now visible on the desk landing, between the stock-state strip and the order grid.
