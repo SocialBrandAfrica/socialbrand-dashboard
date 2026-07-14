@@ -4,6 +4,12 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-14 -- PUSH-HARDEN-001 fix: ACL was Read+Execute, needed Modify (`2766b72`)
+
+Pieter's own question ("are all files in the SocialBrand folder covered?") prompted a re-check that surfaced a real bug: the extractor writes AND deletes inside its own script folder while running (`extractor_last_error.txt` on failure/clean-exit, `<table>_badrows.log` on bad rows) -- the ACL step had granted the run-as account Read+Execute only, which would have broken the very next error write and every subsequent clean-run cleanup after the lock. Fixed to Modify. Scope confirmed correct separately -- the lock covers the whole `C:\SocialBrand` folder (Object+Container Inherit), every file today and anything added later, not just the one script. Not yet executed on any server.
+
+---
+
 ## 2026-07-14 -- SB-CC-PUSH-HARDEN-001: unbrand task + protect script -- CODE READY, NOT YET EXECUTED (`e0dbc1d`)
 
 Server-side hardening, floor-side execution -- this entry records what's built and pushed to the repo; the actual change on the 5 store servers has NOT happened yet and won't show in push_log until Pieter runs it.
