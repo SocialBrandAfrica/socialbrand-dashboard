@@ -4,6 +4,20 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-14 -- BUG-LOG ENG-018 v10 re-anchor: yardstick flag moves full -> fitted (`9d6cfd7`)
+
+PM ruled (under Pieter's delegated authority) on CC's own open flag from the BLOOM-008 v10 ship: canon SS14 v7 item 9 re-anchored -- under v10 FULL is the luxury order by definition and is EXPECTED to exceed the 7-day yardstick, so it never trips `DEFECT_SIGNAL` any more (closes the ~500% false read). The flag moves to FITTED (the order actually sent): fires only when fitted deviates beyond `p_yardstick_tolerance_pct` from BOTH the 7-day yardstick AND demonstrated weekly demand, with no named scenario reason.
+
+**Built:** `rpc_bloom_scenario_overview` rewritten (migration `eng018_v10_reanchor_scenario_overview_flag`, same params, new `yardstick_reason` output column). `full` always carries the permanent reason `full_is_luxury_by_definition` (R29 -- surfaced on the card even without a flag); `fitted` carries `cash_constrained` when the delivery week's `order_budget_ledger.cash_constrained` is true, the ONE clean stored signal among the ruling's three named exemptions.
+
+**Scoped honestly, not guessed:** the ruling names cash constraint, catch-up, and month-end build as exemptions. Only cash constraint has a clean, already-stored, per-week boolean. Catch-up has no standing per-store flag (it's an on-demand scenario computation, never a stored state) and month-end build is a per-LINE fact (archetype x day-of-month), not a single store boolean -- inventing a threshold for either would be a policy call this commit does not make (R27 SS7, confront on ambiguity rather than silently resolve it). Documented in the SQL header and DB-SCHEMA, flagged to PM/Pieter rather than absorbed silently.
+
+**R22 live across 3 store/route pairs (10116/DC_AMBIENT, 80176/DIRECT_BEER, 21355/DC_TOPS):** `full` correctly never flags on any of the three; `yardstick_reason='full_is_luxury_by_definition'` present on every full row; essentials/catch_up unchanged (out of scope for this ruling, verified still NULL/NULL). **Real finding surfaced, not silently absorbed: `fitted` tripped `DEFECT_SIGNAL` on ALL 3 samples** (deviations 66.2% / 323.0% / 645.2% from the 7-day yardstick) -- under v10's deeper HERO-to-max-band + CORE-to-band depth model, the flag as ruled will likely fire on nearly every live order. Whether the 20% tolerance or the yardstick formula itself needs revisiting for the post-v10 world is now a live, named question for PM/Pieter -- not something this build silently tuned around.
+
+**Frontend:** `yardstick_reason` renders as a small caption on the scenario card (`src/app/bloom/page.jsx`, `YARDSTICK_REASON_LABEL` map). The existing `DEFECT_SIGNAL` render block was already generic on `s.yardstick_flag` (never hardcoded to a scenario name), so it needed zero changes to move onto the fitted card. `next build` clean. `/bloom` is auth-gated -- verified via direct SQL against the live function across the 3 store/route pairs above, not a browser click-through (same standing constraint as every prior Bloom session).
+
+---
+
 ## 2026-07-14 -- Repo catch-up: BLOOM-008 v10 recipe rewrite + l2_range_state committed (`1ba862b`)
 
 `sql/create_rpc_bloom_order_recipe.sql` had a real gap between the repo and live: HANDOVER-CURRENT/DB-SCHEMA both documented the BLOOM-008 items 1-4 rewrite (range state, universal max-band ceiling, scope-over-states scenarios, floor-protected fit-to-cash) as SHIPPED + R22-CLOSED on 2026-07-12 19:10, but the last git commit touching that file was `1bfbe0c` (the earlier W2 fix). The working tree carried the v10 rewrite uncommitted, and `sql/create_l2_range_state.sql` was untracked entirely -- both applied live via MCP in a prior session, never pushed.
