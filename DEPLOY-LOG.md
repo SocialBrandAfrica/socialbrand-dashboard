@@ -4,6 +4,20 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-14 -- SB-CC-BLOOM-011 item 1: l2_sales_budget, the NEEDS budget foundation (`846b17a`)
+
+New rolling 6-month sales projection per store per budget week (canon SS14 ADDENDUM v11 item 2). Full detail in DB-SCHEMA.md's own `l2_sales_budget` section -- summary here.
+
+One shared formula (`rpc_project_route_sales_budget`), two callers (R21): `refresh_l2_sales_budget` for the live nightly fact, `rpc_backtest_l2_sales_budget` for item 1's own gate. Real bug caught + fixed during R22: `CREATE TEMP TABLE ... ON COMMIT DROP` doesn't clean up mid-transaction, collided when a store has more than one route (10116: DC_AMBIENT + DIRECT_COCACOLA) -- fixed to explicit DROP/CREATE/DROP, re-verified.
+
+R22: `ly_base_cost` reconciles exactly to raw `sigma_sales` (655629.97 both ways). Pool size matches the recipe's own known DC pool within live drift.
+
+**Backtest ran, results published, NOT scored pass/fail by CC (PM signs on that):** `sigma_sales` only has ~17 months of history, so a full clean 6-month backtest isn't possible yet (needs ~21mo) -- ran the largest clean window instead (15 weeks, anchored 2026-03-28), named as a real constraint, not hidden. 10116 bias -3.3%/MAPE 15.3%, 80175 bias +4.3%/MAPE 17.3%, 21355 (TOPS) bias +12.7%/MAPE 21.8% (thinner LY-history coverage). **The 82%-of-forecast cashflow basis keeps governing every order calculation until PM signs off on this.**
+
+Also this session: BUG-LOG ENG-018 same-day correction (`e0eadd5`) -- see below.
+
+---
+
 ## 2026-07-14 -- BUG-LOG ENG-018 same-day correction: single-reference flag (`e0eadd5`)
 
 PM corrected canon item 9 the same day as the entry below, after CC's own R22 showed the dual-reference version (7-day yardstick AND demonstrated demand) fires on ~100% of live orders under v10 -- "a flag that always fires means nothing." `fitted`'s `DEFECT_SIGNAL` now judges against `demonstrated_weekly_demand` alone; the 7-day yardstick stays on every card as a computed display reference, flags nothing. `cash_constrained` remains the one stored exemption. R22 re-verified on the same 3 store/route pairs -- still flag in this test set, but now for a legitimate reason (fitted==full, budget doesn't bind, a genuinely large order vs real trailing sales), not an artifact of the unfair flat-line comparison. `next build` clean.
