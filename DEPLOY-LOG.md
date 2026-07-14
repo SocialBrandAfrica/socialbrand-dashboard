@@ -4,6 +4,20 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-14 -- PUSH-HARDEN-001 follow-up: 11 retired scripts removed from repo, off-server removal tool built for the servers (`38487dd`)
+
+Pieter ruling: retired scripts must not be on the servers, full stop -- a local same-server archive subfolder (what the existing `Cleanup-SocialBrandFolder.ps1` already does) doesn't satisfy that.
+
+**Repo-side (done, this commit):** `git rm` on `Push-SigmaToSupabase.ps1`, `Create-SundayPushTask.ps1`, `Discover-SigmaTables.ps1/2/3`, `Fix-ScheduledTasksHidden.ps1`, `RunNightlyPush.bat`, `RunBackfill.bat`, `RunDiscovery.bat/2/3`. A dedicated Explore pass across the whole repo + Bible root confirmed zero live dependencies (no scheduled task, no script invocation, no CI/CD entry point references any of them) before removal -- every hit was a historical mention (commit messages, handovers, canon docs), none of which were touched. Full git history preserved (`git rm`, not a history rewrite).
+
+**Server-side (NOT executed, Pieter's/floor's step):** new `Archive-And-Remove-RetiredScripts.ps1` -- same 11-file list, hash-verified (SHA256, source vs archived copy) before any deletion, refuses to run unless the archive target resolves to a different drive/host than the script folder (a real off-server destination). `-DryRun` makes zero changes.
+
+**Related fix caught in the same pass:** `Cleanup-SocialBrandFolder.ps1` (Daisy root) still called three of these files "operational" in its own comments -- true when written, false since the 2026-06-28 retirement. Corrected; its own move-list trimmed of the now-fully-removed scripts (nothing left for it to find) while keeping their `.txt` query-result output on its list (data, not code, different category).
+
+Verified: ASCII-only + PowerShell parser clean on all touched/new `.ps1` files. Nothing executed on any server.
+
+---
+
 ## 2026-07-14 -- PUSH-HARDEN-001 follow-up: scrubbed PRSSALE references, renamed retired cleanup script (`ecf8db8`)
 
 Pieter follow-up ("rename the file and scrub the comments anyway") after confirming behaviour is unaffected either way. `Remove-PrssalePushTasks.ps1` -> `Remove-LegacyScheduledTasks.ps1` (git mv, history preserved); its header/banner reworded generically. `Invoke-ExtractFromSigmaSQL.ps1` v1.22: one historical-changelog mention of the retired brief's own code name now points at canon instead of repeating it inline; the cross-reference to the renamed cleanup script updated.
