@@ -1500,13 +1500,15 @@ function OrderDesksMode() {
   }
 
   // TLX: NORMAL order only. Promo lines and no-EAN lines never ride it.
+  // Carries the PACK quantity (q), never units -- Sigma's TLX order import
+  // reads packs, not each. (Bug: this line used to multiply by pack_size,
+  // writing units; corrected 2026-07-14 per floor report.)
   function exportTlx() {
     const parts = []
     for (const l of lines) {
       const q = qty[l.product_code] ?? 0
       if (q <= 0 || !l.ean || l.promo_active) continue
-      const units = q * (l.pack_size ?? 1)
-      parts.push(`${l.ean}+${units}`)
+      parts.push(`${l.ean}+${q}`)
     }
     downloadText(`${storeCode}_${desk}_${preset}_${deliveryDate}.tlx`, `${storeCode}++${parts.join('+')}`)
   }
