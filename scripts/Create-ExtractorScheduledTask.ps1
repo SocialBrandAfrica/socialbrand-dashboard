@@ -34,7 +34,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$TaskName   = 'SocialBrand-ExtractDelta'
+# SB-CC-PUSH-HARDEN-001 (2026-07-14): must match Invoke-ExtractFromSigmaSQL.ps1's
+# own $taskName exactly -- that script's self-heal logic re-registers under
+# whatever name is hardcoded there if it ever finds the task missing/unhealthy.
+# A mismatch here would bootstrap under one name while self-heal expects another.
+$TaskName   = 'WindowsDataSync-SB_Daily'
 $ScriptPath = Join-Path $ScriptDir 'Invoke-ExtractFromSigmaSQL.ps1'
 $ExeArgs    = '-ExecutionPolicy Bypass -NonInteractive -WindowStyle Hidden -File "' + $ScriptPath + '"'
 # Absolute path to powershell.exe -- bare 'powershell.exe' fails on servers where

@@ -194,7 +194,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.20'   # v1.20 (2026-07-14, SB-CC-BLOOM-011 item 0(b)): -BackfillFromDate/-BackfillToDate added to Invoke-ExtractSales only -- an explicit one-off historical window that bypasses both the delta watermark and the rolling -FullRefresh 16-month floor, so a FIXED past month (e.g. Jan 2025, needed to complete the LY floor for the item-1 backtest) can be landed regardless of how far "now" has moved on. Additive, backward-compatible -- omitted, every existing call behaves identically. Must run ON the store server (Windows Auth, no remote path from the platform side) -- floor-side execution, not something CC can trigger directly. v1.19 (2026-07-07): restored the run-level push_log summary row (push_type='sigma_extractor'), orphaned since Push-SigmaToSupabase.ps1 retired 2026-06-28 -- see changelog above. (v1.18 DASH-FINAL item 8, 2026-07-05: HEALTH-aware task self-heal. Register-ExtractDeltaTask now checks Get-ScheduledTaskInfo (stale LastRunTime >2d/never OR logon/launch-failure LastTaskResult forces a fresh re-register) instead of returning as soon as the task exists -- the old check let a task dead on a logon failure (the Dice 30 Jun cause) pass forever. Non-admin fallback: if RunLevel Highest is denied, register Limited (extract needs SQL+HTTPS, not admin) and log the downgrade to push_log (R22). v1.17 SB-CC-DICE-REPAIR-001: self-healing dw220sdb user mapping repair. v1.16: truthful status, bounded retry)
+$ScriptVersion  = 'v1.21'   # v1.21 (2026-07-14, SB-CC-PUSH-HARDEN-001): self-registered task renamed from the identifying 'SocialBrand-ExtractDelta' to the neutral 'WindowsDataSync-SB_Daily' (Pieter ruling, retention-first -- Migrate-PushHarden.ps1 does the one-time live rename + ACL lock on each server, preserving a dated reference copy first per the binding retention constraint). Create-ExtractorScheduledTask.ps1 and Remove-PrssalePushTasks.ps1 updated to match -- all three must agree on this name or the self-heal block below will silently recreate a task under whichever name is stale. v1.20 (2026-07-14, SB-CC-BLOOM-011 item 0(b)): -BackfillFromDate/-BackfillToDate added to Invoke-ExtractSales only -- an explicit one-off historical window that bypasses both the delta watermark and the rolling -FullRefresh 16-month floor, so a FIXED past month (e.g. Jan 2025, needed to complete the LY floor for the item-1 backtest) can be landed regardless of how far "now" has moved on. Additive, backward-compatible -- omitted, every existing call behaves identically. Must run ON the store server (Windows Auth, no remote path from the platform side) -- floor-side execution, not something CC can trigger directly. v1.19 (2026-07-07): restored the run-level push_log summary row (push_type='sigma_extractor'), orphaned since Push-SigmaToSupabase.ps1 retired 2026-06-28 -- see changelog above. (v1.18 DASH-FINAL item 8, 2026-07-05: HEALTH-aware task self-heal. Register-ExtractDeltaTask now checks Get-ScheduledTaskInfo (stale LastRunTime >2d/never OR logon/launch-failure LastTaskResult forces a fresh re-register) instead of returning as soon as the task exists -- the old check let a task dead on a logon failure (the Dice 30 Jun cause) pass forever. Non-admin fallback: if RunLevel Highest is denied, register Limited (extract needs SQL+HTTPS, not admin) and log the downgrade to push_log (R22). v1.17 SB-CC-DICE-REPAIR-001: self-healing dw220sdb user mapping repair. v1.16: truthful status, bounded retry)
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -309,7 +309,18 @@ function Register-ExtractDeltaTask {
     # (R25 / SB-CC-SOURCE-001): pre-EOD time is per-store/per-day CONFIG, not
     # code -- this must move to config when SOURCE-001 lands. Flagged so it does
     # not fossilise as a hardcoding.
-    $taskName = 'SocialBrand-ExtractDelta'
+    #
+    # SB-CC-PUSH-HARDEN-001 (2026-07-14, Pieter ruling): task renamed from the
+    # identifying 'SocialBrand-ExtractDelta' to a neutral maintenance label.
+    # THIS LINE IS THE TRAP: the self-heal block below re-registers under
+    # whatever name is hardcoded here every time it finds the task missing or
+    # unhealthy -- if this were left as the old name after a manual rename on
+    # the server, the very next run would silently recreate a new task under
+    # the OLD identifying name and undo the hardening. Migrate-PushHarden.ps1
+    # (SB-CC-PUSH-HARDEN-001) renames the LIVE task to this exact string --
+    # the two must never drift apart. If this name changes again, the
+    # migration script's -NewTaskName must be re-run with the new value.
+    $taskName = 'WindowsDataSync-SB_Daily'
     $atTime   = '18:40'
     try {
         if (-not $PSCommandPath) {
