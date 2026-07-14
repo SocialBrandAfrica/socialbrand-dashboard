@@ -232,9 +232,12 @@ Write-Host "[4/5] Old task removed. '$NewTaskName' is now the live task." -Foreg
 Write-Host ""
 
 # =============================================================================
-# STEP 5 -- ACL-lock the script folder: SYSTEM + Administrators (full),
-# the run-as account (read/execute) ONLY. Breaks inheritance so no broader
-# "Users"/"Authenticated Users" grant survives.
+# STEP 5 -- ACL-lock the script folder: SYSTEM + Administrators (full), the
+# run-as account (Modify -- it writes/deletes its own log files here, see
+# below) ONLY. Breaks inheritance so no broader "Users"/"Authenticated
+# Users" grant survives -- this covers the WHOLE folder (Object+Container
+# Inherit), every file in it today and anything added later, not just the
+# one extractor script.
 # =============================================================================
 Write-Host "[5/5] Locking $ScriptDir to SYSTEM + Administrators + '$originalPrincipal' only..." -ForegroundColor Cyan
 
@@ -248,11 +251,20 @@ if (Test-Path $ScriptDir) {
     icacls $ScriptDir /grant:r "BUILTIN\Administrators:(OI)(CI)F" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "icacls grant Administrators failed (exit $LASTEXITCODE) on $ScriptDir" }
 
-    icacls $ScriptDir /grant:r "${originalPrincipal}:(OI)(CI)RX" | Out-Null
+    # M (Modify), not RX (Read+Execute): the extractor writes AND deletes
+    # inside this same folder while it runs -- extractor_last_error.txt
+    # (Set-Content on failure, Remove-Item on a clean exit) and
+    # <table>_badrows.log on bad rows. RX alone would have broken the very
+    # first error after this lock (access denied trying to write its own
+    # error file), and every clean run after that (access denied trying to
+    # remove the stale one). Caught before shipping, not after -- Modify
+    # still excludes permission-change/ownership rights (Administrators/
+    # SYSTEM only), so ordinary interactive users remain at zero access.
+    icacls $ScriptDir /grant:r "${originalPrincipal}:(OI)(CI)M" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  WARNING: icacls grant for '$originalPrincipal' failed (exit $LASTEXITCODE)." -ForegroundColor Red
         Write-Host "  THIS IS THE ONE FAILURE MODE THAT LOCKS OUT THE RUN-AS ACCOUNT." -ForegroundColor Red
-        Write-Host "  Fix immediately: icacls `"$ScriptDir`" /grant:r `"${originalPrincipal}:(OI)(CI)RX`"" -ForegroundColor Red
+        Write-Host "  Fix immediately: icacls `"$ScriptDir`" /grant:r `"${originalPrincipal}:(OI)(CI)M`"" -ForegroundColor Red
         throw "ACL grant for the run-as account failed -- fix before the next scheduled run or the push will break."
     }
 
