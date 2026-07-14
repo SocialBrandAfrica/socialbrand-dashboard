@@ -19,7 +19,7 @@
 //   - Promo buy-in toy, week-strip picker (plain date inputs for v0)
 // =============================================================================
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '@/lib/supabase'
 import { zar, pct, num } from '@/lib/format'
@@ -1261,6 +1261,8 @@ function OrderDesksMode() {
   const [deliveryChain, setDeliveryChain] = useState(null)
   const [deliveryChainError, setDeliveryChainError] = useState(null)
   const [monthProjection, setMonthProjection] = useState(null)
+  const [importReport, setImportReport] = useState(null)
+  const fileInputRef = useRef(null)
 
   const desks = STORE_DESKS[storeCode] || []
 
@@ -1508,16 +1510,18 @@ function OrderDesksMode() {
   // Total Items/Total Qty footer) via the xlsx lib already used elsewhere
   // in this codebase (src/app/page.jsx report export).
   function exportPromoSheet() {
-    const promoLines = lines.filter(l => l.promo_active && (l.geared_packs ?? 0) > 0)
+    // ENG-021: read the buyer's live on-screen qty, same source as the CSV/TLX
+    // exporters -- a zeroed promo line must never export at full geared qty.
+    const promoLines = lines.filter(l => l.promo_active && (qty[l.product_code] ?? 0) > 0)
     const title = `Promo Order - ${storeCode} - ${deliveryDate}`
     const aoa = [
       [title, '', '', '', ''],
       ['Product Code', 'Description', 'Size', 'Order Qty', 'Promo Suffix'],
       ...promoLines.map(l => [
-        l.product_code, l.description ?? '', '', l.geared_packs ?? 0,
+        l.product_code, l.description ?? '', '', qty[l.product_code] ?? 0,
         l.promo_suffix ?? (l.promo_naming_gap ? `#${l.promo_nr}` : ''),
       ]),
-      ['Total Items:', promoLines.length, '', 'Total Qty:', promoLines.reduce((s, l) => s + (l.geared_packs ?? 0), 0)],
+      ['Total Items:', promoLines.length, '', 'Total Qty:', promoLines.reduce((s, l) => s + (qty[l.product_code] ?? 0), 0)],
     ]
     const ws = XLSX.utils.aoa_to_sheet(aoa)
     ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }]
@@ -1525,6 +1529,110 @@ function OrderDesksMode() {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Promo Order')
     XLSX.writeFile(wb, `${storeCode}_${desk}_${preset}_${deliveryDate}_promo.xlsx`)
+  }
+
+  // Canon item 11b -- THE ROUND-TRIP RULE. Quantities only: match on Product
+  // Code, consume Order Qty, ignore every other column. The engine owns pool
+  // membership (a code not in the generated order is never added, only
+  // reported); a code missing from the file is left unchanged; an explicit
+  // 0 zeroes the line. Rejects per row, never per file (R22, no silent
+  // drops -- every unknown code and every rejected row is named in the
+  // report, never dropped quietly).
+  function parseCsvGrid(text) {
+    const rows = []
+    let field = '', row = [], inQuotes = false
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i]
+      if (inQuotes) {
+        if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++ } else inQuotes = false }
+        else field += c
+        continue
+      }
+      if (c === '"') { inQuotes = true }
+      else if (c === ',') { row.push(field); field = '' }
+      else if (c === '\r') { /* skip */ }
+      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = '' }
+      else field += c
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row) }
+    return rows.filter(r => r.some(c => String(c ?? '').trim() !== ''))
+  }
+
+  async function importOrderFile(file) {
+    setImportReport(null)
+    let rows
+    try {
+      if (/\.xlsx$/i.test(file.name)) {
+        const buf = await file.arrayBuffer()
+        const wb = XLSX.read(buf, { type: 'array' })
+        rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' })
+      } else {
+        rows = parseCsvGrid(await file.text())
+      }
+    } catch (e) {
+      setImportReport({ fileError: `Could not read "${file.name}": ${e.message}` })
+      return
+    }
+    if (!rows || rows.length < 2) {
+      setImportReport({ fileError: `"${file.name}" has no data rows.` })
+      return
+    }
+    const header = rows[0].map(h => String(h ?? '').trim().toLowerCase())
+    const codeIdx = header.indexOf('product code')
+    const qtyIdx = header.indexOf('order qty')
+    if (codeIdx === -1 || qtyIdx === -1) {
+      setImportReport({ fileError: `"${file.name}" needs "Product Code" and "Order Qty" columns -- the desk's own CSV/XLSX export format.` })
+      return
+    }
+
+    // Guard: the export filename carries store + delivery date
+    // (`${store}_${desk}_${preset}_${date}...`) -- warn, never block, if
+    // the file looks like it belongs to a different order (item 11b rule 5).
+    // Anchored on the FIRST token (store, never contains "_") and the
+    // TRAILING ISO date (never split on a fixed position -- `desk` values
+    // like DC_AMBIENT/DIRECT_BEER and presets like order_essentials
+    // legitimately contain underscores, which breaks any fixed-index split).
+    const stem = file.name.replace(/\.(csv|xlsx)$/i, '')
+    const fileStore = stem.split('_')[0]
+    const fileDateMatch = stem.match(/(\d{4}-\d{2}-\d{2})$/)
+    const nameMismatch = (fileStore && fileStore !== storeCode) || (fileDateMatch && fileDateMatch[1] !== deliveryDate)
+      ? `"${file.name}" looks like it belongs to a different order (this desk: ${storeCode}, delivery ${deliveryDate}). Applied anyway -- check before submitting.`
+      : null
+
+    const known = new Set(lines.map(l => String(l.product_code)))
+    const nextQty = { ...qty }
+    const nextEdited = { ...edited }
+    let changed = 0, unchanged = 0
+    const unknownSet = new Set()
+    const rejected = []
+
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r]
+      if (!row || row.every(c => String(c ?? '').trim() === '')) continue
+      const code = String(row[codeIdx] ?? '').trim()
+      if (!code) continue
+      if (!known.has(code)) { unknownSet.add(code); continue }
+      const raw = row[qtyIdx]
+      const n = Number(raw)
+      if (raw === '' || raw == null || !Number.isFinite(n) || n < 0) {
+        rejected.push({ code, value: String(raw ?? ''), reason: !Number.isFinite(n) || raw === '' || raw == null ? 'non-numeric Order Qty' : 'negative Order Qty' })
+        continue
+      }
+      const q = Math.round(n)
+      if ((Number(nextQty[code]) || 0) === q) { unchanged++ }
+      else { nextQty[code] = q; nextEdited[code] = true; changed++ }
+    }
+
+    const unknown = [...unknownSet]
+    setQty(nextQty)
+    setEdited(nextEdited)
+    setImportReport({ changed, unchanged, unknown, rejected, nameMismatch, fileName: file.name })
+  }
+
+  function onImportFileChosen(e) {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-choosing the same file name back-to-back
+    if (file) importOrderFile(file)
   }
 
   const inputStyle = {
@@ -1791,6 +1899,28 @@ function OrderDesksMode() {
             </div>
           </div>
 
+          {importReport && (
+            <div style={{ margin: '0 24px', marginTop: 14, fontFamily: 'var(--font-mono)', fontSize: 10.5,
+              color: importReport.fileError ? '#fca5a5' : 'var(--veld-mist)',
+              background: importReport.fileError ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.03)',
+              border: `1px solid ${importReport.fileError ? 'rgba(239,68,68,0.35)' : 'var(--hairline)'}`,
+              borderRadius: 8, padding: '8px 12px', lineHeight: 1.6 }}>
+              {importReport.fileError ? importReport.fileError : (
+                <>
+                  Import "{importReport.fileName}": {importReport.changed} changed · {importReport.unchanged} unchanged
+                  {' · '}{importReport.unknown.length} unknown code{importReport.unknown.length === 1 ? '' : 's'}
+                  {' · '}{importReport.rejected.length} rejected row{importReport.rejected.length === 1 ? '' : 's'}
+                  {importReport.unknown.length > 0 && <div style={{ marginTop: 4 }}>Unknown (not in this order, never added): {importReport.unknown.join(', ')}</div>}
+                  {importReport.rejected.length > 0 && (
+                    <div style={{ marginTop: 4 }}>
+                      Rejected: {importReport.rejected.map(r => `${r.code} (${r.value || '—'}, ${r.reason})`).join(' · ')}
+                    </div>
+                  )}
+                  {importReport.nameMismatch && <div style={{ marginTop: 4, color: 'var(--core-yellow)' }}>{importReport.nameMismatch}</div>}
+                </>
+              )}
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14,
             padding: '16px 24px', borderTop: '1px solid var(--glass-border)', flexWrap: 'wrap' }}>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)', flex: '1 1 200px' }}>
@@ -1800,6 +1930,10 @@ function OrderDesksMode() {
               <Button variant="solid" onClick={exportCsv}>StockFlow CSV</Button>
               <Button variant="solid" onClick={exportTlx}>TLX</Button>
               <Button variant="solid" onClick={exportPromoSheet}>Promo Sheet</Button>
+              <input ref={fileInputRef} type="file" accept=".csv,.xlsx" style={{ display: 'none' }} onChange={onImportFileChosen} />
+              <Button variant="solid" onClick={() => fileInputRef.current?.click()} {...(submitted ? { disabled: true } : {})}>
+                Import
+              </Button>
               <Button variant="daisy" onClick={() => setSubmitted(true)} {...(submitted ? { disabled: true } : {})}>
                 {submitted ? 'Submitted' : 'Submit order'}
               </Button>
