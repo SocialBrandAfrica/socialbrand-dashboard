@@ -36,6 +36,18 @@
     Valid values: sales, movements, articles, lifecycle, orders, orderlines,
     suppliermaster, supplierlink, tradeterms, ean, departments, subdepts, soh_daily.
 
+.PARAMETER BackfillFromDate
+.PARAMETER BackfillToDate
+    SB-CC-BLOOM-011 item 0(b). Explicit historical window for sigma_sales ONLY
+    (-TableName sales required alongside these). Supply both together. Bypasses
+    the delta watermark and the rolling -FullRefresh 16-month floor -- use this
+    to land a FIXED past month that "now" has already moved past.
+
+.EXAMPLE
+    # One-off backfill: land January 2025 (item 0b, completes the LY floor for
+    # the item-1 backtest). Run ON the store server.
+    .\Invoke-ExtractFromSigmaSQL.ps1 -TableName sales -BackfillFromDate 2025-01-01 -BackfillToDate 2025-01-31
+
 .EXAMPLE
     # Initial load -- full history, all tables
     powershell.exe -ExecutionPolicy Bypass -File ".\Invoke-ExtractFromSigmaSQL.ps1" -FullRefresh
@@ -144,8 +156,23 @@ param(
     [ValidateSet('sales','movements','articles','lifecycle','orders','orderlines',
                  'suppliermaster','supplierlink','tradeterms','ean','scanrefs','departments','subdepts',
                  'soh_daily','promotions','promotionarticles')]
-    [string]$TableName = ''
+    [string]$TableName = '',
+    # SB-CC-BLOOM-011 item 0(b), 2026-07-14: one-off historical window override
+    # for sigma_sales ONLY (Invoke-ExtractSales). The rolling 16-month
+    # -FullRefresh floor can never reach a fixed past month once "now" has
+    # moved on -- this is the explicit escape hatch for that. Both must be
+    # supplied together (validated below) or neither -- normal delta/full-
+    # refresh behaviour is completely unchanged when they are omitted.
+    # Example (run ON the store server): .\Invoke-ExtractFromSigmaSQL.ps1
+    #   -TableName sales -BackfillFromDate 2025-01-01 -BackfillToDate 2025-01-31
+    [string]$BackfillFromDate = '',
+    [string]$BackfillToDate = ''
 )
+
+if (($BackfillFromDate -and -not $BackfillToDate) -or ($BackfillToDate -and -not $BackfillFromDate)) {
+    Write-Host "FATAL: -BackfillFromDate and -BackfillToDate must be supplied together." -ForegroundColor Red
+    exit 1
+}
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -167,7 +194,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.19'   # v1.19 (2026-07-07): restored the run-level push_log summary row (push_type='sigma_extractor'), orphaned since Push-SigmaToSupabase.ps1 retired 2026-06-28 -- see changelog above. (v1.18 DASH-FINAL item 8, 2026-07-05: HEALTH-aware task self-heal. Register-ExtractDeltaTask now checks Get-ScheduledTaskInfo (stale LastRunTime >2d/never OR logon/launch-failure LastTaskResult forces a fresh re-register) instead of returning as soon as the task exists -- the old check let a task dead on a logon failure (the Dice 30 Jun cause) pass forever. Non-admin fallback: if RunLevel Highest is denied, register Limited (extract needs SQL+HTTPS, not admin) and log the downgrade to push_log (R22). v1.17 SB-CC-DICE-REPAIR-001: self-healing dw220sdb user mapping repair. v1.16: truthful status, bounded retry)
+$ScriptVersion  = 'v1.20'   # v1.20 (2026-07-14, SB-CC-BLOOM-011 item 0(b)): -BackfillFromDate/-BackfillToDate added to Invoke-ExtractSales only -- an explicit one-off historical window that bypasses both the delta watermark and the rolling -FullRefresh 16-month floor, so a FIXED past month (e.g. Jan 2025, needed to complete the LY floor for the item-1 backtest) can be landed regardless of how far "now" has moved on. Additive, backward-compatible -- omitted, every existing call behaves identically. Must run ON the store server (Windows Auth, no remote path from the platform side) -- floor-side execution, not something CC can trigger directly. v1.19 (2026-07-07): restored the run-level push_log summary row (push_type='sigma_extractor'), orphaned since Push-SigmaToSupabase.ps1 retired 2026-06-28 -- see changelog above. (v1.18 DASH-FINAL item 8, 2026-07-05: HEALTH-aware task self-heal. Register-ExtractDeltaTask now checks Get-ScheduledTaskInfo (stale LastRunTime >2d/never OR logon/launch-failure LastTaskResult forces a fresh re-register) instead of returning as soon as the task exists -- the old check let a task dead on a logon failure (the Dice 30 Jun cause) pass forever. Non-admin fallback: if RunLevel Highest is denied, register Limited (extract needs SQL+HTTPS, not admin) and log the downgrade to push_log (R22). v1.17 SB-CC-DICE-REPAIR-001: self-healing dw220sdb user mapping repair. v1.16: truthful status, bounded retry)
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -851,16 +878,27 @@ function Invoke-ExtractSales {
 
     # Retention window: first day of current month minus 16 months.
     # Mirrors the RetentionCutoff formula in Push-SigmaToSupabase.ps1 exactly.
-    $today    = Get-Date
-    $fromDate = if ($FullRefresh) {
-        (Get-Date -Year $today.Year -Month $today.Month -Day 1).AddMonths(-16).ToString('yyyy-MM-dd')
+    $today = Get-Date
+    if ($BackfillFromDate -and $BackfillToDate) {
+        # SB-CC-BLOOM-011 item 0(b): explicit historical window, bypasses both
+        # the delta watermark and the rolling FullRefresh floor -- the only
+        # way to land a FIXED past month (e.g. Jan 2025) once "now" has moved
+        # on far enough that -FullRefresh's own 16-month floor can't reach it.
+        $fromDate = $BackfillFromDate
+        $toDate   = $BackfillToDate
+        Write-Host "  BACKFILL MODE: explicit window, ignores watermark and FullRefresh floor." -ForegroundColor Yellow
     }
     else {
-        $wm = Get-Watermark -Table 'sigma_sales' -Column 'sale_date'
-        if ($wm) { $wm.AddDays(-$DeltaOverlapDays).ToString('yyyy-MM-dd') }
-        else     { $today.AddDays(-$DefaultDeltaDays).ToString('yyyy-MM-dd') }
+        $fromDate = if ($FullRefresh) {
+            (Get-Date -Year $today.Year -Month $today.Month -Day 1).AddMonths(-16).ToString('yyyy-MM-dd')
+        }
+        else {
+            $wm = Get-Watermark -Table 'sigma_sales' -Column 'sale_date'
+            if ($wm) { $wm.AddDays(-$DeltaOverlapDays).ToString('yyyy-MM-dd') }
+            else     { $today.AddDays(-$DefaultDeltaDays).ToString('yyyy-MM-dd') }
+        }
+        $toDate = $today.ToString('yyyy-MM-dd')
     }
-    $toDate = $today.ToString('yyyy-MM-dd')
 
     Write-Host "  Window: $fromDate .. $toDate"
 
