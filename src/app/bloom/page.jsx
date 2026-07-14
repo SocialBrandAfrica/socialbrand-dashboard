@@ -1499,7 +1499,16 @@ function OrderDesksMode() {
     downloadText(`${storeCode}_${desk}_${preset}_${deliveryDate}.csv`, header + body)
   }
 
-  // TLX: NORMAL order only. Promo lines and no-EAN lines never ride it.
+  // Pieter ruling 2026-07-14: the three-file export contract (CSV/TLX/Promo
+  // Sheet) is a DC-only shape. Coca-Cola, SAB and every other direct desk
+  // never get a separate promo sheet -- just TLX and CSV, so TLX on those
+  // routes must carry promo lines itself (nothing else would carry them).
+  const isDcRoute = desk === 'DC_AMBIENT' || desk === 'DC_TOPS'
+
+  // TLX: on DC routes, NORMAL order only -- promo lines and no-EAN lines
+  // never ride it (they go out on the separate Promo Sheet). On direct
+  // routes (no promo sheet exists there), promo lines ride the TLX too --
+  // it is the buyer's only export for that desk.
   // Carries the PACK quantity (q), never units -- Sigma's TLX order import
   // reads packs, not each. (Bug: this line used to multiply by pack_size,
   // writing units; corrected 2026-07-14 per floor report.)
@@ -1507,7 +1516,8 @@ function OrderDesksMode() {
     const parts = []
     for (const l of lines) {
       const q = qty[l.product_code] ?? 0
-      if (q <= 0 || !l.ean || l.promo_active) continue
+      if (q <= 0 || !l.ean) continue
+      if (isDcRoute && l.promo_active) continue
       parts.push(`${l.ean}+${q}`)
     }
     downloadText(`${storeCode}_${desk}_${preset}_${deliveryDate}.tlx`, `${storeCode}++${parts.join('+')}`)
@@ -1945,7 +1955,7 @@ function OrderDesksMode() {
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <Button variant="solid" onClick={exportCsv}>StockFlow CSV</Button>
               <Button variant="solid" onClick={exportTlx}>TLX</Button>
-              <Button variant="solid" onClick={exportPromoSheet}>Promo Sheet</Button>
+              {isDcRoute && <Button variant="solid" onClick={exportPromoSheet}>Promo Sheet</Button>}
               <input ref={fileInputRef} type="file" accept=".csv,.xlsx" style={{ display: 'none' }} onChange={onImportFileChosen} />
               <Button variant="solid" onClick={() => fileInputRef.current?.click()} {...(submitted ? { disabled: true } : {})}>
                 Import
