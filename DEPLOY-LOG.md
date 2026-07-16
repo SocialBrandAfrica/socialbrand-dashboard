@@ -4,6 +4,20 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-14 -- PUSH-HARDEN-001: finalize made surgical -- export folder kept, credential stripped (`594b646`)
+
+Pieter's design refinement: `C:\SocialBrand` **survives** as the genuine Sigma export folder (CSV/Excel only, load-bearing for nothing) while `C:\RetailHistory` holds the machinery under a neutral name — the brand lands on the one folder where it means nothing.
+
+**Two real bugs this exposed in the prior commit:**
+1. `-Finalize` did `Remove-Item $OldDir -Recurse -Force` — under the new design that **destroys the export folder and everything in it** (`DIWAAIS.xls`, `DIWAAIS2.xls`, every CSV). Now surgical: explicit named machinery list, never a recursive wipe.
+2. **The credential.** `sb-key.txt` (Supabase service_role key) lives in `C:\SocialBrand`. The export folder is deliberately *unlocked* — fine for exports, but a service_role key in it hands out full DB access to any interactive user and defeats the entire exercise. Moot under the old "delete the whole folder" finalize; now that the folder survives, the key **must** be stripped out. It's on the machinery list and is the most important item on it.
+
+**Safety:** never removes a machinery file whose counterpart is missing from the locked folder (losing `sb-key.txt` with no surviving copy would permanently dark that store's feed) — keeps it back and warns loudly. Post-strip it lists survivors and flags any `.ps1`/`.bat` or key/secret/token-named file still in the unlocked folder.
+
+**Unit-tested** in temp folders, 11 assertions, all pass: credential gone from the unlocked folder and still present in the locked one; extractor/logs removed; `*_badrows.log` pattern matched; the folder itself survives; `DIWAAIS.xls`/`DIWAAIS2.xls`/`daily_export.csv` all survive; a machinery file with no counterpart kept back rather than deleted. Not executed anywhere.
+
+---
+
 ## 2026-07-14 -- SB-CC-PUSH-HARDEN-001: ONE Retail History migration, four production bugs closed (`d029699`)
 
 Pieter ruling + counsel-cleared. Consolidates four fighting versions (`Migrate-PushHarden.ps1` + the three root `ops-*` scripts, all superseded/hard-blocked) into one per-server script running the approved sequence: **preconditions → retention export → rename task → copy folder → repoint → lock the FINAL folder with the ACTUAL run-as account → STOP for human verification → separate `-Finalize` deletes the old.**
