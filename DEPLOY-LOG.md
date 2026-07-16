@@ -4,6 +4,27 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-14 -- SB-CC-PUSH-HARDEN-001: ONE Retail History migration, four production bugs closed (`d029699`)
+
+Pieter ruling + counsel-cleared. Consolidates four fighting versions (`Migrate-PushHarden.ps1` + the three root `ops-*` scripts, all superseded/hard-blocked) into one per-server script running the approved sequence: **preconditions → retention export → rename task → copy folder → repoint → lock the FINAL folder with the ACTUAL run-as account → STOP for human verification → separate `-Finalize` deletes the old.**
+
+**Four real bugs the previous scripts would have hit on live servers, during the review week:**
+
+1. **Self-heal resurrection.** `Register-ExtractDeltaTask` runs at startup on *every* full-chain run, re-registering the task under whatever name is hardcoded in **that deployed copy**. Renaming the live task while an older extractor is deployed → the next 18:40 run recreates the old branded task. Two tasks, double extraction nightly, brand back in Task Scheduler, silently, within 24h. Now **hard-gated**: the script refuses unless the extractor on disk already carries the new name. Deploy-then-rename is enforced, not hoped for.
+2. **ACL/move order deadlock.** Lock-then-copy loses the lock (`Copy-Item` doesn't carry the source ACL; the copy inherits from `C:\` root where Users can read). Copy-then-lock locks the *stale fallback* and leaves the live folder open. **Neither order worked.** Now locks the final folder, after the move.
+3. **Assumed principal.** Granting only SYSTEM + Administrators assumed the run-as is an admin — but the extractor's own v1.18 logic falls back to **Limited/non-elevated** when `RunLevel Highest` is denied, and that has fired before. An assumed-admin lock would lock out the account running the feed and dark the store silently. Now the principal is **read off the live task** and granted explicitly, **Modify** (the extractor writes its own error/badrows logs there and deletes the error file on clean exit).
+4. **Four task names in play** (`SocialBrand-ExtractDelta` on servers / `WindowsDataSync-SB_Daily` in repo / `Retail History` in two ops scripts / `DataMaintenanceDaily` in a third's verify line). Converged on Pieter's choice: **`Retail History`**, in the three files that must agree.
+
+**Extractor v1.23:** `$taskName = 'Retail History'`; every `C:\socialbrand\...` absolute literal replaced with `$BaseDir` (= `$PSScriptRoot`) so it runs from wherever deployed — this is what makes the `C:\SocialBrand` → `C:\RetailHistory` move safe with no path rewriting; User-Agent de-branded. **`$ClientId = 'socialbrand'` deliberately unchanged** — live DB value on 277k+ rows, load-bearing, canon-ruled. Flagged, not broken.
+
+**Catman guard.** Pieter's standing instruction: `S:\sigma\comms\Catman` (PRSSALE.DAT / TAC*.zip) is SPAR property and is never touched. The script refuses to start if any path resolves to `*catman*`, `s:*`, or `*\sigma\comms*` — unit-tested against 7 hostile variants (case, subpath, bare `S:\`) and 5 legitimate paths, all pass.
+
+**Safety model:** copies never moves; retention export verified non-empty before any change; new task verified byte-identical then auto-rolled-back on mismatch; old task + folder stay live as fallback (both 18:40 tasks run the first night deliberately — the extractor is idempotent, upserts on natural keys — so the store still feeds if the new path has a problem); `-Finalize` refuses unless the new task points at the new folder *and* has a real `LastRunTime` inside 26h; `-DryRun` changes nothing.
+
+**Not executed anywhere** — no server access from this session. Parse-checked + ASCII-verified on all five scripts. Rollout: `-DryRun` one server → real run → let it feed one night → confirm `push_log` → `-Finalize` → then the other four.
+
+---
+
 ## 2026-07-14 -- PUSH-HARDEN-001 follow-up: 11 retired scripts removed from repo, off-server removal tool built for the servers (`38487dd`)
 
 Pieter ruling: retired scripts must not be on the servers, full stop -- a local same-server archive subfolder (what the existing `Cleanup-SocialBrandFolder.ps1` already does) doesn't satisfy that.
