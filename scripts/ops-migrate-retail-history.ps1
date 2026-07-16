@@ -45,6 +45,22 @@
     and old folder both survive until you run -Finalize, and -Finalize only
     runs after YOU have confirmed a real 18:40 feed landed in push_log.
 
+    THE END STATE (Pieter's design, 2026-07-14):
+      C:\RetailHistory  = the MACHINERY. Extractor, key, logs. ACL-locked to
+                          SYSTEM + Administrators + the real run-as account.
+                          Neutral name -- nothing here says what it is.
+      C:\SocialBrand    = KEPT, as the genuine Sigma export folder. CSV/Excel
+                          only. Load-bearing for nothing. Not locked -- an
+                          export folder reveals nothing either way.
+      The brand name ends up on the one folder where it means nothing, and
+      every trace of how the platform actually works moves off under a
+      neutral name. -Finalize therefore strips the MACHINERY out of
+      C:\SocialBrand and LEAVES the folder and its exports intact -- it is
+      NOT a folder delete. sb-key.txt (the Supabase service_role key) is on
+      that strip list and is the most important item on it: the export folder
+      is not ACL-locked, so a key left behind there would hand out full DB
+      access and defeat this whole exercise.
+
 .PARAMETER OldTaskName
     The branded task currently on the server.
 
@@ -62,9 +78,12 @@
     Retention export target. Default C:\SB-retain (matches the record memo).
 
 .PARAMETER Finalize
-    SECOND run, after verification: deletes the old task and the old folder.
-    Refuses unless the new task exists, is pointed at the new folder, and has
-    a LastRunTime newer than the migration stamp.
+    SECOND run, after verification: deletes the old TASK, and strips the
+    MACHINERY (extractor, sb-key.txt, logs) out of the old folder -- the
+    folder itself and its CSV/Excel exports are KEPT (see THE END STATE
+    above). Never removes a machinery file whose counterpart is missing from
+    the new folder. Refuses unless the new task exists, points at the new
+    folder, and has a real LastRunTime inside 26h.
 
 .PARAMETER DryRun
     Reports every step, changes nothing, writes nothing.
@@ -151,13 +170,51 @@ if ($Finalize) {
     }
 
     Write-Host "[finalize] '$NewTaskName' last ran $($info.LastRunTime) and points at the new folder. Proceeding." -ForegroundColor Green
+    Write-Host ""
+
+    # -------------------------------------------------------------------------
+    # Pieter's design, 2026-07-14: '$OldDir' SURVIVES as the genuine Sigma
+    # export folder (CSV/Excel only, load-bearing for nothing). Only the
+    # MACHINERY leaves it. So finalize is surgical -- an explicit named list,
+    # never a recursive wipe. An earlier draft of this script did
+    # `Remove-Item $OldDir -Recurse -Force` here, which would have destroyed
+    # DIWAAIS.xls / DIWAAIS2.xls and every other real export in that folder.
+    #
+    # *** THE CREDENTIAL. *** sb-key.txt is the Supabase service_role key.
+    # '$NewDir' is ACL-locked; '$OldDir' is NOT (it is just an export folder
+    # now, readable by ordinary users). Leaving the key behind in an unlocked
+    # folder would hand out full DB access and defeat the entire point of this
+    # exercise. It is on the list below and it is the single most important
+    # removal here.
+    # -------------------------------------------------------------------------
+    $MachineryFiles = @(
+        'Invoke-ExtractFromSigmaSQL.ps1',
+        'sb-key.txt',
+        'Test-SupabaseConnection.ps1',
+        'extractor_last_run.log',
+        'extractor_last_err.log',
+        'extractor_last_error.txt',
+        'nightly_push.log'
+    )
+    $MachineryPatterns = @('*_badrows.log')
 
     if ($DryRun) {
         Write-Host "  DRY RUN: would delete task '$OldTaskName'" -ForegroundColor Yellow
-        Write-Host "  DRY RUN: would remove folder '$OldDir'" -ForegroundColor Yellow
+        Write-Host "  DRY RUN: would remove MACHINERY ONLY from '$OldDir' (folder + exports KEPT):" -ForegroundColor Yellow
+        foreach ($m in $MachineryFiles) {
+            $p = Join-Path $OldDir $m
+            if (Test-Path -LiteralPath $p) { Write-Host "           - $m" -ForegroundColor Yellow }
+        }
+        foreach ($pat in $MachineryPatterns) {
+            Get-ChildItem -LiteralPath $OldDir -Filter $pat -File -ErrorAction SilentlyContinue |
+                ForEach-Object { Write-Host "           - $($_.Name)" -ForegroundColor Yellow }
+        }
+        Write-Host "  DRY RUN: everything else in '$OldDir' would be left exactly as-is." -ForegroundColor Yellow
         return
     }
 
+    # 1. Old task first -- nothing should be able to launch from $OldDir while
+    #    we strip it.
     if (Get-ScheduledTask -TaskName $OldTaskName -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName $OldTaskName -Confirm:$false
         Write-Host "[finalize] Removed old task '$OldTaskName'." -ForegroundColor Green
@@ -165,15 +222,64 @@ if ($Finalize) {
         Write-Host "[finalize] Old task '$OldTaskName' already gone." -ForegroundColor DarkGray
     }
 
-    if (Test-Path -LiteralPath $OldDir) {
-        Remove-Item -LiteralPath $OldDir -Recurse -Force
-        Write-Host "[finalize] Removed old folder '$OldDir'." -ForegroundColor Green
+    # 2. Machinery out of the export folder -- but NEVER remove a file whose
+    #    counterpart did not land in the locked folder. Losing sb-key.txt with
+    #    no surviving copy would take the store's feed down permanently.
+    $removed = 0; $keptBack = 0
+    $targets = @()
+    foreach ($m in $MachineryFiles) {
+        $p = Join-Path $OldDir $m
+        if (Test-Path -LiteralPath $p) { $targets += (Get-Item -LiteralPath $p) }
+    }
+    foreach ($pat in $MachineryPatterns) {
+        $targets += (Get-ChildItem -LiteralPath $OldDir -Filter $pat -File -ErrorAction SilentlyContinue)
+    }
+
+    foreach ($t in $targets) {
+        $counterpart = Join-Path $NewDir $t.Name
+        if (-not (Test-Path -LiteralPath $counterpart)) {
+            Write-Host "  [KEPT] '$($t.Name)' -- no counterpart in '$NewDir'. NOT removed." -ForegroundColor Red
+            $keptBack++
+            continue
+        }
+        Remove-Item -LiteralPath $t.FullName -Force
+        Write-Host "  [moved-out] $($t.Name)" -ForegroundColor Green
+        $removed++
+    }
+    Write-Host "[finalize] Machinery removed from '$OldDir': $removed file(s). Kept back (no counterpart): $keptBack." -ForegroundColor Green
+
+    # 3. Report what survives, and flag anything that still looks like code or
+    #    a secret sitting in an UNLOCKED folder.
+    Write-Host ""
+    Write-Host "=== '$OldDir' now contains (export folder, NOT locked) ===" -ForegroundColor Cyan
+    $survivors = Get-ChildItem -LiteralPath $OldDir -File -ErrorAction SilentlyContinue
+    if (-not $survivors) {
+        Write-Host "  (no files at root)" -ForegroundColor DarkGray
     } else {
-        Write-Host "[finalize] Old folder '$OldDir' already gone." -ForegroundColor DarkGray
+        $survivors | Sort-Object Name |
+            Select-Object Name, @{n='KB';e={[math]::Round($_.Length/1KB,1)}}, LastWriteTime |
+            Format-Table -AutoSize | Out-String | Write-Host
+    }
+    $suspect = $survivors | Where-Object { $_.Extension -in @('.ps1','.bat','.cmd','.psm1') -or $_.Name -match '(?i)key|secret|token|password|cred' }
+    if ($suspect) {
+        Write-Host "  *** REVIEW THESE -- code or possible secrets left in an UNLOCKED folder: ***" -ForegroundColor Red
+        $suspect | ForEach-Object { Write-Host "      $($_.Name)" -ForegroundColor Red }
+        Write-Host "  This folder is meant to hold CSV/Excel exports only. Anything above either" -ForegroundColor Yellow
+        Write-Host "  belongs in '$NewDir' (locked) or should be removed." -ForegroundColor Yellow
+    } else {
+        Write-Host "  [ok] No scripts or key-like files remain at the root of the export folder." -ForegroundColor Green
     }
 
     Write-Host ""
-    Write-Host "=== FINALIZE DONE. Retention copies remain in $RetainDir. ===" -ForegroundColor Cyan
+    Write-Host "=== FINALIZE DONE ===" -ForegroundColor Cyan
+    Write-Host "  Machinery : '$NewDir'   (locked: SYSTEM + Administrators + run-as)"
+    Write-Host "  Exports   : '$OldDir'   (kept, CSV/Excel, load-bearing for nothing)"
+    Write-Host "  Retained  : $RetainDir"
+    if ($keptBack -gt 0) {
+        Write-Host ""
+        Write-Host "  WARNING: $keptBack machinery file(s) were KEPT because no copy exists in '$NewDir'." -ForegroundColor Red
+        Write-Host "  Investigate before considering this server done." -ForegroundColor Red
+    }
     return
 }
 
@@ -381,6 +487,12 @@ Write-Host "NOTE: both tasks are scheduled for 18:40 tonight. That is deliberate
 Write-Host "      the fallback proves the store still feeds if the new path has a problem." -ForegroundColor DarkGray
 Write-Host "      The extractor is idempotent (upserts on natural keys), so a double run" -ForegroundColor DarkGray
 Write-Host "      does not corrupt anything. -Finalize removes the duplicate." -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "END STATE after -Finalize:" -ForegroundColor White
+Write-Host "  '$NewDir'  = machinery (extractor, key, logs), locked."
+Write-Host "  '$OldDir'  = KEPT as the Sigma export folder (CSV/Excel), machinery stripped out."
+Write-Host "  -Finalize does NOT delete '$OldDir' -- it removes only named machinery files"
+Write-Host "  (including sb-key.txt, which must not sit in an unlocked export folder)."
 Write-Host ""
 Write-Host "VERIFY BEFORE FINALIZING (do not skip):" -ForegroundColor Yellow
 Write-Host "  1. Let it run tonight at 18:40 (or: schtasks /Run /TN `"$NewTaskName`")"
