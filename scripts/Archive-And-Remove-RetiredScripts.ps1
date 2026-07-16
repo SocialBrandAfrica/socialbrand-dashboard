@@ -8,8 +8,8 @@
     server's C:\SocialBrand.
 
 .DESCRIPTION
-    Different risk profile from Migrate-PushHarden.ps1 (which renames a LIVE
-    task and locks a folder -- everything stays recoverable in place).
+    Different risk profile from ops-migrate-retail-history.ps1 (which renames a
+    LIVE task and locks a folder -- everything stays recoverable in place).
     This script DELETES files from the server. Under an active records-
     retention request, a local "moved to a subfolder on the same box" archive
     (which is what the existing Cleanup-SocialBrandFolder.ps1 does for the

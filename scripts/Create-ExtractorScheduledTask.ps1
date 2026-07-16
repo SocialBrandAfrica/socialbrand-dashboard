@@ -38,7 +38,7 @@ $ErrorActionPreference = 'Stop'
 # own $taskName exactly -- that script's self-heal logic re-registers under
 # whatever name is hardcoded there if it ever finds the task missing/unhealthy.
 # A mismatch here would bootstrap under one name while self-heal expects another.
-$TaskName   = 'WindowsDataSync-SB_Daily'
+$TaskName   = 'Retail History'
 $ScriptPath = Join-Path $ScriptDir 'Invoke-ExtractFromSigmaSQL.ps1'
 $ExeArgs    = '-ExecutionPolicy Bypass -NonInteractive -WindowStyle Hidden -File "' + $ScriptPath + '"'
 # Absolute path to powershell.exe -- bare 'powershell.exe' fails on servers where

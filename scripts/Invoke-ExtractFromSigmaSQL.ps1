@@ -177,13 +177,27 @@ if (($BackfillFromDate -and -not $BackfillToDate) -or ($BackfillToDate -and -not
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# SB-CC-PUSH-HARDEN-001 (v1.23, 2026-07-14): THE SCRIPT'S OWN FOLDER, never a
+# hardcoded literal. Every 'C:\socialbrand\...' absolute path in this script
+# used to be baked in, which meant the folder de-brand (C:\SocialBrand ->
+# C:\RetailHistory) would leave the moved copy still reading its key from --
+# and writing its error log to -- the OLD branded folder. Deriving the base
+# folder from the script's own location makes the extractor work from
+# wherever it is deployed, so the move is safe and there is no lockstep
+# path-rewrite to get wrong. Defined BEFORE the trap below because the trap
+# writes into it.
+$BaseDir = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($BaseDir)) { $BaseDir = Split-Path -Parent $MyInvocation.MyCommand.Definition }
+if ([string]::IsNullOrWhiteSpace($BaseDir)) { $BaseDir = (Get-Location).Path }
+$ErrorFile = Join-Path $BaseDir 'extractor_last_error.txt'
+
 # Script-scope trap: catches terminating errors thrown OUTSIDE the main
 # try/catch -- i.e. the CONFIG section below (unknown host, missing key file).
 # Without this, such failures exit 1 with no error file and push_log shows a
 # bare "Exit code 1" (the v1.8 mechanism only covers the main try block).
 trap {
     try {
-        Set-Content -Path 'C:\socialbrand\extractor_last_error.txt' -Value ("CONFIG/STARTUP: " + $_.ToString()) -Encoding UTF8 -Force
+        Set-Content -Path $ErrorFile -Value ("CONFIG/STARTUP: " + $_.ToString()) -Encoding UTF8 -Force
     }
     catch {}
     Write-Host "FATAL (startup): $_" -ForegroundColor Red
@@ -194,7 +208,7 @@ trap {
 # CONFIG
 # =============================================================================
 
-$ScriptVersion  = 'v1.22'   # v1.22 (2026-07-14, SB-CC-PUSH-HARDEN-001 follow-up, Pieter ruling): scrubbed a legacy-mechanism reference from a changelog line + a doc comment above (retirement history stays in canon, not repeated inline). No functional change. v1.21 (2026-07-14, SB-CC-PUSH-HARDEN-001): self-registered task renamed from the identifying 'SocialBrand-ExtractDelta' to the neutral 'WindowsDataSync-SB_Daily' (Pieter ruling, retention-first -- Migrate-PushHarden.ps1 does the one-time live rename + ACL lock on each server, preserving a dated reference copy first per the binding retention constraint). Create-ExtractorScheduledTask.ps1 and Remove-LegacyScheduledTasks.ps1 updated to match -- all three must agree on this name or the self-heal block below will silently recreate a task under whichever name is stale. v1.20 (2026-07-14, SB-CC-BLOOM-011 item 0(b)): -BackfillFromDate/-BackfillToDate added to Invoke-ExtractSales only -- an explicit one-off historical window that bypasses both the delta watermark and the rolling -FullRefresh 16-month floor, so a FIXED past month (e.g. Jan 2025, needed to complete the LY floor for the item-1 backtest) can be landed regardless of how far "now" has moved on. Additive, backward-compatible -- omitted, every existing call behaves identically. Must run ON the store server (Windows Auth, no remote path from the platform side) -- floor-side execution, not something CC can trigger directly. v1.19 (2026-07-07): restored the run-level push_log summary row (push_type='sigma_extractor'), orphaned since Push-SigmaToSupabase.ps1 retired 2026-06-28 -- see changelog above. (v1.18 DASH-FINAL item 8, 2026-07-05: HEALTH-aware task self-heal. Register-ExtractDeltaTask now checks Get-ScheduledTaskInfo (stale LastRunTime >2d/never OR logon/launch-failure LastTaskResult forces a fresh re-register) instead of returning as soon as the task exists -- the old check let a task dead on a logon failure (the Dice 30 Jun cause) pass forever. Non-admin fallback: if RunLevel Highest is denied, register Limited (extract needs SQL+HTTPS, not admin) and log the downgrade to push_log (R22). v1.17 SB-CC-DICE-REPAIR-001: self-healing dw220sdb user mapping repair. v1.16: truthful status, bounded retry)
+$ScriptVersion  = 'v1.23'   # v1.23 (2026-07-14, SB-CC-PUSH-HARDEN-001, Pieter ruling + counsel-cleared): ONE NAME EVERYWHERE = 'Retail History' (supersedes the interim 'WindowsDataSync-SB_Daily'; Create-ExtractorScheduledTask.ps1 + Remove-LegacyScheduledTasks.ps1 match). THIS VERSION MUST BE DEPLOYED TO A SERVER *BEFORE* ITS TASK IS RENAMED -- the self-heal block below re-registers under whatever name is hardcoded here on every full-chain run, so a rename done while an older copy is deployed would resurrect the old branded task on the next 18:40 run and double-extract nightly. ops-migrate-retail-history.ps1 hard-gates on exactly this. ALSO: every 'C:\socialbrand\...' absolute literal replaced with $BaseDir (= the script's own folder, $PSScriptRoot) -- the extractor now works from wherever it is deployed, so the C:\SocialBrand -> C:\RetailHistory folder move needs no path rewrite and cannot leave the moved copy reading its key from the old folder. User-Agent de-branded (own-Supabase header only). $ClientId = 'socialbrand' DELIBERATELY UNCHANGED -- it is a live DB value on 277k+ rows, load-bearing, canon-ruled. v1.22 (2026-07-14): scrubbed a legacy-mechanism reference from a changelog line + a doc comment above (retirement history stays in canon, not repeated inline). No functional change. v1.21 (2026-07-14, SB-CC-PUSH-HARDEN-001): self-registered task renamed from the identifying 'SocialBrand-ExtractDelta' to a neutral label (Pieter ruling, retention-first -- preserving a dated reference copy first per the binding retention constraint). v1.20 (2026-07-14, SB-CC-BLOOM-011 item 0(b)): -BackfillFromDate/-BackfillToDate added to Invoke-ExtractSales only -- an explicit one-off historical window that bypasses both the delta watermark and the rolling -FullRefresh 16-month floor, so a FIXED past month (e.g. Jan 2025, needed to complete the LY floor for the item-1 backtest) can be landed regardless of how far "now" has moved on. Additive, backward-compatible -- omitted, every existing call behaves identically. Must run ON the store server (Windows Auth, no remote path from the platform side) -- floor-side execution, not something CC can trigger directly. v1.19 (2026-07-07): restored the run-level push_log summary row (push_type='sigma_extractor'), orphaned since Push-SigmaToSupabase.ps1 retired 2026-06-28 -- see changelog above. (v1.18 DASH-FINAL item 8, 2026-07-05: HEALTH-aware task self-heal. Register-ExtractDeltaTask now checks Get-ScheduledTaskInfo (stale LastRunTime >2d/never OR logon/launch-failure LastTaskResult forces a fresh re-register) instead of returning as soon as the task exists -- the old check let a task dead on a logon failure (the Dice 30 Jun cause) pass forever. Non-admin fallback: if RunLevel Highest is denied, register Limited (extract needs SQL+HTTPS, not admin) and log the downgrade to push_log (R22). v1.17 SB-CC-DICE-REPAIR-001: self-healing dw220sdb user mapping repair. v1.16: truthful status, bounded retry)
 $ClientId       = 'socialbrand'
 
 # Store identity -- auto-detected from hostname, same map as Push-SigmaToSupabase.ps1.
@@ -219,7 +233,7 @@ $EasyDb      = 'EASYDB'
 
 # Supabase -- service_role key loaded from local file. Never stored in script.
 $SupabaseUrl = 'https://crklvhfwyxlisfcvqenc.supabase.co'
-$KeyFile     = 'C:\socialbrand\sb-key.txt'
+$KeyFile     = Join-Path $BaseDir 'sb-key.txt'
 if (-not (Test-Path $KeyFile)) {
     throw "Supabase key file not found: $KeyFile. Create it with the service_role key on the first line."
 }
@@ -274,7 +288,7 @@ function Send-TaskHealthLog {
             'Authorization' = "Bearer $SupabaseKey"
             'Content-Type'  = 'application/json; charset=utf-8'
             'Prefer'        = 'return=minimal'
-            'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+            'User-Agent'    = "RetailHistory-Extractor/$ScriptVersion PowerShell"
         }
         $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log" -Method POST -Headers $hdrs -Body $bytes -TimeoutSec 15
     }
@@ -311,16 +325,22 @@ function Register-ExtractDeltaTask {
     # not fossilise as a hardcoding.
     #
     # SB-CC-PUSH-HARDEN-001 (2026-07-14, Pieter ruling): task renamed from the
-    # identifying 'SocialBrand-ExtractDelta' to a neutral maintenance label.
-    # THIS LINE IS THE TRAP: the self-heal block below re-registers under
-    # whatever name is hardcoded here every time it finds the task missing or
-    # unhealthy -- if this were left as the old name after a manual rename on
-    # the server, the very next run would silently recreate a new task under
-    # the OLD identifying name and undo the hardening. Migrate-PushHarden.ps1
-    # (SB-CC-PUSH-HARDEN-001) renames the LIVE task to this exact string --
-    # the two must never drift apart. If this name changes again, the
-    # migration script's -NewTaskName must be re-run with the new value.
-    $taskName = 'WindowsDataSync-SB_Daily'
+    # identifying 'SocialBrand-ExtractDelta' to 'Retail History'.
+    #
+    # *** THIS LINE IS THE TRAP. READ BEFORE CHANGING IT. ***
+    # The self-heal block below re-registers the scheduled task under whatever
+    # name is hardcoded HERE, at startup, on every full-chain run. So:
+    #   - This copy must be DEPLOYED to a server BEFORE that server's live task
+    #     is renamed. Rename-first, deploy-later means the next 18:40 run
+    #     recreates the OLD branded task: two tasks, double extraction every
+    #     night, brand back in Task Scheduler, silently, within 24 hours.
+    #   - ops-migrate-retail-history.ps1 REFUSES TO RUN unless the extractor it
+    #     finds on disk already contains this exact string. That gate is the
+    #     only thing standing between a rename and the resurrection above.
+    #   - Three files must always agree on this name: here,
+    #     Create-ExtractorScheduledTask.ps1 ($TaskName) and
+    #     Remove-LegacyScheduledTasks.ps1 ($KeeperTask).
+    $taskName = 'Retail History'
     $atTime   = '18:40'
     try {
         if (-not $PSCommandPath) {
@@ -598,7 +618,7 @@ function Get-Headers {
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json; charset=utf-8'
         'Prefer'        = 'resolution=merge-duplicates,return=minimal'
-        'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+        'User-Agent'    = "RetailHistory-Extractor/$ScriptVersion PowerShell"
     }
 }
 
@@ -652,7 +672,7 @@ function Get-Watermark {
     $hdrs = @{
         'apikey'        = $SupabaseKey
         'Authorization' = "Bearer $SupabaseKey"
-        'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+        'User-Agent'    = "RetailHistory-Extractor/$ScriptVersion PowerShell"
     }
     try {
         $rows = Invoke-RestMethod -Uri $url -Method GET -Headers $hdrs -TimeoutSec 30
@@ -709,7 +729,7 @@ function Send-Batch {
                         # DIAGNOSTIC (v1.2): dump the offending row so we can see the
                         # exact bad value -- JSON sent plus per-field character codes.
                         try {
-                            $log = "C:\socialbrand\" + $Table + "_badrows.log"
+                            $log = Join-Path $BaseDir ($Table + "_badrows.log")
                             Add-Content -Path $log -Value "=== bad row ==="
                             Add-Content -Path $log -Value $rj
                             foreach ($k in $row.Keys) {
@@ -1177,7 +1197,7 @@ FROM dw220sdb.dbo.DBStAr WITH (NOLOCK)
         'Authorization' = "Bearer $SupabaseKey"
         'Content-Type'  = 'application/json; charset=utf-8'
         'Prefer'        = 'resolution=ignore-duplicates,return=minimal'
-        'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+        'User-Agent'    = "RetailHistory-Extractor/$ScriptVersion PowerShell"
     }
     $pushed = 0
     $batch  = [System.Collections.Generic.List[object]]::new()
@@ -1589,7 +1609,7 @@ WHERE  rn = 1
             'apikey'        = $SupabaseKey
             'Authorization' = "Bearer $SupabaseKey"
             'Prefer'        = 'return=minimal'
-            'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+            'User-Agent'    = "RetailHistory-Extractor/$ScriptVersion PowerShell"
         }
         try {
             $null = Invoke-RestMethod -Uri $delUrl -Method DELETE -Headers $delHdrs -TimeoutSec 30
@@ -1685,7 +1705,7 @@ WHERE  rn = 1
             'apikey'        = $SupabaseKey
             'Authorization' = "Bearer $SupabaseKey"
             'Prefer'        = 'return=minimal'
-            'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+            'User-Agent'    = "RetailHistory-Extractor/$ScriptVersion PowerShell"
         }
         try {
             $null = Invoke-RestMethod -Uri $delUrl -Method DELETE -Headers $delHdrs -TimeoutSec 30
@@ -1967,9 +1987,9 @@ FROM dw220sdb.dbo.DBAKTP WITH (NOLOCK)
 # =============================================================================
 
 $startTime = Get-Date
-# Clear any stale error file from the previous run so the push script does not
-# read stale diagnostics if this run succeeds or fails for a different reason.
-try { Remove-Item 'C:\socialbrand\extractor_last_error.txt' -Force -ErrorAction SilentlyContinue } catch {}
+# Clear any stale error file from the previous run so a later reader does not
+# pick up stale diagnostics if this run succeeds or fails for a different reason.
+try { Remove-Item $ErrorFile -Force -ErrorAction SilentlyContinue } catch {}
 
 Write-Host "=================================================="
 Write-Host " Sigma Layer 1 Extractor  $ScriptVersion"
@@ -2011,7 +2031,7 @@ function Send-TableLog {
             'Authorization' = "Bearer $SupabaseKey"
             'Content-Type'  = 'application/json; charset=utf-8'
             'Prefer'        = 'return=minimal'
-            'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+            'User-Agent'    = "RetailHistory-Extractor/$ScriptVersion PowerShell"
         }
         $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log" -Method POST -Headers $hdrs -Body $bytes -TimeoutSec 15
     }
@@ -2050,7 +2070,7 @@ function Send-RunSummary {
             'Authorization' = "Bearer $SupabaseKey"
             'Content-Type'  = 'application/json; charset=utf-8'
             'Prefer'        = 'return=minimal'
-            'User-Agent'    = "SocialBrand-Extractor/$ScriptVersion PowerShell"
+            'User-Agent'    = "RetailHistory-Extractor/$ScriptVersion PowerShell"
         }
         $null = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/push_log" -Method POST -Headers $hdrs -Body $bytes -TimeoutSec 15
     }
@@ -2123,7 +2143,7 @@ catch {
     if ($factLanded) {
         # EOD data is current; a later non-fact table tripped. Report SUCCESS.
         # No error file -> Push-SigmaToSupabase logs sigma_extractor SUCCESS (exit 0).
-        try { Remove-Item 'C:\socialbrand\extractor_last_error.txt' -Force -ErrorAction SilentlyContinue } catch {}
+        try { Remove-Item $ErrorFile -Force -ErrorAction SilentlyContinue } catch {}
         Write-Host "TRUTHFUL-STATUS: EOD fact tables (sigma_sales/sigma_movements/l2_soh_daily) landed; a later non-fact table tripped (likely a mid-run dw220sdb lock). Reporting SUCCESS -- end-of-day data is current. Tripped: $fatalMsg" -ForegroundColor Yellow
         # fall through to the SUMMARY block and exit 0 naturally.
     }
@@ -2134,7 +2154,7 @@ catch {
         # Push-SigmaToSupabase surfaces the real message (PS5.1 cannot capture
         # Write-Host via stream redirection in a subprocess).
         try {
-            Set-Content -Path 'C:\socialbrand\extractor_last_error.txt' -Value $fatalMsg -Encoding UTF8 -Force
+            Set-Content -Path $ErrorFile -Value $fatalMsg -Encoding UTF8 -Force
         }
         catch {}
         Write-Host "FATAL: an EOD fact table did not land -- genuine end-of-day failure." -ForegroundColor Red

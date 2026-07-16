@@ -15,9 +15,10 @@
     (belt-and-suspenders in case the task was registered under a different name).
 
     Keeps:
-        "WindowsDataSync-SB_Daily"  -- Invoke-ExtractFromSigmaSQL.ps1 at 18:40
+        "Retail History"  -- Invoke-ExtractFromSigmaSQL.ps1 at 18:40
         This is the sigma-native extractor; it must continue running every day.
-        (Renamed from "SocialBrand-ExtractDelta" 2026-07-14, SB-CC-PUSH-HARDEN-001.)
+        (Renamed from "SocialBrand-ExtractDelta" 2026-07-14, SB-CC-PUSH-HARDEN-001.
+         $KeeperTask below must always match the extractor's own $taskName.)
 
     Safe to run multiple times. Reports what it found and removed.
 
@@ -28,7 +29,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$KeeperTask   = 'WindowsDataSync-SB_Daily'
+$KeeperTask   = 'Retail History'
 $RemoveByName = @('SocialBrand Nightly Push', 'SocialBrand Sunday Push')
 
 Write-Host ""
