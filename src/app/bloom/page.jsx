@@ -1832,6 +1832,20 @@ function OrderDesksMode() {
                       {YARDSTICK_REASON_LABEL[s.yardstick_reason] ?? s.yardstick_reason}
                     </div>
                   )}
+                  {/* ENG-025 step 2b -- the direct supplier minimum, a FLAG that
+                      never blocks (canon v7 item 7e). Shown only on direct desks
+                      (min_order_value is NULL on DC). Below the minimum the card
+                      says so and shows the shortfall; the buyer decides
+                      (accumulate or send). R29 -- the reason travels. */}
+                  {s.min_order_value != null && (
+                    <div style={{
+                      fontFamily: 'var(--font-mono)', fontSize: 9, marginTop: 3,
+                      color: Number(s.min_shortfall) > 0 ? 'var(--data-warn, #c9a227)' : 'var(--veld-mist)',
+                      opacity: Number(s.min_shortfall) > 0 ? 1 : 0.75,
+                    }}>
+                      {s.min_reason}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

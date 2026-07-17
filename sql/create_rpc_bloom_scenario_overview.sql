@@ -85,6 +85,21 @@
 -- flags nothing any more. `cash_constrained` remains the one stored
 -- exemption; the catch-up/month-end signal gap above still stands.
 --
+-- ⭐ ENG-025 STEP 2b -- DIRECT MINIMUM ORDER VALUE AS A FLAG (PM ruling
+-- 2026-07-17, queue item 2; canon SS14 v7 item 7e). A direct supplier
+-- carries a minimum order value (its own commercial term, config
+-- `bloom_route_config.direct_min_order_value`, DEMO_CALIBRATION R5,000).
+-- Surfaced here, per scenario, as a FLAG that NEVER blocks -- below the
+-- minimum the desk says so, shows the shortfall and its reason (R29), and
+-- the BUYER decides (accumulate to next cycle, or send as is). No
+-- generate-path change, no quantity change -- three read-only output
+-- columns computed off `value_normal`, the order value each scenario would
+-- actually submit. NULL on DC routes (no supplier minimum). The home stays
+-- on bloom_route_config: the minimum is a term of the ROUTE, not a calendar
+-- fact (7e), so unlike cadence it does not move to supplier_calendar.
+-- Accumulate-to-next-cycle stays canon (v9 item 7) and stays unautomated
+-- this pass -- the flag informs, it does not act.
+--
 -- Breakdowns (Pieter 22:3x): by KVI band, by mode, by tier, count-first
 -- line count, protected/trimmed counts (fit outcome) -- all read straight
 -- off the same aggregated rows, jsonb per scenario.
@@ -119,6 +134,9 @@
 -- never the number a fit-applied scenario's own caption reasons about.
 -- =============================================================================
 
+-- Signature unchanged; return shape gains 3 columns (additive) -- DROP required
+-- because RETURNS TABLE changes. Frontend keys by column name, so unknown-to-old
+-- callers is safe (a named-column read ignores columns it does not consume).
 DROP FUNCTION IF EXISTS public.rpc_bloom_scenario_overview(text,date,date,text,numeric);
 
 CREATE FUNCTION public.rpc_bloom_scenario_overview(
@@ -139,6 +157,7 @@ RETURNS TABLE(
   by_kvi_band jsonb, by_mode jsonb, by_tier jsonb, by_kvi_band_lines jsonb,
   demonstrated_weekly_demand numeric,
   count_first_pool integer,
+  min_order_value numeric, min_shortfall numeric, min_reason text,  -- ENG-025 step 2b
   computed_at timestamptz
 )
 LANGUAGE plpgsql
@@ -253,6 +272,17 @@ BEGIN
       END)
       AND obl.grain = 'weekly'
       AND obl.year_month = (SELECT MAX(a.budget_week_start) FROM agg a)
+  ),
+  -- ENG-025 step 2b: the desk's own supplier minimum. Keyed on p_route
+  -- directly -- a DIRECT_<brand> or DIRECT_BEER desk's route_key IS its
+  -- bloom_route_config key. NULL for DC routes (no row / no minimum), which
+  -- makes below_min NULL and the flag absent, exactly right (DC has no
+  -- supplier-minimum concept).
+  mincfg AS (
+    SELECT rc.direct_min_order_value AS min_val
+    FROM bloom_route_config rc
+    WHERE rc.store_code = p_store_code AND rc.route_key = p_route AND rc.status = 'RULED'
+    LIMIT 1
   )
   SELECT
     a.scenario_key, a.lines::int, a.promo_lines::int, a.count_first_lines::int,
@@ -281,6 +311,18 @@ BEGIN
     kj.by_kvi_band, mj.by_mode, tj.by_tier, klj.by_kvi_band_lines,
     ROUND((SELECT v FROM demonstrated), 2),
     a.count_first_pool::int,
+    -- ENG-025 step 2b -- minimum-order FLAG (never blocks; R29 reason travels).
+    (SELECT min_val FROM mincfg),
+    (CASE WHEN (SELECT min_val FROM mincfg) IS NULL THEN NULL
+          ELSE GREATEST(0, (SELECT min_val FROM mincfg) - a.value_normal) END),
+    (CASE
+       WHEN (SELECT min_val FROM mincfg) IS NULL THEN NULL
+       WHEN a.value_normal >= (SELECT min_val FROM mincfg)
+         THEN 'clears the R' || trim(to_char((SELECT min_val FROM mincfg),'FM999999990')) || ' supplier minimum'
+       ELSE 'R' || trim(to_char(GREATEST(0,(SELECT min_val FROM mincfg) - a.value_normal),'FM999999990'))
+            || ' below the R' || trim(to_char((SELECT min_val FROM mincfg),'FM999999990'))
+            || ' supplier minimum -- accumulate to the next cycle or send as is (buyer decides)'
+     END),
     v_now
   FROM agg a
   LEFT JOIN kvi_json kj ON kj.scenario_key = a.scenario_key
