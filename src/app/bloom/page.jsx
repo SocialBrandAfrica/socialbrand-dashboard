@@ -1127,16 +1127,27 @@ const STORE_DESKS = {
   // brief's own priority (item 6). Wave 1 = Coca-Cola. Wave 2 = Clover, Simba,
   // Danone -- config-only, the recipe/stock-state/overview RPCs already
   // generalise on the DIRECT_<brand> route pattern.
-  // Mondelez + National Brands are NOT listed: both are genuinely fortnightly
-  // (median drop gap 11-13d) and supplier_calendar has no fortnightly concept,
-  // so a weekly desk would order half their need -- held behind the cycle
-  // mechanic rather than shipped on a knowingly-wrong cover (canon v9 item 8).
+  // Wave 3 (2026-07-17) = National Brands at 10116 ONLY. Canon 7f rounds cadence
+  // to the nearest whole cycle with ties resolving weekly: its median drop gap is
+  // 10.5 over 16 observations = exactly 1.50 cycles = the tie = WEEKLY, so it
+  // needs no fortnightly grain. Stable at every noise floor, delivery day Tue 76%.
+  //
+  // Mondelez is STILL NOT listed, and the reason has changed -- it is no longer
+  // "fortnightly, waiting on the grain". Its cadence flips on the lines-per-day
+  // noise floor that no canon item states (>=1 -> median 9 -> weekly; >=3, which
+  // SB-CC-BLOOM-009 rule 2 mandates -> median 12 -> fortnightly), and it has no
+  // dominant delivery day at all (Wed 38% / Thu 38%, tied and adjacent -- the
+  // wave-1 bug that collapses the lead to 1). Held for a PM ruling on the floor,
+  // never seeded at a coin-toss (canon v9 item 8, the accuracy gate).
+  // 80175's Mondelez + National Brands and 21355's Coca-Cola remain genuinely
+  // fortnightly (median 13) and wait on the 7e grain.
   '10116': [
     { value: 'DC_AMBIENT', label: 'SPAR DC Ambient' },
     { value: 'DIRECT_COCACOLA', label: 'Coca-Cola Direct' },
     { value: 'DIRECT_CLOVER', label: 'Clover Direct' },
     { value: 'DIRECT_SIMBA', label: 'Simba Direct' },
     { value: 'DIRECT_DANONE', label: 'Danone Direct' },
+    { value: 'DIRECT_NATBRANDS', label: 'National Brands Direct' },
   ],
   '80175': [
     { value: 'DC_AMBIENT', label: 'SPAR DC Ambient' },
