@@ -11,6 +11,14 @@
 .env*.local
 .env
 
+# secrets — NEVER commit these
+# sb-key.txt holds the Supabase service_role key. The extractor reads its key
+# from C:\RetailHistory on each store server, never from this repo, so this
+# file has no reason to exist here. Ignored by exact path and by bare name so
+# a stray copy in another folder cannot be added either.
+scripts/sb-key.txt
+sb-key.txt
+
 # debug
 npm-debug.log*
 
