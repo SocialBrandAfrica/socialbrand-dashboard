@@ -377,6 +377,26 @@ Write-Host "  [ok] Current folder permissions recorded: $aclPath" -ForegroundCol
 # =============================================================================
 Write-Host "[3/6] Creating '$NewTaskName' from the preserved definition..." -ForegroundColor Cyan
 $xmlContent = Get-Content -LiteralPath $xmlPath -Raw
+
+# BUG-LOG ENG-023 (2026-07-17, PM fix on a live-server halt): the description is
+# set HERE, in the XML, before the task is registered. It was previously set with
+# `Set-ScheduledTask -Description` AFTER registering -- that cmdlet has no
+# -Description parameter, so the script died between step 3 and step 4 with the
+# new task already registered and unpointed. Setting it in the XML is also the
+# correct place on the merits: the exported XML carries the OLD task's own
+# description, so registering the XML unaltered would have carried the old label
+# straight into the new task and defeated the rename.
+$newDescription = 'Scheduled data maintenance task.'
+if ($xmlContent -match '(?s)<Description>.*?</Description>') {
+    $xmlContent = $xmlContent -replace '(?s)<Description>.*?</Description>', "<Description>$newDescription</Description>"
+    Write-Host "  [ok] Description replaced in the XML before registration." -ForegroundColor Green
+} elseif ($xmlContent -match '<RegistrationInfo>') {
+    $xmlContent = $xmlContent -replace '<RegistrationInfo>', "<RegistrationInfo><Description>$newDescription</Description>"
+    Write-Host "  [ok] Description inserted into the XML before registration (original had none)." -ForegroundColor Green
+} else {
+    Write-Host "  [warn] No <RegistrationInfo> block found -- registering without a description override." -ForegroundColor Yellow
+}
+
 Register-ScheduledTask -TaskName $NewTaskName -Xml $xmlContent -Force | Out-Null
 
 $newTask = Get-ScheduledTask -TaskName $NewTaskName -ErrorAction SilentlyContinue
@@ -391,7 +411,6 @@ if ($mismatch.Count -gt 0) {
     Unregister-ScheduledTask -TaskName $NewTaskName -Confirm:$false
     throw "New task did not match the original ($($mismatch -join ', ')). Rolled it back. '$OldTaskName' is untouched."
 }
-Set-ScheduledTask -TaskName $NewTaskName -Description 'Scheduled data maintenance task.' | Out-Null
 Write-Host "  [ok] '$NewTaskName' registered, verified identical (trigger/execute/arguments)." -ForegroundColor Green
 Write-Host "       Old task '$OldTaskName' still present as fallback -- deleted only by -Finalize." -ForegroundColor DarkGray
 
