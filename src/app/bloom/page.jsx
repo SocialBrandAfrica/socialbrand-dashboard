@@ -1123,11 +1123,28 @@ function RecipeMode({ stores }) {
 // (canon v7 item 4, corrected wording 2026-07-11 evening).
 // =============================================================================
 const STORE_DESKS = {
-  // SB-CC-BLOOM-009: Coca-Cola direct desk, priority 1 (10116 + 80175 first,
-  // "SPAR pair carries ~85% of the direct rand"). Remaining brands/stores
-  // follow the same pattern in later passes.
-  '10116': [{ value: 'DC_AMBIENT', label: 'SPAR DC Ambient' }, { value: 'DIRECT_COCACOLA', label: 'Coca-Cola Direct' }],
-  '80175': [{ value: 'DC_AMBIENT', label: 'SPAR DC Ambient' }, { value: 'DIRECT_COCACOLA', label: 'Coca-Cola Direct' }],
+  // SB-CC-BLOOM-009: direct desks beside the DC, ordered by weekly rand per the
+  // brief's own priority (item 6). Wave 1 = Coca-Cola. Wave 2 = Clover, Simba,
+  // Danone -- config-only, the recipe/stock-state/overview RPCs already
+  // generalise on the DIRECT_<brand> route pattern.
+  // Mondelez + National Brands are NOT listed: both are genuinely fortnightly
+  // (median drop gap 11-13d) and supplier_calendar has no fortnightly concept,
+  // so a weekly desk would order half their need -- held behind the cycle
+  // mechanic rather than shipped on a knowingly-wrong cover (canon v9 item 8).
+  '10116': [
+    { value: 'DC_AMBIENT', label: 'SPAR DC Ambient' },
+    { value: 'DIRECT_COCACOLA', label: 'Coca-Cola Direct' },
+    { value: 'DIRECT_CLOVER', label: 'Clover Direct' },
+    { value: 'DIRECT_SIMBA', label: 'Simba Direct' },
+    { value: 'DIRECT_DANONE', label: 'Danone Direct' },
+  ],
+  '80175': [
+    { value: 'DC_AMBIENT', label: 'SPAR DC Ambient' },
+    { value: 'DIRECT_COCACOLA', label: 'Coca-Cola Direct' },
+    { value: 'DIRECT_CLOVER', label: 'Clover Direct' },
+    { value: 'DIRECT_SIMBA', label: 'Simba Direct' },
+    { value: 'DIRECT_DANONE', label: 'Danone Direct' },
+  ],
   '21355': [{ value: 'DC_TOPS', label: 'TOPS DC' }, { value: 'DIRECT_BEER', label: 'SAB Direct' }],
   '80176': [{ value: 'DC_TOPS', label: 'TOPS DC' }, { value: 'DIRECT_BEER', label: 'SAB Direct' }],
   '80579': [{ value: 'DC_TOPS', label: 'TOPS DC' }],
