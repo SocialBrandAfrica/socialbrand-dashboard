@@ -4,6 +4,36 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-17 -- SB-CC-BLOOM-009 wave 2: Clover, Simba, Danone direct desks (`8a2207c`)
+
+Six new direct desks at the SPAR pair (10116 + 80175). **Config-only** — `rpc_bloom_order_recipe`, `rpc_bloom_stock_state` and `rpc_bloom_scenario_overview` already generalise on the `DIRECT_<brand>` route pattern and read `direct_supplier_nrs` off a RULED `bloom_route_config` row, so a desk is one config row + one calendar row + a frontend list entry. Zero schema change, zero RPC change: R32's rollout test passing on its own terms. Migration `bloom009_wave2_direct_desks_clover_danone_simba`; canonical file `sql/create_bloom_route_config_direct_desks_wave2.sql`.
+
+**Supplier identity settled on receipts, not names or link counts.** Three independent signals (live-linked product count / R-W receipt cadence / demonstrated 28d cost demand) agree on one receiving `supplier_nr` per brand per store. The receipt test decides, because wave 1 already proved the name-obvious account can be a ghost — and it caught a second one at scale: **10116 CLOVER `1611` holds 614 live links and 613 products `1610` does not carry, and ZERO of them have sold in 28 days (R0.00).** Dead legacy account, excluded. This supersedes wave 1's "1610+1611 union" note, which observed the same cadence but never tested whether `1611` contributed anything. The same exclusive-selling-product test run across **every** sub-account of all five brands: Mondelez `1586` R54.66/wk, Mondelez `1280` R4.53/wk, every other R0.00. The dominant `supplier_nr` alone is the proven pool.
+
+**Demand cross-check vs the brief's own PM reference (item 5, 10116 weekly):** Simba R18,006 vs R18,092 (−0.5%), Mondelez R16,159 vs R15,938 (+1.4%), Danone R8,959 vs R9,075 (−1.3%). Clover +22.5% and National Brands −16.5% are the 5-day window shift between the brief (12 Jul) and this build (17 Jul), **not** pool errors — the sub-account test proves the dominant covers everything that sells. Reported, never tuned to match.
+
+**Cadence: median gap between consecutive drops, not drops-per-week.** The brief's rule 3 (`drops_per_wk >= 1 -> weekly`) is a proxy, and measured directly it mis-classifies two brands. R21 — behaviour decides, never a constant fitted to one case.
+
+| desk | drops/wk | median gap | verdict | dows |
+|---|---|---|---|---|
+| Clover 10116/80175 | 1.50 / 1.75 | 5.0d | twice weekly | {2,4} |
+| Danone 10116/80175 | 1.50 / 1.88 | 5.0d / 4.0d | twice weekly | {2,4} |
+| Simba 10116/80175 | 0.75 / 0.75 | **7.0d** | **weekly** | {5} |
+
+Simba reads "fortnightly" under the literal rule at 0.75 drops/wk; its median gap is exactly 7.0 — a weekly Friday truck skipping ~1 Friday in 4 (noise floor + holidays pull the mean to 9.5). Exact parity with the shipped, accepted Coca-Cola 10116 desk (median 7.0). Clover/Danone get **two** delivery days, which does not contradict wave 1's "single dominant weekday" note: that guards a once-weekly supplier from a phantom second truck, and Clover's second truck is real. Forcing one DOW would claim the next truck is 7 days out when it is 2-5 — over-ordering, the exact inverse of the bug wave 1 fixed.
+
+**HELD, not shipped — Mondelez + National Brands.** Both are genuinely fortnightly (median gap 11-13d at both stores). `supplier_calendar.delivery_dows` is a weekday array with no fortnightly concept, so a weekly desk would knowingly **halve** their cover — barred by the accuracy gate (canon v9 item 8). They wait on the cycle mechanic, a shared pantry debt (R32), not a per-desk patch.
+
+**R22, population level, all 6 desks:** 35-day ceiling **0 breaches** (max 33.8d) · tail states ordered **0** · out-of-stock KVI lines silently un-ordered-and-unflagged **0**. Calendars return orderable dates with true leads (Clover/Danone Tue→Thu lead 2; Simba Fri→Fri lead 7).
+
+**Simba's order reads 2.7× weekly demand and is CORRECT — verified against the engine's own instrument rather than accepted or explained away.** `rpc_bloom_stock_state` shows Simba KVI at 10116 holding **1.2 stock-days** against an 11-day min band, with 9 KVI_CRITICAL lines at SOH 0. The bands reconcile exactly to ENG-012's order-time recompute (MRS H S BALLS: demand 12.64 × (KVI safety 4 + lead 7) = min_band 139.0 vs 139.1 live). The desk is refilling a starved category on a weekly truck — the availability failure the KVI floor exists to fix, not an over-order. A 1×-weekly yardstick is simply the wrong test for a depleted pool.
+
+**Named live defect found, flagged NOT fixed here:** `bloom_route_config.direct_cycle_weeks` and `direct_min_order_value` are **stored but never read** — nothing in `sql/` or `src/` consumes either, so brief rules 3 (cycle) and 4 (R5,000 minimum, accumulate to next cycle) are config decoration rather than behaviour on **every** direct desk, wave 1 included. Consequence today: Coca-Cola 80175 carries `direct_cycle_weeks=2` while its own median gap is 7.0 (weekly) — the config is wrong *and* inert, so the live desk orders on the correct weekly cover by accident. The moment that column becomes load-bearing, the stale row would **double** a live desk's cover. Carrying that dependent is part of the fortnightly build (R30), which is why `direct_cycle_weeks` is set honestly on every wave-2 row even though nothing reads it yet.
+
+**Verification, explicit about its limit:** `next build` clean, middleware loaded (81.6 kB). `/bloom` is auth-gated and this session held the standing no-middleware-bypass rule, so there is **no live screenshot**. Push confirmed on `origin/main` (0/0); `orders.socialbrand.africa/bloom` serves 307 → `/login` correctly. **Vercel deploy NOT independently confirmed from this seat** — no Vercel CLI, no `.vercel` dir, no token, and the changed page sits behind auth so the usual public-buildId check cannot see it. Pieter's own desk walk is the DoD gate (R31).
+
+---
+
 ## 2026-07-14 -- PUSH-HARDEN-001: finalize made surgical -- export folder kept, credential stripped (`594b646`)
 
 Pieter's design refinement: `C:\SocialBrand` **survives** as the genuine Sigma export folder (CSV/Excel only, load-bearing for nothing) while `C:\RetailHistory` holds the machinery under a neutral name — the brand lands on the one folder where it means nothing.
