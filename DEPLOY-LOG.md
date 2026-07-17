@@ -4,6 +4,24 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-17 -- ENG-025 (rows + min flag), BLOOM-009 wave 3, PM script fixes, key ignore
+
+Five commits this session, all on `origin/main`, all R22'd to source. Reverse order below.
+
+**`d7863d3` — ENG-025 step 2b: direct minimum order value as a FLAG (PM queue item 2, canon v7 item 7e).** `rpc_bloom_scenario_overview` gains three additive columns (`min_order_value` / `min_shortfall` / `min_reason`), computed off `value_normal` per scenario, config home unchanged on `bloom_route_config.direct_min_order_value`. Never blocks. R22, all three branches: NatBrands clears (R12,599 vs R5,000, shortfall 0); DC route returns NULL (no supplier-minimum concept); a throwaway desk at a R10,000 min on a R5,221 order returned shortfall R4,779 with the order STILL generated (9 lines) — seeded in a transaction, rolled back, zero residue verified. Frontend renders it under each scenario card, amber when short. `next build` clean; `/bloom` auth-gated so static proof only.
+
+**`a5fb769` — BLOOM-009 wave 3: National Brands direct desk at 10116 (config only).** Shipped HALF of PM queue item 1. Identity receipt-proven: `direct_supplier_nrs = {99, 2071}` unioned — the dominant `99` misses 10 selling lines on sub-account `2071` that National Brands receives itself (the wave-1 dominant-only method would have dropped them); `1543` excluded, dead. Cadence: median drop gap 10.5 / 16 gaps = exactly 1.50 cycles = the tie, canon 7f resolves ties weekly → `cycle_weeks=1`, today's behaviour, no grain dependency. Delivery Tue 76%. R22 clean: 0 tail ordered, 0 over-35d unflagged, 0 OOS KVI silent; order R11,993 = 11.9 days of demand on an 11-day horizon. **Mondelez 10116 HELD** — its cadence flips on the lines-per-day noise floor (≥1 → median 9 → weekly; ≥3, the brief's own floor → median 12 → fortnightly) and it has no dominant delivery day (Wed 38% / Thu 38%). Not seeded on a coin toss. Later re-derived on PM's value floor (canon 7g): clean median 11.0 with the 42-day supply hole excluded → fortnightly, Thursday (most-recent regime), now a fully-specified item-5 desk.
+
+**Implementation trap recorded:** Postgres `ROUND(1.5)=2` is 7f backwards on the tie and would have seeded the NatBrands desk fortnightly, doubling its cover. 7f rounding is `GREATEST(1, CEIL(median_gap/7.0 - 0.5))` (verified 1.29→1, 1.50→1, 1.86→2, 2.50→2).
+
+**`9ef44d7` — ENG-025 step 1: re-derive every direct desk cadence from receipts (PM ruling, rows before column).** `direct_cycle_weeks` set behaviourally on all 11 live direct desks from median drop gap, while the column is still unread (no-op on behaviour). Caught the one that mattered: **Coca-Cola 80175 stored `fortnightly` against a real 7.0-day median gap over 22 observations** — it ordered correctly only because the column is dead; column-first would have doubled its cover. DIRECT_BEER ×3 carried NULL, all re-derive weekly. Post-condition fails loudly if any RULED direct desk is NULL or non-weekly before the grain lands. **Full value-floor re-derivation (canon 7g) run after: all 12 live desks — 9 brand + 3 beer — reconcile weekly on the ruled method, zero wrong rows.**
+
+**`7802109` + `a335a8f` — PM's two live-server script fixes committed (ENG-024, ENG-023).** Authored by PM on Pieter's disk during the server rollout, uncommitted and lost on the next pull; both already live on all 5 servers. ENG-024: extractor v1.24, 18:40→19:30 (after the 19:00 close + Sigma EOD), with the trigger check matching `$atTimeToken` not the hardcoded literal so self-heal cannot pull it back. ENG-023: task description set in the XML before registration (`Set-ScheduledTask` has no `-Description` param — the old call halted the migration mid-rollout). Both parser-clean, ASCII-only.
+
+**`6d5d075` — gitignore `sb-key.txt` (the Supabase service_role key).** Untracked, un-ignored, never committed (verified `git log --all --full-history`). Closes disk-exposure before it opens; committed alone ahead of any other add.
+
+---
+
 ## 2026-07-17 -- SB-CC-BLOOM-009 wave 2: Clover, Simba, Danone direct desks (`8a2207c`)
 
 Six new direct desks at the SPAR pair (10116 + 80175). **Config-only** — `rpc_bloom_order_recipe`, `rpc_bloom_stock_state` and `rpc_bloom_scenario_overview` already generalise on the `DIRECT_<brand>` route pattern and read `direct_supplier_nrs` off a RULED `bloom_route_config` row, so a desk is one config row + one calendar row + a frontend list entry. Zero schema change, zero RPC change: R32's rollout test passing on its own terms. Migration `bloom009_wave2_direct_desks_clover_danone_simba`; canonical file `sql/create_bloom_route_config_direct_desks_wave2.sql`.
