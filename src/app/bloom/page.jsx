@@ -1139,8 +1139,13 @@ const STORE_DESKS = {
   // dominant delivery day at all (Wed 38% / Thu 38%, tied and adjacent -- the
   // wave-1 bug that collapses the lead to 1). Held for a PM ruling on the floor,
   // never seeded at a coin-toss (canon v9 item 8, the accuracy gate).
-  // 80175's Mondelez + National Brands and 21355's Coca-Cola remain genuinely
-  // fortnightly (median 13) and wait on the 7e grain.
+  // ENG-025 (2026-07-18): the 7e grain landed (supplier_calendar.cycle_weeks +
+  // cycle_anchor_week_start), so fortnightly desks are now supported. National
+  // Brands 80175 (supplier 47, gap 14) and Coca-Cola 21355 (316, gap 13) are
+  // SEEDED cycle_weeks=2, DC-overlap guard clean, awaiting Pieter's R31 walk.
+  // Mondelez x2 stays HELD: it is Super Group distributor-delivered (its link
+  // account carries no receipts), a multi-brand scoping question for PM -- never
+  // name-guessed (canon 7d, R21/R22).
   '10116': [
     { value: 'DC_AMBIENT', label: 'SPAR DC Ambient' },
     { value: 'DIRECT_COCACOLA', label: 'Coca-Cola Direct' },
@@ -1155,8 +1160,9 @@ const STORE_DESKS = {
     { value: 'DIRECT_CLOVER', label: 'Clover Direct' },
     { value: 'DIRECT_SIMBA', label: 'Simba Direct' },
     { value: 'DIRECT_DANONE', label: 'Danone Direct' },
+    { value: 'DIRECT_NATBRANDS', label: 'National Brands Direct' },
   ],
-  '21355': [{ value: 'DC_TOPS', label: 'TOPS DC' }, { value: 'DIRECT_BEER', label: 'SAB Direct' }],
+  '21355': [{ value: 'DC_TOPS', label: 'TOPS DC' }, { value: 'DIRECT_BEER', label: 'SAB Direct' }, { value: 'DIRECT_COCACOLA', label: 'Coca-Cola Direct' }],
   '80176': [{ value: 'DC_TOPS', label: 'TOPS DC' }, { value: 'DIRECT_BEER', label: 'SAB Direct' }],
   '80579': [{ value: 'DC_TOPS', label: 'TOPS DC' }],
 }

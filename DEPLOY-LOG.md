@@ -4,6 +4,18 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-18 (later) -- ENG-025 step 4: two fortnightly desks seeded + the DC-overlap guard
+
+Step 4 of the cadence law, taken to walk-ready then handed to Pieter. Two of the "fortnightly four" activated, the DC-overlap guard PM asked for built, and Mondelez surfaced as a scoping question rather than seeded on a guess.
+
+- **The DC-overlap guard `rpc_bloom_direct_dc_overlap(store, route)`** (migration `cadence_law_07_direct_dc_overlap_guard`). A DIRECT_<brand> desk pools by supplier LINK, the DC desk pools by DEPARTMENT -- a product in both is ordered twice. The guard surfaces the overlap (R22/R29, flag never block), runnable before the calendar is seeded. Reusable for store #6 (R25/R32). `sql/create_rpc_bloom_direct_dc_overlap.sql`.
+- **Coca-Cola 21355 (supplier 316) + National Brands 80175 (47) SEEDED fortnightly** (migration `cadence_law_08b_seed_fortnightly_two_desks` + `refresh_supplier_calendar`). Both are single-brand accounts where the link number == the receipt number, so the recipe pool and the cadence agree on one `supplier_nr`. `cycle_weeks=2`: Coca-Cola 21355 Fri (anchor 06-27), NatBrands 80175 Tue (anchor 07-04). Guard clean (0 overlap) on both. R22: next-deliveries land exactly 14 days apart (fortnightly proven live -- Coca-Cola 07-31->08-14, NatBrands 07-21->08-04); scenario_overview runs, and the min-order flag works on real data (NatBrands full order R2,511 correctly reads "R2,488.89 below the R5,000 minimum", never blocks). Frontend `STORE_DESKS` entries added in `src/app/bloom/page.jsx` (auth-gated -- Pieter's R31 walk is the gate). `confirmed_by` left NULL until that walk.
+- **Mondelez x2 HELD -- a scoping question for PM, not an identity failure.** The receipt-proven hunt (canon 7d) found Mondelez is **Super Group distributor-delivered** (10116 supplier 950, 80175 supplier 654), a MULTI-BRAND account: 950 receives 96 products @10116, only 42 Mondelez. Its "MONDELEZ" link account (1586/1280) carries the product identity but ZERO receipts. So link != receipt AND the receiving account mixes brands -- it does not fit the single-supplier_nr desk model the built desks use. Needs a PM ruling (scope by the Mondelez link with cadence read from the distributor's Mondelez-only receipts, or a distributor-level desk), R27 §7. Never name-guessed.
+
+`sql/`: `create_rpc_bloom_direct_dc_overlap.sql`, `create_bloom_route_config_fortnightly_cocacola_natbrands.sql`, `src/app/bloom/page.jsx`.
+
+---
+
 ## 2026-07-18 -- ENG-025 THE CADENCE LAW GETS A HOME: grain + generator (canon §14 v9 7e-7h)
 
 The cadence law lived only in canon prose and a migration comment block -- no engine object derived it, nothing wrote `supplier_calendar` (its 16 rows were a hand-written `INSERT ... VALUES`). That is the R25 break named in canon 7h: a new store gets an empty calendar and no drop cover. This deploy promotes the logic CC had written five times as throwaway SQL into two callable objects, and ships the fortnightly grain WITH its generator in one pass (binding: "ships together" -- the anchor is a date only the ledger can honestly give). Applied live to prod (`crklvhfwyxlisfcvqenc`) via MCP migrations; DB changes only, no frontend touched.
