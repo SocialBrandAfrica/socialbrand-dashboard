@@ -4,6 +4,24 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-18 -- ENG-025 THE CADENCE LAW GETS A HOME: grain + generator (canon §14 v9 7e-7h)
+
+The cadence law lived only in canon prose and a migration comment block -- no engine object derived it, nothing wrote `supplier_calendar` (its 16 rows were a hand-written `INSERT ... VALUES`). That is the R25 break named in canon 7h: a new store gets an empty calendar and no drop cover. This deploy promotes the logic CC had written five times as throwaway SQL into two callable objects, and ships the fortnightly grain WITH its generator in one pass (binding: "ships together" -- the anchor is a date only the ledger can honestly give). Applied live to prod (`crklvhfwyxlisfcvqenc`) via MCP migrations; DB changes only, no frontend touched.
+
+**Migrations (all live):** `cadence_law_01_grain_supplier_calendar_cycle`, `cadence_law_02b/02c_forge_config_cadence_keys`, `cadence_law_03c_derive_dow_recency` (+ `ALTER ... SET search_path=public`), `cadence_law_04_refresh_supplier_calendar`, `cadence_law_05_next_deliveries_cycle_aware`, `cadence_law_06_retire_direct_cycle_weeks`.
+
+- **The grain.** `supplier_calendar` + `cycle_weeks smallint NOT NULL DEFAULT 1` + `cycle_anchor_week_start date` + CHECK `(cycle_weeks=1 OR anchor NOT NULL)`. Anchor = the budget-week START (Saturday) of the qualifying drop, never a raw drop date (correction 1). At `cycle_weeks=1` byte-identical to pre-grain -- the zero-delta proof.
+- **The generator.** `rpc_derive_supplier_cadence(store, route, window)` RETURNS the proposed row + evidence (R29): value floor (0.25× the supplier's own median receipt-day cost) → regime-outlier gaps excluded and NAMED → median → half-down `GREATEST(1, CEIL(median/7.0-0.5))` → dow from the CURRENT regime (trailing 84d). Reproduces every ruled figure: 9 configured desks all `cycle_weeks=1`; NatBrands 10116 gap 10.5→weekly (the half-down tie, `ROUND(1.5)=2` would have doubled it); 80175 Coca-Cola Thursday @ 60% (the two-regime average that fooled the PM, 7i, now read from the recent regime only).
+- **The writer.** `refresh_supplier_calendar(store)` writes cadence with provenance; onboarding = one call. Existing desks: `delivery_dows` PRESERVED verbatim (dow divergence surfaced in source_note per ENG-026), only cadence stamped -- **zero delivery_dows delta on all 9 desks** (BEFORE 10116 Coca-Cola `[5]` == AFTER `[5]`, etc.).
+- **The wiring.** `rpc_bloom_next_deliveries` honours `cycle_weeks` via a floored non-negative-safe modulo (correction 2). **AFTER == BEFORE byte-for-byte on all 11 direct desks + DC/BEER** at anchor 2026-07-18 (zero-delta). Fortnightly alternate-week selection + negative-week safety proven.
+- **ENG-025 step 2.** `bloom_route_config.direct_cycle_weeks` RETIRED with lineage (R28, superseded_by `supplier_calendar.cycle_weeks`) -- never dropped, never read; the calendar owns cadence. The `direct_min_order_value` flag (step 2b) was already live (`d7863d3`), confirmed surfacing per scenario, never blocks.
+
+**R22 gate: GREEN.** Cadence zero-delta (9 desks derive = stored), next-deliveries zero-delta (11 desks AFTER==BEFORE), end-to-end recipe/scenario_overview spot-check clean. get_advisors: functions carry explicit `search_path`; SECURITY DEFINER writer pinned to `public`.
+
+**Staged, NOT activated (step 4 follow-on):** Coca-Cola 21355 (316) + National Brands 80175 (47) receipt-confirmed fortnightly (`cycle_weeks=2`), ready to seed. Held because activating a fortnightly Coca-Cola desk at TOPS 21355 risks double-ordering lines already in the `DC_TOPS` dept-cycle pool (needs a DC-overlap guard + Pieter's R31 walk), and **Mondelez ×2 identity is unresolved** (its `supplier_text` at the SPAR pair matches no Mondelez brand token; identity is receipt-proven, never name-guessed -- R21/R22). `sql/`: `create_supplier_calendar_cycle_grain.sql`, `create_rpc_derive_supplier_cadence.sql`, `create_refresh_supplier_calendar.sql`, `create_rpc_bloom_next_deliveries.sql`.
+
+---
+
 ## 2026-07-17 -- ENG-025 (rows + min flag), BLOOM-009 wave 3, PM script fixes, key ignore
 
 Five commits this session, all on `origin/main`, all R22'd to source. Reverse order below.
