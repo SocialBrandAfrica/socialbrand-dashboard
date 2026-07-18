@@ -4,6 +4,19 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-18 (later 2) -- v_supplier_class: dropshipment identified programmatically (Pieter ruling)
+
+Correction after a rule break: I had located Mondelez by name-matching `supplier_text` (against R21/R22 -- the engine reproduces from programmatic source, names are a human label only). The right key was the Sigma supplier type (`DBLFTS.TYP` -> Z/S/F), which is exactly the axis I missed. Keyed on it, the picture is decisive:
+
+- **Every "DIRECT_<brand>" desk supplier is `supplier_type='S'` = DROPSHIP** -- delivers its own truck (own R/W receipts) but is payable via the SPAR DC creditor. Clover, Coca-Cola, Simba, Danone, National Brands and Mondelez-via-Super-Group are all this class. **Only SAB is `type='F'` = true DIRECT.** The framework has been dropshipment all along.
+- **`v_supplier_class`** (migration `supplier_class_01_v_supplier_class`, `sql/create_v_supplier_class.sql`) makes it a first-class queryable fact per (store, supplier): class Z->DC / S->DROPSHIP / F->DIRECT, plus terms/order_method/settlement-discount fields and a `delivers_own_182d` liveness flag. Purely source-derived (DEDUCTIVE), no names. Group-wide: DROPSHIP 12,871 (142 deliver own) / DIRECT 822 (64) / DC 101 (8), zero nulls-or-other. So creditors, repayment terms and supplier-performance are defined up front, and a dropshipment supplier is never pooled into the DC for orders/deliveries. Grant SELECT to `authenticated`.
+- **Mondelez was never a scoping problem** -- it is an ordinary dropshipment supplier whose delivering account is 950 (10116) / 654 (80175); my "multi-brand" worry came from reading the empty shell account 1586. It seeds like any other dropship brand once PM rules on the desk naming.
+- **L1 GAP flagged (R23):** `creditor_nr` is NULL on all 13,794 supplier rows -- the DC-creditor linkage a DROPSHIP supplier settles through is not extracted yet. `supplier_type` is the current dropshipment marker; the creditor account must be added to L1 before the finance modules can resolve it.
+
+**For PM (policy, not built):** whether to relabel `DIRECT_<brand>` desks as their true DROPSHIP class (R30 cascade -- recipe/frontend/config), how the DC-creditor payment reconciliation treats dropship goods, and seeding Mondelez as a dropship desk. `sql/create_v_supplier_class.sql`.
+
+---
+
 ## 2026-07-18 (later) -- ENG-025 step 4: two fortnightly desks seeded + the DC-overlap guard
 
 Step 4 of the cadence law, taken to walk-ready then handed to Pieter. Two of the "fortnightly four" activated, the DC-overlap guard PM asked for built, and Mondelez surfaced as a scoping question rather than seeded on a guess.
