@@ -4,6 +4,19 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-18 (later 3) -- PREDICT-001 step 1: the ex-VAT finance gauge
+
+First step of the purchase-prediction engine (SB-CC-PREDICT-001 §7.1) -- source-only, fast, gives finance the one honest number today. Corrects the VAT basis and exposes cost-error contamination.
+
+- **The basis was wrong at source:** `refresh_order_budget_ledger` sets `sales_actual = SUM(sales_incl_vat)` (incl-VAT) while `landed_amount = SUM(cost_value)` (ex-VAT cost) -- so any purchases/sales ratio mixed bases. `sigma_sales` carries native `vat_value`, so `sales_exvat = sales_incl_vat - vat_value` is the fix (never a flat /1.15).
+- **`rpc_predict_exvat_gauge(p_date_from, p_date_to, p_store_codes, p_gp_floor_pct)`** (migration `predict_02b`, `sql/create_rpc_predict_exvat_gauge.sql`) -- per store, whole-store (PREDICT-001 ruling 2): sales incl + ex-VAT, purchases (R/W cost), COGS raw + cost-error-clean (l2_classification COST_ERROR excluded, canon §12c), ratio ex-VAT vs the 82% target (config `purchases_to_sales_target`, DEMO_CALIBRATION), vs-target in pp, GP ex-VAT, and a `gp_health` flag that surfaces implausible GP rather than hiding it. Layer-2 published interface (R30/R32); ratios are ACTUALS (R22), not the projection. Grant EXECUTE to `authenticated`.
+- **R22 (last 8 budget weeks 2026-05-23..07-17), reproduces the spec to the decimal:** ex-VAT ratio 10116 77.1% / 21355 83.5% / 80175 74.3% / 80176 71.1% / 80579 41.4% (spec: 71-84%); incl-VAT 69.0/72.6/66.3/62.0/36.2 (spec: 62-73%, target meaningless); GP ex-VAT 19.8/-0.7/19.4/16.5/10.5 (healthy SPARs 15-19%). **21355 GP -0.7% correctly trips `gp_health=REVIEW`** -- the cost-error contamination the gauge is meant to expose (its COST_ERROR bucket catches only 2 lines, so the gauge flags a bigger contamination for the worklist). 80579 41.4% is the IBT-fed Dice, a real false-green-on-low-own-purchases case.
+- **Config:** `purchases_to_sales_target` = 0.82 (DEMO_CALIBRATION, canon v11 item 3) added to `forge_config`.
+
+Step 1 of the accuracy-first sequence; steps 2-5 (l2_sales_budget to 5 stores wired nightly, World-2 dept interim, recovery-ladder trend, event-calendar sign-off) follow, each R22-gated. `sql/create_rpc_predict_exvat_gauge.sql`.
+
+---
+
 ## 2026-07-18 (later 2) -- v_supplier_class: dropshipment identified programmatically (Pieter ruling)
 
 Correction after a rule break: I had located Mondelez by name-matching `supplier_text` (against R21/R22 -- the engine reproduces from programmatic source, names are a human label only). The right key was the Sigma supplier type (`DBLFTS.TYP` -> Z/S/F), which is exactly the axis I missed. Keyed on it, the picture is decisive:
