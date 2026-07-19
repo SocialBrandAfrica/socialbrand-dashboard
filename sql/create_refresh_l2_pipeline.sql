@@ -224,6 +224,21 @@ BEGIN
   v_result := v_result || jsonb_build_object('bloom_pantry_chain_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
   -- ===================== end SB-CC-BLOOM-005 / ENG-002 =====================
 
+  -- SB-CC-PREDICT-001 step 2 (ENG-022, applied live 2026-07-18 migration
+  -- predict_03_wire_sales_budget_into_pipeline): the sales-budget need projection,
+  -- per store, all ruled routes. Depends on l2_rhythm_profile + l2_seasonality_profile
+  -- (fresh above) + l2_stock_position + sigma_sales. Per-store guarded. This is the
+  -- ENG-002-class close for l2_sales_budget -- it stops being a manual object.
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_sales_budget(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('sales_budget_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+  v_result := v_result || jsonb_build_object('sales_budget_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+
   -- BT out-event logging (SB-CC-BT-FIX-001: moved from read RPC to nightly pipeline).
   -- Guarded so it can never abort the chain.
   BEGIN

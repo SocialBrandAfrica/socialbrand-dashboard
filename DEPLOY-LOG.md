@@ -4,6 +4,19 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-18 (later 4) -- PREDICT-001 step 2: l2_sales_budget x5 + nightly wiring (ENG-022 / ENG-002)
+
+The need projection extended from 2 stores to all 5, every ruled route, and wired into the nightly chain -- ENG-002 closes WITH the table, not after it (PM note 3). The projection machinery (`refresh_l2_sales_budget` / `rpc_project_route_sales_budget`) was already fully general (resolves the DC route from `format_group`, loops every RULED `bloom_route_config` route); it was simply run by hand for 2 stores and never wired -- the ENG-022 defect.
+
+- **Populated x5, all 19 store-routes, 26 weeks each** (494 rows): 10116 + 80175 = 6 routes (DC_AMBIENT + 5 direct desks incl. today's DIRECT_NATBRANDS), 21355 = 3 (DC_TOPS + DIRECT_BEER + today's DIRECT_COCACOLA), 80176 + 80579 = 2. The newly-seeded fortnightly desks were picked up automatically (RULED config).
+- **Wired into `refresh_l2_pipeline`** (migration `predict_03_wire_sales_budget_into_pipeline`, `sql/create_refresh_l2_pipeline.sql`) after the Bloom pantry chain, so `l2_rhythm_profile` + `l2_seasonality_profile` (its inputs beside `l2_stock_position`/`sigma_sales`) are fresh. Per-store guarded. Verified: `pg_get_functiondef` contains the call, 5 stores / 19 routes populated.
+- **R22 gate (PM note 3), all three met:** (a) `ly_base_cost` reconciles to raw `sigma_sales` to the rand -- 80175/DC_AMBIENT week 1: pool 12,741 products, direct LY sum R266,978 == projected `ly_base_cost` R266,978; (b) route-scope population proven -- pool sizes match each route's config; (c) the TOPS LY-blind caveat is a per-row column (`products_with_ly_history`/`products_in_pool`) -- DC_TOPS reads ~11% LY coverage at all three TOPS stores (the §3c-d recycled-code join gap), SPAR DC 14-27%, named on every row, no store scored FAIL on thin LY.
+- **PROVISIONAL** (PREDICT-001 DoD 6): the raw `trend_factor` still drives (step 4 replaces it with the locked recovery ladder), and holidays are uncorrected (§16). Nothing governs orders off this yet -- the 82% basis still drives every order calc until Pieter signs.
+
+Step 2 of the accuracy-first sequence. Next: ENG-020 (World-1 purity, leg-2 gates = LINK_CODES non-empty + named-case regression) → World-2 dept interim → recovery-ladder trend → event calendar → sign. `sql/create_refresh_l2_pipeline.sql`.
+
+---
+
 ## 2026-07-18 (later 3) -- PREDICT-001 step 1: the ex-VAT finance gauge
 
 First step of the purchase-prediction engine (SB-CC-PREDICT-001 §7.1) -- source-only, fast, gives finance the one honest number today. Corrects the VAT basis and exposes cost-error contamination.
