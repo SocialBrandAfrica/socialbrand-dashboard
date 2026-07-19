@@ -1153,6 +1153,7 @@ const STORE_DESKS = {
     { value: 'DIRECT_SIMBA', label: 'Simba Direct' },
     { value: 'DIRECT_DANONE', label: 'Danone Direct' },
     { value: 'DIRECT_NATBRANDS', label: 'National Brands Direct' },
+    { value: 'DIRECT_MONDELEZ', label: 'Mondelez Direct' },
   ],
   '80175': [
     { value: 'DC_AMBIENT', label: 'SPAR DC Ambient' },
@@ -1161,6 +1162,7 @@ const STORE_DESKS = {
     { value: 'DIRECT_SIMBA', label: 'Simba Direct' },
     { value: 'DIRECT_DANONE', label: 'Danone Direct' },
     { value: 'DIRECT_NATBRANDS', label: 'National Brands Direct' },
+    { value: 'DIRECT_MONDELEZ', label: 'Mondelez Direct' },
   ],
   '21355': [{ value: 'DC_TOPS', label: 'TOPS DC' }, { value: 'DIRECT_BEER', label: 'SAB Direct' }, { value: 'DIRECT_COCACOLA', label: 'Coca-Cola Direct' }],
   '80176': [{ value: 'DC_TOPS', label: 'TOPS DC' }, { value: 'DIRECT_BEER', label: 'SAB Direct' }],

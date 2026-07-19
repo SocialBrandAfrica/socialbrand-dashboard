@@ -4,6 +4,18 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-19 -- Mondelez direct desk seeded (call-3 reversal, account-scoped)
+
+Pieter reversed the Mondelez parking: the "doesn't fit the built desk model" read was itself the rule-break relocated -- the "42 of 96 lines Mondelez" split was brand-name text-matching on product descriptions to decide account membership. Correction: one order is placed against one Sigma supplier account; the account IS the order, not the description-matched subset. So Mondelez seeds as a standard `DIRECT_<brand>` desk scoped to the full RECEIVING account, no brand filter, life gate excludes dead lines. R32 config-only, same pattern as Coca-Cola 21355 / National Brands 80175.
+
+- **`DIRECT_MONDELEZ` seeded at 10116 (account 950) + 80175 (account 654)** -- SUPER GROUP AFRICA - MONDELEZ, type S dropshipment (migration `mondelez_01_seed_direct_desk_account_scoped` + `refresh_supplier_calendar`, `sql/create_bloom_route_config_direct_mondelez.sql`). Cadence reproduces canon §14 v9 7g exactly: FORTNIGHTLY (`cycle_weeks=2`), median gap 13, the 42-day supply hole excluded as a regime outlier, real drops R12,054-R49,337 vs noise <=R1,839; 10116 Thursday (60% dow-conf), 80175 Wednesday (37.5% dow-conf, flagged uncertain -- Pieter's walk confirms the day).
+- **DC-overlap guard clean (0) at both** (`rpc_bloom_direct_dc_overlap`). R22 end-to-end: next-deliveries land 14 days apart (fortnightly proven -- 10116 07-30->08-13, 80175 07-29->08-12); full-scenario order 10116 34 lines R22,880 / 80175 10 lines R5,374, both clear the R5,000 minimum. The account-scoped pool (224/215 linked) produced real orders -- the life gate excluded dead lines to 34/10 sellable, exactly as ruled (no description pre-filter).
+- Frontend `STORE_DESKS` entries added (`Mondelez Direct` at both SPARs, `src/app/bloom/page.jsx`, auth-gated -- Pieter's R31 walk is the gate). `confirmed_by` NULL until the walk.
+
+The "fortnightly four" is now four seeded (Coca-Cola 21355, National Brands 80175, Mondelez 10116+80175), all walk-ready. `sql/create_bloom_route_config_direct_mondelez.sql`.
+
+---
+
 ## 2026-07-18 (later 4) -- PREDICT-001 step 2: l2_sales_budget x5 + nightly wiring (ENG-022 / ENG-002)
 
 The need projection extended from 2 stores to all 5, every ruled route, and wired into the nightly chain -- ENG-002 closes WITH the table, not after it (PM note 3). The projection machinery (`refresh_l2_sales_budget` / `rpc_project_route_sales_budget`) was already fully general (resolves the DC route from `format_group`, loops every RULED `bloom_route_config` route); it was simply run by hand for 2 stores and never wired -- the ENG-022 defect.
