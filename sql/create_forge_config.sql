@@ -37,4 +37,9 @@ INSERT INTO public.forge_config (config_key, store_format, value_num, effective_
   ('inactive_window_days',   '*',    91, '2026-07-10', 'stratum 3: no sale in this window = inactive'),
   ('inactive_slice_pct',     '*',    15, '2026-07-10', 'stratum 3 share of daily budget'),
   ('zero_audit_pct',         '*',    5,  '2026-07-10', 'stratum 5 share of daily budget, soh=0 random slice'),
-  ('tlx_soh_belt',           '*',    24, '2026-07-10', 'canon §8.12#3 near-certainty belt: |soh| < 24 for TLX');
+  ('tlx_soh_belt',           '*',    24, '2026-07-10', 'canon §8.12#3 near-certainty belt: |soh| < 24 for TLX'),
+  -- SB-CC-BLOOM-014 (canon §14 v12): the tail keep-or-delist cover threshold
+  -- rpc_bloom_order_recipe reads. A SLOW line's single pack must turn within
+  -- this many days to earn the one-pack minimum; slower = worklist, not order.
+  ('relevant_min_cover_days','*',    60, '2026-07-20', 'canon §14 v12: SLOW one-pack minimum only where pack_size/rhythm_adjusted_demand <= this; Pieter tunes')
+ON CONFLICT (config_key, store_format) DO NOTHING;

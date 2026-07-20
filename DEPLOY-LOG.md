@@ -4,6 +4,19 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-20 -- SB-CC-BLOOM-014: rpc_bloom_order_recipe v12 -- full-need MINIMUM PRESENCE
+
+Canon SS14 v12 (amends v10 DEPTH, lineage kept). The 80175 DC_AMBIENT Full audit left 387 empty, still-selling lines at zero (343 CORE, 41 SLOW, 2 HERO) because v10 made the order-stock ceiling universal and all-or-nothing -- any line whose single supplier pack breaches it was zeroed, blocking the first pack onto an empty shelf (DF-7 phantom-death spiral, the opposite of Full's availability job).
+
+- **Fix (all in the `packs_mp`/`packs_ceiled`/`geared_ceiled`/`resolved` CTEs, `%8$L IS NULL` guarding it to REAL scenarios so the yardstick/stock_state diagnostic path is byte-unchanged):** (1) a life-gate line (HERO/CORE) whose PROJECTED soh at delivery is below its own min_band gets >=1 pack; that first pack is exempt from the ceiling; the ceiling still caps pack 2+. Trigger is the projection, so it fires above SOH 0 when thin (Pieter). (2) A SLOW line earns the one-pack minimum ONLY where one pack turns within `relevant_min_cover_days` (forge_config, DEMO_CALIBRATION, seed 60); a slower SLOW pack is `keep_or_delist=true`, NOT ordered, surfaced for a keep-or-delist range decision. (3) MARKDOWN/DERANGE/VERIFY unchanged. HERO never silently zeroed -- orders its one exempt pack, carries `hero_pack_over_max`.
+- **New (additive, name-safe for every caller): output cols `min_presence_forced` / `keep_or_delist`;** config key `relevant_min_cover_days`. R32 clean -- config + recipe + the `story` label (R29); no schema change. Frontend already surfaces the two new reasons via the `line.story` tooltip.
+- **R22, two stores, isolation by measure-before / apply / measure-after.** 80175 DC_AMBIENT Full: 0 pre-ordered lines moved; 426 HERO/CORE below-band now carry a pack; SLOW split 16 ordered / 28 worklist; 0 worklist lines ordered; group rand delta R143,405.86 == exact sum of the added packs (zero gap); 3 HERO empties now order + flag. 80176 DC_TOPS Full: 45 min-presence adds all single-pack & below-band, 0 HERO silently zeroed, worklist exclusive, 0 real ceiling breaches. ESSENTIALS excludes the SLOW minimum (0), CATCH_UP excludes SLOW (0), FITTED + scenario_overview run clean with the new columns.
+- **Note (fixed in the same deploy):** the population-ceiling WARNING compared the ROUND(,4) display demand against the full-precision internal ceiling, so a line sitting at EXACTLY 35.0 days read a hair over and cried wolf (2 rows on 80175). Given a 1-day display-rounding guard (`> ceiling + 1`); genuine breaches are days over.
+
+`sql/create_rpc_bloom_order_recipe.sql`, `sql/create_forge_config.sql`. Migrations `rpc_bloom_order_recipe_v12_min_presence_bloom014` + `_warning_rounding_guard` + `forge_config_relevant_min_cover_days_bloom014`. Frontend follow-up (not blocking): a dedicated keep-or-delist worklist view (currently the lines return at 0 packs with the KEEP_OR_DELIST story; queryable via `keep_or_delist`).
+
+---
+
 ## 2026-07-20 -- ENG-029: DIRECT_BEER (SAB desk) receipt-scoped, not link-scoped
 
 Found by Pieter's question "is the SAB order just SAB lines?" -- it wasn't. The `DIRECT_BEER` pool scoped by beer/cider merch-group + non-DC *link*, never checking a real direct *receipt*, so link-only DC-supplied beer leaked onto the "SAB Direct" desk and double-counted against DC_TOPS. Receipt-proven at 21355: only SAB (555) has direct receipts (462 in 182d, R1.22M); Distell/Diageo/Heineken/DGB/Isicebi all have ZERO -- their stock arrives on the DC truck (SPAR SOUTHRAND, type Z). The canon 7d trap (attribution by receipts, not links), just never enforced in this pool.

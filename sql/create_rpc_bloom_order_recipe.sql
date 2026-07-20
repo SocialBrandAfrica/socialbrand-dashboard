@@ -110,6 +110,27 @@
 -- commits of this file (git history) -- not restated here since none of
 -- these formulas changed in the v10 pass, only WHERE their output feeds
 -- (target_level, scope) changed.
+--
+-- =========================== v12 (2026-07-20, SB-CC-BLOOM-014, canon SS14 v12,
+-- amends v10 DEPTH with lineage) -- MINIMUM PRESENCE + LIKELY-TO-DERANGE.
+-- The 80175 DC_AMBIENT Full audit left 387 empty, still-selling lines at zero
+-- (343 CORE, 41 SLOW, 2 HERO) because v10's universal ceiling zeroed any line
+-- whose single supplier pack breaches it -- the DF-7 phantom-death spiral, the
+-- opposite of Full's own availability job. v12 (all in the packs_mp/
+-- packs_ceiled/geared_ceiled/resolved CTEs, %8$L IS NULL guarding it to REAL
+-- scenarios so the yardstick/stock_state diagnostic path is untouched):
+--   1. A life-gate line (range_state HERO/CORE) whose PROJECTED soh at
+--      delivery is below its own min_band gets at least one pack; that FIRST
+--      pack is exempt from the 35-day ceiling; the ceiling still caps pack 2+.
+--      Trigger is the projection below min_band, so it fires above soh 0 too.
+--   2. A SLOW line earns the same one-pack minimum ONLY where one pack turns
+--      within relevant_min_cover_days (forge_config, DEMO_CALIBRATION, 60);
+--      a slower SLOW pack is likely-to-derange -> keep_or_delist=true, NOT
+--      ordered, surfaced for a keep-or-delist range decision.
+--   3. MARKDOWN/DERANGE/VERIFY unchanged (never order). HERO never silently
+--      zeroed -- it orders its one exempt pack and carries hero_pack_over_max.
+-- New output columns min_presence_forced / keep_or_delist (additive, name-safe
+-- for every caller). R32 clean: config + recipe + labels, no schema change.
 -- =============================================================================
 
 DROP FUNCTION IF EXISTS public.rpc_bloom_order_recipe(text,date,date,date,text,numeric,boolean,integer,integer,integer,numeric,text,jsonb,integer,numeric);
@@ -143,6 +164,7 @@ RETURNS TABLE(
   soh numeric, lead_days_used integer, lead_days_source text, projected_soh numeric,
   count_first boolean, band_blocked_reason text,
   pack_forced_review boolean, hero_pack_over_max boolean,
+  min_presence_forced boolean, keep_or_delist boolean,
   need_units numeric, pack_size smallint, pack_cost numeric,
   normal_packs integer, promo_active boolean, promo_nr bigint, promo_start date, promo_end date,
   promo_uplift numeric, promo_uplift_source text, promo_suffix text, promo_naming_gap boolean,
@@ -176,6 +198,7 @@ DECLARE
   v_band_violations int;
   v_sql text;
   v_direct_supplier_nrs bigint[];
+  v_relevant_min_cover_days numeric;  -- v12: SLOW keep-or-delist cover threshold (forge_config, seed 60)
 BEGIN
   SET LOCAL statement_timeout = '30s';
 
@@ -184,6 +207,13 @@ BEGIN
   p_early_month_build_start_day := COALESCE(p_early_month_build_start_day, 25);
   p_store_target_days := COALESCE(p_store_target_days, 21);
   p_max_order_stock_days := COALESCE(p_max_order_stock_days, 35);
+
+  -- v12 (SB-CC-BLOOM-014): the SLOW keep-or-delist cover threshold.
+  SELECT fc.value_num INTO v_relevant_min_cover_days
+  FROM forge_config fc
+  WHERE fc.config_key = 'relevant_min_cover_days' AND fc.store_format = '*' AND fc.retired_on IS NULL
+  LIMIT 1;
+  v_relevant_min_cover_days := COALESCE(v_relevant_min_cover_days, 60);
 
   IF p_route IS NULL THEN
     RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS, DIRECT_BEER or a RULED DIRECT_<brand> desk (canon SS14 v7 item 1 / v9 item 7)';
@@ -504,29 +534,59 @@ BEGIN
               ELSE 0 END)::int AS normal_packs_raw
       FROM needc n
     ),
-    -- v10 item 2 / canon v9 item 2, made universal (no pack-size exception):
-    -- the ceiling is DAYS OF STOCK a single forced pack would create
-    -- (soh + one pack) / demand vs p_max_order_stock_days (35) -- NOT
-    -- max_band_ot directly. max_band_ot is a tight (~3-7 day) reorder-cycle
-    -- figure; comparing a single indivisible pack against it force-reviewed
-    -- ~98%% of real need (verified live) because most pack sizes simply
-    -- exceed a few days of demand -- completely normal retail ordering,
-    -- not the extreme case v9/v30 named (AQUAFRESH 670 days, Select Rice
-    -- 448 days). The 35-day figure is v9's own named constant; v10's
-    -- change is removing the exception that let pack-forced lines through
-    -- past it, not shrinking the ceiling itself to the reorder band.
-    packs_ceiled AS (
+    -- v12 (canon SS14 v12 / SB-CC-BLOOM-014): MINIMUM PRESENCE + LIKELY-TO-
+    -- DERANGE. The %8$L IS NULL guard confines the whole v12 carve to REAL
+    -- scenarios -- the diagnostic flat-cover override path (the ENG-018
+    -- yardstick and rpc_bloom_stock_state's own pool call, both pass
+    -- p_days_cover_override non-NULL) keeps its exact pre-v12 numbers.
+    packs_mp AS (
       SELECT p.*,
-        (p.normal_packs_raw >= 1 AND p.ros_final > 0
-          AND (GREATEST(p.soh_used,0) + p.normal_packs_raw * p.ps) / p.ros_final > %28$s
-        ) AS pack_forced_review,
-        (CASE
-           WHEN p.normal_packs_raw >= 1 AND p.ros_final > 0
-             AND (GREATEST(p.soh_used,0) + p.normal_packs_raw * p.ps) / p.ros_final > %28$s
-           THEN 0
-           ELSE p.normal_packs_raw
-         END)::int AS normal_packs_calc
+        -- a life-gate line (HERO/CORE) whose PROJECTED soh at delivery is
+        -- below its OWN min_band -- empty or thin. Trigger is the projection,
+        -- not soh<=0, so the guarantee fires when stock is above 0 but thin.
+        (%8$L IS NULL AND p.range_state IN ('HERO','CORE') AND p.proj < p.min_band_ot AND p.ros_final > 0) AS mp_life,
+        -- SLOW tail candidate: below presence, has demand, FULL/FITTED ONLY
+        -- (never essentials' no-tail scope, never catch_up's HERO/CORE pool).
+        (%8$L IS NULL AND p.range_state = 'SLOW' AND p.proj < p.min_band_ot AND p.ros_final > 0
+           AND NOT %24$L::boolean AND NOT %11$L::boolean) AS slow_candidate,
+        -- whole packs that keep post-order cover within the 35-day ceiling.
+        (CASE WHEN p.ros_final > 0
+              THEN GREATEST(FLOOR((%28$s * p.ros_final - GREATEST(p.soh_used,0)) / p.ps), 0)
+              ELSE 0 END)::int AS packs_under_ceiling,
+        -- does even the FIRST pack breach the 35-day ceiling? (the exempt case)
+        (p.ros_final > 0 AND (GREATEST(p.soh_used,0) + p.ps) / p.ros_final > %28$s) AS first_pack_over_ceiling,
+        -- SLOW relevance: one pack turns within relevant_min_cover_days (60).
+        (p.ros_final > 0 AND (p.ps / p.ros_final) <= %29$s) AS pack_relevant
       FROM packs p
+    ),
+    -- v12: the ceiling with the minimum-presence exemption baked in. The
+    -- 35-day figure (%28$s) is v9's own named constant, unchanged. What v12
+    -- adds: a life-gate line projected below min_band, or a relevant SLOW
+    -- pack, gets its FIRST pack even when that pack alone breaches the
+    -- ceiling (the DF-7 phantom-death fix -- v10's all-or-nothing zeroed
+    -- these onto an empty shelf). The ceiling still caps pack 2 and up.
+    packs_ceiled AS (
+      SELECT m.*,
+        -- pack_forced_review keeps its v10 meaning EXACTLY: a NON-min-presence
+        -- HERO/CORE line whose full need breaches the ceiling and is NOT
+        -- ordered (routes to human review). Min-presence lines never land here.
+        (m.range_state IN ('HERO','CORE') AND NOT m.mp_life AND m.normal_packs_raw >= 1 AND m.ros_final > 0
+          AND (GREATEST(m.soh_used,0) + m.normal_packs_raw * m.ps) / m.ros_final > %28$s) AS pack_forced_review,
+        -- v12: an ORDERED first pack exempt from the ceiling (the minimum-
+        -- presence pack -- HERO/CORE below band, or a relevant SLOW pack).
+        ((m.mp_life OR (m.slow_candidate AND m.pack_relevant)) AND m.first_pack_over_ceiling) AS min_presence_forced,
+        -- v12: SLOW likely-to-derange -> keep-or-delist worklist, NOT ordered.
+        (m.slow_candidate AND NOT m.pack_relevant) AS keep_or_delist,
+        (CASE
+           WHEN m.slow_candidate AND m.pack_relevant THEN 1                       -- SLOW one-pack minimum (relevant), ceiling-exempt
+           WHEN m.slow_candidate THEN 0                                           -- SLOW likely-to-derange: worklist, not ordered
+           WHEN m.range_state NOT IN ('HERO','CORE') THEN 0                       -- other tail states / non-candidate SLOW: no depth (unchanged)
+           WHEN m.normal_packs_raw < 1 THEN 0
+           WHEN m.mp_life THEN LEAST(m.normal_packs_raw, GREATEST(1, m.packs_under_ceiling))  -- >=1 (first pack exempt), ceiling caps pack 2+
+           WHEN m.ros_final > 0 AND (GREATEST(m.soh_used,0) + m.normal_packs_raw * m.ps) / m.ros_final > %28$s THEN 0  -- non-min-presence over ceiling: all-or-nothing (v10, unchanged)
+           ELSE m.normal_packs_raw
+         END)::int AS normal_packs_calc
+      FROM packs_mp m
     ),
     gear_source AS (
       SELECT DISTINCT ON (pk.product_code) pk.product_code, pa.start_date, pa.end_date
@@ -594,7 +654,9 @@ BEGIN
       -- inflated one.
       SELECT g.*,
         (CASE
-           WHEN g.geared_packs_raw >= 1 AND g.ros_final > 0
+           WHEN g.geared_packs_raw < 1 THEN g.geared_packs_raw
+           WHEN g.mp_life THEN LEAST(g.geared_packs_raw, GREATEST(1, g.packs_under_ceiling))  -- v12: same first-pack exemption on the geared path
+           WHEN g.ros_final > 0
              AND (GREATEST(g.soh_used,0) + g.geared_packs_raw * g.ps) / g.ros_final > %28$s
            THEN 0
            ELSE g.geared_packs_raw
@@ -605,6 +667,7 @@ BEGIN
       SELECT g.*,
         CASE
           WHEN %24$L::boolean THEN g.normal_packs_calc  -- W2: essentials never gears
+          WHEN g.range_state = 'SLOW' THEN g.normal_packs_calc  -- v12: the SLOW one-pack minimum lives on the normal path, never the geared leg
           WHEN g.promo_active THEN g.geared_packs_calc
           ELSE g.normal_packs_calc
         END AS resolved_packs_calc
@@ -710,7 +773,9 @@ BEGIN
       ROUND(pk.min_band_ot,2) AS min_band, ROUND(pk.max_band_ot,2) AS max_band, ROUND(pk.target_level,2) AS target_level,
       pk.soh_raw AS soh, %9$s::int AS lead_days_used, %17$L::text AS lead_days_source, ROUND(pk.proj,2) AS projected_soh,
       pk.count_first AS count_first, pk.band_blocked_reason AS band_blocked_reason,
-      pk.pack_forced_review AS pack_forced_review, (pk.pack_forced_review AND pk.range_state='HERO') AS hero_pack_over_max,
+      pk.pack_forced_review AS pack_forced_review,
+      ((pk.min_presence_forced OR pk.pack_forced_review) AND pk.range_state='HERO') AS hero_pack_over_max,
+      pk.min_presence_forced AS min_presence_forced, pk.keep_or_delist AS keep_or_delist,
       ROUND(pk.needu,2) AS need_units, pk.ps AS pack_size, ROUND(pk.pack_cost,2) AS pack_cost,
       pk.normal_packs_calc AS normal_packs, pk.promo_active AS promo_active, pk.promo_nr AS promo_nr, pk.promo_start AS promo_start, pk.promo_end AS promo_end,
       ROUND(pk.gear,4) AS promo_uplift, (CASE WHEN pk.gear_from_own_promo THEN 'own_promo' ELSE 'default' END) AS promo_uplift_source,
@@ -721,7 +786,7 @@ BEGIN
       pk.fit_applied AS budget_fit_applied, pk.fit_reason AS budget_fit_reason,
       %19$L::date AS budget_week_start, %20$L::text AS budget_week_source,
       pk.is_bt_hero AS is_bt_hero, %10$L::text AS preset_applied, false AS frozen_focus_pending,
-      format('%%s [%%s] tier KVI=%%s, archetype=%%s -> %%s, window=%%s demand=%%s, band [%%s|%%s], SOH %%s, lead %%s(%%s) -> proj %%s, need %%s = %%s packs%%s%%s%%s%%s',
+      format('%%s [%%s] tier KVI=%%s, archetype=%%s -> %%s, window=%%s demand=%%s, band [%%s|%%s], SOH %%s, lead %%s(%%s) -> proj %%s, need %%s = %%s packs%%s%%s%%s%%s%%s%%s',
         COALESCE(pk.tier,'-'), pk.range_state, COALESCE(pk.kvi_band,'-'), COALESCE(pk.archetype,'EVERYDAY(default)'), pk.mode_reason,
         pk.ros_window_used, ROUND(pk.ros_final,2),
         ROUND(pk.min_band_ot,1), ROUND(pk.max_band_ot,1), pk.soh_raw, %9$s, %17$L::text, ROUND(pk.proj,1), ROUND(pk.needu,1), pk.resolved_packs_calc,
@@ -729,7 +794,10 @@ BEGIN
                pk.ps, ROUND(pk.max_band_ot,1), CASE WHEN pk.range_state='HERO' THEN 'HERO: needs a human call (smaller pack/loose unit)' ELSE 'route to derange/review' END) ELSE '' END,
         CASE WHEN pk.count_first THEN format(' | COUNT_FIRST: %%s', CASE WHEN pk.soh_raw < 0 THEN 'negative claim, SOH treated as 0' ELSE 'positive claim, ordered on it, count still rides' END) ELSE '' END,
         CASE WHEN pk.promo_nr IS NOT NULL THEN format(' | promo %%s->%%s gear %%s', pk.promo_start, pk.promo_end, ROUND(pk.gear,2)) ELSE '' END,
-        CASE WHEN pk.fit_applied THEN format(' | budget fit: %%s (%%s -> %%s packs)', pk.fit_reason, pk.resolved_packs_calc, pk.final_packs) ELSE '' END) AS story
+        CASE WHEN pk.fit_applied THEN format(' | budget fit: %%s (%%s -> %%s packs)', pk.fit_reason, pk.resolved_packs_calc, pk.final_packs) ELSE '' END,
+        -- v12 (canon SS14 v12): the two new stories, R29.
+        CASE WHEN pk.min_presence_forced THEN format(' | MIN_PRESENCE: %%s projected below min_band (%%s), first pack exempt from max band', pk.range_state, ROUND(pk.min_band_ot,1)) ELSE '' END,
+        CASE WHEN pk.keep_or_delist THEN format(' | KEEP_OR_DELIST: likely to derange, one pack = %%s days cover (over %%s), range decision', ROUND(pk.ps/NULLIF(pk.ros_final,0),0), %29$s) ELSE '' END) AS story
     FROM finalp pk
     LEFT JOIN v_ean_bridge eb ON eb.store_code=%1$L AND eb.product_code=pk.product_code
   $q$, p_store_code, v_soh_dt, NULL::boolean, v_dom,
@@ -738,7 +806,7 @@ BEGIN
        v_preset_catchup, p_catchup_band_cap_multiple, v_fit_to_budget, v_weekly_budget,
        p_route, v_dept_nrs, v_lead_source, v_next_delivery, v_week_start, v_week_source,
        v_dows, v_buyin_lead_days, p_delivery_date, v_preset_essentials, v_direct_supplier_nrs, p_soh_override,
-       p_store_target_days, p_max_order_stock_days);
+       p_store_target_days, p_max_order_stock_days, v_relevant_min_cover_days);
 
   EXECUTE 'DROP TABLE IF EXISTS _bloom_recipe_out';
   EXECUTE format('CREATE TEMP TABLE _bloom_recipe_out AS %s', v_sql);
@@ -752,13 +820,22 @@ BEGIN
   -- comparing against it here would flag routine, correct rounding as a
   -- false violation (verified live: 900+ false positives at 10116 before
   -- this fix).
+  -- v12: the intentional minimum-presence first packs (min_presence_forced)
+  -- legitimately sit past the ceiling and are EXCLUDED here. Any OTHER ordered
+  -- row past the ceiling is still a genuine violation the invariant must catch.
+  -- the "+ 1" is a display-rounding guard: rhythm_adjusted_demand is ROUND(,4)
+  -- while the internal ceiling math (packs_ceiled) uses full-precision ros_final,
+  -- so a line sitting at EXACTLY the ceiling (e.g. 10 units / (2/7) = 35.00d)
+  -- reads a hair over 35 through the rounded column. A genuine breach is days
+  -- over, never 0.002 -- the 1-day slack drops the false positive, keeps the real one.
   EXECUTE format(
     'SELECT count(*) FROM _bloom_recipe_out WHERE suggested_packs > 0 AND rhythm_adjusted_demand > 0
-       AND (soh + suggested_packs*pack_size) / rhythm_adjusted_demand > %s',
+       AND NOT min_presence_forced
+       AND (soh + suggested_packs*pack_size) / rhythm_adjusted_demand > %s + 1',
     p_max_order_stock_days)
     INTO v_band_violations;
   IF v_band_violations > 0 THEN
-    RAISE WARNING 'canon v10 item 2: % row(s) exceed the %-day order-stock ceiling (store=%, route=%, delivery=%, preset=%)',
+    RAISE WARNING 'canon v12 item 1: % row(s) exceed the %-day order-stock ceiling WITHOUT the minimum-presence exemption (store=%, route=%, delivery=%, preset=%)',
       v_band_violations, p_max_order_stock_days, p_store_code, p_route, p_delivery_date, v_preset_applied;
   END IF;
 
