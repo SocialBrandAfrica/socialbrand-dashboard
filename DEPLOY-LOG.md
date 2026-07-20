@@ -4,6 +4,18 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-20 -- ENG-029: DIRECT_BEER (SAB desk) receipt-scoped, not link-scoped
+
+Found by Pieter's question "is the SAB order just SAB lines?" -- it wasn't. The `DIRECT_BEER` pool scoped by beer/cider merch-group + non-DC *link*, never checking a real direct *receipt*, so link-only DC-supplied beer leaked onto the "SAB Direct" desk and double-counted against DC_TOPS. Receipt-proven at 21355: only SAB (555) has direct receipts (462 in 182d, R1.22M); Distell/Diageo/Heineken/DGB/Isicebi all have ZERO -- their stock arrives on the DC truck (SPAR SOUTHRAND, type Z). The canon 7d trap (attribution by receipts, not links), just never enforced in this pool.
+
+- **Fix:** the DIRECT_BEER base-pool clause in `rpc_bloom_order_recipe` now additionally requires a real non-Z `R/W` receipt for the product in 182d. Applied via a surgical in-place edit (`pg_get_functiondef` -> `replace` the one clause -> `EXECUTE`, guarded) -- the ~300-line dynamic-SQL recipe was NOT hand-retyped. `sql/create_rpc_bloom_order_recipe.sql` line 358.
+- **R22, isolated:** DC_AMBIENT 10116 = 977 lines byte-identical with the change reverted vs applied (proven by revert/measure/re-apply); DC_TOPS and DIRECT_<brand> unchanged. Only DIRECT_BEER moves: 21355 41->28 lines, 80176 27, 80579 24. Double-count vs DC_TOPS 19 -> 7.
+- **Partial by design -- the remaining 7 are a routing ruling for PM.** They are genuine SAB beers (Carling Black Label, Castle Lite, Corona, Stella, Castle Milk Stout, ~R30k) that are ALSO DC-orderable (dual-sourced -- real receipts on both routes). Canon 7d ("only SAB is direct") says they belong on SAB, i.e. the DC_TOPS pool should exclude direct-receipt-proven beer -- a second core-pool change + routing decision, flagged not rushed. BUG-LOG ENG-029.
+
+`sql/create_rpc_bloom_order_recipe.sql`.
+
+---
+
 ## 2026-07-19 -- Mondelez direct desk seeded (call-3 reversal, account-scoped)
 
 Pieter reversed the Mondelez parking: the "doesn't fit the built desk model" read was itself the rule-break relocated -- the "42 of 96 lines Mondelez" split was brand-name text-matching on product descriptions to decide account membership. Correction: one order is placed against one Sigma supplier account; the account IS the order, not the description-matched subset. So Mondelez seeds as a standard `DIRECT_<brand>` desk scoped to the full RECEIVING account, no brand filter, life gate excludes dead lines. R32 config-only, same pattern as Coca-Cola 21355 / National Brands 80175.

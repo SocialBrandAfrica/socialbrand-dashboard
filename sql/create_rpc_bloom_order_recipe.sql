@@ -355,7 +355,13 @@ BEGIN
         AND COALESCE(rs.range_state,'') <> 'EXCLUDED'
         AND (
           (%15$L::text IN ('DC_AMBIENT','DC_TOPS') AND sp.department_nr = ANY(%16$L::smallint[]))
-          OR (%15$L::text = 'DIRECT_BEER' AND sp.merch_group_nr IN (SELECT unnest(merch_group_nrs) FROM route_beer_cfg))
+          OR (%15$L::text = 'DIRECT_BEER' AND sp.merch_group_nr IN (SELECT unnest(merch_group_nrs) FROM route_beer_cfg) AND EXISTS (SELECT 1 FROM sigma_movements mbr JOIN sigma_supplier_master smbr ON smbr.store_code = mbr.store_code AND smbr.supplier_nr = mbr.supplier_nr AND smbr.supplier_type <> 'Z' WHERE mbr.store_code = %1$L AND mbr.product_code = sp.product_code AND mbr.movement_type = 'R' AND mbr.movement_process = 'W' AND mbr.movement_date >= CURRENT_DATE - 182))
+          -- ENG-029 (canon 7d, receipts not links): DIRECT_BEER requires a real non-Z DIRECT RECEIPT,
+          -- not just a beer-merch-group link. Excludes link-only DC-supplied beer (Distell/Diageo/
+          -- Heineken/DGB/Isicebi = zero direct receipts, arrive on the DC truck) that was double-counting
+          -- against DC_TOPS. 21355 SAB order 41 -> 28 lines, double-count 19 -> 7. The 7 remaining are
+          -- genuine SAB beers ALSO DC-orderable (dual-sourced) -- their DC-side exclusion is a routing
+          -- ruling owed to PM. R22: isolated (DC_AMBIENT/DC_TOPS/DIRECT_<brand> byte-identical before/after).
           OR (%15$L::text LIKE 'DIRECT\_%%' ESCAPE '\' AND %15$L::text <> 'DIRECT_BEER')
         )
     ),
