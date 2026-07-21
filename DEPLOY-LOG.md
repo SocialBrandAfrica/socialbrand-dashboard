@@ -4,6 +4,10 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-21 -- Chrome MCP tool-name prefix corrected (repo-only, no production deploy)
+
+`f317294`. CLAUDE.md Step 1, `/autopilot` and the settings.json allowlist all used `mcp__Claude_in_Chrome__`; the live namespace is `mcp__claude-in-chrome__`, so the `select:` query resolved nothing (Step 1 silently loaded zero browser schemas) and 22 allowlist entries matched no real tool. Verified by running the corrected 15-name query: all 15 schemas returned. Typo fix, no policy change.
+
 ## 2026-07-20 -- SB-CC-BLOOM-014: rpc_bloom_order_recipe v12 -- full-need MINIMUM PRESENCE
 
 Canon SS14 v12 (amends v10 DEPTH, lineage kept). The 80175 DC_AMBIENT Full audit left 387 empty, still-selling lines at zero (343 CORE, 41 SLOW, 2 HERO) because v10 made the order-stock ceiling universal and all-or-nothing -- any line whose single supplier pack breaches it was zeroed, blocking the first pack onto an empty shelf (DF-7 phantom-death spiral, the opposite of Full's availability job).
