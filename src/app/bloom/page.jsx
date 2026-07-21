@@ -1320,6 +1320,14 @@ function OrderDesksMode() {
   const [importReport, setImportReport] = useState(null)
   // ENG-031 / Track A item 1: what the TLX actually carried, and what it could not.
   const [tlxReport, setTlxReport] = useState(null)
+  // ENG-034 sign-off (PM 2026-07-21, canon SS14 v13): the rail's own LY coverage.
+  // l2_sales_budget is LY-anchored and canon carries it as PROVISIONAL, so the
+  // strip states that plainly with the MEASURED coverage rather than a store list
+  // or an invented threshold (R21 -- a TOPS-only label would be exactly the
+  // hardcoded-store-list rule we ban, and the SPAR/TOPS split is 2 observations,
+  // not a constant). The buyer sees ~27% at a SPAR and ~11% at a TOPS and weighs
+  // the over-rail figure accordingly.
+  const [railCoverage, setRailCoverage] = useState(null)
   const fileInputRef = useRef(null)
 
   const desks = STORE_DESKS[storeCode] || []
@@ -1354,6 +1362,13 @@ function OrderDesksMode() {
     supabase.from('order_budget_ledger').select('*')
       .eq('store_code', storeCode).eq('route_key', 'ALL').order('year_month', { ascending: false }).limit(1).maybeSingle()
       .then(({ data }) => { if (!cancelled) setAllBudgetRow(data ?? null) })
+    // ENG-034 sign-off: the NEEDS rail's own LY coverage, keyed per DESK (that is
+    // l2_sales_budget's grain, not the ledger's). Published interface, SELECT
+    // granted -- the surface reads the engine's own measurement, never derives it.
+    setRailCoverage(null)
+    supabase.from('l2_sales_budget').select('products_in_pool, products_with_ly_history, budget_week_start')
+      .eq('store_code', storeCode).eq('route_key', desk).order('budget_week_start', { ascending: true }).limit(1).maybeSingle()
+      .then(({ data }) => { if (!cancelled) setRailCoverage(data ?? null) })
     setGenerated(false); setLines([]); setQty({}); setEdited({}); setSubmitted(false)
     return () => { cancelled = true }
   }, [storeCode, desk])
@@ -1529,6 +1544,9 @@ function OrderDesksMode() {
   // protected is the RULED behaviour, surfaced as the real decision it is --
   // never silently trimmed into an empty shelf.
   const overRail = fitToBudget && budgetTotal > 0 && total > budgetTotal ? total - budgetTotal : 0
+  const railLyPct = Number(railCoverage?.products_in_pool) > 0
+    ? Math.round(100 * Number(railCoverage.products_with_ly_history) / Number(railCoverage.products_in_pool))
+    : null
 
   // Canon v7 item 11 -- THE EXPORT CONTRACT, three files per order:
   // (1) CSV = EVERYTHING, StockFlow benchmark format (Bloom/BENCHMARK_
@@ -1810,6 +1828,9 @@ function OrderDesksMode() {
             {budgetManualOverride ? 'MANUAL' : budgetIsNeeds ? 'NEEDS (projection)' : cashConstrained ? '80% CASH-CONSTRAINED (10d essentials)' : '82% FORECAST (21d essentials)'}
           </strong></span>
           <span>Route budget{budgetManualOverride || budgetIsNeeds ? '' : ' (82%)'}: {zar(budgetTotal)}</span>
+          {budgetIsNeeds && railLyPct != null && (
+            <span style={{ color: 'var(--core-yellow)' }}>rail provisional · LY {railLyPct}% of pool</span>
+          )}
           {!budgetManualOverride && cash80Group > 0 && <span>Group 80%-cash reference: {zar(cash80Group)}</span>}
           {generated && fitToBudget && (
             <span>Fit: {zar(beforeFitTotal)} → {zar(total)} · {protectedCount} at floor · {trimmedCount} held below cutoff</span>
@@ -1822,6 +1843,9 @@ function OrderDesksMode() {
             background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.35)', borderRadius: 8, padding: '8px 12px' }}>
             Over the week’s rail by {zar(overRail)} — HERO/KVI floors and the minimum-presence packs are protected and never trimmed.
             Nothing has been shaved into an empty shelf; this is a buying decision, not a fault.
+            {budgetIsNeeds && railLyPct != null && (
+              <> The rail itself is <strong>provisional</strong> — it is projected off last year and only {railLyPct}% of this pool has last-year history, so treat the over-rail figure as indicative, not a cash verdict.</>
+            )}
           </div>
         )}
         {/* LEG D: the fallback is no longer silent. */}

@@ -16,6 +16,8 @@ PM ruling the same day, on the defect leg d exposed. Retires canon SS14 v10's "s
 
 Migration `eng034_fit_is_a_ranked_whole_pack_fill`. Files `sql/create_rpc_bloom_order_recipe.sql`, `src/app/bloom/page.jsx`.
 
+**SIGN-OFF LABELS (PM 2026-07-21, canon SS14 v13 -- labels not logic, no Fit gate, min-presence stays inside the protected floor):** the over-rail flag is unchanged, and the budget strip now carries the rail's own **measured** LY coverage -- `rail provisional · LY N% of pool` -- read from `l2_sales_budget.products_with_ly_history / products_in_pool` for that (store, DESK), with the same caveat repeated inside the over-rail banner. **Deliberately NOT a TOPS-only label (R21):** a store-list label is the hardcoded-store-list rule we ban, and a SPAR-vs-TOPS threshold would be a constant fitted to two observations. The measured figure is stated instead and it immediately earned that choice -- live coverage is **10116 DC 27% · 80175 DC 13% · 21355 DC_TOPS 9% · 80176 DC_TOPS 10% · 80579 DC_TOPS 10% · DIRECT_BEER 19-24%**. **80175's SPAR DC rail is 13%, nearly as thin as TOPS** -- the "TOPS problem" is not a TOPS problem, it is an LY-coverage problem that happens to be worst at TOPS. A store-list label would have hidden that.
+
 **Nightly proof, unplanned and welcome:** `refresh-l2-pipeline` fired mid-session at 20:15 UTC and picked up BOTH of this session's new wirings on its first live run -- `l2_export_key` and the NEEDS rail refreshed themselves without intervention (verified via `resolved_at` / `updated_at` = 20:15:00 exactly). That also explains a R6,492 movement in unfitted order values between the evening's measurements: `l2_stock_position` refreshed underneath them, not a code change.
 
 ---
