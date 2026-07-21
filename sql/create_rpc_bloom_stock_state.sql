@@ -76,10 +76,9 @@ BEGIN
   IF p_route IN ('DC_AMBIENT','DC_TOPS') THEN
     SELECT dc.dc_cycle_dept_nrs INTO v_dept_nrs
     FROM bloom_dc_config dc WHERE dc.store_code = p_store_code AND dc.status = 'RULED';
-  ELSIF p_route = 'DIRECT_BEER' THEN
-    SELECT rc.merch_group_nrs INTO v_merch_nrs
-    FROM bloom_route_config rc WHERE rc.store_code = p_store_code AND rc.route_key = 'DIRECT_BEER';
   ELSIF p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN
+    -- ENG-033 (2026-07-21): DIRECT_BEER lost its merch-group branch and joins the
+    -- DIRECT_* class, so the instrument describes the same population the order does.
     -- SB-CC-BLOOM-009: no dept-wide-vs-orderable floor-debt concept exists
     -- yet for a supplier-defined direct desk (that gap is a DC Z-link
     -- concept) -- dept_scope below falls back to pool_run itself for this
@@ -134,10 +133,9 @@ BEGIN
     WHERE sp.store_code = p_store_code
       AND (
         (p_route IN ('DC_AMBIENT','DC_TOPS') AND sp.department_nr = ANY(v_dept_nrs))
-        OR (p_route = 'DIRECT_BEER' AND sp.merch_group_nr = ANY(v_merch_nrs))
       )
     UNION
-    SELECT pr.product_code FROM pool_run pr WHERE p_route LIKE 'DIRECT\_%' ESCAPE '\' AND p_route <> 'DIRECT_BEER'
+    SELECT pr.product_code FROM pool_run pr WHERE p_route LIKE 'DIRECT\_%' ESCAPE '\'
   ),
   dept_demand AS (
     SELECT COALESCE(SUM(ss.cost_value), 0) / 4.0 AS v

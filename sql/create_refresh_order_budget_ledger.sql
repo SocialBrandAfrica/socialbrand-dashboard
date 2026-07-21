@@ -40,8 +40,15 @@
 --   DC          -- sigma_articles.department_nr = ANY(bloom_dc_config.
 --                  dc_cycle_dept_nrs), landed requires the movement's own
 --                  supplier_type='Z' (matches the recipe's DC lnk branch).
---   DIRECT_BEER -- UNCHANGED from Ship 1: merch_group_nrs scope, landed
---                  requires the movement's supplier NOT excluded_supplier_types.
+--   DIRECT_BEER -- ENG-033 (2026-07-21): ACCOUNT-scoped, exactly like DIRECT
+--                  below. Sales scoped by active sigma_supplier_link to the
+--                  route's own direct_supplier_nrs (the receipt-proven SAB
+--                  account), landed keyed on the movement's own supplier_nr.
+--                  RETIRED with lineage (R28): the merch_group_nrs scope and
+--                  the excluded_supplier_types landed test. It kept its own
+--                  route_key (ENG-013) and is therefore still EXCLUDED from
+--                  the DIRECT rollup below -- folding it in would double-count
+--                  SAB spend against the DIRECT rail.
 --   DIRECT      -- union of every DIRECT_<brand> desk's own curated
 --                  direct_supplier_nrs at that store (BLOOM-009) -- sales
 --                  scoped by active sigma_supplier_link to one of those
@@ -75,10 +82,13 @@ BEGIN
     WHERE dc.status = 'RULED'
   ),
   beer_products AS (
-    SELECT rc.store_code, a.product_code
+    -- ENG-033 (2026-07-21): account-scoped, not merch-group-scoped
+    SELECT DISTINCT sl.store_code, sl.product_code
     FROM public.bloom_route_config rc
-    JOIN public.sigma_articles a ON a.store_code = rc.store_code AND a.merch_group_nr = ANY(rc.merch_group_nrs)
+    JOIN public.sigma_supplier_link sl
+      ON sl.store_code = rc.store_code AND sl.supplier_nr = ANY(rc.direct_supplier_nrs)
     WHERE rc.route_key = 'DIRECT_BEER'
+      AND COALESCE(sl.status,'') <> 'S' AND (sl.valid_to IS NULL OR sl.valid_to >= CURRENT_DATE)
   ),
   direct_supplier_nrs_by_store AS (
     SELECT rc.store_code, unnest(rc.direct_supplier_nrs) AS supplier_nr
@@ -143,7 +153,8 @@ BEGIN
     SELECT dc.store_code, dc.dc_cycle_dept_nrs FROM public.bloom_dc_config dc WHERE dc.status = 'RULED'
   ),
   beer_config AS (
-    SELECT rc.store_code, rc.merch_group_nrs, rc.excluded_supplier_types
+    -- ENG-033 (2026-07-21): the SAB account itself is the route
+    SELECT rc.store_code, rc.direct_supplier_nrs
     FROM public.bloom_route_config rc WHERE rc.route_key = 'DIRECT_BEER'
   ),
   direct_supplier_nrs_by_store AS (
@@ -178,16 +189,12 @@ BEGIN
     UNION ALL
     SELECT 'DIRECT_BEER', 'monthly', mb.store_code, mb.month_key, SUM(mb.cost_value)
       FROM moves_bucketed mb
-      JOIN beer_config bc ON bc.store_code = mb.store_code
-      JOIN public.sigma_articles a ON a.store_code = mb.store_code AND a.product_code = mb.product_code AND a.merch_group_nr = ANY(bc.merch_group_nrs)
-      JOIN public.sigma_supplier_master sm ON sm.store_code = mb.store_code AND sm.supplier_nr = mb.supplier_nr AND NOT (sm.supplier_type = ANY(bc.excluded_supplier_types))
+      JOIN beer_config bc ON bc.store_code = mb.store_code AND mb.supplier_nr = ANY(bc.direct_supplier_nrs)
       GROUP BY mb.store_code, mb.month_key
     UNION ALL
     SELECT 'DIRECT_BEER', 'weekly', mb.store_code, mb.week_key, SUM(mb.cost_value)
       FROM moves_bucketed mb
-      JOIN beer_config bc ON bc.store_code = mb.store_code
-      JOIN public.sigma_articles a ON a.store_code = mb.store_code AND a.product_code = mb.product_code AND a.merch_group_nr = ANY(bc.merch_group_nrs)
-      JOIN public.sigma_supplier_master sm ON sm.store_code = mb.store_code AND sm.supplier_nr = mb.supplier_nr AND NOT (sm.supplier_type = ANY(bc.excluded_supplier_types))
+      JOIN beer_config bc ON bc.store_code = mb.store_code AND mb.supplier_nr = ANY(bc.direct_supplier_nrs)
       GROUP BY mb.store_code, mb.week_key
     UNION ALL
     SELECT 'DIRECT', 'monthly', mb.store_code, mb.month_key, SUM(mb.cost_value)

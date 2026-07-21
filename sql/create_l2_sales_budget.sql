@@ -137,10 +137,8 @@ BEGIN
     AND (
       (p_route_key IN ('DC_AMBIENT', 'DC_TOPS') AND sm.supplier_type = 'Z'
         AND sp.department_nr = ANY(COALESCE((SELECT dc_cycle_dept_nrs FROM dc_cfg), ARRAY[]::smallint[])))
-      OR (p_route_key = 'DIRECT_BEER' AND sm.status = 'A'
-        AND NOT (sm.supplier_type = ANY(COALESCE((SELECT excluded_supplier_types FROM route_cfg), ARRAY[]::text[])))
-        AND sp.merch_group_nr IN (SELECT unnest(merch_group_nrs) FROM route_cfg))
-      OR (p_route_key LIKE 'DIRECT\_%' ESCAPE '\' AND p_route_key <> 'DIRECT_BEER'
+      -- ENG-033 (2026-07-21): DIRECT_BEER is account-scoped like every other DIRECT_* desk
+      OR (p_route_key LIKE 'DIRECT\_%' ESCAPE '\'
         AND sl.supplier_nr = ANY(COALESCE((SELECT direct_supplier_nrs FROM route_cfg), ARRAY[]::bigint[])))
     );
 
@@ -346,10 +344,8 @@ BEGIN
       AND (
         (p_route_key IN ('DC_AMBIENT','DC_TOPS') AND sm.supplier_type = 'Z'
           AND sp.department_nr = ANY(COALESCE((SELECT dc_cycle_dept_nrs FROM dc_cfg), ARRAY[]::smallint[])))
-        OR (p_route_key = 'DIRECT_BEER' AND sm.status = 'A'
-          AND NOT (sm.supplier_type = ANY(COALESCE((SELECT excluded_supplier_types FROM route_cfg), ARRAY[]::text[])))
-          AND sp.merch_group_nr IN (SELECT unnest(merch_group_nrs) FROM route_cfg))
-        OR (p_route_key LIKE 'DIRECT\_%' ESCAPE '\' AND p_route_key <> 'DIRECT_BEER'
+        -- ENG-033 (2026-07-21): DIRECT_BEER is account-scoped like every other DIRECT_* desk
+        OR (p_route_key LIKE 'DIRECT\_%' ESCAPE '\'
           AND sl.supplier_nr = ANY(COALESCE((SELECT direct_supplier_nrs FROM route_cfg), ARRAY[]::bigint[])))
       )
   ),

@@ -62,7 +62,7 @@
     Version  : v1.4
     Date     : 2026-06-08
     Schema   : sigma_layer1_schema.sql v1.0
-    Requires : C:\socialbrand\sb-key.txt (Supabase service_role key, first line)
+    Requires : C:\RetailHistory\sb-key.txt (Supabase service_role key, first line)
                SQL Server client libraries (present on all Sigma store servers)
 
     v1.0 : Initial release. 12 tables, delta + full-refresh modes.
@@ -298,9 +298,10 @@ function Send-TaskHealthLog {
 }
 
 function Register-ExtractDeltaTask {
-    # Ensures the SocialBrand-ExtractDelta scheduled task exists, fires at 18:40
-    # (before the 19:00 store close, clear of the ~20:00 dw220sdb lock), AND is
-    # actually running. Runs at extractor startup BEFORE any SQL, so it lands even
+    # Ensures the 'Retail History' scheduled task exists, fires at 19:30 (after
+    # the 19:00 store close and Sigma's ~15-min EOD, clear of the ~20:00 dw220sdb
+    # lock -- v1.24 / ENG-024, moved from 18:40 which read the day before close),
+    # AND is actually running. Runs at extractor startup BEFORE any SQL, so it lands even
     # when dw220sdb is locked. Non-fatal -- a registration failure never blocks the
     # extract (it just retries next run).
     #
@@ -319,10 +320,10 @@ function Register-ExtractDeltaTask {
     # needs ONE manual extractor run, which then permanently re-registers a healthy
     # task. Documented in STORE-ONBOARDING-RECIPE (same bootstrap every server got).
     #
-    # 18:40 is hardcoded to match Create-ExtractorScheduledTask.ps1. Per Pieter
-    # (R25 / SB-CC-SOURCE-001): pre-EOD time is per-store/per-day CONFIG, not
-    # code -- this must move to config when SOURCE-001 lands. Flagged so it does
-    # not fossilise as a hardcoding.
+    # 19:30 is hardcoded here (v1.24 / ENG-024). Per Pieter (R25): the run time
+    # is per-store CONFIG (store_extract_config.eod_window_start, already fetched
+    # by Get-StoreExtractConfig and ignored here) -- wiring $atTime to that column
+    # is ENG-024's proper fix. Flagged so it does not fossilise as a hardcoding.
     #
     # SB-CC-PUSH-HARDEN-001 (2026-07-14, Pieter ruling): task renamed from the
     # identifying 'SocialBrand-ExtractDelta' to 'Retail History'.

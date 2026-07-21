@@ -2,6 +2,31 @@
 -- create_rpc_bloom_order_recipe.sql
 -- SB-CC-BLOOM-004 item 5 -- the profile-driven Recipe RPC.
 --
+-- ============== ENG-033: THE SAB DESK IS ACCOUNT-SCOPED (2026-07-21) ==========
+-- Pieter ruling relayed by PM 2026-07-21: "re-scope the SAB desk to the supplier
+-- account like every other desk, no manual skip-lists, fix once not twice."
+-- DIRECT_BEER loses its own branch and joins the DIRECT_* code path: its pool is
+-- the products carrying an active link to its receipt-proven supplier ACCOUNT
+-- (bloom_route_config.direct_supplier_nrs -- 21355/80579 = 555, 80176 = 590, all
+-- type F, all receipt-proven; the link-only 1392 "SAB BREWERIES" with zero receipts
+-- ever is excluded, canon SS14 v9 7d, same pattern as CLOVER 1611 at 10116).
+--
+-- RETIRED WITH LINEAGE (R28, retired_on 2026-07-21, superseded_by this pass), never
+-- deleted: (a) merch_group_nrs {201..205,401} as the DIRECT_BEER pool scope, and
+-- (b) the ENG-029 "must have SOME non-Z direct receipt in 182d" gate bolted onto it.
+-- Account scope subsumes both. ENG-029 existed to stop link-only DC-supplied beer
+-- (Distell/Diageo/Heineken/DGB/Isicebi) riding the desk; those products are simply
+-- not linked to the SAB account, so they cannot enter. It also settles A2 (merch
+-- groups 301/302): the SAB-supplied 301/302 lines enter on their own account while
+-- the DC-dominated ones never do -- which is why the merch-group ADD was refused
+-- and this re-scope was ruled instead.
+--
+-- Identity-independent by construction: keys on product_code / supplier_nr /
+-- receipts via v_supplier_class, touches no EAN and no TLX zeroing, so it sits
+-- OUTSIDE the Track-B Phase-1 identity freeze (PM sequencing ruling, same day).
+-- The ledger key is UNCHANGED -- v_ledger_route still returns 'DIRECT_BEER', so
+-- the SAB budget rail (ENG-013) is untouched.
+--
 -- =========================== BLOOM-008 POST-WALK RECOVERY (v10, 2026-07-12) ==
 -- CLEANUP-ENGINE-CANON SS14 ADDENDUM v10 (Pieter's floorwalk, WALK-FINDINGS
 -- W1-W33) -- recovers BLOOM-008 items 1-4, the redefinition that was
@@ -229,13 +254,17 @@ BEGIN
        OR (p_route = 'DC_TOPS' AND v_format_group <> 'TOPS') THEN
       RAISE EXCEPTION 'p_route % does not match store % (format %)', p_route, p_store_code, v_format_group;
     END IF;
-  ELSIF p_route = 'DIRECT_BEER' THEN
-    NULL;
   ELSIF p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN
+    -- ENG-033 (Pieter ruling via PM, 2026-07-21): DIRECT_BEER no longer has its own
+    -- branch. The SAB desk is scoped by its receipt-proven supplier ACCOUNT like every
+    -- later direct desk, so one code path serves every DIRECT_* route. The merch-group
+    -- scope (and the ENG-029 receipt gate bolted onto it) is retired with lineage --
+    -- account scope subsumes both: a product enters because SAB supplies it, not because
+    -- it sits in a beer merch group and something direct once delivered it.
     SELECT rc.direct_supplier_nrs INTO v_direct_supplier_nrs
     FROM bloom_route_config rc WHERE rc.store_code = p_store_code AND rc.route_key = p_route AND rc.status = 'RULED';
     IF v_direct_supplier_nrs IS NULL THEN
-      RAISE EXCEPTION 'no RULED bloom_route_config row for store % route %', p_store_code, p_route;
+      RAISE EXCEPTION 'no RULED bloom_route_config row (with direct_supplier_nrs) for store % route %', p_store_code, p_route;
     END IF;
   ELSE
     RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS, DIRECT_BEER or a RULED DIRECT_<brand> desk (canon SS14 v7 item 1 / v9 item 7)';
@@ -305,21 +334,19 @@ BEGIN
   v_weekly_budget := COALESCE(v_weekly_budget, 0);
 
   v_sql := format($q$
-    WITH route_beer_cfg AS (
-      SELECT rc.merch_group_nrs, rc.excluded_supplier_types
-      FROM bloom_route_config rc WHERE rc.store_code=%1$L AND rc.route_key='DIRECT_BEER'
-    ),
-    lnk AS (
+    WITH lnk AS (
+      -- ENG-033: one pool rule for every DIRECT_* desk, DIRECT_BEER included -- the
+      -- product is on the route because the route's own receipt-proven supplier
+      -- account carries an active link to it. route_beer_cfg (merch_group_nrs /
+      -- excluded_supplier_types) is retired here with lineage, not dropped from config.
       SELECT DISTINCT ON (sl.product_code) sl.product_code,
         GREATEST(COALESCE(sl.pack_size,1),1)::smallint AS ps, sl.list_cost AS pack_cost
       FROM sigma_supplier_link sl
       LEFT JOIN sigma_supplier_master sm ON sm.store_code=sl.store_code AND sm.supplier_nr=sl.supplier_nr
-      LEFT JOIN route_beer_cfg rbc ON true
       WHERE sl.store_code=%1$L AND COALESCE(sl.status,'')<>'S' AND (sl.valid_to IS NULL OR sl.valid_to>=CURRENT_DATE)
         AND (
           (%15$L::text IN ('DC_AMBIENT','DC_TOPS') AND sm.supplier_type='Z')
-          OR (%15$L::text = 'DIRECT_BEER' AND sm.status='A' AND NOT (sm.supplier_type = ANY(rbc.excluded_supplier_types)))
-          OR (%15$L::text LIKE 'DIRECT\_%%' ESCAPE '\' AND %15$L::text <> 'DIRECT_BEER' AND sl.supplier_nr = ANY(%25$L::bigint[]))
+          OR (%15$L::text LIKE 'DIRECT\_%%' ESCAPE '\' AND sl.supplier_nr = ANY(%25$L::bigint[]))
         )
       ORDER BY sl.product_code, (sl.supplier_nr=1339) DESC, sl.cost_date DESC NULLS LAST
     ),
@@ -385,14 +412,13 @@ BEGIN
         AND COALESCE(rs.range_state,'') <> 'EXCLUDED'
         AND (
           (%15$L::text IN ('DC_AMBIENT','DC_TOPS') AND sp.department_nr = ANY(%16$L::smallint[]))
-          OR (%15$L::text = 'DIRECT_BEER' AND sp.merch_group_nr IN (SELECT unnest(merch_group_nrs) FROM route_beer_cfg) AND EXISTS (SELECT 1 FROM sigma_movements mbr JOIN sigma_supplier_master smbr ON smbr.store_code = mbr.store_code AND smbr.supplier_nr = mbr.supplier_nr AND smbr.supplier_type <> 'Z' WHERE mbr.store_code = %1$L AND mbr.product_code = sp.product_code AND mbr.movement_type = 'R' AND mbr.movement_process = 'W' AND mbr.movement_date >= CURRENT_DATE - 182))
-          -- ENG-029 (canon 7d, receipts not links): DIRECT_BEER requires a real non-Z DIRECT RECEIPT,
-          -- not just a beer-merch-group link. Excludes link-only DC-supplied beer (Distell/Diageo/
-          -- Heineken/DGB/Isicebi = zero direct receipts, arrive on the DC truck) that was double-counting
-          -- against DC_TOPS. 21355 SAB order 41 -> 28 lines, double-count 19 -> 7. The 7 remaining are
-          -- genuine SAB beers ALSO DC-orderable (dual-sourced) -- their DC-side exclusion is a routing
-          -- ruling owed to PM. R22: isolated (DC_AMBIENT/DC_TOPS/DIRECT_<brand> byte-identical before/after).
-          OR (%15$L::text LIKE 'DIRECT\_%%' ESCAPE '\' AND %15$L::text <> 'DIRECT_BEER')
+          -- ENG-033 supersedes ENG-029's merch-group + any-direct-receipt gate for DIRECT_BEER
+          -- (retired with lineage, R28). That gate existed to stop link-only DC-supplied beer
+          -- (Distell/Diageo/Heineken/DGB/Isicebi -- zero direct receipts, they arrive on the DC
+          -- truck) riding the SAB desk. Account scope removes them by construction: they are not
+          -- linked to the SAB account at all. A DIRECT_* desk needs no second pool predicate --
+          -- lnk already IS the pool.
+          OR (%15$L::text LIKE 'DIRECT\_%%' ESCAPE '\')
         )
     ),
     tiered AS (
