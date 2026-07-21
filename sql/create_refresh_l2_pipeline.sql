@@ -143,6 +143,20 @@ BEGIN
   END LOOP;
   v_result := v_result || jsonb_build_object('last_counted_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
 
+  -- Track A item 1 / ENG-031: the export-eligibility pantry fact. Depends only on
+  -- sigma_articles + v_ean_bridge, so it carries no L2 ordering constraint. Wired
+  -- here rather than left to a manual call -- an unwired pantry fact drifts out of
+  -- step with the rest, which already happened once to the Ship-2 pantry (ENG-002).
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_export_key(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('export_key_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+  v_result := v_result || jsonb_build_object('export_key_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+
   -- ===================== SB-CC-BLOOM-005 / ENG-002: Ship-2 pantry chain =====================
   -- l2_bloom_ros_pantry FIRST -- l2_stock_band (last in this chain) depends on
   -- it, and it is the most expensive object here even after the perf rewrite.

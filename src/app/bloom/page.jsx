@@ -1065,13 +1065,27 @@ function RecipeMode({ stores }) {
     downloadText(`${storeCode}_recipe_order_${deliveryDate}.csv`, header + body)
   }
 
-  function exportTlx() {
+  // ENG-031: same engine verdict as the desk exporter (rpc_bloom_export_eligibility).
+  // This screen has no report strip, so held-back lines are announced loudly rather
+  // than dropped quietly -- the whole point of the fix (R22, no silent drops).
+  async function exportTlx() {
+    const wanted = lines.filter(l => (qty[l.product_code] ?? 0) > 0)
+    const { data, error: eligErr } = await supabase.rpc('rpc_bloom_export_eligibility', {
+      p_store_code: storeCode, p_product_codes: wanted.map(l => Number(l.product_code)),
+    })
+    if (eligErr) { window.alert(`Export blocked -- could not read export eligibility: ${eligErr.message}`); return }
+    const elig = new Map((data ?? []).map(r => [Number(r.product_code), r]))
     const parts = []
-    for (const l of lines) {
+    const excluded = []
+    for (const l of wanted) {
       const q = qty[l.product_code] ?? 0
-      if (q <= 0 || !l.ean) continue
+      const e = elig.get(Number(l.product_code))
+      if (!e || !e.export_eligible) { excluded.push(`${l.product_code} ${l.description ?? ''} (${e?.ineligible_reason ?? 'no engine identity row'})`); continue }
       const units = q * (l.pack_size ?? 1)
-      parts.push(`${l.ean}+${units}`)
+      parts.push(`${e.export_key}+${units}`)
+    }
+    if (excluded.length) {
+      window.alert(`TLX: ${parts.length} lines written, ${excluded.length} held back -- Sigma cannot match the key.\nOrder these by hand or fix the barcode at source:\n\n${excluded.join('\n')}`)
     }
     downloadText(`${storeCode}.tlx`, `${storeCode}++${parts.join('+')}`)
   }
@@ -1304,6 +1318,8 @@ function OrderDesksMode() {
   const [deliveryChainError, setDeliveryChainError] = useState(null)
   const [monthProjection, setMonthProjection] = useState(null)
   const [importReport, setImportReport] = useState(null)
+  // ENG-031 / Track A item 1: what the TLX actually carried, and what it could not.
+  const [tlxReport, setTlxReport] = useState(null)
   const fileInputRef = useRef(null)
 
   const desks = STORE_DESKS[storeCode] || []
@@ -1548,14 +1564,38 @@ function OrderDesksMode() {
   // Carries the PACK quantity (q), never units -- Sigma's TLX order import
   // reads packs, not each. (Bug: this line used to multiply by pack_size,
   // writing units; corrected 2026-07-14 per floor report.)
-  function exportTlx() {
+  // ENG-031: the old `if (!l.ean) continue` guard was DEAD CODE. The R20-addendum
+  // COALESCE (2026-06-30) made `ean` never null, so manufactured store-prefixed keys
+  // rode the TLX, Sigma silently dropped them on import, and the buyer saw a line
+  // count that never arrived. Eligibility is now an ENGINE verdict read from
+  // rpc_bloom_export_eligibility (l2_export_key) -- the frontend never decides what a
+  // real barcode is (R21, R30), and the key written is the engine's own export_key,
+  // so there is one home for it. Excluded lines are SURFACED with their reason
+  // (R21 sec 5, R22 no silent drops), never quietly skipped.
+  async function exportTlx() {
+    setTlxReport(null)
+    const wanted = lines.filter(l => (qty[l.product_code] ?? 0) > 0 && !(isDcRoute && l.promo_active))
+    if (wanted.length === 0) { setTlxReport({ exported: 0, excluded: [] }); return }
+
+    const { data, error: eligErr } = await supabase.rpc('rpc_bloom_export_eligibility', {
+      p_store_code: storeCode,
+      p_product_codes: wanted.map(l => Number(l.product_code)),
+    })
+    // Fail loudly, never ship a guessed file (R22). A TLX built without the verdict
+    // is exactly the silent-drop failure this fix exists to end.
+    if (eligErr) { setTlxReport({ error: `Export blocked -- could not read export eligibility: ${eligErr.message}` }); return }
+
+    const elig = new Map((data ?? []).map(r => [Number(r.product_code), r]))
     const parts = []
-    for (const l of lines) {
+    const excluded = []
+    for (const l of wanted) {
       const q = qty[l.product_code] ?? 0
-      if (q <= 0 || !l.ean) continue
-      if (isDcRoute && l.promo_active) continue
-      parts.push(`${l.ean}+${q}`)
+      const e = elig.get(Number(l.product_code))
+      if (!e) { excluded.push({ code: l.product_code, desc: l.description, reason: 'no engine identity row' }); continue }
+      if (!e.export_eligible) { excluded.push({ code: l.product_code, desc: l.description, reason: e.ineligible_reason }); continue }
+      parts.push(`${e.export_key}+${q}`)
     }
+    setTlxReport({ exported: parts.length, excluded })
     downloadText(`${storeCode}_${desk}_${preset}_${deliveryDate}.tlx`, `${storeCode}++${parts.join('+')}`)
   }
 
@@ -1997,6 +2037,26 @@ function OrderDesksMode() {
               )}
             </div>
           )}
+
+          {tlxReport && (
+            <div style={{ margin: '0 24px', marginTop: 14, fontFamily: 'var(--font-mono)', fontSize: 10.5,
+              color: tlxReport.error ? '#fca5a5' : (tlxReport.excluded?.length ? 'var(--core-yellow)' : 'var(--veld-mist)'),
+              background: tlxReport.error ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.03)',
+              border: `1px solid ${tlxReport.error ? 'rgba(239,68,68,0.35)' : 'var(--hairline)'}`,
+              borderRadius: 8, padding: '8px 12px', lineHeight: 1.6 }}>
+              {tlxReport.error ? tlxReport.error : (
+                <>
+                  TLX: {tlxReport.exported} line{tlxReport.exported === 1 ? '' : 's'} written
+                  {tlxReport.excluded.length > 0 && <> · <strong>{tlxReport.excluded.length} held back</strong> (Sigma cannot match the key -- order these by hand or fix the barcode at source)</>}
+                  {tlxReport.excluded.length > 0 && (
+                    <div style={{ marginTop: 4 }}>
+                      {tlxReport.excluded.map(x => `${x.code} ${x.desc ?? ''} (${x.reason})`).join(' · ')}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14,
             padding: '16px 24px', borderTop: '1px solid var(--glass-border)', flexWrap: 'wrap' }}>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)', flex: '1 1 200px' }}>
@@ -2111,13 +2171,25 @@ export default function BloomPage() {
     downloadText(`${storeCode}_bloom_order_${deliveryDate}.csv`, header + body)
   }
 
-  function exportTlx() {
+  // ENG-031: same engine verdict as the desk exporter (rpc_bloom_export_eligibility).
+  async function exportTlx() {
+    const wanted = lines.filter(l => (qty[l.product_code] ?? 0) > 0)
+    const { data, error: eligErr } = await supabase.rpc('rpc_bloom_export_eligibility', {
+      p_store_code: storeCode, p_product_codes: wanted.map(l => Number(l.product_code)),
+    })
+    if (eligErr) { window.alert(`Export blocked -- could not read export eligibility: ${eligErr.message}`); return }
+    const elig = new Map((data ?? []).map(r => [Number(r.product_code), r]))
     const parts = []
-    for (const l of lines) {
+    const excluded = []
+    for (const l of wanted) {
       const q = qty[l.product_code] ?? 0
-      if (q <= 0 || !l.ean) continue
+      const e = elig.get(Number(l.product_code))
+      if (!e || !e.export_eligible) { excluded.push(`${l.product_code} ${l.description ?? ''} (${e?.ineligible_reason ?? 'no engine identity row'})`); continue }
       const units = q * (l.pack_size ?? 1)
-      parts.push(`${l.ean}+${units}`)
+      parts.push(`${e.export_key}+${units}`)
+    }
+    if (excluded.length) {
+      window.alert(`TLX: ${parts.length} lines written, ${excluded.length} held back -- Sigma cannot match the key.\nOrder these by hand or fix the barcode at source:\n\n${excluded.join('\n')}`)
     }
     downloadText(`${storeCode}.tlx`, `${storeCode}++${parts.join('+')}`)
   }
