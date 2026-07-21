@@ -4,6 +4,22 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-21 -- ENG-034: Fit-to-Budget is a RANKED WHOLE-PACK FILL, never proportional scaling
+
+PM ruling the same day, on the defect leg d exposed. Retires canon SS14 v10's "scale the remaining quantities proportionally" with lineage (R28) and reconciles v8 (ranked trim), v10 (floor-protected) and v12 (presence never zeroed) with what an indivisible pack permits.
+
+- **The defect [DEDUCTIVE]:** a pack is indivisible, so scaling a 1-2 pack line by a fraction and flooring lands on zero. 10116 DC_AMBIENT, budget R506,841: 12,453 lines worth R525,584.57 collapsed to **R3,602.85 with 6 survivors** at a ~0.494 factor, the fitted order landed R255k BELOW its own budget, and the v12 minimum-presence packs were re-zeroed. Proportional allocation of a fixed budget across atomic units is incoherent by construction -- no base rate needed.
+- **The fix, reusing what exists (R21):** the CATCH_UP priority-basket walk. A FLOOR layer is funded first and never trimmed (HERO/KVI protected lines at full quantity + the v12 minimum-presence pack), then remaining DEPTH fills in the existing `cu_rank` order (HERO -> KVI band -> GMROI -> product_code) at WHOLE packs on a prefix cutoff. Lines past the cutoff hold at their floor with a reason, never a fractional collapse. New `budget_fit_reason` values: `min_presence_floor`, `ranked_fill`, `below_cutoff_held_at_floor`, `below_cutoff_not_funded`.
+- **R22, isolation:** unfitted output byte-identical to `packs_before_fit` on all 6 store/route pairs tested -- the change touches the fit path only. 10116 DC_AMBIENT fitted moves from 152 lines / R250,798.56 to **1,718 lines / R736,415.69**; nothing is shaved onto an empty shelf. `next build` clean.
+- **🔴 WHAT THE FIX EXPOSED, reported not absorbed: `depth_funded = 0` at every store/route today** -- the floor layer alone exceeds the rail everywhere, so the ranked walk currently has nothing left to allocate. 10116 DC floor R733,042 vs rail R495,603 · 80175 DC R493,421 vs R368,873 · 21355 DC_TOPS R315,002 vs R47,563 · 80579 DC_TOPS R295,495 vs R44,834 · 80176 DC_TOPS R187,803 vs R90,394 · 21355 DIRECT_BEER R83,723 vs R10,480. Two causes, both named: the stores are genuinely broadly below band, AND **the TOPS rails are structurally understated** because `l2_sales_budget` is LY-anchored and TOPS LY coverage is ~11% (the known family/EAN-bridge debt, canon v11 3c-d) -- the 6.6x gap at 21355 is that debt, not a buying signal. The order therefore lands ABOVE the rail, which is the SAFE direction and the RULED behaviour (canon v9 item 5 / v7 item 9), now surfaced on the budget strip as "over the week's rail by R X -- floors protected".
+- **Silent display defect fixed in the same pass:** the strip's `protectedCount` / `trimmedCount` filters matched **no engine value at all** (`protected_kvi`, `trimmed_partial`, `trimmed_to_zero` are never emitted), so it had shown 0 protected and 0 trimmed on every order since it shipped.
+
+Migration `eng034_fit_is_a_ranked_whole_pack_fill`. Files `sql/create_rpc_bloom_order_recipe.sql`, `src/app/bloom/page.jsx`.
+
+**Nightly proof, unplanned and welcome:** `refresh-l2-pipeline` fired mid-session at 20:15 UTC and picked up BOTH of this session's new wirings on its first live run -- `l2_export_key` and the NEEDS rail refreshed themselves without intervention (verified via `resolved_at` / `updated_at` = 20:15:00 exactly). That also explains a R6,492 movement in unfitted order values between the evening's measurements: `l2_stock_position` refreshed underneath them, not a code change.
+
+---
+
 ## 2026-07-21 -- LEG D: the budget rail derives itself, and the stale-week fallback is no longer silent
 
 Track A item 3 (canon SS17 A3). The weekly rail had been frozen at the WC-11-Jul hand seed for three weeks, so every auto-fitted DC and direct order was fitting to a stale number. Two defects sat underneath it, both fixed here.

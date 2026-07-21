@@ -1519,8 +1519,16 @@ function OrderDesksMode() {
   const cols = ['Code', 'Pack', 'Description', 'Dept', 'SOH', 'ROS/day', 'Tier', 'Promo', 'Qty · packs', 'Value']
   const gridCols = '76px 44px minmax(180px,1.7fr) 110px 56px 90px 90px 60px 130px 100px'
   const beforeFitTotal = useMemo(() => lines.reduce((s, l) => s + (Number(l.packs_before_fit) || 0) * (Number(l.pack_cost) || 0), 0), [lines])
-  const trimmedCount = lines.filter(l => l.budget_fit_reason === 'trimmed_partial' || l.budget_fit_reason === 'trimmed_to_zero').length
-  const protectedCount = lines.filter(l => l.budget_fit_reason === 'protected_kvi').length
+  // ENG-034: the fit reasons the engine ACTUALLY emits. The previous filters
+  // ('trimmed_partial' / 'trimmed_to_zero' / 'protected_kvi') matched no engine
+  // value at all, so this strip has been reading 0 protected and 0 trimmed on
+  // every order since it shipped -- a silent display defect, fixed here.
+  const trimmedCount = lines.filter(l => l.budget_fit_reason === 'below_cutoff_held_at_floor' || l.budget_fit_reason === 'below_cutoff_not_funded').length
+  const protectedCount = lines.filter(l => l.budget_fit_reason === 'protected_kvi_hero' || l.budget_fit_reason === 'min_presence_floor').length
+  // Canon SS14 v9 item 5 / v7 item 9: an order over its ceiling with the floors
+  // protected is the RULED behaviour, surfaced as the real decision it is --
+  // never silently trimmed into an empty shelf.
+  const overRail = fitToBudget && budgetTotal > 0 && total > budgetTotal ? total - budgetTotal : 0
 
   // Canon v7 item 11 -- THE EXPORT CONTRACT, three files per order:
   // (1) CSV = EVERYTHING, StockFlow benchmark format (Bloom/BENCHMARK_
@@ -1804,9 +1812,18 @@ function OrderDesksMode() {
           <span>Route budget{budgetManualOverride || budgetIsNeeds ? '' : ' (82%)'}: {zar(budgetTotal)}</span>
           {!budgetManualOverride && cash80Group > 0 && <span>Group 80%-cash reference: {zar(cash80Group)}</span>}
           {generated && fitToBudget && (
-            <span>Fit: {zar(beforeFitTotal)} → {zar(total)} · {protectedCount} protected · {trimmedCount} trimmed</span>
+            <span>Fit: {zar(beforeFitTotal)} → {zar(total)} · {protectedCount} at floor · {trimmedCount} held below cutoff</span>
           )}
         </div>
+        {/* ENG-034: floors are never trimmed, so an order can legitimately sit above
+            its rail. Canon v9 item 5 -- surface it as the decision it is. */}
+        {generated && overRail > 0 && (
+          <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--core-yellow)',
+            background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.35)', borderRadius: 8, padding: '8px 12px' }}>
+            Over the week’s rail by {zar(overRail)} — HERO/KVI floors and the minimum-presence packs are protected and never trimmed.
+            Nothing has been shaved into an empty shelf; this is a buying decision, not a fault.
+          </div>
+        )}
         {/* LEG D: the fallback is no longer silent. */}
         {generated && budgetWeekStale && (
           <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--core-yellow)',

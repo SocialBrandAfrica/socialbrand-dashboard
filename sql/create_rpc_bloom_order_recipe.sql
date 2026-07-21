@@ -759,6 +759,45 @@ BEGIN
         ) AS cu_include
       FROM catchup_walk w
     ),
+    -- ENG-034 (PM ruling 2026-07-21): FIT IS A RANKED WHOLE-PACK FILL, NEVER
+    -- PROPORTIONAL SCALING. Retires v10's "scale the rest proportionally" with
+    -- lineage. A pack is indivisible, so scaling a 1-2 pack line by a fraction and
+    -- flooring lands on zero -- measured live at 10116, 12,453 lines worth R525,584
+    -- collapsed to 6 lines / R3,602.85 at a ~0.494 factor while the order UNDER-spent
+    -- its own budget by R255k and re-zeroed the very packs v12 guarantees. DEDUCTIVE:
+    -- proportional allocation of a fixed budget over atomic units is incoherent by
+    -- construction. Reconciles v8 (ranked trim), v10 (floor-protected) and v12
+    -- (presence never zeroed). Breadth comes from v12 + catch-up across weeks, never
+    -- from shaving every line.
+    --
+    -- THE FLOOR LAYER -- funded first, never trimmed.
+    fit_ranked AS (
+      SELECT b.*,
+        (CASE
+           WHEN b.is_protected THEN b.resolved_packs_calc
+           WHEN b.resolved_packs_calc >= 1 AND (b.mp_life OR (b.slow_candidate AND b.pack_relevant)) THEN 1
+           ELSE 0
+         END)::int AS fit_floor_packs
+      FROM catchup_decided b
+    ),
+    -- THE RANKED WHOLE-PACK WALK -- same rank and prefix-cutoff shape as the
+    -- catch-up priority basket (HERO -> KVI band -> GMROI -> product_code), reused
+    -- rather than reinvented (R21).
+    fit_walk AS (
+      SELECT f.*,
+        GREATEST(f.resolved_packs_calc - f.fit_floor_packs, 0) AS fit_depth_packs,
+        GREATEST(f.resolved_packs_calc - f.fit_floor_packs, 0) * f.pack_cost AS fit_depth_value,
+        SUM(f.fit_floor_packs * f.pack_cost) OVER () AS fit_floor_spend,
+        COALESCE(SUM(GREATEST(f.resolved_packs_calc - f.fit_floor_packs, 0) * f.pack_cost)
+          OVER (ORDER BY f.cu_rank ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS fit_depth_before
+      FROM fit_ranked f
+    ),
+    fit_decided AS (
+      SELECT w.*,
+        (w.fit_depth_packs > 0
+         AND w.fit_depth_before + w.fit_depth_value <= GREATEST(%14$L::numeric - w.fit_floor_spend, 0)) AS fit_depth_funded
+      FROM fit_walk w
+    ),
     finalp AS (
       SELECT b.*,
         (%13$L::boolean OR %11$L::boolean) AS fit_applied,
@@ -766,27 +805,19 @@ BEGIN
           WHEN %11$L::boolean THEN  -- catch_up: its own walk decides, generic fit never re-runs on top
             (CASE WHEN b.cu_include THEN b.resolved_packs_calc ELSE 0 END)
           WHEN NOT %13$L::boolean THEN b.resolved_packs_calc
-          WHEN b.is_protected THEN b.resolved_packs_calc
-          WHEN protected_totals.protected_spend >= %14$L::numeric THEN 0
-          ELSE FLOOR(b.resolved_packs_calc * LEAST(
-                 (%14$L::numeric - protected_totals.protected_spend) / NULLIF(protected_totals.unprotected_spend, 0), 1.0))
+          WHEN b.fit_depth_funded THEN b.resolved_packs_calc
+          ELSE b.fit_floor_packs
         END::int AS final_packs,
         CASE
           WHEN %11$L::boolean THEN (CASE WHEN b.cu_include THEN 'catchup_priority_fill' ELSE 'catchup_below_cutoff' END)
           WHEN NOT %13$L::boolean THEN NULL
           WHEN b.is_protected THEN 'protected_kvi_hero'
-          WHEN protected_totals.protected_spend >= %14$L::numeric THEN 'scaled_to_budget (protected spend alone exceeds budget)'
-          WHEN protected_totals.unprotected_spend = 0 THEN 'fits'
-          WHEN (%14$L::numeric - protected_totals.protected_spend) / NULLIF(protected_totals.unprotected_spend,0) >= 1.0 THEN 'fits'
-          ELSE 'scaled_to_budget'
+          WHEN b.fit_depth_packs <= 0 THEN (CASE WHEN b.fit_floor_packs > 0 THEN 'min_presence_floor' ELSE 'fits' END)
+          WHEN b.fit_depth_funded THEN 'ranked_fill'
+          WHEN b.fit_floor_packs > 0 THEN 'below_cutoff_held_at_floor'
+          ELSE 'below_cutoff_not_funded'
         END AS fit_reason
-      FROM catchup_decided b
-      CROSS JOIN (
-        SELECT
-          SUM(CASE WHEN is_protected THEN resolved_packs_calc*pack_cost ELSE 0 END) AS protected_spend,
-          SUM(CASE WHEN NOT is_protected THEN resolved_packs_calc*pack_cost ELSE 0 END) AS unprotected_spend
-        FROM catchup_decided
-      ) protected_totals
+      FROM fit_decided b
     )
     SELECT
       %1$L::text AS store_code, pk.product_code AS product_code,
