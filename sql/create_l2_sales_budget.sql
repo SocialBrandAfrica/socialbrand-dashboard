@@ -98,13 +98,15 @@ DECLARE
 BEGIN
   SET LOCAL statement_timeout = '60s';
 
-  -- Saturday on/after (or equal to) the anchor -- same formula as
-  -- rpc_bloom_order_recipe's own v_week_start (R21, budget-week convention
-  -- v7 item 7).
+  -- LEG D (2026-07-21): the budget week CONTAINING the anchor -- now byte-identical to
+  -- rpc_bloom_order_recipe's own v_week_start, which this comment always claimed but the
+  -- code did not do. The retired "+7 if earlier than the anchor" advance meant the
+  -- projection could only ever hold weeks starting in the FUTURE (live proof: earliest
+  -- row 2026-07-25 while the current budget week started 2026-07-18), so the week you
+  -- are ordering in never existed and the recipe silently fell back to the nearest PAST
+  -- week -- ENG-016, and the reason every order was fitted to a 3-week-stale budget.
+  -- Retired with lineage (R28), not deleted.
   v_anchor_week_start := p_anchor_date - ((EXTRACT(ISODOW FROM p_anchor_date)::int + 1) % 7);
-  IF v_anchor_week_start < p_anchor_date THEN
-    v_anchor_week_start := v_anchor_week_start + 7;
-  END IF;
 
   -- Route pool -- mirrors rpc_bloom_order_recipe's `lnk` CTE population
   -- exactly (R21, one classifier reused, never reinvented).

@@ -1506,6 +1506,14 @@ function OrderDesksMode() {
   // label -- independent of cash_constrained, which still governs the
   // order_essentials day-cover on its own (unaffected by this flag).
   const budgetManualOverride = !!budgetRow?.budget_manual_override
+  // LEG D: the rail's own basis and WHICH week the engine actually priced against.
+  // budget_week_source has been an engine output all along and nothing displayed it,
+  // which is what made ENG-016's nearest-past-week fallback silent -- every order was
+  // fitted to a 3-week-stale WC-11-Jul budget with nothing on screen saying so.
+  const budgetIsNeeds = String(budgetRow?.source_note ?? '').startsWith('NEEDS')
+  const budgetWeekSource = lines[0]?.budget_week_source ?? null
+  const budgetWeekPriced = lines[0]?.budget_week_start ?? null
+  const budgetWeekStale = !!budgetWeekSource && budgetWeekSource !== 'delivery_week_exact'
   const promoCount = lines.filter(l => l.promo_active).length
   const shown = filter === 'all' ? lines : lines.filter(l => l.promo_active)
   const cols = ['Code', 'Pack', 'Description', 'Dept', 'SOH', 'ROS/day', 'Tier', 'Promo', 'Qty · packs', 'Value']
@@ -1791,14 +1799,23 @@ function OrderDesksMode() {
         </div>
         <div style={{ marginTop: 10, display: 'flex', gap: 18, flexWrap: 'wrap', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--veld-mist)' }}>
           <span>Basis this week: <strong style={{ color: budgetManualOverride ? 'var(--daisy-white)' : cashConstrained ? 'var(--core-yellow)' : 'var(--data-pos)' }}>
-            {budgetManualOverride ? 'MANUAL' : cashConstrained ? '80% CASH-CONSTRAINED (10d essentials)' : '82% FORECAST (21d essentials)'}
+            {budgetManualOverride ? 'MANUAL' : budgetIsNeeds ? 'NEEDS (projection)' : cashConstrained ? '80% CASH-CONSTRAINED (10d essentials)' : '82% FORECAST (21d essentials)'}
           </strong></span>
-          <span>Route budget{budgetManualOverride ? '' : ' (82%)'}: {zar(budgetTotal)}</span>
+          <span>Route budget{budgetManualOverride || budgetIsNeeds ? '' : ' (82%)'}: {zar(budgetTotal)}</span>
           {!budgetManualOverride && cash80Group > 0 && <span>Group 80%-cash reference: {zar(cash80Group)}</span>}
           {generated && fitToBudget && (
             <span>Fit: {zar(beforeFitTotal)} → {zar(total)} · {protectedCount} protected · {trimmedCount} trimmed</span>
           )}
         </div>
+        {/* LEG D: the fallback is no longer silent. */}
+        {generated && budgetWeekStale && (
+          <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--core-yellow)',
+            background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.35)', borderRadius: 8, padding: '8px 12px' }}>
+            {budgetWeekSource === 'no_ledger_row'
+              ? 'No budget row exists for this delivery week on this route — the order is priced against a budget of R0. Fit to budget will trim everything. Generate the budget rail before ordering.'
+              : `This delivery week has no budget row. The engine fell back to the nearest PAST week (${budgetWeekPriced}) — the figure above is stale and the fit is judged against it.`}
+          </div>
+        )}
         {error && (
           <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: '#fca5a5',
             background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 8, padding: '8px 12px' }}>

@@ -247,6 +247,9 @@ BEGIN
   LOOP
     BEGIN
       PERFORM refresh_l2_sales_budget(v_store);
+      -- LEG D: the projection is the NEEDS rail's only source, so the rail is written in
+      -- the same breath. MANUAL (cashflow punch-in) rows are never overwritten.
+      PERFORM refresh_order_budget_ledger_needs(v_store);
     EXCEPTION WHEN OTHERS THEN
       v_result := v_result || jsonb_build_object('sales_budget_error_' || v_store, SQLERRM);
     END;
