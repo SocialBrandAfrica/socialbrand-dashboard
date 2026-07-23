@@ -71,20 +71,30 @@ CREATE POLICY l2_export_key_read ON public.l2_export_key FOR SELECT USING (true)
 GRANT SELECT ON public.l2_export_key TO anon, authenticated;
 
 -- -----------------------------------------------------------------------------
+-- Identity Phase 1 MUTATION (2026-07-22, CANON SS17) -- THE FREEZE.
+-- A product whose identity FLIPS to REAL only because the Phase-1 decoder
+-- (v_scan_ref_decoded) rescued its EAN-8 body is held INELIGIBLE
+-- (ineligible_reason='identity_phase1_freeze') until Phase 3, so no
+-- newly-flipped line can auto-zero on the strength of type_flag=3 before its
+-- consumers are repointed (CANON SS17 hard gate: TLX artifact FROZEN for the
+-- flipped population). "flipped" = real-by-decoder AND not already a real body
+-- kind in L1. Verified live: 0 frozen products reached a live TLX artifact,
+-- 0 REAL lost.
 CREATE OR REPLACE FUNCTION public.refresh_l2_export_key(p_store text)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
 DECLARE
-  v_rows int; v_inelig int; v_plu int; v_nobridge int;
+  v_rows int; v_inelig int; v_plu int; v_nobridge int; v_frozen int;
 BEGIN
   DELETE FROM l2_export_key WHERE store_code = p_store;
 
   INSERT INTO l2_export_key (store_code, product_code, export_key, key_source, export_eligible, ineligible_reason)
   SELECT k.store_code, k.product_code, k.export_key, k.key_source,
-         k.key_source NOT IN ('SYNTHETIC_FALLBACK','BRIDGE_PLU_SYNTHETIC') AS export_eligible,
-         CASE k.key_source
-           WHEN 'SYNTHETIC_FALLBACK'   THEN 'no_bridge_row_key_manufactured'
-           WHEN 'BRIDGE_PLU_SYNTHETIC' THEN 'plu_synthetic_key'
+         (k.key_source NOT IN ('SYNTHETIC_FALLBACK','BRIDGE_PLU_SYNTHETIC') AND NOT k.phase1_frozen) AS export_eligible,
+         CASE
+           WHEN k.key_source = 'SYNTHETIC_FALLBACK'   THEN 'no_bridge_row_key_manufactured'
+           WHEN k.key_source = 'BRIDGE_PLU_SYNTHETIC' THEN 'plu_synthetic_key'
+           WHEN k.phase1_frozen                       THEN 'identity_phase1_freeze'
          END
   FROM (
     SELECT a.store_code, a.product_code,
@@ -101,18 +111,30 @@ BEGIN
              WHEN pc.ean_category = 'EAN_REAL_SHORT' THEN 'BRIDGE_EAN_REAL_SHORT'
              WHEN pc.ean_category = 'EAN_SHORT'      THEN 'BRIDGE_EAN_SHORT'
              ELSE 'BRIDGE_OTHER'
-           END AS key_source
+           END AS key_source,
+           COALESCE(f.flipped, false) AS phase1_frozen
     FROM sigma_articles a
     LEFT JOIN v_ean_bridge b     ON b.store_code = a.store_code AND b.product_code = a.product_code
     LEFT JOIN product_catalog pc ON pc.store_code = a.store_code AND pc.ean = b.ean
+    LEFT JOIN (
+      -- products the Phase-1 decoder flips to REAL that L1's own body kinds did
+      -- NOT already call real -> frozen until Phase 3 repoints consumers.
+      SELECT store_code, product_code, true AS flipped
+      FROM v_scan_ref_decoded
+      WHERE COALESCE(blocked_flag,'0') NOT IN ('1','-1')
+      GROUP BY store_code, product_code
+      HAVING bool_or(is_real_v2)
+         AND NOT bool_or(code_kind_l1 IN ('EAN13_BODY','UPCA_BODY','FULL13'))
+    ) f ON f.store_code = a.store_code AND f.product_code = a.product_code
     WHERE a.store_code = p_store
   ) k;
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   SELECT count(*) FILTER (WHERE NOT export_eligible),
          count(*) FILTER (WHERE ineligible_reason = 'plu_synthetic_key'),
-         count(*) FILTER (WHERE ineligible_reason = 'no_bridge_row_key_manufactured')
-    INTO v_inelig, v_plu, v_nobridge
+         count(*) FILTER (WHERE ineligible_reason = 'no_bridge_row_key_manufactured'),
+         count(*) FILTER (WHERE ineligible_reason = 'identity_phase1_freeze')
+    INTO v_inelig, v_plu, v_nobridge, v_frozen
   FROM l2_export_key WHERE store_code = p_store;
 
   -- no silent empties (canon SS8.6 guard 4)
@@ -124,6 +146,7 @@ BEGIN
     'store_code', p_store, 'rows', v_rows,
     'ineligible', v_inelig, 'plu_synthetic_key', v_plu,
     'no_bridge_row_key_manufactured', v_nobridge,
+    'identity_phase1_freeze', v_frozen,
     'refreshed_at', now());
 END $fn$;
 

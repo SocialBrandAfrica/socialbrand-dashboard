@@ -8,6 +8,14 @@
 -- the routine count stack), tlx (artifact='tlx' AND |soh| < the near-
 -- certainty belt AND not counted_91 AND ean_status='REAL' -- canon §8.12#3),
 -- or any other artifact name directly (stockflow, etc).
+--
+-- ENG-031 gate (Identity Phase 1, 2026-07-22): the TLX selector now ALSO
+-- requires l2_export_key.export_eligible -- a line rides the TLX only when its
+-- key is one Sigma actually holds, so manufactured/synthetic/frozen keys can no
+-- longer ride and be silently dropped on import (R22, no silent drops). The new
+-- 'tlx_held' selector returns exactly what the gate holds back, each with its
+-- reason (R21 §5). This closed the pre-existing gap where 89 of 90 live TLX
+-- lines group-wide carried manufactured keys.
 -- =============================================================================
 
 CREATE OR REPLACE FUNCTION public.rpc_forge_lines(p_store text, p_date date DEFAULT NULL::date, p_selector text DEFAULT 'stockflow'::text)
@@ -24,19 +32,33 @@ latest AS (
 )
 SELECT c.product_code, c.description, c.dept_name, c.subdept_name,
        c.soh, c.capital_value, sp.last_sale_date, sp.last_receipt_date,
-       c.bucket, c.bucket_reason, c.ean_key, c.ean_status
+       c.bucket,
+       CASE WHEN p_selector = 'tlx_held'
+            THEN 'export_held: ' || COALESCE(ek.ineligible_reason, 'no_export_key_row')
+            ELSE c.bucket_reason END AS bucket_reason,
+       c.ean_key, c.ean_status
 FROM l2_classification c
 JOIN latest l ON c.snapshot_date = l.d
 LEFT JOIN l2_stock_position sp
        ON sp.store_code = c.store_code AND sp.product_code = c.product_code
+LEFT JOIN l2_export_key ek
+       ON ek.store_code = c.store_code AND ek.product_code = c.product_code
 WHERE c.store_code = p_store
   AND (
         (p_selector = 'leave_counted' AND c.bucket = 'LEAVE_COUNTED')
      OR (p_selector = 'deposit' AND c.bucket = 'DEPOSIT')
+     -- the TLX proper: cascade verdict AND belt AND uncounted AND REAL, and now
+     -- ALSO a key Sigma actually holds. All four gates, or it does not export.
      OR (p_selector = 'tlx' AND c.artifact = 'tlx'
          AND ABS(c.soh) < (SELECT value_num FROM belt)
-         AND NOT c.counted_91 AND c.ean_status = 'REAL')
-     OR (p_selector NOT IN ('tlx','leave_counted','deposit') AND c.artifact = p_selector)
+         AND NOT c.counted_91 AND c.ean_status = 'REAL'
+         AND COALESCE(ek.export_eligible, false))
+     -- everything the gate holds back, with its reason (R21 §5)
+     OR (p_selector = 'tlx_held' AND c.artifact = 'tlx'
+         AND ABS(c.soh) < (SELECT value_num FROM belt)
+         AND NOT c.counted_91 AND c.ean_status = 'REAL'
+         AND NOT COALESCE(ek.export_eligible, false))
+     OR (p_selector NOT IN ('tlx','tlx_held','leave_counted','deposit') AND c.artifact = p_selector)
       )
 ORDER BY c.capital_value DESC
 $function$;
