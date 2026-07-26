@@ -112,6 +112,24 @@ CREATE TABLE IF NOT EXISTS public.l2_creditor_stock_match (
   order_line_count   integer     NOT NULL DEFAULT 0,
   age_anchor_date    date,                 -- invoice_date, else grv_date
   age_days           integer,
+  -- PM ruling 2026-07-26: carry the rand on NO_GRV (the overpayment question).
+  -- invoice_value is 0 on ALL 2,585 NO_GRV rows, so invoice_ex_vat is NULL there by
+  -- design. exposure falls back with its PROVENANCE named, never silently:
+  --   invoice_ex_vat -> invoiced_line_total -> order_cost_total -> none_captured.
+  -- 'none_captured' (2,423 headers) is stated as such -- printing R0 for an
+  -- unmeasured document is the same lie as printing NULL.
+  exposure_ex_vat     numeric,
+  exposure_basis      text,
+  -- DEDUCTIVE: a negative order/line value cannot be a purchase, so the header is a
+  -- credit or return. status_1='7' (17,316 headers) is dominated by negative and
+  -- zero-value documents and 5,147 of them land in NO_INVOICE, which on a screen
+  -- reads as "stock we hold unbilled" when it is a RETURN. credit_value is dead
+  -- (0 on every one), so the negative value is the only signal available.
+  -- A FLAG, NOT AN EIGHTH VERDICT: a credit can legitimately be MATCHED, so
+  -- pre-empting the cascade would move the proven R22 baseline. Re-proven unchanged.
+  is_credit_or_return boolean     NOT NULL DEFAULT false,
+  order_cost_total    numeric,
+  status_1            text,                 -- EVIDENCE only; its codes are undecoded (R23)
   engine_version     text        NOT NULL DEFAULT 'debt001-v1',
   computed_at        timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (store_code, order_nr),
