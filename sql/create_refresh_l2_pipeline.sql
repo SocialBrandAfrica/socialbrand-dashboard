@@ -1,7 +1,15 @@
 -- =============================================================================
 -- create_refresh_l2_pipeline.sql
--- Canonical source for refresh_l2_pipeline(). Synced to LIVE 2026-07-11;
+-- Canonical source for refresh_l2_pipeline(). Synced to LIVE 2026-07-26;
 -- de-hardcoded 2026-06-17 (SB-CC-RECONCILE-001 Phase 1).
+-- =============================================================================
+-- 2026-07-26 IDENTITY PHASE 2: two loops added directly after the L2 matview
+--   chain -- refresh_l2_ean_resolved then refresh_l2_link_codes_queue. Placement
+--   is load-bearing, not cosmetic: v_ean_bridge became a thin view over
+--   l2_ean_resolved, so the resolved identity must be rebuilt before the 31
+--   objects that read the bridge (export key, Bloom pantry, bt_*, mv_rate_of_sale,
+--   search index). Applied live as migration
+--   phase2_05_wire_identity_into_refresh_l2_pipeline.
 -- =============================================================================
 -- 2026-07-11 SYNC NOTE: the SB-CC-BLOOM-005/ENG-002 Ship-2 pantry chain wiring
 --   below (landed live 2026-07-10 by a separate execution context) had not
@@ -84,6 +92,37 @@ BEGIN
   REFRESH MATERIALIZED VIEW l2_stock_position;
   REFRESH MATERIALIZED VIEW l2_kpi_daily;
   v_result := v_result || jsonb_build_object('chain_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+
+  -- ============ IDENTITY PHASE 2 (CANON SS17, 2026-07-26): resolved identity FIRST ============
+  -- ORDER IS LOAD-BEARING. v_ean_bridge is now a thin view over l2_ean_resolved,
+  -- and 31 live objects read that bridge -- refresh_l2_export_key, the whole Bloom
+  -- pantry chain, refresh_l2_bt_*, mv_rate_of_sale and upsert_search_index all do.
+  -- So the resolved identity must be rebuilt BEFORE any of them run. It is placed
+  -- here because its own inputs (sigma_scan_refs, sigma_articles, product_catalog)
+  -- are already settled by this point.
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_ean_resolved(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('ean_resolved_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+  v_result := v_result || jsonb_build_object('ean_resolved_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+
+  -- The LINK_CODES candidate queue. Detects family / successor / absent-identity
+  -- CANDIDATES only; resolves nothing (status CHECK-locked to CANDIDATE pending
+  -- the item-12 ruling). Feeds ENG-020 leg 2's own non-empty gate.
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_link_codes_queue(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('link_codes_queue_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+  v_result := v_result || jsonb_build_object('link_codes_queue_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+  -- ============ end IDENTITY PHASE 2 ============
 
   -- Consignment engine (SB-CC-PMINI-WIRE-001 Gap A). Reads sigma_sales x
   -- sigma_articles; depends on L1 (refreshed pre-pipeline by the push), not on

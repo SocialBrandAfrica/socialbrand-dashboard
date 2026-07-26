@@ -6,6 +6,29 @@
 -- rpc_forge_map_upsert / rpc_forge_map_retire (NOT YET BUILT -- the
 -- Product-Mapper toolkit doesn't exist yet either; this table is schema
 -- ready for that build, holds zero rows until it lands).
+--
+-- ⭐ IDENTITY PHASE 2 STATUS (2026-07-26, PM ruling -- CC).
+-- STILL DELIBERATELY EMPTY (0 rows), and that is now a RULING, not just a
+-- pending build. Two binding reasons:
+--   1. The rpc_forge_map_upsert / _retire write path is still not built, and
+--      R30 addendum 2 forbids any other write path (no direct INSERT grant).
+--   2. What a resolution MEANS is the HELD item-12 candidate. Pieter's
+--      principle governs: the engine may act on a family/successor resolution
+--      only when the DATABASE decides it deterministically, and resolving it by
+--      letting a normal user amend the database is NOT ALLOWED. PM churns the
+--      mechanism before anything is written here.
+-- confirmed_by / confirmed_at stay NULL until a human actually rules -- they are
+-- a provenance stamp, never an approval the engine fills in for itself.
+--
+-- The DETERMINISTIC half of identity is live and does not need this table:
+-- l2_ean_resolved answers "which barcode is this product's canonical key" and
+-- v_ean_bridge is now a thin view over it. The candidates that WOULD be resolved
+-- here sit in l2_link_codes_queue, status CHECK-locked to CANDIDATE (6,698 rows).
+--
+-- The "subsumes l2_link_codes_queue" plan above is DEFERRED, deliberately: canon
+-- SS17 and the ENG-020 leg-2 gate name l2_link_codes_queue by name and need it
+-- non-empty NOW, whereas this table cannot be written to until its RPC lands.
+-- Fold the queue in here when rpc_forge_map_* is built, with lineage (R28).
 
 CREATE TABLE public.l2_product_map (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
