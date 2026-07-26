@@ -4,6 +4,85 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-26 -- ORD-STOP-001 defect 5: l2_range_state wired into the nightly chain (`e5bf527`)
+
+The one Ship-2 object never wired into `refresh_l2_pipeline`, and it DRIVES DEPTH in `rpc_bloom_order_recipe` (canon §14 v10 item 1: a missing row defaults to SLOW = zero depth = never ordered). Last refresh 2026-07-12 17:00 UTC against every sibling at 2026-07-25 20:15 -- 13 days stale on the table that decides what gets ordered.
+
+**Why it was skipped, and why the slot matters.** It reads `l2_classification` (early), `l2_kvi_profile` (mid, Ship-2 chain) and `l2_bt_heroes` (LATE, built by `refresh_bt_precompute`). It is the only pantry fact whose dependencies straddle the whole chain, so it fits with none of its siblings. Wired AFTER `bt_precompute` -- placing it with the Ship-2 group would read a stale `l2_bt_heroes` and mislabel every HERO.
+
+**R22, before -> after, all five stores refreshed:** NORMAL products with no range_state row 766 -> 0 · pass the life gate but called SLOW/DERANGE/MARKDOWN 486 -> 0 · labelled CORE/HERO but fail the gate 470 -> 0.
+
+**⚠️ FIXED BUT NOT UPSTREAM, AND ORD-STOP-001 IS NOT CLOSED.** 10116 DC_AMBIENT full moved only 479 -> 487 lines / R236,897 -> R240,293 (+1.7%) against the 2026-07-21 signed reference of 1,718 lines / R736,416. Judgement delivered per PM's instruction, each item measured not inferred:
+- **Defect 4 (order a fraction of its reference) is NOT a defect.** The 10116 CORE+HERO pool rose 118,463 -> 154,159 units SOH between 21 and 25 Jul (+30.1%), in-stock lines 5,914 -> 6,849. Projected SOH now averages 11.41 against min_band 2.50, so 4,616 of 5,051 CORE lines sit ABOVE band: need is legitimately 0 and v12 min-presence correctly does not fire. **The store restocked.** Comparing to the 21 Jul figure is a comparison across a regime boundary (canon's own `regime` rule). **The 21 Jul reference was cut on an understocked store and may need re-cutting before it can gate again -- PM's call.**
+- **Defect 3 (catch_up collapsed) is a SYMPTOM** of the same restocking: catch-up targets 21 aggregate stock-days and the pool is already near it.
+- **Defect 1 is MISDIAGNOSED as inert Fit.** The recipe DOES honour `p_fit_to_budget` (`budget_fit_applied` true on all 318 lines at 21355, two distinct reasons) and correctly refuses to trim, because ALL 318 ordered lines are floor layer: 228 `protected_kvi_hero` + 90 `min_presence_floor`. Canon v13 §1 forbids trimming either. **The real defect is narrow: `rpc_bloom_scenario_overview` never aggregates the recipe's own `budget_fit_reason` into `protected_lines`/`trimmed_lines`** -- BUG-LOG ENG-036.
+- **Defects 2, 7, 8 CONFIRMED REAL AND OPEN** (ENG-041, ENG-038-adjacent yardstick, ENG-037).
+
+**The Recipe desk is still NOT safe to order off. The `rpc_bloom_order_dc` fallback stands as PM ruled.**
+
+---
+
+## 2026-07-26 -- SB-CC-DEBT-001: the creditor/stock match baseline + ageing instrument (`68194d0`, `1a7bd66`)
+
+CANON §12e. What we RECEIVED married to what we OWE, per (store, order_nr), with named verdicts carrying their reason in a buyer's words (R29). Establishes the cost-integrity baseline before any cost calculation, per Pieter's ruling.
+
+- **NEW `l2_creditor_stock_match`** + `refresh_l2_creditor_stock_match(p_store)`, header grain, wired into `refresh_l2_pipeline` ahead of every cost consumer. Seven verdicts: `MATCHED` / `VALUE_BREAK` / `NO_INVOICE` / `NO_GRV` / `INVOICE_VALUE_MISSING` / `RECEIPT_OUT_OF_WINDOW` / `OPEN_ORDER`.
+- **NEW `v_creditor_ageing`** -- who we owe, how much, how old, and how much is backed by stock that actually arrived.
+- **NEW config** `forge_config.creditor_match_tolerance_rand` = R1.00, DEMO_CALIBRATION. Justified from a measured bimodal distribution (625/684 within R1, only 4 between R1 and R10, then 55 genuine breaks to R12,527) -- no percentage floor was measurable as a natural break, so none was invented (R21).
+- **`supplier_invoices` RETIRED IN PLACE** with lineage (0 rows -- the dead scaffold that made us believe the invoice data was unfetched). Commented, never dropped.
+
+**R22 reproduced FROM THE BUILT FACT, exact to the cent ×5 against PM's independent baseline:** R7,028,184.86 received / R6,975,847.20 invoiced ex-VAT / −R52,337.66 (0.745%), 684 headers / 13,459 receipt lines, Dice at +R0.01.
+
+**PM's three landmine laws applied** (VAT boundary; singles×case units avoided entirely; header grain, dead `received_qty` never read). **Four further source traps found by CC and neutralised, each of which produces a false catastrophic number:** `grv_nr = 0` is the no-GRV sentinel and NOT NULL (18,049 headers -- testing `IS NOT NULL` reports ZERO no-GRV cases and hides the whole overpayment population) · `vat_total` populated where `invoice_value = 0` (15,980 headers, fabricates −R2,068,847 of phantom negative invoice) · date sentinels `1990-01-01` (`order_date` on 41,920/55,002) · **`due_date` is a DEAD COLUMN, one distinct value across all 55,002 rows** (ENG-039).
+
+**Second pass (`1a7bd66`):** NO_GRV now carries its rand -- `invoice_value` is 0 on ALL 2,585 NO_GRV headers, so `exposure_ex_vat`/`exposure_basis` fall back with provenance named per row (R1,659,567.62 measurable on 162 headers; 2,423 marked `none_captured` rather than rendered R0). NEW `is_credit_or_return` [DEDUCTIVE -- a negative order value cannot be a purchase]: `status_1='7'` spans 17,316 headers dominated by negative/zero values and 5,147 carried `NO_INVOICE`, which on a screen reads as "stock we hold unbilled" when it is a RETURN. Deliberately a FLAG not an eighth verdict -- a credit can legitimately be MATCHED, so pre-empting the cascade would move a proven baseline. **R22 re-proven unchanged after the change.**
+
+**Not done, named:** the DoD screen (Pulse). The fact and view answer all four of Pieter's questions; nothing surfaces them yet.
+
+---
+
+## 2026-07-26 -- IDENTITY PHASE 2: native-first `v_ean_bridge`, the R25 §2 break retired (`900b8b6`)
+
+CANON §17 Phase 2, the item-12-INDEPENDENT foundation.
+
+- **NEW `l2_ean_resolved`** + `refresh_l2_ean_resolved(p_store)` -- the deterministic resolved identity, one canonical key per (store, product), native `sigma_scan_refs` first via `v_scan_ref_decoded`, `product_catalog` demoted to fallback. 278,198 rows ×5.
+- **`v_ean_bridge` REPOINTED to a thin view over it** (`CREATE OR REPLACE`, identical column contract, so none of its dependents moved). **PERSISTED, NOT A VIEW, and that was measured:** the decoder over 240k scan rows ran 6,835 ms as a plain query; persisted, the bridge reads in 55 ms.
+- **NEW `l2_link_codes_queue`** + `refresh_l2_link_codes_queue(p_store)` -- 6,698 CANDIDATES in three deterministic classes: SHARED_EAN (the recode/successor signature), PACK_FAMILY (canon's five parent-child guards), ABSENT_FROM_DBREFE (the COKE ZERO class that can never key a TLX). **Unblocks ENG-020 leg 2, which could not pass its own non-empty gate while the object did not exist.**
+- **The item-12 hold is STRUCTURAL:** `status` CHECK-locked to `CANDIDATE`, no keeper/verdict/resolution column, and an UPDATE to `RESOLVED` proven rejected. `l2_product_resolution` + `l2_product_map` stay at 0 rows by ruling, scaffolded with the identity + export/gate-flag columns so Phase 3 needs no schema change.
+
+**R22 gates, all passed pre-repoint:** (store,product) unique 240,142/240,142 with 0 dupes (R20 fan-out safety intact) · **0 products lost** from the old bridge · 1,462 keys changed to native · EAN-8 rescue 3,113/3,113 and UPC-A 7,672/7,672 check-digit valid · **sales reconciliation delta R0.0000 on all five stores** (R20 addendum) · Phase-1 freeze intact (0 frozen and 0 ineligible on a live TLX) · `upsert_search_index` and `REFRESH mv_rate_of_sale` both clean despite 66 shared barcodes.
+
+**Coverage won:** native real-EAN 77.4 / 88.4 / 83.7 / 91.1 / 88.4% against the catalogue bridge's 43.0 / 2.5 / 16.0 / 2.6 / 2.2%. `mv_rate_of_sale` keys now 78-91% real, which **retires "treat TOPS EAN-grain coverage as synthetic-dominant"**. Export-ineligible collapsed 238,888 -> 44,505 group-wide (ENG-032 largely fixed, not merely measured).
+
+**Canon corrections owed and accepted by PM:** `v_ean_bridge` has 32 live dependents (PM's recount; CC measured 31), not the 7 §17 recorded · `product_catalog` retirement is Phase 3, 4,512 rows still resolve only through it · 25 `FULL13` codes Sigma holds fail their own GS1 check digit (pre-existing L1 data quality, NOT a decoder defect).
+
+---
+
+## 2026-07-26 -- RECONCILE-001 JOB 1: canonical SQL for the Identity Phase 1 objects (`3c57bc6`)
+
+Closes the debt the 2026-07-22 entry below flagged as OWED. One file per object, reconstructed from live DDL (R22): NEW `create_gs1_check_digit.sql` and `create_v_scan_ref_decoded.sql`; `create_v_item_ean.sql` (repoint), `create_l2_export_key.sql` (the Phase-1 freeze on `refresh_l2_export_key`) and `create_rpc_forge_lines.sql` (export gate + `tlx_held`) updated to live. **No behaviour change -- prod already ran these objects; the repo now matches live.** RECONCILE-001 whole again.
+
+---
+
+## 2026-07-22 -- IDENTITY PHASE 1: the decoder reads Sigma's type_flag, not string length (ENG-030 closed)
+
+CANON §17 Track B Phase 1. The `v_item_ean` decoder classified scan codes by LENGTH and ignored Sigma's own `DBREFE.cTYP`/`cSYSTEM`, stamping ~4,303 EAN-8 bodies as PLU. Now decoded natively. **DB-only, L1 byte-identical, extractor untouched.** Applied live via MCP migrations; **canonical `sql/create_*.sql` OWED (RECONCILE-001, next session) -- flagged, not silently skipped.**
+
+- **NEW `gs1_check_digit(text)`** -- immutable, length-agnostic GS1 mod-10.
+- **NEW `v_scan_ref_decoded`** -- the decoder, L2 over `sigma_scan_refs`. `code_kind_v2 = f(type_flag, system_flag, GS1 prefix)`, NEVER length. UPCA_BODY len-11 only, EAN13_BODY len-12 only; a short body under a real-code flag decodes `ANOMALY_LEN` (surfaced) rather than fabricating a check digit.
+- **`v_item_ean` REPOINTED** onto it, output contract unchanged. Gate 1 proven: 0 has_barcode regressions, 3,110 products gained a real barcode.
+- **`refresh_l2_export_key`** carries the Phase-1 freeze (`ineligible_reason='identity_phase1_freeze'`) on every flipped product until Phase 3. R30 double-revoke (PUBLIC + anon) re-proven, `anon` EXECUTE = false.
+- **`rpc_forge_lines` gated on `l2_export_key.export_eligible` -- a PRE-EXISTING ENG-031 gap, not Phase 1's.** The export gate governed the Bloom order TLX only; the Forge STOCKTAKE TLX (which zeroes stock in Sigma) read `l2_classification.artifact` directly and bypassed it. Live impact caught: **89 of 90 lines on the current Forge TLX carried manufactured synthetic keys** (R28,354.44) that Sigma silently drops on import -- the "exported 1,891, imported 1,845" R22 failure §17 names, live and invisible on screen. New `tlx_held` selector surfaces every held line with its reason (R21 §5).
+
+- **Two self-caught fabrication defects, fixed before anything landed:** `type_flag=2` len-10 → `UPCA_BODY` (a UPC-A body is 11 digits -- invented a barcode, flipped 3,048 products on fiction) and `type_flag=1` len-7/8/10 → `EAN13_BODY` (3 products). Caught by reconciling flips BY CAUSE, not by the gate passing. Both now `ANOMALY_LEN`.
+- **Gate (c) ruled (PM):** the `2000xx` scale reading was FALSIFIED (catches ~3% of `scale_flag=1`) -- `type_flag=0` 20-29 decodes IN_STORE as a class, scale carried on `sigma_articles.scale_flag`, never a prefix literal (R21/R25).
+
+**VERIFIED post-nightly (R22, 2026-07-23):** the nightly `refresh-l2-pipeline` (2026-07-22 20:15 UTC) applied the decoder to `l2_classification` ×5. `ean_status` REAL 14,340 / **UNRESOLVED 384 (non-zero BY DESIGN -- R23 §2)** / PLU 215; **0 frozen products reached a live TLX artifact**; **Forge TLX emit collapsed 90→1** group-wide; **0 REAL lost**. Capital Tied R5,597,947 -- identity-attributable move ~R9k (0.17%), the rest ordinary day-advance. `SOURCE_FIX` (R12) + `EXPENSE_ZERO` (R8,960) fall to AMBIGUOUS; the 6 `COST_ERROR` lines / R2.88M never counted (fire at cascade 0b ahead of `ean_status`).
+
+Migrations `identity_phase1_decoder_v_scan_ref_decoded`, `identity_phase1_decoder_tighten_upca_and_itf14`, `identity_phase1_decoder_length_validity_and_freeze`, `identity_phase1_repoint_v_item_ean_onto_decoder`, `forge_tlx_honours_l2_export_key`. **No repo commit yet** (canonical SQL owed; `sb_secret` rotation hold on the Daisy push stands, separate repo).
+
+---
+
 ## 2026-07-21 -- ENG-034: Fit-to-Budget is a RANKED WHOLE-PACK FILL, never proportional scaling
 
 PM ruling the same day, on the defect leg d exposed. Retires canon SS14 v10's "scale the remaining quantities proportionally" with lineage (R28) and reconciles v8 (ranked trim), v10 (floor-protected) and v12 (presence never zeroed) with what an indivisible pack permits.
