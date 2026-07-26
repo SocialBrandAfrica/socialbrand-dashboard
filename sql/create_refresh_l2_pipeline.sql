@@ -124,6 +124,21 @@ BEGIN
   v_result := v_result || jsonb_build_object('link_codes_queue_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
   -- ============ end IDENTITY PHASE 2 ============
 
+  -- ============ SB-CC-DEBT-001 / CANON §12e: THE COST-INTEGRITY BASELINE ============
+  -- What we RECEIVED married to what we OWE, per (store, order_nr), with a named
+  -- verdict. Pieter's ruling: this baseline is established BEFORE any cost
+  -- calculation, so it runs ahead of every cost/budget consumer below.
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_creditor_stock_match(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('creditor_stock_match_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+  v_result := v_result || jsonb_build_object('creditor_stock_match_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+  -- ============ end SB-CC-DEBT-001 ============
+
   -- Consignment engine (SB-CC-PMINI-WIRE-001 Gap A). Reads sigma_sales x
   -- sigma_articles; depends on L1 (refreshed pre-pipeline by the push), not on
   -- the chain above, so order within the pipeline is not load-bearing. Placed
