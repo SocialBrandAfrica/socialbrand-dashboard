@@ -138,6 +138,10 @@ BEGIN
   END LOOP;
   v_result := v_result || jsonb_build_object('creditor_stock_match_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
   -- ============ end SB-CC-DEBT-001 ============
+  --
+  -- NOTE: refresh_l2_range_state is wired LATER, after refresh_bt_precompute --
+  -- see the ORD-STOP-001 block further down. It cannot sit with its Ship-2
+  -- siblings because it reads l2_bt_heroes, which bt_precompute builds late.
 
   -- Consignment engine (SB-CC-PMINI-WIRE-001 Gap A). Reads sigma_sales x
   -- sigma_articles; depends on L1 (refreshed pre-pipeline by the push), not on
@@ -328,6 +332,29 @@ BEGIN
     v_result := v_result || jsonb_build_object('bt_precompute_error', SQLERRM);
   END;
   v_result := v_result || jsonb_build_object('bt_precompute_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+
+  -- ============ ORD-STOP-001 defect 5: l2_range_state DRIVES DEPTH ============
+  -- MUST run HERE, after refresh_bt_precompute, because it reads l2_bt_heroes
+  -- (built late by bt_precompute) as well as l2_kvi_profile (mid) and
+  -- l2_classification (early). It is the ONLY pantry fact whose dependencies
+  -- straddle the whole chain, which is exactly how it was left unwired and went
+  -- 13 days stale (last refresh 2026-07-12 17:00 while every sibling refreshed
+  -- 2026-07-25 20:15). Consequence measured before the fix: 766 NORMAL products
+  -- had NO range_state row and defaulted to SLOW = zero depth = never ordered;
+  -- 486 passed the life gate while the stale table called them SLOW/DERANGE/
+  -- MARKDOWN; 470 were CORE/HERO but no longer passed the gate. All three are 0
+  -- after wiring. Placing it with its Ship-2 siblings would have it read a stale
+  -- l2_bt_heroes and silently mislabel every HERO.
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_range_state(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('range_state_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+  v_result := v_result || jsonb_build_object('range_state_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+  -- ============ end ORD-STOP-001 defect 5 ============
 
   -- L1 dashboard recovery steps (PM 06-11 ruling): belt-and-braces for the
   -- push script's REST 500s -- refresh mv_kpi_by_date + search index in-DB.
