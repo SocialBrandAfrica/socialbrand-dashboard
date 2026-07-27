@@ -237,6 +237,23 @@ BEGIN
     END;
   END LOOP;
 
+  -- BUG-LOG ENG-046 (SB-CC-BLOOM-017, 2026-07-27): this pass was NEVER CALLED.
+  -- fill_l2_bloom_promo_pantry_sibling_fallback() is rungs 2 and 3 of the canon SS14
+  -- promo_uplift contamination ladder (own promo -> same-format sibling -> labelled
+  -- 2.00 default). The per-store loop above only ever fills rung 1, so the pantry sat
+  -- with 9,938 of 16,903 rows at promo_uplift NULL every night, with ZERO sibling and
+  -- ZERO default rows. Latent while nothing read the pantry for ordering; LOAD-BEARING
+  -- from W1.6, where a NULL silently becomes gear 1.0 instead of the ruled 2.00 and
+  -- under-orders every promo line with no own-promo history. PLATFORM-WIDE by design
+  -- (the DF-1 sibling leg reads across stores), so it runs AFTER the loop completes,
+  -- exactly as its own header always required. Third instance of the ENG-002 /
+  -- ENG-035 class: an object that exists, is correct, and is never called.
+  BEGIN
+    PERFORM fill_l2_bloom_promo_pantry_sibling_fallback();
+  EXCEPTION WHEN OTHERS THEN
+    v_result := v_result || jsonb_build_object('bloom_promo_fallback_error', SQLERRM);
+  END;
+
   FOR v_store IN SELECT unnest(v_active_stores)
   LOOP
     BEGIN

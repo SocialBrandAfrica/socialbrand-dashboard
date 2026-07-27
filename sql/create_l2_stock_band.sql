@@ -170,9 +170,27 @@ CREATE TABLE public.l2_stock_band (
   soh_flow_closes           boolean,
   soh_flow_window_days      int,
   soh_flow_reason           text,
+  -- W1.2 (SB-CC-BLOOM-017): which pantry guard set the rate this band drank.
+  ros_scan_guard            text,
+  ros_draw_guard            text,
+  -- W1.5: the ledger-flow residual, SURFACED WITH NO VERDICT. It used to be a second
+  -- road into band_blocked and fired on 94% of CORE at 10116, all bucket HEALTHY.
+  -- A flag that fires on everything says nothing (BUG-LOG ENG-041 discipline).
+  soh_flow_open             boolean,
+  -- W1.6 / ENG-045: the forward leg. The lift applies ONCE, here.
+  promo_in_buyin_window     boolean NOT NULL DEFAULT false,
+  promo_nr                  bigint,
+  promo_window_start        date,
+  promo_window_end          date,
+  promo_uplift_used         numeric NOT NULL DEFAULT 1.0,
+  promo_uplift_source       text,
+  promo_uplift_basis        text,   -- own_promo | own_promo_provisional_capped_uplift | no_promo_window
+  demand_pre_promo          numeric,
   band_blocked              boolean NOT NULL DEFAULT false,
   band_blocked_reason       text,
-  engine_version            text NOT NULL DEFAULT 'v2.0',
+  -- W1.5: band_blocked is now its DOCUMENTED definition ONLY --
+  -- l2_classification.bucket IN ('COUNT','AMBIGUOUS'). 19.3% -> 1.7% at 10116.
+  engine_version            text NOT NULL DEFAULT 'v3.1',
   profiled_at               timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (store_code, product_code)
 );

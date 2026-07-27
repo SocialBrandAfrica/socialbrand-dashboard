@@ -396,6 +396,14 @@ BEGIN
         COALESCE(c28.cost28,0)/28.0 AS daily_cost_demand,
         rop.ros_14d_corrected, rop.ros_28d_corrected, rop.ros_56d_corrected,
         rop.ros_draw_14d_corrected, rop.ros_draw_28d_corrected, rop.ros_draw_56d_corrected,
+        rop.ros_draw_14d_published, rop.ros_draw_28d_published, rop.ros_draw_56d_published,
+        rop.ros_draw_14d_guard, rop.ros_draw_28d_guard, rop.ros_draw_56d_guard,
+        rop.ros_draw_14d AS draw_raw_14d, rop.ros_draw_28d AS draw_raw_28d, rop.ros_draw_56d AS draw_raw_56d,
+        rop.draw_regime_divergence_28d, rop.draw_regime_divergence_56d,
+        pmp.promo_uplift AS pantry_promo_uplift, pmp.uplift_ros_basis AS pantry_uplift_basis,
+        pmp.promo_uplift_source AS pantry_uplift_source,
+        b.promo_uplift_used AS band_promo_uplift, b.promo_uplift_basis AS band_promo_basis,
+        b.promo_in_buyin_window AS band_promo_in_window,
         rop.p_sell_estimate AS p_sell_scan, rop.p_sell_estimate_draw AS p_sell_draw,
         COALESCE(rop.unit_incommensurable, true) AS unit_incommensurable
       FROM l2_stock_band b
@@ -408,6 +416,7 @@ BEGIN
       LEFT JOIN sales sa ON sa.product_code=b.product_code
       LEFT JOIN cost28 c28 ON c28.product_code=b.product_code
       LEFT JOIN l2_bloom_ros_pantry rop ON rop.store_code=b.store_code AND rop.product_code=b.product_code
+      LEFT JOIN l2_bloom_promo_pantry pmp ON pmp.store_code=b.store_code AND pmp.product_code=b.product_code
       WHERE b.store_code=%1$L
         AND COALESCE(rs.range_state,'') <> 'EXCLUDED'
         AND (
@@ -425,11 +434,48 @@ BEGIN
       SELECT p.*,
         CASE p.tier WHEN 'TOP_100' THEN (CASE WHEN p.q14=0 THEN p.q28/28.0 ELSE p.q14/14.0 END)
           WHEN 'TOP_1000' THEN p.q28/28.0 ELSE p.q56/56.0 END AS scan_raw,
-        CASE p.tier WHEN 'TOP_100' THEN (CASE WHEN p.q14=0 THEN p.ros_draw_28d_corrected ELSE p.ros_draw_14d_corrected END)
-          WHEN 'TOP_1000' THEN p.ros_draw_28d_corrected ELSE p.ros_draw_56d_corrected END AS draw_corrected,
-        (CASE p.tier WHEN 'TOP_100' THEN (CASE WHEN p.q14=0 THEN 'ros_28d (q14=0 fallback)' ELSE 'ros_14d' END)
-          WHEN 'TOP_1000' THEN 'ros_28d' ELSE 'ros_56d' END) AS ros_window_used
-      FROM pool p
+        -- W1.1 part 2 (SB-CC-BLOOM-017, canon SS14 ADDENDUM v14 rule 1): THE GUARDED
+        -- LADDER. Was: the raw UNCAPPED ros_draw_*_corrected -- the "one value under
+        -- two rules" defect, since refresh_l2_stock_band applied a 2.0x cap and this
+        -- did not. Now: read the pantry's ONE guarded value (_published, already
+        -- floored and capped). Widen ONLY to a window that BOTH publishes AND is
+        -- REGIME-CLEAN (draw_regime_divergence <= regime_divergence_max, PM constraint
+        -- 2026-07-27). Otherwise WITHHOLD to this line's OWN tier-window RAW -- never
+        -- a cross-window maximum, which PM refused as manufactured.
+        (CASE
+          WHEN p.tier = 'TOP_100' AND p.q14 <> 0 THEN COALESCE(
+            p.ros_draw_14d_published,
+            CASE WHEN p.ros_draw_28d_published IS NOT NULL AND p.draw_regime_divergence_28d IS NOT NULL
+                  AND p.draw_regime_divergence_28d <= rgm.mx THEN p.ros_draw_28d_published END,
+            CASE WHEN p.ros_draw_56d_published IS NOT NULL AND p.draw_regime_divergence_56d IS NOT NULL
+                  AND p.draw_regime_divergence_56d <= rgm.mx THEN p.ros_draw_56d_published END,
+            p.draw_raw_14d)
+          WHEN p.tier IN ('TOP_100','TOP_1000') THEN COALESCE(
+            p.ros_draw_28d_published,
+            CASE WHEN p.ros_draw_56d_published IS NOT NULL AND p.draw_regime_divergence_56d IS NOT NULL
+                  AND p.draw_regime_divergence_56d <= rgm.mx THEN p.ros_draw_56d_published END,
+            p.draw_raw_28d)
+          ELSE COALESCE(p.ros_draw_56d_published, p.draw_raw_56d)
+        END) AS draw_corrected,
+        (CASE
+          WHEN p.tier = 'TOP_100' AND p.q14 <> 0 THEN
+            CASE WHEN p.ros_draw_14d_published IS NOT NULL THEN 'ros_14d (own window, guard=' || COALESCE(p.ros_draw_14d_guard,'none') || ')'
+                 WHEN p.ros_draw_28d_published IS NOT NULL AND p.draw_regime_divergence_28d IS NOT NULL
+                       AND p.draw_regime_divergence_28d <= rgm.mx THEN 'ros_28d (widened, regime-clean)'
+                 WHEN p.ros_draw_56d_published IS NOT NULL AND p.draw_regime_divergence_56d IS NOT NULL
+                       AND p.draw_regime_divergence_56d <= rgm.mx THEN 'ros_56d (widened, regime-clean)'
+                 ELSE 'ros_14d RAW (corrected withheld, no regime-clean window)' END
+          WHEN p.tier IN ('TOP_100','TOP_1000') THEN
+            CASE WHEN p.ros_draw_28d_published IS NOT NULL THEN 'ros_28d (own window, guard=' || COALESCE(p.ros_draw_28d_guard,'none') || ')'
+                 WHEN p.ros_draw_56d_published IS NOT NULL AND p.draw_regime_divergence_56d IS NOT NULL
+                       AND p.draw_regime_divergence_56d <= rgm.mx THEN 'ros_56d (widened, regime-clean)'
+                 ELSE 'ros_28d RAW (corrected withheld, no regime-clean window)' END
+          ELSE
+            CASE WHEN p.ros_draw_56d_published IS NOT NULL THEN 'ros_56d (own window, guard=' || COALESCE(p.ros_draw_56d_guard,'none') || ')'
+                 ELSE 'ros_56d RAW (corrected withheld)' END
+        END) AS ros_window_used
+      FROM pool p CROSS JOIN (SELECT COALESCE(MAX(value_num),2.0) AS mx FROM public.forge_config
+                               WHERE config_key='regime_divergence_max' AND retired_on IS NULL) rgm
     ),
     guarded AS (
       SELECT t.*,
@@ -629,9 +675,21 @@ BEGIN
       GROUP BY gs.product_code, gs.start_date, gs.end_date
     ),
     with_gear AS (
-      SELECT pk.*, CASE WHEN gc.base_ros IS NULL OR gc.base_ros=0 THEN 2.0 ELSE LEAST(GREATEST(gc.promo_ros/gc.base_ros,1.0),5.0) END AS gear,
-        (gc.base_ros IS NOT NULL AND gc.base_ros<>0) AS gear_from_own_promo
-      FROM packs_ceiled pk LEFT JOIN gear_calc gc ON gc.product_code=pk.product_code
+      -- W1.6 second half (SB-CC-BLOOM-017, canon SS14 ADDENDUM v14 rule 4: THE LIFT
+      -- APPLIES ONCE). RETIRED with lineage (R28, retired_on 2026-07-27): this CTE
+      -- used to compute a THIRD independent promo uplift inline off sigma_sales, on
+      -- CALENDAR days, with a hardcoded 5.0 cap and a hardcoded 2.0 default, beside
+      -- the pantry's and the band's. Now it reads the uplift MAGNITUDE from its one
+      -- home, l2_bloom_promo_pantry (in-stock corrected per Pieter 2026-07-27,
+      -- config-capped, full contamination ladder own -> sibling -> labelled 2.00).
+      -- The DELIVERY-SPECIFIC window gate stays here as the existing promo_active,
+      -- applied downstream where suggested_packs is chosen: the band cannot supply
+      -- that gate because it is date-agnostic by design. Each consumer lifts ONCE.
+      -- gear_source and gear_calc above are now UNREFERENCED and retired in place
+      -- (Postgres does not execute an unreferenced CTE).
+      SELECT pk.*, GREATEST(COALESCE(pk.pantry_promo_uplift, 1.0), 1.0) AS gear,
+        (COALESCE(pk.pantry_uplift_source,'') = 'own_promo') AS gear_from_own_promo
+      FROM packs_ceiled pk
     ),
     geared_calc AS (
       SELECT wg.*,

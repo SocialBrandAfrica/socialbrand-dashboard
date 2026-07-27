@@ -4,6 +4,32 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-27 -- SB-CC-BLOOM-017 Wave 1: the ordering number is made right
+
+Items 1.1 (re-scoped by PM ADDENDUM v1.3), 1.2, 1.5 and 1.6, all four in the objects where they live. Applied by migration to the live DB and R22-verified on all five stores before this commit. **Live order values moved, which is why this is committed the same night: Pieter places Monday for Wednesday and Thursday.**
+
+**What moved on the desk** (FULL preset, next real delivery dates):
+
+| Desk | Ordered | Value | Non-promo | Promo |
+|---|---|---|---|---|
+| 10116 DC_AMBIENT (Thu 30 Jul) | 490 -> 457 | R240,791.58 -> **R188,820.80** | R107,670 -> R108,363 (+0.6%) | R133,122 -> **R80,458 (-39.6%)** |
+| 80175 DC_AMBIENT (Wed 29 Jul) | 416 -> 361 | R280,016.99 -> **R258,005.29** | -- | R169,667 |
+| 21355 DC_TOPS (Thu 30 Jul) | 315 -> 308 | R274,299.23 -> **R247,505.77** | -- | R84,255 |
+
+**The promo drop was decomposed, not accepted.** It is not the gear: the retired inline formula was reproduced side by side and averaged 2.041 against the new 1.963, with only 175 of 872 lines differing at all. It is the observable-day floor, and it lands exactly where the defect was -- **17.8% of promo lines have their 14-day window withheld against 4.1% of non-promo, a 4.3x concentration.** That is the signature of a line that sells hard on promo, runs out, goes quiet, and had its rate computed off three observable days. The desk was over-ordering promo lines off collapsed divisors.
+
+**Guards after the lift:** `pack_forced_review` 7 / 4 / 1 and `hero_pack_over_max` **0 on all three desks** -- the 35-day ceiling and max-band still bind on a promo-lifted band. `count_first` falls to 2.6% / 1.7% / 2.6%, closing brief item 2.8 as a by-product.
+
+**Two defects found during the build, both by reading the objects rather than the brief's description of them, and both the same class -- one rule with several implementations.** BUG-LOG ENG-046 (`refresh_l2_pipeline` never called `fill_l2_bloom_promo_pantry_sibling_fallback()`, leaving 9,938 of 16,903 promo-pantry rows at NULL uplift every night) and ENG-047 (the recipe carried a third independent promo uplift, calendar-day, hardcoded 5.0 cap and 2.0 default). ENG-041, ENG-044 and ENG-045 close with this deploy.
+
+**One correction I made mid-build, recorded because the R22 caught it and not a walk:** the first cut had the recipe read `l2_stock_band.promo_uplift_used`, which hands it the band's anchor-based window test as well as the magnitude. The band is date-agnostic by design and cannot know the delivery date. That silently dropped gearing on 479 of 872 promo-active lines at 10116. Fixed to magnitude-from-pantry, gate-from-recipe.
+
+**Named debt, not hidden:** the function bodies in `sql/create_l2_bloom_ros_pantry.sql` and `sql/create_l2_stock_band.sql` are not yet reconciled to live (table DDL and headers are). Live is authoritative until they are, next session.
+
+**Nothing in §16 or the calendar is wired, no date literal from the 4 July DC interruption exists in any function, view or matview** -- verified at source. Pieter's ruling: it is an event, not a regime, and nothing is calibrated to it.
+
+---
+
 ## 2026-07-26 -- ORD-STOP-001 defect 5: l2_range_state wired into the nightly chain (`e5bf527`)
 
 The one Ship-2 object never wired into `refresh_l2_pipeline`, and it DRIVES DEPTH in `rpc_bloom_order_recipe` (canon §14 v10 item 1: a missing row defaults to SLOW = zero depth = never ordered). Last refresh 2026-07-12 17:00 UTC against every sibling at 2026-07-25 20:15 -- 13 days stale on the table that decides what gets ordered.

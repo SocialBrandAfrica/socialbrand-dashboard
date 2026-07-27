@@ -188,6 +188,33 @@ CREATE TABLE public.l2_bloom_ros_pantry (
   draw_correction_days_removed_14d  int,
   draw_correction_days_removed_28d  int,
   draw_correction_days_removed_56d  int,
+  -- W1.1 (SB-CC-BLOOM-017, canon SS14 ADDENDUM v14 rule 1, effective 2026-07-26):
+  -- THE ONE GUARDED VALUE every consumer reads, plus the rule that set it. Raw and
+  -- uncapped corrected stay stocked beside them for lineage (R27 s2). A consumer must
+  -- never read a _corrected column directly -- that was the "one value under two
+  -- rules" defect (the band capped at 2.0x raw, rpc_bloom_order_recipe did not).
+  ros_14d_published             numeric,
+  ros_28d_published             numeric,
+  ros_56d_published             numeric,
+  ros_14d_guard                 text,
+  ros_28d_guard                 text,
+  ros_56d_guard                 text,
+  ros_draw_14d_published        numeric,
+  ros_draw_28d_published        numeric,
+  ros_draw_56d_published        numeric,
+  ros_draw_14d_guard            text,
+  ros_draw_28d_guard            text,
+  ros_draw_56d_guard            text,
+  -- guard values: no_correction | published | capped_2x_raw
+  --             | withheld_observable_floor | non_positive_raw
+  -- Regime coherence of the two BORROWABLE windows (PM constraint 2026-07-27): a
+  -- widening fallback is accepted only while the wider window is regime-clean.
+  -- Two-half SALE-DAY-MEAN ratio, silence-robust. Gates BORROWING only, never a
+  -- line's own designated tier window.
+  draw_regime_divergence_28d    numeric,
+  draw_regime_divergence_56d    numeric,
+  corrector_floor_share         numeric,
+  corrector_cap_multiple        numeric,
   pantry_refreshed_at           timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (store_code, product_code)
 );
