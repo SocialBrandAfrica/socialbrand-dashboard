@@ -138,6 +138,22 @@ BEGIN
   END LOOP;
   v_result := v_result || jsonb_build_object('creditor_stock_match_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
   -- ============ end SB-CC-DEBT-001 ============
+
+  -- ============ SB-CC-BLOOM-017 W1 item 1.3: IN-TRANSIT STOCK ============
+  -- Open ordered qty per (store, product), bounded by the ROUTE own demonstrated
+  -- placement->GRV lead x in_transit_lead_multiple. Canon s14 ADDENDUM v14 rule 3.
+  -- Sits with the creditor baseline because both derive from the sigma_orders L1 leg.
+  -- Must be fresh BEFORE any consumer projects SOH (rpc_bloom_order_recipe reads it).
+  FOR v_store IN SELECT unnest(v_active_stores)
+  LOOP
+    BEGIN
+      PERFORM refresh_l2_on_order(v_store);
+    EXCEPTION WHEN OTHERS THEN
+      v_result := v_result || jsonb_build_object('on_order_error_' || v_store, SQLERRM);
+    END;
+  END LOOP;
+  v_result := v_result || jsonb_build_object('on_order_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
+  -- ============ end SB-CC-BLOOM-017 W1 item 1.3 ============
   --
   -- NOTE: refresh_l2_range_state is wired LATER, after refresh_bt_precompute --
   -- see the ORD-STOP-001 block further down. It cannot sit with its Ship-2

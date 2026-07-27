@@ -4,6 +4,29 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-27 later -- SB-CC-BLOOM-017 Wave 1 item 1.3: `l2_on_order` BUILT, then its projection leg REVERTED the same session (canon moved under the build)
+
+**State at close: the FACT is live and HELD. The PROJECTION leg is REVERTED. No live order value is changed by 1.3.**
+
+**What shipped and stayed.** NEW `l2_on_order` (per store/product: `on_order_qty` in SINGLES, `on_order_cost`, `expected_landing_date`, `route_keys`, `lead_days_used`/`lead_basis`, plus a `stale_*` leg carrying the excluded documents with age and route for the worklist) + `refresh_l2_on_order(p_store)`, wired into `refresh_l2_pipeline` immediately after the SB-CC-DEBT-001 creditor block. Four `forge_config` DEMO_CALIBRATION keys (`in_transit_lead_multiple` 2, `in_transit_lead_window_days` 182, `in_transit_min_received_orders` 5, `in_transit_lead_fallback_days` 7). Grants proven live before merge, all three legs of the R30 addendum extension: anon EXECUTE **false**, PUBLIC **false**, authenticated **true**. Determinism proven (21355 re-run: 460 rows, 0 differing).
+
+**What was reverted, and why.** The build was written to canon §14 ADDENDUM **v14 rule 3**, read in full at session start. **ADDENDUM v15 landed the same day and is this object's actual specification** — it states `l2_on_order` "unbuilt" and refines exactly the half I implemented: v14 named the in-transit BOUND, v15 names the SELECTION. Non-conforming on five of seven rules — only the LATEST order of its kind is outstanding and everything behind it is cancelled (rule 1, Pieter ruling); the partition is `(store_code, supplier_nr, status_2)` with `status_2` opaque and supplier-alone explicitly a defect (rule 2); the open population is `order_type` 0/1/2 **measured, never a date test** (rule 3); recency is `order_nr`, not the 76%-sentinel `order_date` (rule 4); a promised date that has passed means not in transit (rule 5). The rand shows it: v15 measures all-open at **R64,978,904** and the rule-1 answer at **R231,452**; this build reported **R886,144.56**, sitting between the two because the sentinel date-filter removed much of the population while nothing applied latest-of-kind.
+
+**The revert was not optional.** The projection leg had moved a live desk on placement morning — 21355 DC_TOPS 308 → 199 lines, R247,505.89 → R145,363.60, on six open orders never tested for latest-of-kind. `rpc_bloom_order_recipe` restored from the reconstructed prestate shadow and verified back to **308 lines / R247,505.89** exactly; the shadow was then dropped; the live body carries **zero** `on_order_qty` references. `sql/create_rpc_bloom_order_recipe.sql` reverted in step, so repo == live.
+
+**Measurements that survive the rebuild** (each proved to source, and the v15 rebuild inherits them):
+- **UNITS.** `sigma_order_lines.ordered_qty` is **SINGLES**, the same basis as the R/W movement qty and as SOH — 8,723 of 13,430 matched receipt lines equal it exactly, multipack ratio 1.0298 where mean pack is 18.38. No pack bridge on the quantity leg.
+- **COST.** `cost` is the **CASE** cost. `ordered_qty * cost` runs **11.94×** the invoiced total — canon §12e point 4's trap, which inflated July 15.7×. The line value is `ordered_qty * cost / pack_size`, landing at 0.942 of invoiced (residual = ordered-vs-invoiced difference).
+- **Route-demonstrated placement→GRV leads** (median/p90, 182d): 10116 DC 2/4 · 80175 DC 2/5 · 80176 DC 3/6 · 21355 DC 4/7 · 80579 DC 4/7 · CLOVER 4/4-5 · DANONE 3-4/5-6 · MONDELEZ 3-7/10-12 · NATBRANDS 7-8/9-14.
+- **`status_1='7'` is an INERT guard.** All 31 real-dated rows carry a GRV, so it can never remove an open order. Kept defensively, named inert rather than claimed as working (R28 §5).
+- **SAB has no derivable lead.** `order_date` is the sentinel on essentially every SAB header (21355/555 = 1 real of 58; 80176/590 = 3 of 148), which independently confirms canon v15 rule 6's route to the cutoff via `placement_dows` × `delivery_dows`.
+
+**`outstanding_order_window_days` was never created in `forge_config`** — the withdrawn 30-day seed is retired before it was built, so no lineage row was manufactured for a key that never existed.
+
+**Owed next session:** rebuild `refresh_l2_on_order` to v15 rules 1-5, then the rule-6 cutoff derivation (BUG-LOG ENG-048), then re-run the before/after and publish per-desk. `l2_on_order` carries a `COMMENT` marking it HELD and not canon-correct so nothing reads it meanwhile.
+
+---
+
 ## 2026-07-27 -- SB-CC-BLOOM-017 Wave 1: the ordering number is made right
 
 Items 1.1 (re-scoped by PM ADDENDUM v1.3), 1.2, 1.5 and 1.6, all four in the objects where they live. Applied by migration to the live DB and R22-verified on all five stores before this commit. **Live order values moved, which is why this is committed the same night: Pieter places Monday for Wednesday and Thursday.**
