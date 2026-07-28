@@ -19,6 +19,15 @@
 scripts/sb-key.txt
 sb-key.txt
 
+# client engagements — confidential, NEVER commit these
+# The control is the FOLDER: engagement material lives in Daisy/Clients/ and never leaves it.
+# This is the belt. Daisy's own repo ignores Clients/ but it never pushes; this repo does, so a
+# stray copy here would publish a third party's data. Ignored by exact path and by bare name so
+# a copy in any subfolder cannot be added either — same pattern as sb-key.txt above.
+# A file copied to some other name (docs/, an export) is still committable: the folder is the rule.
+/Clients
+Clients/
+
 # debug
 npm-debug.log*
 
