@@ -1236,13 +1236,37 @@ function DeskOrderRow({ line, qty, isEdited, onQty }) {
       : 'transparent'
   const hasGeared = isPromo && line.geared_packs != null && line.geared_packs !== line.normal_packs
   const selected = hasGeared && qty === line.geared_packs ? 'geared' : 'normal'
+
+  // SB-CC-BLOOM-018 item 2 -- THE PROMO FLOOR GAP, surfaced never silent.
+  // The engine holds both demands: the band's promo-lifted one and the
+  // unlifted one the order was actually computed on (ENG-052, open). The row
+  // SHOWS the difference and changes no quantity. The gap is recomputed
+  // against the buyer's OWN edited quantity, not the recipe's raw suggestion,
+  // so closing it by hand makes the chip disappear as it should.
+  const posUnits = (qty ?? 0) * (line.pack_size ?? 0) + Number(line.soh ?? 0)
+  const floorUnits = line.promo_floor_units == null ? null : Number(line.promo_floor_units)
+  const hasPromoGap = !!line.promo_in_window && floorUnits != null && posUnits < floorUnits
+  const gapUnits = hasPromoGap ? Math.max(0, floorUnits - posUnits) : 0
+  const gapPacks = hasPromoGap && line.pack_size ? Math.ceil(gapUnits / line.pack_size) : 0
+  const upliftAtCap = line.promo_uplift_band != null && Number(line.promo_uplift_band) >= 5
+
+  // SB-CC-BLOOM-018 item 1 -- THE BUYER SEES THE TRUCK (canon SS14 v15 6a,
+  // Pieter ruling 2026-07-28). Where in-transit reduced this line, say so with
+  // the quantity and the landing. Never a silent reduction.
+  const truckCounted = !!line.in_transit_counted
+  const truckPending = !truckCounted && Number(line.in_transit_qty ?? 0) > 0
+
+  // R29 -- every reason the engine produced travels to the hover, in order.
+  const rowTitle = [line.story, line.promo_gap_reason, line.in_transit_reason]
+    .filter(Boolean).join('\n\n')
+
   return (
     <div style={{
       display: 'grid', gridTemplateColumns: '76px 44px minmax(180px,1.7fr) 110px 56px 90px 90px 60px 130px 100px',
       alignItems: 'center', gap: 0, padding: '9px 18px', background: wash,
       borderBottom: '1px solid var(--hairline)', fontSize: 12, fontFamily: 'var(--font-mono)',
       fontVariantNumeric: 'tabular-nums',
-    }} title={line.story}>
+    }} title={rowTitle}>
       <span style={{ color: line.count_first ? 'var(--data-neg)' : 'var(--veld-mist)' }}>
         {line.count_first ? '# ' : ''}{String(line.product_code)}
       </span>
@@ -1253,14 +1277,64 @@ function DeskOrderRow({ line, qty, isEdited, onQty }) {
           <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--growth-green)', border: '1px solid var(--growth-green)',
             borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>BT</span>
         )}
+        {/* BLOOM-018 item 2: the promo floor gap, on the row that has it. */}
+        {hasPromoGap && (
+          <span title={line.promo_gap_reason ?? undefined}
+            style={{ marginLeft: 6, fontSize: 9, color: 'var(--data-warn)', border: '1px solid var(--data-warn)',
+              borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>
+            GAP {gapPacks}
+          </span>
+        )}
+        {/* The uplift behind this gap is a BOUND, not a measurement (it sits on
+            the ladder cap). Flagged so nobody reads a censored value as a fact. */}
+        {hasPromoGap && upliftAtCap && (
+          <span title="Uplift is AT THE CAP -- a bound, not a measurement. True uplift is >= this value and unknown (ENG-053)."
+            style={{ marginLeft: 4, fontSize: 9, color: 'var(--veld-mist)', border: '1px dashed var(--veld-mist)',
+              borderRadius: 'var(--radius-pill)', padding: '1px 5px' }}>
+            CAP
+          </span>
+        )}
+        {/* BLOOM-018 item 1: the truck. Counted = it reduced this order. */}
+        {truckCounted && (
+          <span title={line.in_transit_reason ?? undefined}
+            style={{ marginLeft: 6, fontSize: 9, color: 'var(--growth-green)', border: '1px solid var(--growth-green)',
+              borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>
+            IN TRANSIT {num(line.in_transit_qty)}
+          </span>
+        )}
+        {truckPending && (
+          <span title={line.in_transit_reason ?? undefined}
+            style={{ marginLeft: 6, fontSize: 9, color: 'var(--veld-mist)', border: '1px dashed var(--veld-mist)',
+              borderRadius: 'var(--radius-pill)', padding: '1px 5px' }}>
+            EN ROUTE {num(line.in_transit_qty)}
+          </span>
+        )}
       </span>
       <span style={{ color: 'var(--veld-mist)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{line.dept_name ?? '—'}</span>
-      <span style={{ textAlign: 'right', color: line.count_first ? 'var(--data-neg)' : 'var(--veld-mist)' }}
-        title={line.count_first ? 'Band-blocked claim — count first (canon ENG-014)' : undefined}>
+      <span style={{ textAlign: 'right', color: line.count_first ? 'var(--data-neg)' : truckCounted ? 'var(--growth-green)' : 'var(--veld-mist)' }}
+        title={line.count_first
+          ? 'Band-blocked claim — count first (canon ENG-014)'
+          : truckCounted
+            ? (line.in_transit_reason ?? 'In-transit stock was added to this projection.')
+            : undefined}>
         {line.soh == null ? '—' : Number.isInteger(line.soh) ? line.soh : num(line.soh)}
+        {truckCounted && <span style={{ marginLeft: 3 }}>+</span>}
       </span>
-      <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>
+      {/* BLOOM-018 item 2: BOTH demands, never one. The top figure is what the
+          order was computed on; the figure beneath it is the band's promo-lifted
+          demand the order did NOT use (ENG-052 is open, the quantity is
+          unchanged). Showing one without the other is the silence this closes. */}
+      <span style={{ textAlign: 'right', color: 'var(--daisy-white)', lineHeight: 1.25 }}>
         {num(line.rhythm_adjusted_demand)}
+        {line.promo_in_window && line.promo_band_demand != null
+          && Number(line.promo_band_demand) > Number(line.rhythm_adjusted_demand ?? 0) && (
+          <span
+            title={line.promo_gap_reason
+              ?? 'Band promo-lifted demand. The order was computed on the unlifted rate (ENG-052, open).'}
+            style={{ display: 'block', fontSize: 10, color: 'var(--data-warn)' }}>
+            promo {num(line.promo_band_demand)}
+          </span>
+        )}
       </span>
       <span style={{ textAlign: 'left', paddingLeft: 6, color: 'var(--veld-mist)' }}>{TIER_LABEL[line.tier] ?? line.tier ?? '—'}</span>
       <span style={{ textAlign: 'left', color: isPromo ? 'var(--data-warn)' : 'var(--veld-mist)' }}>
@@ -1900,6 +1974,20 @@ function OrderDesksMode() {
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--veld-mist)', marginTop: 1 }}>
                     geared basis {zar(s.value_geared)}
                   </div>
+                  {/* BLOOM-018 item 2 pt 3 (Pieter ruling 2026-07-29): the
+                      PROMOTIONAL SHARE of value, percentage beside the rand.
+                      Split on promo_active -- the same flag the CSV/TLX/promo-
+                      sheet export splits on (canon SS14 v7 item 11) -- so the
+                      figure reconciles to the files, not to a second definition
+                      of "promo". promo + normal sums back to the card total. */}
+                  {s.promo_share_pct != null && (
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, marginTop: 3,
+                      color: 'var(--data-warn)' }}
+                      title={`Promotional ${zar(s.value_promo_lines)} + normal ${zar(s.value_nonpromo_lines)} = ${zar(Number(s.value_promo_lines) + Number(s.value_nonpromo_lines))}. Split on promo_active, the same flag the export splits on.`}>
+                      {s.promo_share_pct}% promotional
+                      <span style={{ color: 'var(--veld-mist)' }}> · {zar(s.value_promo_lines)} promo / {zar(s.value_nonpromo_lines)} normal</span>
+                    </div>
+                  )}
                   {/* Board honesty pass (canon v9 item 5): each card states its
                       own objective in plain terms -- what the code actually
                       does, not a guess at PM's four-word taxonomy (BUDGET/MAX
@@ -2039,6 +2127,117 @@ function OrderDesksMode() {
           )}
         </GlassCard>
       )}
+
+      {/* ===== SB-CC-BLOOM-018 -- THE PROMO FLOOR GAP + THE TRUCK =====
+          Item 2: every promo-in-window line finishing below its own promo-lifted
+          floor, ranked HERO then KVI then rand, with the packs and rand to close.
+          This is the list PM built by hand on 2026-07-29; it stops being a hand job.
+          Item 1 (canon SS14 v15 6a): wherever in-transit reduced this order, the
+          buyer is SHOWN the truck -- quantity and landing -- never a silent
+          reduction. Both read the buyer's LIVE quantities, so the numbers move as
+          the order is edited. NEITHER changes a suggested quantity: ENG-052 stays
+          open and the model lands with item 3. */}
+      {generated && (() => {
+        const gapRows = lines
+          .map(l => {
+            const posUnits = (qty[l.product_code] ?? 0) * (l.pack_size ?? 0) + Number(l.soh ?? 0)
+            const floor = l.promo_floor_units == null ? null : Number(l.promo_floor_units)
+            if (!l.promo_in_window || floor == null || posUnits >= floor) return null
+            const shortUnits = Math.max(0, floor - posUnits)
+            const shortPacks = l.pack_size ? Math.ceil(shortUnits / l.pack_size) : 0
+            const pri = l.is_bt_hero ? 1 : l.kvi_band === 'KVI_CRITICAL' ? 2 : l.kvi_band === 'KVI_IMPORTANT' ? 3 : 4
+            return { l, posUnits, floor, shortUnits, shortPacks, pri,
+                     shortRand: shortPacks * Number(l.pack_cost ?? 0),
+                     atCap: l.promo_uplift_band != null && Number(l.promo_uplift_band) >= 5 }
+          })
+          .filter(Boolean)
+          .sort((a, b) => a.pri - b.pri || b.shortRand - a.shortRand || a.l.product_code - b.l.product_code)
+
+        const gapRand = gapRows.reduce((s, r) => s + r.shortRand, 0)
+        const gapPriority = gapRows.filter(r => r.pri <= 3).length
+        const gapCapped = gapRows.filter(r => r.atCap).length
+
+        const truckLines = lines.filter(l => l.in_transit_counted)
+        const truckUnits = truckLines.reduce((s, l) => s + Number(l.in_transit_qty ?? 0), 0)
+        const truckCost = truckLines.reduce((s, l) => s + Number(l.in_transit_cost ?? 0), 0)
+        const enRoute = lines.filter(l => !l.in_transit_counted && Number(l.in_transit_qty ?? 0) > 0)
+        const staleLines = lines.filter(l => Number(l.in_transit_stale_qty ?? 0) > 0)
+        const staleOldest = staleLines.reduce((m, l) => Math.max(m, Number(l.in_transit_stale_age_days ?? 0)), 0)
+
+        if (gapRows.length === 0 && truckLines.length === 0 && enRoute.length === 0 && staleLines.length === 0) return null
+
+        return (
+          <GlassCard style={{ margin: '0 32px 20px', padding: '16px 22px' }}>
+            {/* --- item 1: the truck, as a desk-header total --- */}
+            {(truckLines.length > 0 || enRoute.length > 0 || staleLines.length > 0) && (
+              <div style={{ marginBottom: gapRows.length ? 14 : 0, paddingBottom: gapRows.length ? 12 : 0,
+                borderBottom: gapRows.length ? '1px solid var(--hairline)' : 'none' }}>
+                <Label style={{ color: 'var(--veld-mist)' }}>In transit</Label>
+                <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--daisy-white)' }}>
+                  {truckLines.length > 0
+                    ? <><strong style={{ color: 'var(--growth-green)' }}>{truckLines.length} line{truckLines.length === 1 ? '' : 's'}</strong>
+                        {' '}carry {num(truckUnits)} units ({zar(truckCost)}) already on their way and landing on or before this delivery.
+                        {' '}<strong>This order was reduced by that stock.</strong></>
+                    : <>No in-transit stock lands on or before this delivery, so nothing was reduced.</>}
+                </p>
+                {enRoute.length > 0 && (
+                  <p style={{ margin: '4px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)' }}>
+                    {enRoute.length} further line{enRoute.length === 1 ? '' : 's'} have stock en route landing AFTER this delivery — not counted, order not reduced.
+                  </p>
+                )}
+                {staleLines.length > 0 && (
+                  <p style={{ margin: '4px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)' }}>
+                    {staleLines.length} line{staleLines.length === 1 ? '' : 's'} sit against stale open documents (oldest {staleOldest} days) — worklisted, never counted as in transit (canon §14 v15 rule 1).
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* --- item 2: the promo floor gap worklist --- */}
+            {gapRows.length > 0 && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                  <Label style={{ color: 'var(--data-warn)' }}>Promo floor gap</Label>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)' }}>
+                    {gapRows.length} line{gapRows.length === 1 ? '' : 's'} below their promo floor · {gapPriority} HERO/KVI · {zar(gapRand)} to close
+                  </span>
+                </div>
+                <p style={{ margin: '5px 0 8px', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)', lineHeight: 1.5 }}>
+                  The order was computed on each line&apos;s unlifted demand; the floor is its promo-lifted one (ENG-052, open — quantities are unchanged).
+                  {gapCapped > 0 && <> <strong style={{ color: 'var(--core-yellow)' }}>{gapCapped} of these sit on the uplift cap</strong>, so their uplift is a bound and not a measurement (ENG-053).</>}
+                </p>
+                <div style={{ maxHeight: '30vh', overflow: 'auto' }}>
+                  {gapRows.slice(0, 60).map(r => (
+                    <div key={r.l.product_code} title={r.l.promo_gap_reason ?? undefined}
+                      style={{ display: 'grid', gridTemplateColumns: '70px minmax(150px,1.6fr) 92px 74px 74px 78px 86px',
+                        gap: 0, padding: '6px 4px', borderBottom: '1px solid var(--hairline)',
+                        fontFamily: 'var(--font-mono)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
+                      <span style={{ color: 'var(--veld-mist)' }}>{r.l.product_code}</span>
+                      <span style={{ color: 'var(--daisy-white)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {r.l.description}
+                      </span>
+                      <span style={{ color: r.pri === 1 ? 'var(--growth-green)' : r.pri <= 3 ? 'var(--core-yellow)' : 'var(--veld-mist)' }}>
+                        {r.l.is_bt_hero ? 'HERO' : (r.l.kvi_band ?? '—').replace('KVI_', '')}
+                      </span>
+                      <span style={{ textAlign: 'right', color: 'var(--veld-mist)' }} title="position after this order">{num(r.posUnits)}</span>
+                      <span style={{ textAlign: 'right', color: 'var(--veld-mist)' }} title="promo floor">{num(r.floor)}</span>
+                      <span style={{ textAlign: 'right', color: 'var(--data-warn)' }}>
+                        +{r.shortPacks}{r.atCap && <span title="uplift at cap — a bound, not a measurement"> *</span>}
+                      </span>
+                      <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>{zar(r.shortRand)}</span>
+                    </div>
+                  ))}
+                </div>
+                {gapRows.length > 60 && (
+                  <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)' }}>
+                    Showing the top 60 of {gapRows.length} by priority then rand. The full list is `rpc_bloom_promo_floor_gap`.
+                  </p>
+                )}
+              </>
+            )}
+          </GlassCard>
+        )
+      })()}
 
       {generated && (
         <GlassCard style={{ margin: '0 32px 32px', padding: 0, overflow: 'hidden' }}>
