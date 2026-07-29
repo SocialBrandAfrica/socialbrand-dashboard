@@ -4,6 +4,62 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-28 -- SB-CC-BLOOM-017 Wave 1 item 1.3: GREEN. The selection rebuilt to canon v15 rules 1-6a, the projection leg wired, the cutoff derived. Commit `771c386` (repo) + live migrations.
+
+**State at close: item 1.3 is GREEN. One desk moved. Eight offered delivery dates moved, every one LATER.**
+
+**THE SELECTION (rules 1-5a).** `refresh_l2_on_order` rebuilt -- the table, its four config keys, its grants and its pipeline wiring were already correct and were NOT rebuilt from scratch (only the selection moved, as the handover instructed). Latest-of-its-kind only, ranked over ALL order types so a partition whose latest is received yields nothing (r1); partition `(store_code, supplier_nr, status_2)`, `status_2` OPAQUE (r2); open population `order_type IN ('0','1','2')`, never a date test, and a received order inside the filter now RAISEs a WARNING rather than being dropped (r3, s8.6 guard 4); recency on `order_nr` (r4); **5a, ruled mid-build on a measured question CC put to PM: "passed" is judged against the store's own LEDGER WATERMARK, never the calendar.** New columns `promise_basis`, `landing_estimate_state`, `excluded_reasons`.
+
+**R22, both grains, published on ONE basis (ENG-050 / canon s12e 4b):**
+- all-open baseline, line basis **R64,477,050.11**
+- in transit, `(store,supplier,status_2)` grain **R643,965.94** on 1,316 products
+- excluded and worklisted with age, route and reason **R63,833,084.17**
+- **reconciliation delta R0.00**
+- Sigma's own header total for the same pool is **R64,456,863.37** and is published beside it, NAMED as disagreeing with its own lines by R20,186.74. Rule-1 at `(store,supplier)` header grain: R601,108.30.
+
+Gates: rule-3 guard **0 received orders inside 0/1/2 on all five stores** · determinism twice-run **16,247 rows, 0 differing** on qty, cost and reasons · live-vs-shadow **16,247 rows, 0 differing** · every one of 3,513 open headers lands in exactly one verdict, count and rand both summing to the pool.
+
+**THE PROJECTION LEG, wired into `rpc_bloom_order_recipe`.** In-transit landing on or before the delivery date lifts `projected_soh`; joined in the `needc` CTE, patched by asserted `replace()` on a 32k-char body with the anchors verified unique first, prestate stored in `_w13_recipe_prestate`. **Isolation by revert, measure, re-apply** -- the before was taken with the wire provably absent (`l2_on_order` references read 0 during it, 2 after):
+
+| Desk | Delivery | Before | After | Delta |
+|---|---|---|---|---|
+| 10116 DC_AMBIENT | Thu 30 Jul | 575 / R247,675.74 | 575 / R247,675.74 | 0 |
+| **80175 DC_AMBIENT** | Wed 29 Jul | 408 / R274,958.56 | **322 / R234,182.90** | **-86 lines, -R40,775.66** |
+| 21355 DC_TOPS | Thu 30 Jul | 203 / R154,032.57 | 202 / R153,632.95 | -1 line, -R399.62 |
+| 80176 DC_TOPS | Wed 29 Jul | 123 / R112,770.24 | 123 / R112,770.24 | 0 |
+| 80579 DC_TOPS | Thu 30 Jul | 169 / R126,767.69 | 169 / R126,767.69 | 0 |
+
+Invariants: **0 lines went UP on any desk** (adding in-transit can only reduce need) · **0 HERO touched** · the 95 reduced lines decompose 63 CORE/STANDARD, 17 KVI_IMPORTANT, 12 KVI_CRITICAL, 2 CONSUMABLE_CARVE, 1 SLOW, with 87 going to zero. **All 6 KVI_CRITICAL zeros were checked individually** and every one projects ABOVE its own min_band at delivery on stock genuinely landing on or before that date -- five of the six placed that same day.
+
+**The reverted v14 build is vindicated by the numbers.** It had stripped 21355 from 308 lines to 199 (-R102,142) on six open orders never tested for latest-of-kind. Under v15 that desk's entire in-transit exposure is **2 lines and R2,763.87**. The gap between R102,142 and R2,764 is the measure of why the revert was correct.
+
+**RULE 6 + 6a -- THE CUTOFF IS DERIVED.** NEW `rpc_derive_order_cutoff(p_store_code, p_route_key)` (STABLE, returns the proposed row WITH its evidence -- median, pairs observed, dow lead, cycle, seeded prior) + `refresh_supplier_calendar_cutoff(...)` (SECURITY DEFINER writer; store #6 onboarding is one call). `supplier_calendar` gains `order_cutoff_basis`, `order_cutoff_anomaly`, `order_cutoff_seeded_prior` -- the last written ONCE via COALESCE so the original seed survives every later re-derivation (R28 lineage, retired with a date and a successor, never deleted). Basis: the route's own demonstrated placement->GRV median where the ledger carries at least `in_transit_min_received_orders` real pairs, else `placement_dows` x `delivery_dows` (v9 7l) -- reusing the existing threshold rather than inventing a second one. **6a (Pieter ruling 2026-07-28): an anomalous derivation is FLAGGED and NOT enacted.**
+
+**17 of 20 routes moved off the seeded 2. Eight offered delivery dates moved, every one LATER, and Pieter saw the table before it landed:**
+
+| Store | Route | Seeded | Derived | Basis | Offered move |
+|---|---|---|---|---|---|
+| 10116 | DIRECT_MONDELEZ | 2 | 8 | pair lead n=11 | 30 Jul -> 13 Aug |
+| 80175 | DIRECT_NATBRANDS | 2 | 8 | pair lead n=10 | 4 Aug -> 18 Aug |
+| 10116 | DIRECT_CLOVER / DIRECT_DANONE | 2 | 3 | pair lead n=14 / 40 | 30 Jul -> 4 Aug |
+| 80175 | DIRECT_CLOVER / DIRECT_DANONE | 2 | 5 / 3 | pair lead n=14 / 51 | 30 Jul -> 4 Aug |
+| **21355 / 80579** | **DC_TOPS** | 2 | **4** | **pair lead n=191 / 151** | **30 Jul -> 3 Aug** |
+| 10116 | DIRECT_NATBRANDS | 2 | 8 -> **1** | **6a ANOMALY, not enacted** | no move |
+
+**The TOPS DC finding is the operationally important one: those desks had been offering Thursday deliveries the DC does not hit.** 191 and 151 real placement-to-GRV pairs both say 4 days against a typed 2. **80176 DIRECT_BEER derives 1 = Pieter's own floor figure reached by formula, closing ENG-048** (invisible on a Tuesday, visible Mon 3 Aug -- the day he hit it).
+
+**Config, canon s0h point 2.** Five `forge_config` keys stamped `SEED, UNDERIVED` with the derivation logged as owed work: `in_transit_lead_multiple` 2, `in_transit_min_received_orders` 5, `in_transit_lead_fallback_days` 7, `corrector_min_observable_share` 0.5, `corrected_ros_cap_multiple` 2.0. `in_transit_lead_window_days` 182 keeps its reference to `cadence_window_days` and takes no stamp.
+
+**Grants (R30 addendum extension), proven on both new functions before merge:** PUBLIC REVOKEd, anon REVOKEd, authenticated GRANTed.
+
+**Repo:** `771c386` pushed -- `sql/create_rpc_derive_order_cutoff.sql` (new, carries both functions and the three ALTERs), CLAUDE.md mirrored to FILE-GOVERNANCE v2.9 with the ruled byte report, and `.gitignore` gaining `Clients/` by exact path and bare name on the sb-key.txt pattern (the folder is the control, the ignore line is the belt -- this repo pushes and Daisy's does not).
+
+**NAMED DEBT, not hidden.** `sql/create_l2_on_order.sql` and `sql/create_rpc_bloom_order_recipe.sql` owe a reconcile to live, alongside the two Wave-1 bodies already carried. Live is authoritative until closed.
+
+**⚠️ OPEN AND HELD, found the following day and logged as ENG-052:** the promo uplift reaches `l2_stock_band` and dies before the order, because the recipe recomputes its bands at order time from an unlifted demand. 472 of 577 uplifted promo lines at 10116 order zero. The fix is built on `_shadow_recipe_eng052` and **deliberately not deployed** -- it over-predicts the largest promo line 2.16x against observed trading, and the model measures median 0.89 with only 47% of lines inside 1.5x. ENG-052 and the uplift re-derivation deploy together or not at all.
+
+---
+
 ## 2026-07-27 later -- SB-CC-BLOOM-017 Wave 1 item 1.3: `l2_on_order` BUILT, then its projection leg REVERTED the same session (canon moved under the build)
 
 **State at close: the FACT is live and HELD. The PROJECTION leg is REVERTED. No live order value is changed by 1.3.**
