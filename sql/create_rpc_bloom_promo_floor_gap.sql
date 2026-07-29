@@ -71,6 +71,8 @@ RETURNS TABLE (
   promo_uplift_band     numeric,
   promo_uplift_source   text,
   promo_uplift_basis    text,
+  uplift_confidence     text,
+  uplift_is_measured    boolean,
   uplift_at_cap         boolean,
   shortfall_units       numeric,
   shortfall_packs       integer,
@@ -108,7 +110,24 @@ BEGIN
            CASE WHEN r.is_bt_hero                THEN 1
                 WHEN r.kvi_band = 'KVI_CRITICAL' THEN 2
                 WHEN r.kvi_band = 'KVI_IMPORTANT' THEN 3
-                ELSE 4 END                       AS pri_rank
+                ELSE 4 END                       AS pri_rank,
+           -- ⭐ ENG-054: the uplift's CONFIDENCE, in words, derived ONCE here so no
+           -- consumer parses a basis string for itself (the ENG-047 defect class).
+           -- FOUR classes, because the population has four (measured group-wide
+           -- 2026-07-29, n = 1,436 promo-window lines):
+           --   AT_CAP   154 (10.7%) -- censored. A BOUND. True value >= cap, unknown.
+           --   SEED     436 (30.4%) -- the 2.00 ladder default. UNDERIVED (§0h).
+           --   BORROWED 141 ( 9.8%) -- measured on a same-format sibling (DF-1).
+           --   MEASURED 705 (49.1%) -- this line's own promo history. Bankable.
+           -- AT_CAP + SEED = 590 = 41.1% carrying an unmeasured number: PM's ruling
+           -- is that no model is fitted on that population until it is stated.
+           CASE
+             WHEN v_cap IS NOT NULL AND r.promo_uplift_band >= v_cap THEN 'AT_CAP'
+             WHEN r.promo_uplift_band_basis = 'default'              THEN 'SEED'
+             WHEN r.promo_uplift_band_basis = 'sibling_store'
+               OR r.promo_uplift_band_source = 'sibling_store'       THEN 'BORROWED'
+             ELSE 'MEASURED'
+           END AS uplift_conf
     FROM r
     WHERE r.promo_in_window
       AND r.promo_floor_units IS NOT NULL
@@ -122,7 +141,9 @@ BEGIN
     g.pos_units, ROUND(g.promo_floor_units,1),
     ROUND(g.rhythm_adjusted_demand,3), ROUND(g.promo_band_demand,3),
     g.promo_uplift_band, g.promo_uplift_band_source, g.promo_uplift_band_basis,
-    (v_cap IS NOT NULL AND g.promo_uplift_band >= v_cap),
+    g.uplift_conf,
+    (g.uplift_conf = 'MEASURED'),
+    (g.uplift_conf = 'AT_CAP'),
     ROUND(g.promo_shortfall_units,1), g.promo_shortfall_packs, g.promo_shortfall_rand,
     ROUND(g.pos_units / NULLIF(g.promo_band_demand,0), 1),
     ROUND(g.promo_floor_units / NULLIF(g.promo_band_demand,0), 1),

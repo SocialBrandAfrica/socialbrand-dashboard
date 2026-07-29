@@ -1219,6 +1219,46 @@ const YARDSTICK_REASON_LABEL = {
   cash_constrained: 'This week runs cash-constrained -- deviation from the yardstick is expected, not flagged.',
 }
 
+// ⭐ ENG-054 -- HOW MUCH IS THE UPLIFT BEHIND THIS GAP WORTH? In one word.
+// The engine is the authority: rpc_bloom_promo_floor_gap.uplift_confidence
+// derives exactly this CASE server-side. This mirror exists ONLY so the desk
+// panel can keep recomputing against the buyer's LIVE edited quantities (the
+// RPC answers for a generate, not for an in-progress edit). Keep the two in
+// lockstep -- if the engine's classes change, this changes with it.
+//   AT_CAP   the uplift sits on promo_uplift_cap. A BOUND, not a measurement:
+//            the true value is >= this and unknown. 154 of 1,436 group-wide.
+//   SEED     the 2.00 ladder default. UNDERIVED (FILE-GOVERNANCE §0h). 436 of 1,436.
+//   BORROWED measured, but on a same-format sibling's ledger (DF-1), not this line's.
+//   MEASURED this line's own promo history. The only one you can bank on.
+const UPLIFT_CONFIDENCE_CAP = 5
+function upliftConfidence(line) {
+  const u = line?.promo_uplift_band
+  if (u == null) return null
+  if (Number(u) >= UPLIFT_CONFIDENCE_CAP) return 'AT_CAP'
+  if (line.promo_uplift_band_basis === 'default') return 'SEED'
+  if (line.promo_uplift_band_basis === 'sibling_store'
+      || line.promo_uplift_band_source === 'sibling_store') return 'BORROWED'
+  return 'MEASURED'
+}
+const UPLIFT_CONFIDENCE_WORD = {
+  MEASURED: 'measured',
+  BORROWED: 'borrowed',
+  AT_CAP:   'at cap',
+  SEED:     'seed',
+}
+const UPLIFT_CONFIDENCE_TITLE = {
+  MEASURED: 'Measured on this line’s own promo history. Bankable.',
+  BORROWED: 'Measured, but on a same-format sibling store’s ledger (DF-1), not this line’s own.',
+  AT_CAP:   'AT THE CAP — a BOUND, not a measurement. The true uplift is at least this and is unknown, so the gap below is a floor, never a ceiling (ENG-054).',
+  SEED:     'The 2.00 ladder default. Nobody derived it — SEED, UNDERIVED (FILE-GOVERNANCE §0h). Treat the gap as indicative only.',
+}
+const UPLIFT_CONFIDENCE_COLOR = {
+  MEASURED: 'var(--growth-green)',
+  BORROWED: 'var(--veld-mist)',
+  AT_CAP:   'var(--core-yellow)',
+  SEED:     'var(--data-neg)',
+}
+
 // The preserved DC row, adapted to the recipe's own fields. Same grid, same
 // ten columns, same ringed-input pattern as OrderRow above -- the only
 // additions are the count_first (# / pink wash) and BT-hero markers, which
@@ -1248,7 +1288,7 @@ function DeskOrderRow({ line, qty, isEdited, onQty }) {
   const hasPromoGap = !!line.promo_in_window && floorUnits != null && posUnits < floorUnits
   const gapUnits = hasPromoGap ? Math.max(0, floorUnits - posUnits) : 0
   const gapPacks = hasPromoGap && line.pack_size ? Math.ceil(gapUnits / line.pack_size) : 0
-  const upliftAtCap = line.promo_uplift_band != null && Number(line.promo_uplift_band) >= 5
+  const upliftConf = upliftConfidence(line)
 
   // SB-CC-BLOOM-018 item 1 -- THE BUYER SEES THE TRUCK (canon SS14 v15 6a,
   // Pieter ruling 2026-07-28). Where in-transit reduced this line, say so with
@@ -1267,12 +1307,31 @@ function DeskOrderRow({ line, qty, isEdited, onQty }) {
       borderBottom: '1px solid var(--hairline)', fontSize: 12, fontFamily: 'var(--font-mono)',
       fontVariantNumeric: 'tabular-nums',
     }} title={rowTitle}>
+      {/* BLOOM-018 v1.2 item 4: the bare '#' prefix is GONE. Pieter read it as a
+          broken product code on his largest line. The count-first signal now says
+          the word, as a chip in the description cell, and the code stays a code. */}
       <span style={{ color: line.count_first ? 'var(--data-neg)' : 'var(--veld-mist)' }}>
-        {line.count_first ? '# ' : ''}{String(line.product_code)}
+        {String(line.product_code)}
       </span>
       <span style={{ color: 'var(--veld-mist)' }}>{line.pack_size ?? '—'}</span>
       <span style={{ color: 'var(--daisy-white)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {line.description}
+        {/* BLOOM-018 v1.2 item 4: PACK CONTENT. Five pairs at 80175 render as the
+            same product under two codes without it -- GOLDI IQF MP 2KG vs 5KG,
+            SPAR EGGS LARGE 60'S vs 48'S, SUNFLOWER OIL 2LT vs 4LT, MAQ FLEXI 1KG
+            vs 2KG, STORK 500GR vs 1KG. pack_size does not separate them either
+            (6 vs 3, 12 vs 8). Zero shared EANs: the pool is clean, the screen was
+            not, and Pieter called the duplicate-order risk. */}
+        {line.pack_content && (
+          <span style={{ marginLeft: 5, color: 'var(--veld-mist)' }}>{line.pack_content}</span>
+        )}
+        {line.count_first && (
+          <span title={line.band_blocked_reason
+            ? `Count first — ${line.band_blocked_reason}`
+            : 'Count first — the SOH claim on this line is unverified, so it was ordered conservatively (canon ENG-014). Not a broken code.'}
+            style={{ marginLeft: 6, fontSize: 9, color: 'var(--data-neg)', border: '1px solid var(--data-neg)',
+              borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>COUNT FIRST</span>
+        )}
         {line.is_bt_hero && (
           <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--growth-green)', border: '1px solid var(--growth-green)',
             borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>BT</span>
@@ -1285,13 +1344,14 @@ function DeskOrderRow({ line, qty, isEdited, onQty }) {
             GAP {gapPacks}
           </span>
         )}
-        {/* The uplift behind this gap is a BOUND, not a measurement (it sits on
-            the ladder cap). Flagged so nobody reads a censored value as a fact. */}
-        {hasPromoGap && upliftAtCap && (
-          <span title="Uplift is AT THE CAP -- a bound, not a measurement. True uplift is >= this value and unknown (ENG-053)."
-            style={{ marginLeft: 4, fontSize: 9, color: 'var(--veld-mist)', border: '1px dashed var(--veld-mist)',
+        {/* ENG-054: what the uplift behind this gap is worth, IN A WORD, never a
+            basis string. A censored 5.00 and a measured 1.12 must not read alike. */}
+        {hasPromoGap && upliftConf && (
+          <span title={UPLIFT_CONFIDENCE_TITLE[upliftConf]}
+            style={{ marginLeft: 4, fontSize: 9, color: UPLIFT_CONFIDENCE_COLOR[upliftConf],
+              border: `1px ${upliftConf === 'MEASURED' ? 'solid' : 'dashed'} ${UPLIFT_CONFIDENCE_COLOR[upliftConf]}`,
               borderRadius: 'var(--radius-pill)', padding: '1px 5px' }}>
-            CAP
+            {UPLIFT_CONFIDENCE_WORD[upliftConf]}
           </span>
         )}
         {/* BLOOM-018 item 1: the truck. Counted = it reduced this order. */}
@@ -1426,16 +1486,8 @@ function OrderDesksMode() {
         if (err || !data?.[0]) { setError(err?.message ?? 'no calendar row for this desk'); return }
         setDeliveryDate(data[0].delivery_date); setNextDeliveryDate(data[0].following_date)
       })
-    // SB-CC-BLOOM-009: DIRECT_<brand> desks share the generic 'DIRECT'
-    // weekly ledger row (mirrors rpc_bloom_order_recipe's own v_ledger_route
-    // CASE -- must stay in lockstep with it, R21).
-    const ledgerRoute = desk === 'DIRECT_BEER' ? 'DIRECT_BEER' : desk.startsWith('DIRECT_') ? 'DIRECT' : 'DC'
-    supabase.from('order_budget_ledger').select('*')
-      .eq('store_code', storeCode).eq('route_key', ledgerRoute).order('year_month', { ascending: false }).limit(1).maybeSingle()
-      .then(({ data }) => { if (!cancelled) setBudgetRow(data ?? null) })
-    supabase.from('order_budget_ledger').select('*')
-      .eq('store_code', storeCode).eq('route_key', 'ALL').order('year_month', { ascending: false }).limit(1).maybeSingle()
-      .then(({ data }) => { if (!cancelled) setAllBudgetRow(data ?? null) })
+    // The budget ledger fetch MOVED to its own effect below -- it depends on the
+    // delivery date, which is only known once the call above resolves (ENG-055).
     // ENG-034 sign-off: the NEEDS rail's own LY coverage, keyed per DESK (that is
     // l2_sales_budget's grain, not the ledger's). Published interface, SELECT
     // granted -- the surface reads the engine's own measurement, never derives it.
@@ -1446,6 +1498,44 @@ function OrderDesksMode() {
     setGenerated(false); setLines([]); setQty({}); setEdited({}); setSubmitted(false)
     return () => { cancelled = true }
   }, [storeCode, desk])
+
+  // ⭐ ENG-055 -- THE BUDGET ROW MUST BE THE DELIVERY WEEK'S ROW.
+  // Was: .order('year_month', desc).limit(1) -- which takes the LATEST row in the
+  // table. `order_budget_ledger` holds 28 FORWARD weeks (to 2027-01-16), so every
+  // desk was judged against the furthest-out week, and that week happens to be the
+  // table's minimum. Measured at 80175 DC: the screen read R157,951.96 (week of
+  // 2027-01-16) against the true delivery-week budget of R363,695.98 (2026-08-01).
+  // The buyer read 92% spent while sitting at 40% spent -- which suppresses exactly
+  // the promo depth BLOOM-018 exists to recover. Not cosmetic: a cause of the under-buy.
+  //
+  // Fixed by filtering to the delivery week instead of sorting to the end of time:
+  // the newest ledger row AT OR BEFORE the delivery date IS the delivery week's row
+  // (rows are Saturday-anchored week starts, canon §14 v7 item 7). This reproduces
+  // the engine's own resolution rather than re-deriving a week boundary client-side
+  // (R21/R27 -- the recipe picks, the surface never re-cooks). Verified in lockstep
+  // with `rpc_bloom_scenario_overview`, which stamps `budget_week_start` itself:
+  // both return 2026-08-01 / R363,695.98 for this desk.
+  useEffect(() => {
+    if (!storeCode || !desk || !deliveryDate) { setBudgetRow(null); setAllBudgetRow(null); return }
+    let cancelled = false
+    // SB-CC-BLOOM-009: DIRECT_<brand> desks share the generic 'DIRECT' weekly
+    // ledger row (mirrors rpc_bloom_order_recipe's own v_ledger_route CASE --
+    // must stay in lockstep with it, R21).
+    const ledgerRoute = desk === 'DIRECT_BEER' ? 'DIRECT_BEER' : desk.startsWith('DIRECT_') ? 'DIRECT' : 'DC'
+    supabase.from('order_budget_ledger').select('*')
+      .eq('store_code', storeCode).eq('route_key', ledgerRoute)
+      .lte('year_month', deliveryDate)
+      .order('year_month', { ascending: false }).limit(1).maybeSingle()
+      .then(({ data }) => { if (!cancelled) setBudgetRow(data ?? null) })
+    // Same defect, same fix (PM flagged it in the same breath) -- the group 'ALL'
+    // row was also taking the furthest-out period.
+    supabase.from('order_budget_ledger').select('*')
+      .eq('store_code', storeCode).eq('route_key', 'ALL')
+      .lte('year_month', deliveryDate)
+      .order('year_month', { ascending: false }).limit(1).maybeSingle()
+      .then(({ data }) => { if (!cancelled) setAllBudgetRow(data ?? null) })
+    return () => { cancelled = true }
+  }, [storeCode, desk, deliveryDate])
 
   // UX-003 landing board: the scenario overview + 7-day-yardstick sanity
   // strip (canon v7 item 9) load BEFORE Generate -- one published call,
@@ -2148,14 +2238,56 @@ function OrderDesksMode() {
             const pri = l.is_bt_hero ? 1 : l.kvi_band === 'KVI_CRITICAL' ? 2 : l.kvi_band === 'KVI_IMPORTANT' ? 3 : 4
             return { l, posUnits, floor, shortUnits, shortPacks, pri,
                      shortRand: shortPacks * Number(l.pack_cost ?? 0),
-                     atCap: l.promo_uplift_band != null && Number(l.promo_uplift_band) >= 5 }
+                     conf: upliftConfidence(l) }
           })
           .filter(Boolean)
           .sort((a, b) => a.pri - b.pri || b.shortRand - a.shortRand || a.l.product_code - b.l.product_code)
 
         const gapRand = gapRows.reduce((s, r) => s + r.shortRand, 0)
         const gapPriority = gapRows.filter(r => r.pri <= 3).length
-        const gapCapped = gapRows.filter(r => r.atCap).length
+        const gapCapped = gapRows.filter(r => r.conf === 'AT_CAP').length
+        // ENG-054: how much of this gap rests on a number we actually measured.
+        // The buyer can act on the measured tranche today; the at-cap tranche is a
+        // FLOOR (true gap >= shown), and the seed tranche is indicative only.
+        const randByConf = gapRows.reduce((acc, r) => {
+          const k = r.conf ?? 'UNKNOWN'; acc[k] = (acc[k] ?? 0) + r.shortRand; return acc
+        }, {})
+        const kviMeasuredRand = gapRows
+          .filter(r => r.pri <= 3 && r.conf === 'MEASURED')
+          .reduce((s, r) => s + r.shortRand, 0)
+
+        // The worklist EXPORTS -- the buyer captures from a file, he does not read
+        // it off a screen (PM, BLOOM-018 v1.2 item 2). Cut from the LIVE quantities
+        // on screen, never the recipe's raw figures (canon §14 v7 item 11b, the
+        // round-trip rule that ENG-021 breached).
+        const exportGap = () => {
+          const head = ['Rank','Product Code','Description','Priority','Confidence',
+                        'SOH','Ordered Packs','Pack Size','Position Units','Promo Floor Units',
+                        'Order Demand/Day','Band Demand/Day','Uplift','Uplift Basis',
+                        'Short Units','Short Packs','Short Rand']
+          const esc = v => {
+            const s = v == null ? '' : String(v)
+            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+          }
+          const body = gapRows.map((r, i) => [
+            i + 1, r.l.product_code, r.l.description,
+            r.l.is_bt_hero ? 'HERO' : (r.l.kvi_band ?? ''),
+            UPLIFT_CONFIDENCE_WORD[r.conf] ?? '',
+            r.l.soh, qty[r.l.product_code] ?? 0, r.l.pack_size,
+            r.posUnits, Math.round(r.floor * 10) / 10,
+            r.l.rhythm_adjusted_demand, r.l.promo_band_demand,
+            r.l.promo_uplift_band, r.l.promo_uplift_band_basis,
+            Math.round(r.shortUnits * 10) / 10, r.shortPacks,
+            Math.round(r.shortRand * 100) / 100,
+          ].map(esc).join(','))
+          const csv = [head.join(','), ...body].join('\r\n')
+          const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }))
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `promo-floor-gap_${storeCode}_${desk}_${deliveryDate}.csv`
+          document.body.appendChild(a); a.click(); document.body.removeChild(a)
+          URL.revokeObjectURL(url)
+        }
 
         const truckLines = lines.filter(l => l.in_transit_counted)
         const truckUnits = truckLines.reduce((s, l) => s + Number(l.in_transit_qty ?? 0), 0)
@@ -2201,15 +2333,43 @@ function OrderDesksMode() {
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)' }}>
                     {gapRows.length} line{gapRows.length === 1 ? '' : 's'} below their promo floor · {gapPriority} HERO/KVI · {zar(gapRand)} to close
                   </span>
+                  <div style={{ flex: 1 }} />
+                  <button onClick={exportGap}
+                    title="Export this worklist as CSV, cut from the quantities currently on screen."
+                    style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.06em',
+                      textTransform: 'uppercase', color: 'var(--daisy-white)', cursor: 'pointer',
+                      background: 'rgba(255,179,0,0.14)', border: '1px solid var(--data-warn)',
+                      borderRadius: 'var(--radius-chip)', padding: '6px 12px' }}>
+                    Export worklist
+                  </button>
                 </div>
-                <p style={{ margin: '5px 0 8px', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)', lineHeight: 1.5 }}>
+                <p style={{ margin: '5px 0 6px', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)', lineHeight: 1.5 }}>
                   The order was computed on each line&apos;s unlifted demand; the floor is its promo-lifted one (ENG-052, open — quantities are unchanged).
-                  {gapCapped > 0 && <> <strong style={{ color: 'var(--core-yellow)' }}>{gapCapped} of these sit on the uplift cap</strong>, so their uplift is a bound and not a measurement (ENG-053).</>}
                 </p>
+                {/* ENG-054 -- WHAT THE GAP IS BUILT ON. Money you can bank, money that
+                    is a floor, money that is a guess. Never one undifferentiated total. */}
+                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', margin: '0 0 9px',
+                  fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+                  {['MEASURED', 'BORROWED', 'AT_CAP', 'SEED'].filter(k => randByConf[k]).map(k => (
+                    <span key={k} title={UPLIFT_CONFIDENCE_TITLE[k]} style={{ color: UPLIFT_CONFIDENCE_COLOR[k] }}>
+                      {UPLIFT_CONFIDENCE_WORD[k]} {zar(randByConf[k])}
+                    </span>
+                  ))}
+                  {kviMeasuredRand > 0 && (
+                    <span style={{ color: 'var(--growth-green)' }}>
+                      · <strong>{zar(kviMeasuredRand)} of the HERO/KVI gap is measured</strong> — bankable without the model
+                    </span>
+                  )}
+                  {gapCapped > 0 && (
+                    <span style={{ color: 'var(--core-yellow)' }}>
+                      · {gapCapped} at cap, so those gaps are a FLOOR, never a ceiling
+                    </span>
+                  )}
+                </div>
                 <div style={{ maxHeight: '30vh', overflow: 'auto' }}>
                   {gapRows.slice(0, 60).map(r => (
                     <div key={r.l.product_code} title={r.l.promo_gap_reason ?? undefined}
-                      style={{ display: 'grid', gridTemplateColumns: '70px minmax(150px,1.6fr) 92px 74px 74px 78px 86px',
+                      style={{ display: 'grid', gridTemplateColumns: '70px minmax(150px,1.6fr) 92px 74px 68px 68px 62px 82px',
                         gap: 0, padding: '6px 4px', borderBottom: '1px solid var(--hairline)',
                         fontFamily: 'var(--font-mono)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
                       <span style={{ color: 'var(--veld-mist)' }}>{r.l.product_code}</span>
@@ -2219,11 +2379,14 @@ function OrderDesksMode() {
                       <span style={{ color: r.pri === 1 ? 'var(--growth-green)' : r.pri <= 3 ? 'var(--core-yellow)' : 'var(--veld-mist)' }}>
                         {r.l.is_bt_hero ? 'HERO' : (r.l.kvi_band ?? '—').replace('KVI_', '')}
                       </span>
+                      {/* the word, never a basis string (PM, BLOOM-018 v1.2 item 2) */}
+                      <span title={UPLIFT_CONFIDENCE_TITLE[r.conf]}
+                        style={{ color: UPLIFT_CONFIDENCE_COLOR[r.conf] ?? 'var(--veld-mist)' }}>
+                        {UPLIFT_CONFIDENCE_WORD[r.conf] ?? '—'}
+                      </span>
                       <span style={{ textAlign: 'right', color: 'var(--veld-mist)' }} title="position after this order">{num(r.posUnits)}</span>
                       <span style={{ textAlign: 'right', color: 'var(--veld-mist)' }} title="promo floor">{num(r.floor)}</span>
-                      <span style={{ textAlign: 'right', color: 'var(--data-warn)' }}>
-                        +{r.shortPacks}{r.atCap && <span title="uplift at cap — a bound, not a measurement"> *</span>}
-                      </span>
+                      <span style={{ textAlign: 'right', color: 'var(--data-warn)' }}>+{r.shortPacks}</span>
                       <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>{zar(r.shortRand)}</span>
                     </div>
                   ))}
