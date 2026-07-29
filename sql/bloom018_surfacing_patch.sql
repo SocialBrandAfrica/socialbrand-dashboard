@@ -1,0 +1,137 @@
+-- =============================================================================
+-- SB-CC-BLOOM-018 -- THE SURFACING PATCH
+-- Applied live 2026-07-29.  CC.
+-- Amends: rpc_bloom_order_recipe (+20 cols), rpc_bloom_scenario_overview (+3 cols)
+-- =============================================================================
+-- STATUS OF THIS FILE
+--   This is the DELTA RECORD, not the canonical body.  rpc_bloom_order_recipe
+--   and rpc_bloom_scenario_overview already carried a named reconcile debt
+--   (their create_*.sql bodies are behind live); this pass adds to it rather
+--   than clearing it.  LIVE IS AUTHORITATIVE until that reconcile runs.
+--   Reconcile with: SELECT pg_get_functiondef(oid) FROM pg_proc ... -> the file.
+--
+-- =============================================================================
+-- THE PATTERN, AND WHY IT IS THE POINT (DB-SCHEMA "append-after-compute")
+-- =============================================================================
+--   The requirement was to ADD INFORMATION without altering any computed
+--   quantity.  rpc_bloom_order_recipe builds its result as
+--       EXECUTE format('CREATE TEMP TABLE _bloom_recipe_out AS %s', v_sql);
+--   and then returns SELECT * from that temp table.  So the surfacing columns
+--   are APPENDED AFTER the compute has finished and populated by plain joins
+--   to l2_stock_band and l2_on_order.
+--
+--   Consequence: the change is STRUCTURALLY INCAPABLE of moving a suggested
+--   quantity, rather than merely verified not to have.  Not one byte of the
+--   24k-char format() string or its 29 positional args was touched.
+--
+--   R22 gate: 36,205 rows, all 20 desks, FULL scenario fit-off, prestate vs
+--   poststate, ZERO differing in either direction.  Scratch evidence:
+--   _w18_recipe_prestate / _w18_recipe_poststate / _w18_fn_predef.
+--
+--   Two conditions the pattern requires, both met:
+--     1. Append at the END so SELECT * stays positionally aligned with
+--        RETURNS TABLE.
+--     2. Add NO new parameter.  All nine live call sites pass positionally;
+--        a trailing return column is safe, a parameter would not be.
+--
+-- CALLER SET, RE-DERIVED AT SOURCE (pg_depend does not track these):
+--   FIVE real callers, nine call sites --
+--     rpc_bloom_scenario_overview (4, three of them SELECT *)
+--     rpc_bloom_delivery_chain (2), rpc_bloom_stock_state (1),
+--     rpc_bloom_month_projection (1), rpc_bloom_direct_dc_overlap (1)
+--   NOT callers (name appears in COMMENTS only):
+--     refresh_l2_pipeline, rpc_project_route_sales_budget
+--   DB-SCHEMA previously listed four and missed rpc_bloom_direct_dc_overlap.
+--   All five smoke-tested clean after the patch.
+--
+-- NOTE: adding return columns CHANGES THE RETURN TYPE, so CREATE OR REPLACE
+--   is rejected -- the patch DROPs then creates.  DROP LOSES GRANTS; both
+--   functions are re-granted explicitly below.  Read RPCs stay anon-executable
+--   by design (R30 addendum extension scopes the double-revoke to mutating
+--   functions only).
+--
+-- =============================================================================
+-- 1. rpc_bloom_order_recipe -- 20 SURFACING COLUMNS
+-- =============================================================================
+-- Appended to RETURNS TABLE, in this exact order (matching the ALTER order):
+--
+--   ITEM 2, the promo floor gap (canon SS14 v14 rule 4; ENG-052 OPEN):
+--     promo_in_window          boolean   -- l2_stock_band.promo_in_buyin_window
+--     promo_band_demand        numeric   -- the band's PROMO-LIFTED demand
+--     promo_uplift_band        numeric   -- the band's uplift
+--     promo_uplift_band_source text
+--     promo_uplift_band_basis  text      -- discriminates CENSORED from measured;
+--                                        -- 'own_promo_provisional_capped_uplift'
+--                                        -- means the value is a BOUND (ENG-053).
+--                                        -- This string already existed and NO
+--                                        -- consumer read it -- same shape as
+--                                        -- ENG-046 / ENG-002.
+--     promo_floor_units        numeric   -- the band's promo-lifted min_band
+--     promo_shortfall_units    numeric
+--     promo_shortfall_packs    integer
+--     promo_shortfall_rand     numeric
+--     promo_gap_reason         text      -- R29, the reason travels
+--
+--   ITEM 1, the buyer sees the truck (canon SS14 v15 rule 6a, Pieter 2026-07-28):
+--     in_transit_qty           numeric   -- SINGLES
+--     in_transit_cost          numeric
+--     in_transit_landing       date
+--     in_transit_counted       boolean   -- landed on/before delivery => it
+--                                        -- REDUCED this order
+--     in_transit_routes        text
+--     in_transit_lead_basis    text
+--     in_transit_landing_state text
+--     in_transit_stale_qty     numeric   -- worklisted, never counted (v15 r1)
+--     in_transit_stale_age_days integer
+--     in_transit_reason        text      -- R29
+--
+-- Applied as an asserted replace over pg_get_functiondef with two anchors,
+-- each proven to occur exactly once before substitution:
+--   anchor A: ' story text)'                                    (RETURNS TABLE tail)
+--   anchor B: "EXECUTE format('CREATE TEMP TABLE _bloom_recipe_out AS %s', v_sql);"
+-- Anchor B is followed by: one ALTER TABLE adding the 20 columns, then two
+-- UPDATEs populating them from l2_stock_band and l2_on_order respectively,
+-- each scoped by %L store literal (and %L delivery date for the in-transit
+-- counted test).  l2_stock_band's PK is (store_code, product_code) -- no
+-- client_id, so no leading-column index trap; l2_on_order carries a deliberate
+-- secondary index on the same pair for exactly that reason (canon SS17).
+--
+-- =============================================================================
+-- 2. rpc_bloom_scenario_overview -- 3 COLUMNS (item 2 pt 3, Pieter 2026-07-29)
+-- =============================================================================
+--     value_promo_lines    numeric
+--     value_nonpromo_lines numeric
+--     promo_share_pct      numeric
+--
+-- Split on promo_active -- THE SAME FLAG THE CSV/TLX/PROMO-SHEET EXPORT SPLITS
+-- ON (canon SS14 v7 item 11) -- so the KPI reconciles to the files rather than
+-- to a second definition of "promo".  Verified 80175 DC_AMBIENT 2026-08-01:
+-- promo R231,940.32 + normal R95,743.52 = R327,683.84 = the card total, to the
+-- cent, on all four scenarios.
+--
+-- Three anchors, each proven unique:
+--   A: 'computed_at timestamp with time zone)'        (RETURNS TABLE tail)
+--   B: '      MAX(s.budget_week_start) AS budget_week_start'   (agg CTE tail)
+--   C: '    v_now\n  FROM agg a'                      (final SELECT tail)
+--
+-- KNOWN, NOT INTRODUCED HERE: scenario_overview.promo_lines returns the same
+-- value on all four scenarios (870 at 80175) because it counts the promo POOL,
+-- not ordered promo lines -- unlike `lines`, which filters suggested_packs > 0.
+-- Confirmed independently by PM, 20 of 20 rows across all five DC desks.  It is
+-- a pool count, not a scenario property.  Sits on Wave 2 "counter aggregation".
+--
+-- =============================================================================
+-- REPRODUCING THE PATCH
+-- =============================================================================
+-- The applied migrations, in order:
+--   bloom018_recipe_surfacing_promo_gap_and_in_transit
+--   bloom018_scenario_overview_promo_share_kpi
+-- Both are asserted-replace DO blocks reading from _w18_fn_predef (the
+-- pre-change definition stash, taken in migration w18_stash_recipe_predef).
+-- ROLLBACK = EXECUTE the stashed def from _w18_fn_predef, then re-grant:
+--   GRANT EXECUTE ON FUNCTION public.rpc_bloom_order_recipe(
+--     text,date,date,date,text,numeric,boolean,integer,integer,integer,
+--     numeric,text,jsonb,integer,numeric) TO anon, authenticated;
+--   GRANT EXECUTE ON FUNCTION public.rpc_bloom_scenario_overview(
+--     text,date,date,text,numeric) TO anon, authenticated;
+-- =============================================================================

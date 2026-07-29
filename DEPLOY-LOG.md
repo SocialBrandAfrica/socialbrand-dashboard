@@ -4,6 +4,39 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-07-29 -- SB-CC-BLOOM-018 items 1+2 (ENGINE HALF): the promo floor gap and the truck are surfaced. Live migrations + repo. **Frontend built and compiling, NOT yet visually verified -- see the open item at the end.**
+
+**What shipped, and the one design decision that matters.** Both items needed the same surgery: extra columns on `rpc_bloom_order_recipe` (55 today) and on `rpc_bloom_scenario_overview` (25). Run as two passes that is the same 32k-char body cut twice, two full gates, four days before a fixed Monday. **Run as ONE signature pass it is cut once.** PM's sequence of VALUE is unchanged -- item 2's gap and KPI land first on screen, item 1's truck note second -- only the engine surgery collapsed from two to one.
+
+**THE PATTERN, recorded because it generalises (PM instruction; now in DB-SCHEMA Architecture Rules + memory).** The recipe materialises into a temp table and returns `SELECT *`. So the surfacing columns are **appended AFTER the compute has finished** and populated by plain joins to `l2_stock_band` and `l2_on_order`. **The change is therefore structurally incapable of moving a suggested quantity, rather than merely verified not to have.** Not one byte of the 24k-char `format()` string or its 29 positional args was touched. PM: "that is the assertion-that-cannot-fail rule turned the right way round -- you built the safety into the shape instead of asserting it afterwards."
+
+**R22 GATE, the same gate for both items: 36,205 rows, ALL 20 desks, FULL scenario fit-off, prestate vs poststate, ZERO differing in either direction.** Evidence: `_w18_recipe_prestate`, `_w18_recipe_poststate`, `_w18_fn_predef` (rollback stash incl. grants).
+
+**Objects.** `rpc_bloom_order_recipe` +20 columns (10 promo-gap, 10 in-transit); NEW `rpc_bloom_promo_floor_gap(p_store_code,p_delivery_date,p_next_delivery,p_route)`; `rpc_bloom_scenario_overview` +`value_promo_lines`/`value_nonpromo_lines`/`promo_share_pct`. Adding return columns changes the return type, so both were DROPped and recreated -- **DROP loses grants, both re-granted explicitly** and verified. Caller set re-derived at source: **five real callers, nine call sites, all positional** (`rpc_bloom_scenario_overview` ×4 incl. three `SELECT *`, `rpc_bloom_delivery_chain` ×2, `rpc_bloom_stock_state`, `rpc_bloom_month_projection`, `rpc_bloom_direct_dc_overlap`); `refresh_l2_pipeline` and `rpc_project_route_sales_budget` match the name in **comments only**. DB-SCHEMA listed four and missed `rpc_bloom_direct_dc_overlap` -- corrected. All five smoke-clean after.
+
+**THE GAP, MEASURED ACROSS THE BANK FOR THE FIRST TIME** (each desk at its own offered delivery; figures are generate-specific by construction):
+
+| Store | Promo lines in window | Ordering zero | % | Below promo floor | of which KVI/HERO | Rand to close |
+|---|---|---|---|---|---|---|
+| 10116 DC_AMBIENT | 585 | 393 | 67.2% | 96 | 20 | R134,284.26 |
+| 80175 DC_AMBIENT | 462 | 344 | 74.5% | 71 | 20 | R59,756.03 |
+| 21355 DC_TOPS | 83 | 59 | 71.1% | 15 | **11** | R13,548.13 |
+| 80176 DC_TOPS | 83 | 63 | 75.9% | 9 | **8** | R7,920.56 |
+| 80579 DC_TOPS | 77 | 52 | 67.5% | 13 | **10** | R21,253.87 |
+| **GROUP** | **1,290** | **911** | **70.6%** | **204** | **69** | **R236,762.85** |
+
+Not a swallow: five stores, both formats, 67-76%. **At TOPS almost every line below its promo floor is a KVI line** (11/15, 8/9, 10/13 against 20/96 and 20/71 at the SPARs) -- TOPS has no HERO at all (BT scope gap), so the breach lands on the KVI set there. Pieter's named line reproduces to the unit: 822145 B/SOFT, HERO + KVI_IMPORTANT, SOH 0, band demand 18.71/day at uplift 5.00, floor 103 units, order demand 2.11/day, 62 units ordered, **short 21 packs / R7,267.68, 3.3 days cover against a floor of 7.5**.
+
+**ENG-054 RAISED FROM THIS PASS -- the cap censors the model's own input.** 154 of 1,436 promo-window lines (**10.7%**) report exactly the 5.0 cap: 80175 13.0% · 80579 10.8% · 10116 10.6% · 21355 5.7% · 80176 3.1%. A capped value is a BOUND, not a measurement. **ENG-053's cross-store "disagreement" is resolved and reinterpreted: EAN 6001019912371 reads 1.12 at 10116 (real) and 5.00 at 80175 (censored) -- one bound beside one measurement, never two stores disagreeing.** PM ruling: the uplift re-derivation does not begin until this rate is measured; it now is. The discriminating string `promo_uplift_basis` already existed and no consumer read it -- fourth instance of the ENG-002/035/046 class.
+
+**Promo share KPI** reconciles to the cent on all four scenarios (80175: R231,940.32 promo + R95,743.52 normal = R327,683.84 = card total; 70.8%). Split on `promo_active`, the same flag the CSV/TLX/promo-sheet export splits on, so it reconciles to the files. **Confirmed independently with PM, 20/20 rows across five DC desks: `scenario_overview.promo_lines` is a POOL count, not a scenario property** -- unchanged here, sits on Wave 2 counter aggregation.
+
+**Frontend** (`src/app/bloom/page.jsx`): both demands on every promo row, GAP / CAP / IN TRANSIT / EN ROUTE chips, in-transit marked on SOH, a PROMO FLOOR GAP worklist panel and an in-transit desk total (both recomputing off the buyer's LIVE edited quantities), promo share on every scenario card. **`next build` passes -- `/bloom` compiles 22.2 kB, types and lint clean.**
+
+**🔴 OPEN AND NAMED: the frontend is NOT visually verified.** localhost:3000 has no entry in the Supabase auth redirect allowlist, so the dev server cannot be driven through sign-in, and I will not alter auth config or enter credentials. **The engine half is live in the production database while the repo frontend is not deployed**, which is a canon §13 rule-3 divergence that must close this session -- either by shipping the frontend (CC standing deploy authority, gate is green, revert-in-Vercel is the net) or by rolling the migrations back from `_w18_fn_predef`. **Awaiting Pieter's call.** Nothing a buyer sees has changed yet; no quantity moved either way.
+
+---
+
 ## 2026-07-28 -- SB-CC-BLOOM-017 Wave 1 item 1.3: GREEN. The selection rebuilt to canon v15 rules 1-6a, the projection leg wired, the cutoff derived. Commit `771c386` (repo) + live migrations.
 
 **State at close: item 1.3 is GREEN. One desk moved. Eight offered delivery dates moved, every one LATER.**
