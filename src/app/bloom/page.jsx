@@ -2295,6 +2295,12 @@ function OrderDesksMode() {
         const enRoute = lines.filter(l => !l.in_transit_counted && Number(l.in_transit_qty ?? 0) > 0)
         const staleLines = lines.filter(l => Number(l.in_transit_stale_qty ?? 0) > 0)
         const staleOldest = staleLines.reduce((m, l) => Math.max(m, Number(l.in_transit_stale_age_days ?? 0)), 0)
+        // canon §14 v15 rule 5a: the derived landing estimate is an ESTIMATE, never
+        // an exclusion test -- roughly half of genuine deliveries land after their own
+        // median, so a past estimate is COUNTED and SURFACED, never silently dropped
+        // and never silently counted either. 16 such lines at 21355 today.
+        const elapsedEst = truckLines.filter(l => l.in_transit_landing_state === 'estimate_elapsed')
+        const elapsedUnits = elapsedEst.reduce((s, l) => s + Number(l.in_transit_qty ?? 0), 0)
 
         if (gapRows.length === 0 && truckLines.length === 0 && enRoute.length === 0 && staleLines.length === 0) return null
 
@@ -2310,8 +2316,20 @@ function OrderDesksMode() {
                     ? <><strong style={{ color: 'var(--growth-green)' }}>{truckLines.length} line{truckLines.length === 1 ? '' : 's'}</strong>
                         {' '}carry {num(truckUnits)} units ({zar(truckCost)}) already on their way and landing on or before this delivery.
                         {' '}<strong>This order was reduced by that stock.</strong></>
-                    : <>No in-transit stock lands on or before this delivery, so nothing was reduced.</>}
+                    : staleLines.length > 0
+                      ? <>No in-transit stock on this desk — <strong>every open document here is stale</strong> and none is counted.
+                          A desk fed by inter-branch transfer legitimately carries none of its own; this states that rather than
+                          showing an empty panel (§8.6 guard 4, no silent empties).</>
+                      : <>No open orders at all on this desk, so nothing was reduced.</>}
                 </p>
+                {/* canon §14 v15 rule 5a -- counted, and SAID SO. */}
+                {elapsedEst.length > 0 && (
+                  <p style={{ margin: '4px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--core-yellow)' }}
+                    title="The landing estimate is order_date + the route's median lead. By construction about half of genuine deliveries land after their own median, so a past estimate is NOT an exclusion test (canon §14 v15 rule 5a) — these are counted, and flagged so the buyer can chase them.">
+                    <strong>{elapsedEst.length} of those</strong> ({num(elapsedUnits)} units) are past their landing ESTIMATE and are still counted —
+                    the estimate is not an exclusion test, so chase them rather than assume they have arrived.
+                  </p>
+                )}
                 {enRoute.length > 0 && (
                   <p style={{ margin: '4px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)' }}>
                     {enRoute.length} further line{enRoute.length === 1 ? '' : 's'} have stock en route landing AFTER this delivery — not counted, order not reduced.
