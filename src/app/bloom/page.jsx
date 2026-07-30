@@ -1462,6 +1462,9 @@ function OrderDesksMode() {
   // not a constant). The buyer sees ~27% at a SPAR and ~11% at a TOPS and weighs
   // the over-rail figure accordingly.
   const [railCoverage, setRailCoverage] = useState(null)
+  // ENG-056 (canon §16 wired): the last delivery before the next income window and
+  // its placement deadline. Read from the engine, never derived here.
+  const [incomeWindow, setIncomeWindow] = useState(null)
   const fileInputRef = useRef(null)
 
   const desks = STORE_DESKS[storeCode] || []
@@ -1485,6 +1488,7 @@ function OrderDesksMode() {
         setDatesLoading(false)
         if (err || !data?.[0]) { setError(err?.message ?? 'no calendar row for this desk'); return }
         setDeliveryDate(data[0].delivery_date); setNextDeliveryDate(data[0].following_date)
+        setIncomeWindow(data[0])   // ENG-056 -- same call, no extra round trip
       })
     // The budget ledger fetch MOVED to its own effect below -- it depends on the
     // delivery date, which is only known once the call above resolves (ENG-055).
@@ -1987,6 +1991,45 @@ function OrderDesksMode() {
             <BudgetGauge total={committed + total} budget={budgetTotal} />
           </div>
         </div>
+        {/* ⭐ ENG-056 -- THE LAST DELIVERY BEFORE PENSION, AND WHEN IT MUST BE PLACED.
+            Canon §16 wired (SB-CC-BLOOM-018 v1.3 item A). Every figure here is READ
+            from the engine off the published income calendar and this route's own
+            delivery_dows and derived cutoff -- there is no day-of-month anywhere in
+            it, which is the whole point: the fixed day-25 rule was wrong in 12 of 12
+            months by 2 to 8 days and twice named a day nothing can happen on.
+            No demand multiplier rides this (§14 v15 6a -- the date model stops at useful). */}
+        {incomeWindow?.income_window_start && (
+          <div style={{
+            marginTop: 12, padding: '10px 14px', borderRadius: 'var(--radius-chip)',
+            fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.6,
+            border: `1px solid ${incomeWindow.income_calendar_state === 'DEADLINE PASSED' ? 'var(--data-neg)'
+                      : incomeWindow.income_calendar_state === 'PLACE TODAY' ? 'var(--core-yellow)' : 'var(--hairline)'}`,
+            background: incomeWindow.income_calendar_state === 'DEADLINE PASSED' ? 'rgba(239,83,80,0.10)'
+                      : incomeWindow.income_calendar_state === 'PLACE TODAY' ? 'rgba(255,209,0,0.10)' : 'rgba(255,255,255,0.02)',
+          }}>
+            <span style={{ color: 'var(--daisy-white)' }}>
+              <strong>Last delivery before pension: {incomeWindow.last_delivery_before_income ?? '—'}</strong>
+              {incomeWindow.placement_deadline && <> · <strong style={{
+                color: incomeWindow.income_calendar_state === 'DEADLINE PASSED' ? 'var(--data-neg)'
+                     : incomeWindow.income_calendar_state === 'PLACE TODAY' ? 'var(--core-yellow)' : 'var(--daisy-white)' }}>
+                place by {incomeWindow.placement_deadline}</strong></>}
+              {incomeWindow.income_calendar_state === 'PLACE TODAY' && <strong style={{ color: 'var(--core-yellow)' }}> — that is TODAY</strong>}
+              {incomeWindow.income_calendar_state === 'DEADLINE PASSED' && <strong style={{ color: 'var(--data-neg)' }}> — THAT DATE HAS PASSED</strong>}
+            </span>
+            <span style={{ display: 'block', color: 'var(--veld-mist)', fontSize: 10 }}>
+              Income window opens {incomeWindow.income_window_start}
+              {incomeWindow.income_window_streams && <> · {incomeWindow.income_window_streams}</>}
+              {incomeWindow.placement_deadline_basis && <> · {incomeWindow.placement_deadline_basis}</>}
+            </span>
+          </div>
+        )}
+        {/* No silent empty: if the calendar has run out, the desk says so (§8.6 guard 4). */}
+        {incomeWindow && !incomeWindow.income_window_start && incomeWindow.income_calendar_state && (
+          <div style={{ marginTop: 12, padding: '8px 14px', borderRadius: 'var(--radius-chip)',
+            border: '1px dashed var(--core-yellow)', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--core-yellow)' }}>
+            Pension timing unavailable — {incomeWindow.income_calendar_state}.
+          </div>
+        )}
         <div style={{ marginTop: 10, display: 'flex', gap: 18, flexWrap: 'wrap', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--veld-mist)' }}>
           <span>Basis this week: <strong style={{ color: budgetManualOverride ? 'var(--daisy-white)' : cashConstrained ? 'var(--core-yellow)' : 'var(--data-pos)' }}>
             {budgetManualOverride ? 'MANUAL' : budgetIsNeeds ? 'NEEDS (projection)' : cashConstrained ? '80% CASH-CONSTRAINED (10d essentials)' : '82% FORECAST (21d essentials)'}
@@ -2261,15 +2304,20 @@ function OrderDesksMode() {
         // on screen, never the recipe's raw figures (canon §14 v7 item 11b, the
         // round-trip rule that ENG-021 breached).
         const exportGap = () => {
-          const head = ['Rank','Product Code','Description','Priority','Confidence',
+          // v1.3 item C: the run's parameters ride on EVERY row, so a figure that
+          // leaves this screen cannot be quoted without the generate that produced it.
+          const head = ['Store','Route','Delivery Date','Next Delivery','Generated At',
+                        'Rank','Product Code','Description','Priority','Confidence',
                         'SOH','Ordered Packs','Pack Size','Position Units','Promo Floor Units',
                         'Order Demand/Day','Band Demand/Day','Uplift','Uplift Basis',
                         'Short Units','Short Packs','Short Rand']
+          const stamp = new Date().toISOString()
           const esc = v => {
             const s = v == null ? '' : String(v)
             return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
           }
           const body = gapRows.map((r, i) => [
+            storeCode, desk, deliveryDate, nextDeliveryDate, stamp,
             i + 1, r.l.product_code, r.l.description,
             r.l.is_bt_hero ? 'HERO' : (r.l.kvi_band ?? ''),
             UPLIFT_CONFIDENCE_WORD[r.conf] ?? '',
@@ -2350,6 +2398,12 @@ function OrderDesksMode() {
                   <Label style={{ color: 'var(--data-warn)' }}>Promo floor gap</Label>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)' }}>
                     {gapRows.length} line{gapRows.length === 1 ? '' : 's'} below their promo floor · {gapPriority} HERO/KVI · {zar(gapRand)} to close
+                  </span>
+                  {/* v1.3 item C: a published figure carries the run that produced it.
+                      The buy-in window and the drop cover both move with the delivery
+                      date, so this total is meaningless without its parameters. */}
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)', opacity: 0.8 }}>
+                    {storeCode} · {desk} · delivery {deliveryDate} → next {nextDeliveryDate}
                   </span>
                   <div style={{ flex: 1 }} />
                   <button onClick={exportGap}
