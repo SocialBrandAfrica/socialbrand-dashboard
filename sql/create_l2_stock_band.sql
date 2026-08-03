@@ -201,236 +201,211 @@ REVOKE ALL ON public.l2_stock_band FROM PUBLIC;
 GRANT SELECT ON public.l2_stock_band TO anon, authenticated;
 
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.refresh_l2_stock_band(
-  p_store                     text,
-  p_lead_days                 numeric DEFAULT 3.5,
-  p_target_cover_days         numeric DEFAULT 7,
-  p_gmroi_cap_review_factor   numeric DEFAULT 0.5
-) RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
+CREATE OR REPLACE FUNCTION public.refresh_l2_stock_band(p_store text, p_lead_days numeric DEFAULT 3.5, p_target_cover_days numeric DEFAULT 7, p_gmroi_cap_review_factor numeric DEFAULT 0.5)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
 AS $function$
 DECLARE
-  v_anchor date;
-  v_dom int;
-  v_rows int;
-  v_violations int;
-  v_zero_width int;
+  v_anchor date; v_dom int; v_rows int; v_violations int; v_zero_width int;
+  v_buyin_lead int; v_uplift_cap numeric;
 BEGIN
-  SELECT MAX(sale_date) INTO v_anchor
-  FROM public.sigma_sales
+  SELECT MAX(sale_date) INTO v_anchor FROM public.sigma_sales
   WHERE store_code = p_store AND period_kind = 'T' AND txn_kind = 1;
-
   IF v_anchor IS NULL THEN
     RETURN jsonb_build_object('store_code', p_store, 'rows', 0, 'error', 'no sigma_sales rows for this store');
   END IF;
-
   v_dom := EXTRACT(DAY FROM v_anchor)::int;
+
+  SELECT COALESCE(MAX(promo_buyin_lead_days), 7) INTO v_buyin_lead
+  FROM public.supplier_calendar WHERE store_code = p_store;
+  SELECT COALESCE(MAX(value_num), 5.0) INTO v_uplift_cap
+  FROM public.forge_config WHERE config_key='promo_uplift_cap' AND retired_on IS NULL;
 
   DELETE FROM public.l2_stock_band WHERE store_code = p_store;
 
   WITH latest_bucket AS (
-    SELECT DISTINCT ON (product_code) product_code, bucket
-    FROM public.l2_classification
-    WHERE store_code = p_store
-    ORDER BY product_code, snapshot_date DESC
+    SELECT DISTINCT ON (product_code) product_code, bucket FROM public.l2_classification
+    WHERE store_code = p_store ORDER BY product_code, snapshot_date DESC
   ),
   pool AS (
-    -- ENG-003 fix (unchanged): pool IS l2_kvi_profile's own rows.
     SELECT k.product_code, k.kvi_band, sp.daily_ros
     FROM public.l2_kvi_profile k
     JOIN public.l2_stock_position sp ON sp.store_code = k.store_code AND sp.product_code = k.product_code
     WHERE k.store_code = p_store
   ),
-  soh_window AS (
-    SELECT MIN(snapshot_date) AS win_start, MAX(snapshot_date) AS win_end
-    FROM public.l2_soh_daily WHERE store_code = p_store
+  promo_win AS (
+    SELECT DISTINCT ON (pa.product_code) pa.product_code, p.promo_nr,
+           (p.start_date - v_buyin_lead) AS promo_window_start, p.end_date AS promo_window_end
+    FROM public.sigma_promotions p
+    JOIN public.sigma_promotion_articles pa ON pa.store_code=p.store_code AND pa.promo_nr=p.promo_nr
+    WHERE p.store_code = p_store AND COALESCE(p.status,'') <> 'I'
+      AND v_anchor >= (p.start_date - v_buyin_lead) AND v_anchor <= p.end_date
+    ORDER BY pa.product_code, p.start_date DESC, p.promo_nr DESC
   ),
-  soh_start_snap AS (
-    SELECT sd.product_code, sd.soh AS soh_start
-    FROM public.l2_soh_daily sd, soh_window w
-    WHERE sd.store_code = p_store AND sd.snapshot_date = w.win_start
-  ),
-  soh_end_snap AS (
-    SELECT sd.product_code, sd.soh AS soh_end
-    FROM public.l2_soh_daily sd, soh_window w
-    WHERE sd.store_code = p_store AND sd.snapshot_date = w.win_end
-  ),
+  soh_window AS (SELECT MIN(snapshot_date) win_start, MAX(snapshot_date) win_end
+                 FROM public.l2_soh_daily WHERE store_code = p_store),
+  soh_start_snap AS (SELECT sd.product_code, sd.soh soh_start FROM public.l2_soh_daily sd, soh_window w
+                     WHERE sd.store_code=p_store AND sd.snapshot_date=w.win_start),
+  soh_end_snap AS (SELECT sd.product_code, sd.soh soh_end FROM public.l2_soh_daily sd, soh_window w
+                   WHERE sd.store_code=p_store AND sd.snapshot_date=w.win_end),
   movement_flow AS (
-    SELECT sm.product_code, SUM(sm.qty) AS net_qty, bool_or(sm.movement_type = 'I') AS had_stocktake
+    SELECT sm.product_code, SUM(sm.qty) net_qty, bool_or(sm.movement_type='I') had_stocktake
     FROM public.sigma_movements sm, soh_window w
-    WHERE sm.store_code = p_store AND sm.movement_type IN ('K', 'R', 'S')
+    WHERE sm.store_code=p_store AND sm.movement_type IN ('K','R','S')
       AND sm.movement_date > w.win_start AND sm.movement_date <= w.win_end
     GROUP BY sm.product_code
   ),
   joined AS (
-    SELECT p.product_code, COALESCE(p.daily_ros, 0) AS daily_ros, p.kvi_band,
-           CASE WHEN v_dom BETWEEN 1 AND 7 THEN rp.w1_index
-                WHEN v_dom BETWEEN 8 AND 14 THEN rp.w2_index
-                WHEN v_dom BETWEEN 15 AND 21 THEN rp.w3_index
-                ELSE rp.w4_index END AS week_index_raw,
-           sea.current_month_factor,
-           g.gmroi_quartile,
-           lb.bucket,
-           rop.ros_56d AS scan_raw, rop.ros_56d_corrected AS scan_corrected, rop.p_sell_estimate AS p_sell_scan,
-           rop.ros_draw_56d AS draw_raw, rop.ros_draw_56d_corrected AS draw_corrected, rop.p_sell_estimate_draw AS p_sell_draw,
-           rop.unit_incommensurable,
-           ss.soh_start, se.soh_end, mf.net_qty, mf.had_stocktake,
-           w.win_start, w.win_end
+    SELECT p.product_code, COALESCE(p.daily_ros,0) daily_ros, p.kvi_band,
+      CASE WHEN v_dom BETWEEN 1 AND 7 THEN rp.w1_index WHEN v_dom BETWEEN 8 AND 14 THEN rp.w2_index
+           WHEN v_dom BETWEEN 15 AND 21 THEN rp.w3_index ELSE rp.w4_index END AS week_index_raw,
+      sea.current_month_factor, g.gmroi_quartile, lb.bucket,
+      rop.ros_56d scan_raw, rop.ros_56d_published scan_published, rop.ros_56d_guard scan_guard,
+      rop.p_sell_estimate p_sell_scan,
+      rop.ros_draw_56d draw_raw, rop.ros_draw_56d_published draw_published,
+      rop.ros_draw_56d_guard draw_guard, rop.p_sell_estimate_draw p_sell_draw,
+      rop.unit_incommensurable,
+      ss.soh_start, se.soh_end, mf.net_qty, mf.had_stocktake, w.win_start, w.win_end,
+      pw.promo_nr, pw.promo_window_start, pw.promo_window_end,
+      pp.promo_uplift, pp.promo_uplift_source
     FROM pool p
-    LEFT JOIN public.l2_rhythm_profile rp ON rp.store_code = p_store AND rp.product_code = p.product_code
-    LEFT JOIN public.l2_seasonality_profile sea ON sea.store_code = p_store AND sea.product_code = p.product_code
-    LEFT JOIN public.l2_gmroi_profile g ON g.store_code = p_store AND g.product_code = p.product_code
-    LEFT JOIN latest_bucket lb ON lb.product_code = p.product_code
-    LEFT JOIN public.l2_bloom_ros_pantry rop ON rop.store_code = p_store AND rop.product_code = p.product_code
-    LEFT JOIN soh_start_snap ss ON ss.product_code = p.product_code
-    LEFT JOIN soh_end_snap se ON se.product_code = p.product_code
-    LEFT JOIN movement_flow mf ON mf.product_code = p.product_code
+    LEFT JOIN public.l2_rhythm_profile rp ON rp.store_code=p_store AND rp.product_code=p.product_code
+    LEFT JOIN public.l2_seasonality_profile sea ON sea.store_code=p_store AND sea.product_code=p.product_code
+    LEFT JOIN public.l2_gmroi_profile g ON g.store_code=p_store AND g.product_code=p.product_code
+    LEFT JOIN latest_bucket lb ON lb.product_code=p.product_code
+    LEFT JOIN public.l2_bloom_ros_pantry rop ON rop.store_code=p_store AND rop.product_code=p.product_code
+    LEFT JOIN soh_start_snap ss ON ss.product_code=p.product_code
+    LEFT JOIN soh_end_snap se ON se.product_code=p.product_code
+    LEFT JOIN movement_flow mf ON mf.product_code=p.product_code
+    LEFT JOIN promo_win pw ON pw.product_code=p.product_code
+    LEFT JOIN public.l2_bloom_promo_pantry pp ON pp.store_code=p_store AND pp.product_code=p.product_code
     CROSS JOIN soh_window w
   ),
   guarded AS (
-    -- ENG-004: guard each side (scan, family draw) independently before
-    -- combining. Eligibility default for KVI floor bands, else guard-1
-    -- (>=8 selling days/182d, read off the pantry's own p_sell_estimate).
-    SELECT j.*,
-      COALESCE(j.scan_raw, 0) AS scan_raw_g,
-      COALESCE(j.draw_raw, 0) AS draw_raw_g,
-      ROUND(COALESCE(j.p_sell_scan, 0) * 182) AS scan_selling_days,
-      ROUND(COALESCE(j.p_sell_draw, 0) * 182) AS draw_selling_days,
-      (j.kvi_band IN ('KVI_CRITICAL', 'KVI_IMPORTANT') OR COALESCE(j.p_sell_scan, 0) * 182 >= 8) AS scan_eligible,
-      (NOT COALESCE(j.unit_incommensurable, true)
-        AND (j.kvi_band IN ('KVI_CRITICAL', 'KVI_IMPORTANT') OR COALESCE(j.p_sell_draw, 0) * 182 >= 8)) AS draw_eligible
+    SELECT j.*, COALESCE(j.scan_raw,0) scan_raw_g, COALESCE(j.draw_raw,0) draw_raw_g,
+      ROUND(COALESCE(j.p_sell_scan,0)*182) scan_selling_days,
+      ROUND(COALESCE(j.p_sell_draw,0)*182) draw_selling_days,
+      (j.kvi_band IN ('KVI_CRITICAL','KVI_IMPORTANT') OR COALESCE(j.p_sell_scan,0)*182 >= 8) scan_eligible,
+      (NOT COALESCE(j.unit_incommensurable,true)
+        AND (j.kvi_band IN ('KVI_CRITICAL','KVI_IMPORTANT') OR COALESCE(j.p_sell_draw,0)*182 >= 8)) draw_eligible
     FROM joined j
   ),
   capped AS (
     SELECT g.*,
-      CASE WHEN g.scan_eligible AND g.scan_corrected IS NOT NULL
-           THEN LEAST(g.scan_corrected, 2.0 * g.scan_raw_g)
+      CASE WHEN g.scan_eligible AND g.scan_published IS NOT NULL THEN GREATEST(g.scan_published,0)
            ELSE g.scan_raw_g END AS scan_used,
-      CASE WHEN g.draw_eligible AND g.draw_corrected IS NOT NULL
-           THEN LEAST(g.draw_corrected, 2.0 * g.draw_raw_g)
-           ELSE (CASE WHEN NOT COALESCE(g.unit_incommensurable, true) THEN g.draw_raw_g ELSE NULL END) END AS draw_used
+      CASE WHEN g.draw_eligible AND g.draw_published IS NOT NULL THEN GREATEST(g.draw_published,0)
+           WHEN NOT COALESCE(g.unit_incommensurable,true) THEN g.draw_raw_g ELSE NULL END AS draw_used
     FROM guarded g
   ),
   resolved AS (
     SELECT c.*,
-      GREATEST(c.scan_used, COALESCE(c.draw_used, 0)) AS base_demand,
-      (COALESCE(c.draw_used, 0) > c.scan_used) AS demand_from_draw,
-      CASE WHEN c.scan_eligible THEN 'kvi_floor_or_guard1_eligible (' || c.scan_selling_days || 'd/182d)'
-           ELSE 'ineligible_raw_used (' || c.scan_selling_days || 'd/182d, need 8)' END AS scan_eligibility_reason,
-      CASE WHEN COALESCE(c.unit_incommensurable, true) THEN 'unit_incommensurable_no_draw'
-           WHEN c.draw_eligible THEN 'kvi_floor_or_guard1_eligible (' || c.draw_selling_days || 'd/182d)'
-           ELSE 'ineligible_raw_used (' || c.draw_selling_days || 'd/182d, need 8)' END AS draw_eligibility_reason,
-      -- SOH-flow post-condition: window_days is the ACTUAL span l2_soh_daily
-      -- can support at this store, never assumed to be 91.
-      (c.win_end - c.win_start) AS soh_flow_window_days,
-      CASE
-        WHEN (c.win_end - c.win_start) < 14 THEN NULL
-        WHEN c.had_stocktake THEN true
-        WHEN c.soh_start IS NULL OR c.soh_end IS NULL THEN NULL
-        ELSE ABS((c.soh_start + COALESCE(c.net_qty, 0)) - c.soh_end)
-             <= GREATEST(2, 0.05 * GREATEST(c.scan_raw_g, COALESCE(c.draw_raw_g, 0)) * (c.win_end - c.win_start))
-      END AS soh_flow_closes
+      GREATEST(c.scan_used, COALESCE(c.draw_used,0)) base_demand,
+      (COALESCE(c.draw_used,0) > c.scan_used) demand_from_draw,
+      CASE WHEN c.scan_eligible THEN 'kvi_floor_or_guard1_eligible ('||c.scan_selling_days||'d/182d, guard='||COALESCE(c.scan_guard,'no_pantry_row')||')'
+           ELSE 'ineligible_raw_used ('||c.scan_selling_days||'d/182d, need 8)' END scan_eligibility_reason,
+      CASE WHEN COALESCE(c.unit_incommensurable,true) THEN 'unit_incommensurable_no_draw'
+           WHEN c.draw_eligible THEN 'kvi_floor_or_guard1_eligible ('||c.draw_selling_days||'d/182d, guard='||COALESCE(c.draw_guard,'no_pantry_row')||')'
+           ELSE 'ineligible_raw_used ('||c.draw_selling_days||'d/182d, need 8)' END draw_eligibility_reason,
+      (c.win_end - c.win_start) soh_flow_window_days,
+      CASE WHEN (c.win_end-c.win_start) < 14 THEN NULL
+           WHEN c.had_stocktake THEN true
+           WHEN c.soh_start IS NULL OR c.soh_end IS NULL THEN NULL
+           ELSE ABS((c.soh_start+COALESCE(c.net_qty,0))-c.soh_end)
+                <= GREATEST(2, 0.05*GREATEST(c.scan_raw_g,COALESCE(c.draw_raw_g,0))*(c.win_end-c.win_start))
+      END soh_flow_closes,
+      (c.promo_nr IS NOT NULL AND COALESCE(c.promo_uplift,1.0) > 1.0) promo_in_buyin_window,
+      CASE WHEN c.promo_nr IS NOT NULL AND COALESCE(c.promo_uplift,1.0) > 1.0
+           THEN c.promo_uplift ELSE 1.0 END promo_uplift_used,
+      -- W1.6 at-cap marking (PM's owed gate): a capped uplift makes the lifted
+      -- band a FLOOR, not a measurement. Named on the row, never silent.
+      CASE WHEN c.promo_nr IS NULL OR COALESCE(c.promo_uplift,1.0) <= 1.0 THEN 'no_promo_window'
+           WHEN c.promo_uplift >= v_uplift_cap THEN 'own_promo_provisional_capped_uplift'
+           ELSE COALESCE(c.promo_uplift_source,'own_promo') END promo_uplift_basis
     FROM capped c
   ),
   computed AS (
     SELECT product_code, daily_ros, kvi_band,
-      scan_raw_g, scan_used, scan_eligible, scan_eligibility_reason,
-      draw_raw_g, draw_used, draw_eligible, draw_eligibility_reason,
-      base_demand, demand_from_draw,
-      soh_flow_closes, soh_flow_window_days,
-      COALESCE(week_index_raw, 1.0) AS week_index_used,
-      COALESCE(current_month_factor, 1.0) AS month_factor_used,
-      -- GREATEST(...,0): base_demand is already non-negative by construction
-      -- (both scan_raw_g/draw_raw_g floor at 0 via COALESCE), kept for
-      -- symmetry with the multiplier step which could in principle carry a
-      -- negative factor if a future profile object ever produced one.
-      GREATEST(base_demand * COALESCE(week_index_raw, 1.0) * COALESCE(current_month_factor, 1.0), 0) AS rhythm_adjusted_demand,
-      CASE kvi_band WHEN 'KVI_CRITICAL' THEN 4 WHEN 'KVI_IMPORTANT' THEN 2 ELSE 0 END AS safety_days,
-      gmroi_quartile,
-      (COALESCE(bucket, '') IN ('COUNT', 'AMBIGUOUS')) AS bucket_blocked,
-      bucket,
-      (soh_flow_closes IS NOT NULL AND NOT soh_flow_closes) AS flow_blocked
+      scan_raw_g, scan_used, scan_eligible, scan_eligibility_reason, scan_guard,
+      draw_raw_g, draw_used, draw_eligible, draw_eligibility_reason, draw_guard,
+      base_demand, demand_from_draw, soh_flow_closes, soh_flow_window_days,
+      COALESCE(week_index_raw,1.0) week_index_used, COALESCE(current_month_factor,1.0) month_factor_used,
+      promo_in_buyin_window, promo_nr, promo_window_start, promo_window_end,
+      promo_uplift_used, promo_uplift_source, promo_uplift_basis,
+      GREATEST(base_demand*COALESCE(week_index_raw,1.0)*COALESCE(current_month_factor,1.0),0) demand_pre_promo,
+      GREATEST(base_demand*COALESCE(week_index_raw,1.0)*COALESCE(current_month_factor,1.0)*promo_uplift_used,0) rhythm_adjusted_demand,
+      CASE kvi_band WHEN 'KVI_CRITICAL' THEN 4 WHEN 'KVI_IMPORTANT' THEN 2 ELSE 0 END safety_days,
+      gmroi_quartile, (COALESCE(bucket,'') IN ('COUNT','AMBIGUOUS')) bucket_blocked, bucket,
+      (soh_flow_closes IS NOT NULL AND NOT soh_flow_closes) soh_flow_open
     FROM resolved
   ),
   banded AS (
-    SELECT product_code, daily_ros, kvi_band,
-      scan_raw_g, scan_used, scan_eligible, scan_eligibility_reason,
-      draw_raw_g, draw_used, draw_eligible, draw_eligibility_reason,
-      base_demand, demand_from_draw, soh_flow_closes, soh_flow_window_days,
-      week_index_used, month_factor_used,
-      rhythm_adjusted_demand, safety_days, gmroi_quartile,
-      bucket_blocked, flow_blocked, bucket,
-      (rhythm_adjusted_demand * p_lead_days) + (safety_days * rhythm_adjusted_demand) AS min_candidate,
-      (COALESCE(gmroi_quartile = 1, false) AND kvi_band NOT IN ('KVI_CRITICAL', 'KVI_IMPORTANT')) AS gmroi_capped
+    SELECT *, (rhythm_adjusted_demand*p_lead_days)+(safety_days*rhythm_adjusted_demand) min_candidate,
+      (COALESCE(gmroi_quartile=1,false) AND kvi_band NOT IN ('KVI_CRITICAL','KVI_IMPORTANT')) gmroi_capped
     FROM computed
   ),
   reviewed AS (
-    SELECT *,
-      CASE WHEN gmroi_capped THEN p_target_cover_days * p_gmroi_cap_review_factor
-           ELSE p_target_cover_days END AS review_days_used
-    FROM banded
+    SELECT *, CASE WHEN gmroi_capped THEN p_target_cover_days*p_gmroi_cap_review_factor
+                   ELSE p_target_cover_days END review_days_used FROM banded
   )
   INSERT INTO public.l2_stock_band (
     client_id, store_code, product_code, daily_ros,
-    ros_scan_raw, ros_scan_used, scan_eligible, scan_eligibility_reason,
-    ros_draw_raw, ros_draw_used, draw_eligible, draw_eligibility_reason,
-    demand_source, base_demand,
-    week_index_used, month_factor_used,
+    ros_scan_raw, ros_scan_used, scan_eligible, scan_eligibility_reason, ros_scan_guard,
+    ros_draw_raw, ros_draw_used, draw_eligible, draw_eligibility_reason, ros_draw_guard,
+    demand_source, base_demand, week_index_used, month_factor_used,
+    demand_pre_promo, promo_in_buyin_window, promo_nr, promo_window_start,
+    promo_window_end, promo_uplift_used, promo_uplift_source, promo_uplift_basis,
     rhythm_adjusted_demand, kvi_band, safety_days_used, lead_days_used, min_band,
     target_cover_days_used, max_band_uncapped, gmroi_quartile, gmroi_capped,
     shelf_life_cap_skipped, max_band, max_floored_to_min,
-    soh_flow_closes, soh_flow_window_days, soh_flow_reason,
-    band_blocked, band_blocked_reason,
-    engine_version, profiled_at
+    soh_flow_closes, soh_flow_window_days, soh_flow_reason, soh_flow_open,
+    band_blocked, band_blocked_reason, engine_version, profiled_at
   )
   SELECT 'socialbrand', p_store, product_code, daily_ros,
-    scan_raw_g, scan_used, scan_eligible, scan_eligibility_reason,
-    draw_raw_g, draw_used, draw_eligible, draw_eligibility_reason,
+    scan_raw_g, scan_used, scan_eligible, scan_eligibility_reason, scan_guard,
+    draw_raw_g, draw_used, draw_eligible, draw_eligibility_reason, draw_guard,
     (CASE WHEN demand_from_draw THEN 'family_draw' ELSE 'scan' END), base_demand,
     week_index_used, month_factor_used,
-    rhythm_adjusted_demand, kvi_band, safety_days,
-    p_lead_days,
-    min_candidate AS min_band,
-    p_target_cover_days,
-    min_candidate + (rhythm_adjusted_demand * p_target_cover_days) AS max_band_uncapped,
-    gmroi_quartile,
-    gmroi_capped,
-    true,
-    min_candidate + (rhythm_adjusted_demand * review_days_used) AS max_band,
-    (rhythm_adjusted_demand * review_days_used) = 0 AS max_floored_to_min,
+    demand_pre_promo, promo_in_buyin_window, promo_nr, promo_window_start,
+    promo_window_end, promo_uplift_used, promo_uplift_source, promo_uplift_basis,
+    rhythm_adjusted_demand, kvi_band, safety_days, p_lead_days,
+    min_candidate, p_target_cover_days,
+    min_candidate + (rhythm_adjusted_demand*p_target_cover_days),
+    gmroi_quartile, gmroi_capped, true,
+    min_candidate + (rhythm_adjusted_demand*review_days_used),
+    (rhythm_adjusted_demand*review_days_used) = 0,
     soh_flow_closes, soh_flow_window_days,
-    (CASE WHEN soh_flow_closes IS NULL THEN 'not_checked_insufficient_history (' || soh_flow_window_days || 'd available, need >=14)'
+    (CASE WHEN soh_flow_closes IS NULL THEN 'not_checked_insufficient_history ('||soh_flow_window_days||'d available, need >=14)'
           WHEN soh_flow_closes THEN 'closes'
-          ELSE 'mismatch: ledger does not reconcile to observed SOH over ' || soh_flow_window_days || 'd' END) AS soh_flow_reason,
-    (bucket_blocked OR flow_blocked) AS band_blocked,
-    CASE WHEN bucket_blocked AND flow_blocked THEN 'bucket=' || bucket || ' AND soh_flow_mismatch: band blocked, count first'
-         WHEN bucket_blocked THEN 'bucket=' || bucket || ': band blocked, count first'
-         WHEN flow_blocked THEN 'soh_flow_mismatch: band blocked, count first'
-         ELSE NULL END AS band_blocked_reason,
-    'v2.0', now()
+          ELSE 'open: ledger does not reconcile to observed SOH over '||soh_flow_window_days||'d (surfaced, NOT a band verdict -- W1.5)' END),
+    soh_flow_open,
+    bucket_blocked,
+    CASE WHEN bucket_blocked THEN 'bucket='||bucket||': band blocked, count first' ELSE NULL END,
+    'v3.1', now()
   FROM reviewed;
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
 
-  -- POST-CONDITIONS (PM, 2026-07-08, unchanged): two checks, not one.
-  SELECT COUNT(*) INTO v_violations
-  FROM public.l2_stock_band
-  WHERE store_code = p_store AND max_band < min_band;
-
+  SELECT COUNT(*) INTO v_violations FROM public.l2_stock_band
+  WHERE store_code=p_store AND max_band < min_band;
   IF v_violations > 0 THEN
     RAISE EXCEPTION 'l2_stock_band invariant violated: % row(s) at store % have max_band < min_band', v_violations, p_store;
   END IF;
 
-  SELECT COUNT(*) INTO v_zero_width
-  FROM public.l2_stock_band
-  WHERE store_code = p_store AND rhythm_adjusted_demand > 0 AND max_band = min_band;
-
+  SELECT COUNT(*) INTO v_zero_width FROM public.l2_stock_band
+  WHERE store_code=p_store AND rhythm_adjusted_demand > 0 AND max_band = min_band;
   IF v_zero_width > 0 THEN
     RAISE EXCEPTION 'l2_stock_band width test failed: % row(s) at store % have a zero-width band with real demand', v_zero_width, p_store;
   END IF;
 
-  RETURN jsonb_build_object('store_code', p_store, 'anchor', v_anchor, 'day_of_month', v_dom, 'rows', v_rows);
+  RETURN jsonb_build_object('store_code',p_store,'rows',v_rows,'anchor',v_anchor,
+    'promo_buyin_lead_days',v_buyin_lead,'promo_uplift_cap',v_uplift_cap,
+    'promo_lifted_lines',(SELECT COUNT(*) FROM public.l2_stock_band WHERE store_code=p_store AND promo_in_buyin_window),
+    'promo_at_cap_provisional',(SELECT COUNT(*) FROM public.l2_stock_band WHERE store_code=p_store AND promo_uplift_basis='own_promo_provisional_capped_uplift'),
+    'band_blocked_lines',(SELECT COUNT(*) FROM public.l2_stock_band WHERE store_code=p_store AND band_blocked),
+    'soh_flow_open_lines',(SELECT COUNT(*) FROM public.l2_stock_band WHERE store_code=p_store AND soh_flow_open),
+    'engine_version','v3.1');
 END;
 $function$;
 

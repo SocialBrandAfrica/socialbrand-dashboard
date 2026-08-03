@@ -241,341 +241,266 @@ COMMENT ON COLUMN public.l2_bloom_ros_pantry.unit_incommensurable IS
   'NULL rather than publish a number that compares kilograms to units.';
 
 CREATE OR REPLACE FUNCTION public.refresh_l2_bloom_ros_pantry(p_store text)
-RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
 DECLARE
-  v_t0 timestamptz := clock_timestamp();
-  v_rows int;
+  v_t0 timestamptz := clock_timestamp(); v_rows int;
+  v_floor_share numeric; v_cap_mult numeric; v_anchor date;
 BEGIN
-  DELETE FROM public.l2_bloom_ros_pantry WHERE store_code = p_store;
+  SELECT COALESCE(MAX(value_num),0.5) INTO v_floor_share FROM public.forge_config
+   WHERE config_key='corrector_min_observable_share' AND retired_on IS NULL;
+  SELECT COALESCE(MAX(value_num),2.0) INTO v_cap_mult FROM public.forge_config
+   WHERE config_key='corrected_ros_cap_multiple' AND retired_on IS NULL;
 
+  DELETE FROM public.l2_bloom_ros_pantry WHERE store_code = p_store;
   DROP TABLE IF EXISTS pg_temp.tmp_bloom_ros_pool;
   DROP TABLE IF EXISTS pg_temp.tmp_bloom_ros_scan;
   DROP TABLE IF EXISTS pg_temp.tmp_bloom_ros_draw;
 
-  -- ===================== POOL (materialized as a real temp table) =====================
-  -- SB-CC-BLOOM-005: additive OR -- the original Z-only branch is byte-
-  -- identical (same join columns, no status filter added to it); the new
-  -- beer/cider branch (any active supplier link) is what closes ENG-009's
-  -- coverage gap. A product qualifying via BOTH branches collapses to one
-  -- row via the outer DISTINCT (no per-supplier columns are selected).
   CREATE TEMP TABLE tmp_bloom_ros_pool AS
-  SELECT DISTINCT ic.store_code, ic.product_code, b.ean,
-         a.unit,
-         (COALESCE(a.unit, '') = 'EA' AND COALESCE(a.scale_flag, '0') <> '1') AS is_draw_eligible
+  SELECT DISTINCT ic.store_code, ic.product_code, b.ean, a.unit,
+         (COALESCE(a.unit,'')='EA' AND COALESCE(a.scale_flag,'0')<>'1') AS is_draw_eligible
   FROM public.l2_item_classification ic
-  JOIN public.sigma_articles a
-    ON a.store_code = ic.store_code AND a.product_code = ic.product_code
-  JOIN public.sigma_supplier_link sl
-    ON sl.store_code = ic.store_code AND sl.product_code = ic.product_code
-  JOIN public.sigma_supplier_master sm
-    ON sm.store_code = sl.store_code AND sm.supplier_nr = sl.supplier_nr
-  JOIN public.v_ean_bridge b
-    ON b.store_code = ic.store_code AND b.product_code = ic.product_code
-  JOIN public.l2_stock_position sp
-    ON sp.store_code = ic.store_code AND sp.product_code = ic.product_code AND sp.never_sold = false
-  WHERE ic.class = 'NORMAL' AND ic.store_code = p_store
-    AND (
-      sm.supplier_type = 'Z'                                              -- unchanged DC scope
-      OR (
-        a.merch_group_nr IN (201,202,203,204,205,401)                     -- SB-CC-BLOOM-005: beer/cider, either route
-        AND COALESCE(sl.status,'') <> 'S' AND sm.status = 'A'             -- active-link guard, matches rpc_bloom_order_direct_beer
-      )
-    );
-
+  JOIN public.sigma_articles a ON a.store_code=ic.store_code AND a.product_code=ic.product_code
+  JOIN public.sigma_supplier_link sl ON sl.store_code=ic.store_code AND sl.product_code=ic.product_code
+  JOIN public.sigma_supplier_master sm ON sm.store_code=sl.store_code AND sm.supplier_nr=sl.supplier_nr
+  JOIN public.v_ean_bridge b ON b.store_code=ic.store_code AND b.product_code=ic.product_code
+  JOIN public.l2_stock_position sp ON sp.store_code=ic.store_code AND sp.product_code=ic.product_code AND sp.never_sold=false
+  WHERE ic.class='NORMAL' AND ic.store_code=p_store
+    AND (sm.supplier_type='Z' OR (a.merch_group_nr IN (201,202,203,204,205,401)
+         AND COALESCE(sl.status,'')<>'S' AND sm.status='A'));
   CREATE UNIQUE INDEX ON tmp_bloom_ros_pool (store_code, product_code);
   ANALYZE tmp_bloom_ros_pool;
 
-  -- ===================== SCAN chain (sigma_sales) -- SB-CC-BLOOM-005 gaps-and-islands rewrite =====================
   CREATE TEMP TABLE tmp_bloom_ros_scan AS
-  WITH store_anchor AS (
-    SELECT MAX(sale_date) AS anchor_date
-    FROM public.sigma_sales
-    WHERE period_kind = 'T' AND txn_kind = 1 AND store_code = p_store
-  ),
-  bounds AS (
-    SELECT anchor_date, anchor_date - 181 AS win182_start FROM store_anchor
-  ),
-  windows AS (
-    SELECT * FROM (VALUES (14), (28), (56)) AS w(window_days)
-  ),
-  daily_net AS (
-    SELECT ss.product_code, ss.sale_date, SUM(ss.qty) AS net_qty
-    FROM public.sigma_sales ss
-    JOIN tmp_bloom_ros_pool p ON p.store_code = ss.store_code AND p.product_code = ss.product_code
-    CROSS JOIN bounds b
-    WHERE ss.period_kind = 'T' AND ss.txn_kind = 1 AND ss.store_code = p_store
-      AND ss.sale_date >= b.win182_start AND ss.sale_date <= b.anchor_date
-    GROUP BY ss.product_code, ss.sale_date
-  ),
-  sale_days AS (
-    SELECT product_code, sale_date FROM daily_net WHERE net_qty > 0
-  ),
-  p_estimate AS (
-    SELECT pool.product_code,
-           COUNT(sd.sale_date)::numeric / 182.0 AS p_sell
-    FROM tmp_bloom_ros_pool pool
-    LEFT JOIN sale_days sd ON sd.product_code = pool.product_code
-    GROUP BY pool.product_code
-  ),
-  hit_gaps AS (
-    SELECT product_code, sale_date AS hit_date,
-           LAG(sale_date) OVER (PARTITION BY product_code ORDER BY sale_date) AS prev_hit_date
-    FROM sale_days
-  ),
-  runs_interior AS (
-    SELECT hg.product_code,
-           COALESCE(hg.prev_hit_date + 1, b.win182_start) AS run_start,
-           hg.hit_date - 1 AS run_end
-    FROM hit_gaps hg CROSS JOIN bounds b
-    WHERE hg.hit_date - 1 >= COALESCE(hg.prev_hit_date + 1, b.win182_start)
-  ),
-  runs_trailing AS (
-    SELECT sd.product_code, MAX(sd.sale_date) + 1 AS run_start, b.anchor_date AS run_end
-    FROM sale_days sd CROSS JOIN bounds b
-    GROUP BY sd.product_code, b.anchor_date
-    HAVING MAX(sd.sale_date) < b.anchor_date
-  ),
-  runs_no_hits AS (
-    SELECT pool.product_code, b.win182_start AS run_start, b.anchor_date AS run_end
+  WITH store_anchor AS (SELECT MAX(sale_date) anchor_date FROM public.sigma_sales
+    WHERE period_kind='T' AND txn_kind=1 AND store_code=p_store),
+  bounds AS (SELECT anchor_date, anchor_date-181 win182_start FROM store_anchor),
+  windows AS (SELECT * FROM (VALUES (14),(28),(56)) w(window_days)),
+  daily_net AS (SELECT ss.product_code, ss.sale_date, SUM(ss.qty) net_qty
+    FROM public.sigma_sales ss JOIN tmp_bloom_ros_pool p
+      ON p.store_code=ss.store_code AND p.product_code=ss.product_code
+    CROSS JOIN bounds b WHERE ss.period_kind='T' AND ss.txn_kind=1 AND ss.store_code=p_store
+      AND ss.sale_date>=b.win182_start AND ss.sale_date<=b.anchor_date
+    GROUP BY ss.product_code, ss.sale_date),
+  sale_days AS (SELECT product_code, sale_date FROM daily_net WHERE net_qty>0),
+  p_estimate AS (SELECT pool.product_code, COUNT(sd.sale_date)::numeric/182.0 p_sell
+    FROM tmp_bloom_ros_pool pool LEFT JOIN sale_days sd ON sd.product_code=pool.product_code
+    GROUP BY pool.product_code),
+  hit_gaps AS (SELECT product_code, sale_date hit_date,
+    LAG(sale_date) OVER (PARTITION BY product_code ORDER BY sale_date) prev_hit_date FROM sale_days),
+  runs_interior AS (SELECT hg.product_code, COALESCE(hg.prev_hit_date+1,b.win182_start) run_start,
+    hg.hit_date-1 run_end FROM hit_gaps hg CROSS JOIN bounds b
+    WHERE hg.hit_date-1 >= COALESCE(hg.prev_hit_date+1,b.win182_start)),
+  runs_trailing AS (SELECT sd.product_code, MAX(sd.sale_date)+1 run_start, b.anchor_date run_end
+    FROM sale_days sd CROSS JOIN bounds b GROUP BY sd.product_code, b.anchor_date
+    HAVING MAX(sd.sale_date) < b.anchor_date),
+  runs_no_hits AS (SELECT pool.product_code, b.win182_start run_start, b.anchor_date run_end
     FROM tmp_bloom_ros_pool pool CROSS JOIN bounds b
-    WHERE NOT EXISTS (SELECT 1 FROM sale_days sd WHERE sd.product_code = pool.product_code)
-  ),
-  runs AS (
-    SELECT * FROM runs_interior
-    UNION ALL SELECT * FROM runs_trailing
-    UNION ALL SELECT * FROM runs_no_hits
-  ),
-  run_lengths AS (
-    SELECT product_code, run_start, run_end, (run_end - run_start + 1)::int AS run_len
-    FROM runs
-  ),
-  presumed_stockout_runs AS (
-    SELECT rl.product_code, rl.run_start, rl.run_end, rl.run_len
-    FROM run_lengths rl
-    JOIN p_estimate pe ON pe.product_code = rl.product_code
-    WHERE POWER(1.0 - LEAST(GREATEST(pe.p_sell, 0.0001), 0.9999), rl.run_len) < 0.05
-  ),
-  window_calc AS (
-    SELECT pool.product_code, w.window_days,
-           b.anchor_date - (w.window_days - 1) AS win_start,
-           b.anchor_date AS win_end
-    FROM tmp_bloom_ros_pool pool CROSS JOIN bounds b CROSS JOIN windows w
-  ),
-  window_qty AS (
-    SELECT wc.product_code, wc.window_days,
-           COALESCE(SUM(dn.net_qty), 0) AS window_net_qty
-    FROM window_calc wc
-    LEFT JOIN daily_net dn ON dn.product_code = wc.product_code
-                          AND dn.sale_date BETWEEN wc.win_start AND wc.win_end
-    GROUP BY wc.product_code, wc.window_days
-  ),
-  window_stockout AS (
-    -- BUG FIX (SB-CC-BLOOM-005 build, caught by R22 regression check before
-    -- ship): LEAST()/GREATEST() in Postgres IGNORE a NULL argument (return
-    -- the non-NULL one) rather than propagating NULL like a normal operator
-    -- -- so on the LEFT JOIN's NULL-padded "no matching run" rows, the old
-    -- form `LEAST(pr.run_end, wc.win_end) - GREATEST(pr.run_start,
-    -- wc.win_start) + 1` silently collapsed to `win_end - win_start + 1`,
-    -- i.e. the FULL window length, for every product/window with ZERO
-    -- overlapping stockout runs. FILTER (WHERE pr.product_code IS NOT NULL)
-    -- excludes the join-padding rows from the SUM entirely -- only real
-    -- overlaps contribute days. Caught on product 129 @ 10116: presumed_
-    -- stockout_runs had no run anywhere near the last 28 days, yet
-    -- window_stockout was reporting the entire 28-day window as stockout.
-    SELECT wc.product_code, wc.window_days,
-           COALESCE(SUM(GREATEST(0, LEAST(pr.run_end, wc.win_end) - GREATEST(pr.run_start, wc.win_start) + 1))
-                     FILTER (WHERE pr.product_code IS NOT NULL), 0)::int
-             AS stockout_days_in_window
-    FROM window_calc wc
-    LEFT JOIN presumed_stockout_runs pr
-      ON pr.product_code = wc.product_code
-     AND pr.run_start <= wc.win_end AND pr.run_end >= wc.win_start
-    GROUP BY wc.product_code, wc.window_days
-  )
-  SELECT q.product_code,
-    pe.p_sell AS p_sell_estimate,
-    'unconditional_182d_frequency'::text AS p_estimate_basis,
-    MAX(CASE WHEN q.window_days=14 THEN ROUND(q.window_net_qty / 14.0, 4) END) AS ros_14d,
-    MAX(CASE WHEN q.window_days=28 THEN ROUND(q.window_net_qty / 28.0, 4) END) AS ros_28d,
-    MAX(CASE WHEN q.window_days=56 THEN ROUND(q.window_net_qty / 56.0, 4) END) AS ros_56d,
-    MAX(CASE WHEN q.window_days=14 AND (14 - so.stockout_days_in_window) > 0
-             THEN ROUND(q.window_net_qty / (14 - so.stockout_days_in_window), 4) END) AS ros_14d_corrected,
-    MAX(CASE WHEN q.window_days=28 AND (28 - so.stockout_days_in_window) > 0
-             THEN ROUND(q.window_net_qty / (28 - so.stockout_days_in_window), 4) END) AS ros_28d_corrected,
-    MAX(CASE WHEN q.window_days=56 AND (56 - so.stockout_days_in_window) > 0
-             THEN ROUND(q.window_net_qty / (56 - so.stockout_days_in_window), 4) END) AS ros_56d_corrected,
-    MAX(CASE WHEN q.window_days=14 THEN so.stockout_days_in_window END) AS correction_days_removed_14d,
-    MAX(CASE WHEN q.window_days=28 THEN so.stockout_days_in_window END) AS correction_days_removed_28d,
-    MAX(CASE WHEN q.window_days=56 THEN so.stockout_days_in_window END) AS correction_days_removed_56d
-  FROM window_qty q
-  JOIN window_stockout so ON so.product_code=q.product_code AND so.window_days=q.window_days
-  JOIN p_estimate pe ON pe.product_code = q.product_code
-  GROUP BY q.product_code, pe.p_sell;
-
+    WHERE NOT EXISTS (SELECT 1 FROM sale_days sd WHERE sd.product_code=pool.product_code)),
+  runs AS (SELECT * FROM runs_interior UNION ALL SELECT * FROM runs_trailing UNION ALL SELECT * FROM runs_no_hits),
+  run_lengths AS (SELECT product_code, run_start, run_end, (run_end-run_start+1)::int run_len FROM runs),
+  presumed_stockout_runs AS (SELECT rl.product_code, rl.run_start, rl.run_end, rl.run_len
+    FROM run_lengths rl JOIN p_estimate pe ON pe.product_code=rl.product_code
+    WHERE POWER(1.0-LEAST(GREATEST(pe.p_sell,0.0001),0.9999), rl.run_len) < 0.05),
+  window_calc AS (SELECT pool.product_code, w.window_days, b.anchor_date-(w.window_days-1) win_start,
+    b.anchor_date win_end FROM tmp_bloom_ros_pool pool CROSS JOIN bounds b CROSS JOIN windows w),
+  window_qty AS (SELECT wc.product_code, wc.window_days, COALESCE(SUM(dn.net_qty),0) window_net_qty
+    FROM window_calc wc LEFT JOIN daily_net dn ON dn.product_code=wc.product_code
+      AND dn.sale_date BETWEEN wc.win_start AND wc.win_end
+    GROUP BY wc.product_code, wc.window_days),
+  window_stockout AS (SELECT wc.product_code, wc.window_days,
+    COALESCE(SUM(GREATEST(0, LEAST(pr.run_end,wc.win_end)-GREATEST(pr.run_start,wc.win_start)+1))
+      FILTER (WHERE pr.product_code IS NOT NULL),0)::int stockout_days_in_window
+    FROM window_calc wc LEFT JOIN presumed_stockout_runs pr ON pr.product_code=wc.product_code
+      AND pr.run_start<=wc.win_end AND pr.run_end>=wc.win_start
+    GROUP BY wc.product_code, wc.window_days),
+  win_rate AS (SELECT q.product_code, q.window_days, q.window_net_qty,
+    so.stockout_days_in_window oos_days, (q.window_days-so.stockout_days_in_window) observable_days,
+    ROUND(q.window_net_qty/q.window_days::numeric,4) raw_rate,
+    CASE WHEN (q.window_days-so.stockout_days_in_window)>0
+         THEN ROUND(q.window_net_qty/(q.window_days-so.stockout_days_in_window),4) END corrected_rate
+    FROM window_qty q JOIN window_stockout so ON so.product_code=q.product_code AND so.window_days=q.window_days),
+  win_pub AS (SELECT wr.*,
+    CASE WHEN wr.raw_rate<=0 THEN wr.raw_rate WHEN wr.oos_days=0 THEN wr.raw_rate
+         WHEN wr.observable_days < v_floor_share*wr.window_days THEN NULL
+         WHEN wr.corrected_rate IS NULL THEN NULL
+         ELSE LEAST(wr.corrected_rate, v_cap_mult*wr.raw_rate) END published_rate,
+    CASE WHEN wr.raw_rate<=0 THEN 'non_positive_raw' WHEN wr.oos_days=0 THEN 'no_correction'
+         WHEN wr.observable_days < v_floor_share*wr.window_days THEN 'withheld_observable_floor'
+         WHEN wr.corrected_rate IS NULL THEN 'withheld_observable_floor'
+         WHEN wr.corrected_rate > v_cap_mult*wr.raw_rate THEN 'capped_2x_raw'
+         ELSE 'published' END guard
+    FROM win_rate wr)
+  SELECT wp.product_code, pe.p_sell p_sell_estimate, 'unconditional_182d_frequency'::text p_estimate_basis,
+    MAX(CASE WHEN wp.window_days=14 THEN wp.raw_rate END) ros_14d,
+    MAX(CASE WHEN wp.window_days=28 THEN wp.raw_rate END) ros_28d,
+    MAX(CASE WHEN wp.window_days=56 THEN wp.raw_rate END) ros_56d,
+    MAX(CASE WHEN wp.window_days=14 THEN wp.corrected_rate END) ros_14d_corrected,
+    MAX(CASE WHEN wp.window_days=28 THEN wp.corrected_rate END) ros_28d_corrected,
+    MAX(CASE WHEN wp.window_days=56 THEN wp.corrected_rate END) ros_56d_corrected,
+    MAX(CASE WHEN wp.window_days=14 THEN wp.published_rate END) ros_14d_published,
+    MAX(CASE WHEN wp.window_days=28 THEN wp.published_rate END) ros_28d_published,
+    MAX(CASE WHEN wp.window_days=56 THEN wp.published_rate END) ros_56d_published,
+    MAX(CASE WHEN wp.window_days=14 THEN wp.guard END) ros_14d_guard,
+    MAX(CASE WHEN wp.window_days=28 THEN wp.guard END) ros_28d_guard,
+    MAX(CASE WHEN wp.window_days=56 THEN wp.guard END) ros_56d_guard,
+    MAX(CASE WHEN wp.window_days=14 THEN wp.oos_days END) correction_days_removed_14d,
+    MAX(CASE WHEN wp.window_days=28 THEN wp.oos_days END) correction_days_removed_28d,
+    MAX(CASE WHEN wp.window_days=56 THEN wp.oos_days END) correction_days_removed_56d
+  FROM win_pub wp JOIN p_estimate pe ON pe.product_code=wp.product_code
+  GROUP BY wp.product_code, pe.p_sell;
   CREATE UNIQUE INDEX ON tmp_bloom_ros_scan (product_code);
   ANALYZE tmp_bloom_ros_scan;
 
-  -- ===================== DRAW chain (sigma_movements, EA-only) -- same SB-CC-BLOOM-005 rewrite =====================
   CREATE TEMP TABLE tmp_bloom_ros_draw AS
-  WITH ea_pool AS (
-    SELECT product_code FROM tmp_bloom_ros_pool WHERE is_draw_eligible
-  ),
-  store_anchor AS (
-    SELECT MAX(sale_date) AS anchor_date
-    FROM public.sigma_sales
-    WHERE period_kind = 'T' AND txn_kind = 1 AND store_code = p_store
-  ),
-  bounds AS (
-    SELECT anchor_date, anchor_date - 181 AS win182_start FROM store_anchor
-  ),
-  windows AS (
-    SELECT * FROM (VALUES (14), (28), (56)) AS w(window_days)
-  ),
-  daily_net_draw AS (
-    SELECT sm2.product_code, sm2.movement_date, SUM(sm2.qty) AS net_qty
-    FROM public.sigma_movements sm2
-    JOIN ea_pool p ON p.product_code = sm2.product_code
-    CROSS JOIN bounds b
-    WHERE sm2.movement_type = 'K' AND sm2.store_code = p_store
-      AND sm2.movement_date >= b.win182_start AND sm2.movement_date <= b.anchor_date
-    GROUP BY sm2.product_code, sm2.movement_date
-  ),
-  sale_days_draw AS (
-    SELECT product_code, movement_date FROM daily_net_draw WHERE net_qty > 0
-  ),
-  p_estimate_draw AS (
-    SELECT p.product_code,
-           COUNT(sd.movement_date)::numeric / 182.0 AS p_sell
-    FROM ea_pool p
-    LEFT JOIN sale_days_draw sd ON sd.product_code = p.product_code
-    GROUP BY p.product_code
-  ),
-  hit_gaps_draw AS (
-    SELECT product_code, movement_date AS hit_date,
-           LAG(movement_date) OVER (PARTITION BY product_code ORDER BY movement_date) AS prev_hit_date
-    FROM sale_days_draw
-  ),
-  runs_interior_draw AS (
-    SELECT hg.product_code,
-           COALESCE(hg.prev_hit_date + 1, b.win182_start) AS run_start,
-           hg.hit_date - 1 AS run_end
-    FROM hit_gaps_draw hg CROSS JOIN bounds b
-    WHERE hg.hit_date - 1 >= COALESCE(hg.prev_hit_date + 1, b.win182_start)
-  ),
-  runs_trailing_draw AS (
-    SELECT sd.product_code, MAX(sd.movement_date) + 1 AS run_start, b.anchor_date AS run_end
-    FROM sale_days_draw sd CROSS JOIN bounds b
-    GROUP BY sd.product_code, b.anchor_date
-    HAVING MAX(sd.movement_date) < b.anchor_date
-  ),
-  runs_no_hits_draw AS (
-    SELECT p.product_code, b.win182_start AS run_start, b.anchor_date AS run_end
+  WITH ea_pool AS (SELECT product_code FROM tmp_bloom_ros_pool WHERE is_draw_eligible),
+  store_anchor AS (SELECT MAX(sale_date) anchor_date FROM public.sigma_sales
+    WHERE period_kind='T' AND txn_kind=1 AND store_code=p_store),
+  bounds AS (SELECT anchor_date, anchor_date-181 win182_start FROM store_anchor),
+  windows AS (SELECT * FROM (VALUES (14),(28),(56)) w(window_days)),
+  daily_net_draw AS (SELECT sm2.product_code, sm2.movement_date, SUM(sm2.qty) net_qty
+    FROM public.sigma_movements sm2 JOIN ea_pool p ON p.product_code=sm2.product_code
+    CROSS JOIN bounds b WHERE sm2.movement_type='K' AND sm2.store_code=p_store
+      AND sm2.movement_date>=b.win182_start AND sm2.movement_date<=b.anchor_date
+    GROUP BY sm2.product_code, sm2.movement_date),
+  sale_days_draw AS (SELECT product_code, movement_date FROM daily_net_draw WHERE net_qty>0),
+  p_estimate_draw AS (SELECT p.product_code, COUNT(sd.movement_date)::numeric/182.0 p_sell
+    FROM ea_pool p LEFT JOIN sale_days_draw sd ON sd.product_code=p.product_code GROUP BY p.product_code),
+  hit_gaps_draw AS (SELECT product_code, movement_date hit_date,
+    LAG(movement_date) OVER (PARTITION BY product_code ORDER BY movement_date) prev_hit_date FROM sale_days_draw),
+  runs_interior_draw AS (SELECT hg.product_code, COALESCE(hg.prev_hit_date+1,b.win182_start) run_start,
+    hg.hit_date-1 run_end FROM hit_gaps_draw hg CROSS JOIN bounds b
+    WHERE hg.hit_date-1 >= COALESCE(hg.prev_hit_date+1,b.win182_start)),
+  runs_trailing_draw AS (SELECT sd.product_code, MAX(sd.movement_date)+1 run_start, b.anchor_date run_end
+    FROM sale_days_draw sd CROSS JOIN bounds b GROUP BY sd.product_code, b.anchor_date
+    HAVING MAX(sd.movement_date) < b.anchor_date),
+  runs_no_hits_draw AS (SELECT p.product_code, b.win182_start run_start, b.anchor_date run_end
     FROM ea_pool p CROSS JOIN bounds b
-    WHERE NOT EXISTS (SELECT 1 FROM sale_days_draw sd WHERE sd.product_code = p.product_code)
-  ),
-  runs_draw AS (
-    SELECT * FROM runs_interior_draw
-    UNION ALL SELECT * FROM runs_trailing_draw
-    UNION ALL SELECT * FROM runs_no_hits_draw
-  ),
-  run_lengths_draw AS (
-    SELECT product_code, run_start, run_end, (run_end - run_start + 1)::int AS run_len
-    FROM runs_draw
-  ),
-  presumed_stockout_runs_draw AS (
-    SELECT rl.product_code, rl.run_start, rl.run_end, rl.run_len
-    FROM run_lengths_draw rl
-    JOIN p_estimate_draw pe ON pe.product_code = rl.product_code
-    WHERE POWER(1.0 - LEAST(GREATEST(pe.p_sell, 0.0001), 0.9999), rl.run_len) < 0.05
-  ),
-  window_calc_draw AS (
-    SELECT p.product_code, w.window_days,
-           b.anchor_date - (w.window_days - 1) AS win_start,
-           b.anchor_date AS win_end
-    FROM ea_pool p CROSS JOIN bounds b CROSS JOIN windows w
-  ),
-  window_qty_draw AS (
+    WHERE NOT EXISTS (SELECT 1 FROM sale_days_draw sd WHERE sd.product_code=p.product_code)),
+  runs_draw AS (SELECT * FROM runs_interior_draw UNION ALL SELECT * FROM runs_trailing_draw
+    UNION ALL SELECT * FROM runs_no_hits_draw),
+  run_lengths_draw AS (SELECT product_code, run_start, run_end, (run_end-run_start+1)::int run_len FROM runs_draw),
+  presumed_stockout_runs_draw AS (SELECT rl.product_code, rl.run_start, rl.run_end, rl.run_len
+    FROM run_lengths_draw rl JOIN p_estimate_draw pe ON pe.product_code=rl.product_code
+    WHERE POWER(1.0-LEAST(GREATEST(pe.p_sell,0.0001),0.9999), rl.run_len) < 0.05),
+  window_calc_draw AS (SELECT p.product_code, w.window_days, b.anchor_date-(w.window_days-1) win_start,
+    b.anchor_date win_end FROM ea_pool p CROSS JOIN bounds b CROSS JOIN windows w),
+  window_qty_draw AS (SELECT wc.product_code, wc.window_days, COALESCE(SUM(dnd.net_qty),0) window_net_qty
+    FROM window_calc_draw wc LEFT JOIN daily_net_draw dnd ON dnd.product_code=wc.product_code
+      AND dnd.movement_date BETWEEN wc.win_start AND wc.win_end
+    GROUP BY wc.product_code, wc.window_days),
+  window_stockout_draw AS (SELECT wc.product_code, wc.window_days,
+    COALESCE(SUM(GREATEST(0, LEAST(pr.run_end,wc.win_end)-GREATEST(pr.run_start,wc.win_start)+1))
+      FILTER (WHERE pr.product_code IS NOT NULL),0)::int stockout_days_in_window
+    FROM window_calc_draw wc LEFT JOIN presumed_stockout_runs_draw pr ON pr.product_code=wc.product_code
+      AND pr.run_start<=wc.win_end AND pr.run_end>=wc.win_start
+    GROUP BY wc.product_code, wc.window_days),
+  -- REGIME DIVERGENCE per borrowable window: two-half SALE-DAY MEAN ratio.
+  half_stats AS (
     SELECT wc.product_code, wc.window_days,
-           COALESCE(SUM(dnd.net_qty), 0) AS window_net_qty
+      SUM(dnd.net_qty) FILTER (WHERE dnd.movement_date > wc.win_end - (wc.window_days/2)) AS q_new,
+      COUNT(*)         FILTER (WHERE dnd.movement_date > wc.win_end - (wc.window_days/2)) AS d_new,
+      SUM(dnd.net_qty) FILTER (WHERE dnd.movement_date <= wc.win_end - (wc.window_days/2)) AS q_old,
+      COUNT(*)         FILTER (WHERE dnd.movement_date <= wc.win_end - (wc.window_days/2)) AS d_old
     FROM window_calc_draw wc
-    LEFT JOIN daily_net_draw dnd ON dnd.product_code = wc.product_code
-                                AND dnd.movement_date BETWEEN wc.win_start AND wc.win_end
-    GROUP BY wc.product_code, wc.window_days
-  ),
-  window_stockout_draw AS (
-    -- Same FILTER fix as the scan chain's window_stockout -- see comment there.
-    SELECT wc.product_code, wc.window_days,
-           COALESCE(SUM(GREATEST(0, LEAST(pr.run_end, wc.win_end) - GREATEST(pr.run_start, wc.win_start) + 1))
-                     FILTER (WHERE pr.product_code IS NOT NULL), 0)::int
-             AS stockout_days_in_window
-    FROM window_calc_draw wc
-    LEFT JOIN presumed_stockout_runs_draw pr
-      ON pr.product_code = wc.product_code
-     AND pr.run_start <= wc.win_end AND pr.run_end >= wc.win_start
-    GROUP BY wc.product_code, wc.window_days
-  )
-  SELECT q.product_code,
-    pe.p_sell AS p_sell_estimate_draw,
-    'unconditional_182d_frequency_ledger_draw'::text AS p_estimate_basis_draw,
-    MAX(CASE WHEN q.window_days=14 THEN ROUND(q.window_net_qty / 14.0, 4) END) AS ros_draw_14d,
-    MAX(CASE WHEN q.window_days=28 THEN ROUND(q.window_net_qty / 28.0, 4) END) AS ros_draw_28d,
-    MAX(CASE WHEN q.window_days=56 THEN ROUND(q.window_net_qty / 56.0, 4) END) AS ros_draw_56d,
-    MAX(CASE WHEN q.window_days=14 AND (14 - so.stockout_days_in_window) > 0
-             THEN ROUND(q.window_net_qty / (14 - so.stockout_days_in_window), 4) END) AS ros_draw_14d_corrected,
-    MAX(CASE WHEN q.window_days=28 AND (28 - so.stockout_days_in_window) > 0
-             THEN ROUND(q.window_net_qty / (28 - so.stockout_days_in_window), 4) END) AS ros_draw_28d_corrected,
-    MAX(CASE WHEN q.window_days=56 AND (56 - so.stockout_days_in_window) > 0
-             THEN ROUND(q.window_net_qty / (56 - so.stockout_days_in_window), 4) END) AS ros_draw_56d_corrected,
-    MAX(CASE WHEN q.window_days=14 THEN so.stockout_days_in_window END) AS draw_correction_days_removed_14d,
-    MAX(CASE WHEN q.window_days=28 THEN so.stockout_days_in_window END) AS draw_correction_days_removed_28d,
-    MAX(CASE WHEN q.window_days=56 THEN so.stockout_days_in_window END) AS draw_correction_days_removed_56d
-  FROM window_qty_draw q
-  JOIN window_stockout_draw so ON so.product_code=q.product_code AND so.window_days=q.window_days
-  JOIN p_estimate_draw pe ON pe.product_code = q.product_code
-  GROUP BY q.product_code, pe.p_sell;
-
+    JOIN daily_net_draw dnd ON dnd.product_code=wc.product_code
+      AND dnd.movement_date BETWEEN wc.win_start AND wc.win_end AND dnd.net_qty > 0
+    WHERE wc.window_days IN (28,56)
+    GROUP BY wc.product_code, wc.window_days),
+  divergence AS (
+    SELECT product_code, window_days,
+      CASE WHEN d_old >= 3 AND d_new >= 3 AND q_old > 0 AND q_new > 0
+           THEN ROUND(GREATEST((q_old/d_old)/(q_new/d_new), (q_new/d_new)/(q_old/d_old)), 4) END AS div
+    FROM half_stats),
+  win_rate_draw AS (SELECT q.product_code, q.window_days, q.window_net_qty,
+    so.stockout_days_in_window oos_days, (q.window_days-so.stockout_days_in_window) observable_days,
+    ROUND(q.window_net_qty/q.window_days::numeric,4) raw_rate,
+    CASE WHEN (q.window_days-so.stockout_days_in_window)>0
+         THEN ROUND(q.window_net_qty/(q.window_days-so.stockout_days_in_window),4) END corrected_rate
+    FROM window_qty_draw q JOIN window_stockout_draw so
+      ON so.product_code=q.product_code AND so.window_days=q.window_days),
+  win_pub_draw AS (SELECT wr.*,
+    CASE WHEN wr.raw_rate<=0 THEN wr.raw_rate WHEN wr.oos_days=0 THEN wr.raw_rate
+         WHEN wr.observable_days < v_floor_share*wr.window_days THEN NULL
+         WHEN wr.corrected_rate IS NULL THEN NULL
+         ELSE LEAST(wr.corrected_rate, v_cap_mult*wr.raw_rate) END published_rate,
+    CASE WHEN wr.raw_rate<=0 THEN 'non_positive_raw' WHEN wr.oos_days=0 THEN 'no_correction'
+         WHEN wr.observable_days < v_floor_share*wr.window_days THEN 'withheld_observable_floor'
+         WHEN wr.corrected_rate IS NULL THEN 'withheld_observable_floor'
+         WHEN wr.corrected_rate > v_cap_mult*wr.raw_rate THEN 'capped_2x_raw'
+         ELSE 'published' END guard
+    FROM win_rate_draw wr)
+  SELECT wp.product_code, pe.p_sell p_sell_estimate_draw,
+    'unconditional_182d_frequency_ledger_draw'::text p_estimate_basis_draw,
+    MAX(CASE WHEN wp.window_days=14 THEN wp.raw_rate END) ros_draw_14d,
+    MAX(CASE WHEN wp.window_days=28 THEN wp.raw_rate END) ros_draw_28d,
+    MAX(CASE WHEN wp.window_days=56 THEN wp.raw_rate END) ros_draw_56d,
+    MAX(CASE WHEN wp.window_days=14 THEN wp.corrected_rate END) ros_draw_14d_corrected,
+    MAX(CASE WHEN wp.window_days=28 THEN wp.corrected_rate END) ros_draw_28d_corrected,
+    MAX(CASE WHEN wp.window_days=56 THEN wp.corrected_rate END) ros_draw_56d_corrected,
+    MAX(CASE WHEN wp.window_days=14 THEN wp.published_rate END) ros_draw_14d_published,
+    MAX(CASE WHEN wp.window_days=28 THEN wp.published_rate END) ros_draw_28d_published,
+    MAX(CASE WHEN wp.window_days=56 THEN wp.published_rate END) ros_draw_56d_published,
+    MAX(CASE WHEN wp.window_days=14 THEN wp.guard END) ros_draw_14d_guard,
+    MAX(CASE WHEN wp.window_days=28 THEN wp.guard END) ros_draw_28d_guard,
+    MAX(CASE WHEN wp.window_days=56 THEN wp.guard END) ros_draw_56d_guard,
+    MAX(CASE WHEN wp.window_days=14 THEN wp.oos_days END) draw_correction_days_removed_14d,
+    MAX(CASE WHEN wp.window_days=28 THEN wp.oos_days END) draw_correction_days_removed_28d,
+    MAX(CASE WHEN wp.window_days=56 THEN wp.oos_days END) draw_correction_days_removed_56d,
+    MAX(dv.div) FILTER (WHERE dv.window_days=28) draw_regime_divergence_28d,
+    MAX(dv.div) FILTER (WHERE dv.window_days=56) draw_regime_divergence_56d
+  FROM win_pub_draw wp
+  JOIN p_estimate_draw pe ON pe.product_code=wp.product_code
+  LEFT JOIN divergence dv ON dv.product_code=wp.product_code
+  GROUP BY wp.product_code, pe.p_sell;
   CREATE UNIQUE INDEX ON tmp_bloom_ros_draw (product_code);
   ANALYZE tmp_bloom_ros_draw;
 
-  -- ===================== COMBINE (cheap: two small, indexed, ANALYZE'd temp tables) =====================
   INSERT INTO public.l2_bloom_ros_pantry (
     store_code, product_code, ean, unit, unit_incommensurable,
     p_sell_estimate, p_estimate_basis,
     ros_14d, ros_28d, ros_56d, ros_14d_corrected, ros_28d_corrected, ros_56d_corrected,
+    ros_14d_published, ros_28d_published, ros_56d_published,
+    ros_14d_guard, ros_28d_guard, ros_56d_guard,
     correction_days_removed_14d, correction_days_removed_28d, correction_days_removed_56d,
     p_sell_estimate_draw, p_estimate_basis_draw,
     ros_draw_14d, ros_draw_28d, ros_draw_56d,
     ros_draw_14d_corrected, ros_draw_28d_corrected, ros_draw_56d_corrected,
-    draw_correction_days_removed_14d, draw_correction_days_removed_28d, draw_correction_days_removed_56d
-  )
-  SELECT
-    p.store_code, p.product_code, p.ean, p.unit, NOT p.is_draw_eligible,
+    ros_draw_14d_published, ros_draw_28d_published, ros_draw_56d_published,
+    ros_draw_14d_guard, ros_draw_28d_guard, ros_draw_56d_guard,
+    draw_correction_days_removed_14d, draw_correction_days_removed_28d, draw_correction_days_removed_56d,
+    draw_regime_divergence_28d, draw_regime_divergence_56d,
+    corrector_floor_share, corrector_cap_multiple)
+  SELECT p.store_code, p.product_code, p.ean, p.unit, NOT p.is_draw_eligible,
     s.p_sell_estimate, s.p_estimate_basis,
     s.ros_14d, s.ros_28d, s.ros_56d, s.ros_14d_corrected, s.ros_28d_corrected, s.ros_56d_corrected,
+    s.ros_14d_published, s.ros_28d_published, s.ros_56d_published,
+    s.ros_14d_guard, s.ros_28d_guard, s.ros_56d_guard,
     s.correction_days_removed_14d, s.correction_days_removed_28d, s.correction_days_removed_56d,
     d.p_sell_estimate_draw, d.p_estimate_basis_draw,
     d.ros_draw_14d, d.ros_draw_28d, d.ros_draw_56d,
     d.ros_draw_14d_corrected, d.ros_draw_28d_corrected, d.ros_draw_56d_corrected,
-    d.draw_correction_days_removed_14d, d.draw_correction_days_removed_28d, d.draw_correction_days_removed_56d
+    d.ros_draw_14d_published, d.ros_draw_28d_published, d.ros_draw_56d_published,
+    d.ros_draw_14d_guard, d.ros_draw_28d_guard, d.ros_draw_56d_guard,
+    d.draw_correction_days_removed_14d, d.draw_correction_days_removed_28d, d.draw_correction_days_removed_56d,
+    d.draw_regime_divergence_28d, d.draw_regime_divergence_56d,
+    v_floor_share, v_cap_mult
   FROM tmp_bloom_ros_pool p
-  JOIN tmp_bloom_ros_scan s ON s.product_code = p.product_code
-  LEFT JOIN tmp_bloom_ros_draw d ON d.product_code = p.product_code;
-
-  -- GET DIAGNOSTICS must read the INSERT's row count HERE, before any further
-  -- statement runs -- see 2026-07-09 note: it captures the MOST RECENTLY
-  -- EXECUTED command, and the three DROP TABLEs below all report ROW_COUNT=0.
+  JOIN tmp_bloom_ros_scan s ON s.product_code=p.product_code
+  LEFT JOIN tmp_bloom_ros_draw d ON d.product_code=p.product_code;
   GET DIAGNOSTICS v_rows = ROW_COUNT;
 
   DROP TABLE IF EXISTS pg_temp.tmp_bloom_ros_pool;
   DROP TABLE IF EXISTS pg_temp.tmp_bloom_ros_scan;
   DROP TABLE IF EXISTS pg_temp.tmp_bloom_ros_draw;
 
-  RETURN jsonb_build_object(
-    'store_code', p_store,
-    'rows', v_rows,
-    'seconds', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1)
-  );
+  RETURN jsonb_build_object('store_code',p_store,'rows',v_rows,
+    'corrector_floor_share',v_floor_share,'corrector_cap_multiple',v_cap_mult,
+    'seconds',ROUND(EXTRACT(EPOCH FROM clock_timestamp()-v_t0)::numeric,1));
 END;
-$$;
+$function$;
 
 GRANT EXECUTE ON FUNCTION public.refresh_l2_bloom_ros_pantry(text) TO authenticated;
