@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<!--
+  FORGE TOOLKIT — toolkit.socialbrand.africa · v2.0 (2026-07-10, PM-built)
+  v2.0 (Pieter ruling, same day): PROGRESS landing view — week on week, where we were vs where we are,
+  read from forge_integrity_history (daily snapshot 21:30 UTC via pg_cron 'forge-integrity-snapshot',
+  backfilled from retained l2_classification snapshots to 2026-07-01). Full brand pass per
+  SB-INDEX-002 Brand Bible v2.3: sky backdrop (blue is the sky, never a component), veld glass plates,
+  wells, Fraunces/Geist Mono/Geist, Core Yellow rationed to the primary action, data colours on deltas
+  only, ≤8 blur surfaces, solid fallback under 768px. CD design pass briefed in CD-SPEC-FORGE-002.
+  v1.2: instrument drill-down lists + worst-first. v1.1: plain language, dept picker, no sidecars. v1.0: first build.
+
+  ARCHITECTURE RULE (R21/R30): zero classification logic in this page. Engine RPCs compute everything.
+  Interfaces: rpc_forge_summary · rpc_forge_lines · rpc_forge_count_list · rpc_forge_integrity ·
+  rpc_forge_integrity_trend · rpc_forge_integrity_lines · rpc_forge_departments · rpc_cost_error_worklist.
+  TLX format (verified): single line <store>++<ean>+0+<ean>+0+...
+  Known debts: run-log/compliance table (CC) · store list hardcoded (CC port reads stores(is_active)) ·
+  LINK_CODES queue · floor-adoption fact · live-only instruments (kvi, hidden family) start history 2026-07-10.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forge — Operations Toolkit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Geist+Mono:wght@400;500&family=Geist:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --sky-zenith:#070D1A; --sky-deep:#10182E; --sky-horizon:#16213E; --veld-floor:#0C100C;
+    --charcoal:#121612; --glass:rgba(74,107,83,0.10); --glass-frost:rgba(74,107,83,0.20);
+    --border:rgba(255,255,255,0.10); --border-hover:rgba(255,255,255,0.16);
+    --well:rgba(0,0,0,0.35); --well-shadow:inset 0 2px 6px rgba(0,0,0,0.50), inset 0 -1px 0 rgba(255,255,255,0.06);
+    --txt:#F9FBF7; --mist:#A8B5A8; --yellow:#FFD100; --growth:#4A6B53; --veldgreen:#1E3F20;
+    --pos:#66BB6A; --neg:#EF5350; --warn:#FFB300; --neutral:#9E9E9E;
+    --font-display:'Fraunces',Georgia,serif; --font-mono:'Geist Mono',ui-monospace,monospace; --font-ui:'Geist',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;color:var(--txt);font:14px/1.5 var(--font-ui);padding:22px;
+    background:linear-gradient(180deg,var(--sky-zenith) 0%,var(--sky-deep) 45%,var(--sky-horizon) 78%,var(--veld-floor) 100%) fixed}
+  h1{font:600 24px var(--font-display);margin:0;letter-spacing:.3px}
+  h1 .daisy{color:var(--yellow)}
+  .sub{color:var(--mist);font-size:12.5px;margin:4px 0 16px}
+  .plate{background:var(--glass);border:1px solid var(--border);border-radius:16px;
+    box-shadow:0 8px 32px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.06);
+    backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);padding:16px 18px}
+  @media (max-width:768px){ .plate{backdrop-filter:none;-webkit-backdrop-filter:none;background:var(--charcoal)} body{padding:12px} }
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .tab{border:1px solid var(--border);background:var(--charcoal);padding:8px 16px;border-radius:8px;
+    cursor:pointer;color:var(--mist);font-size:13px;user-select:none;border-bottom:2px solid transparent}
+  .tab.on{color:var(--txt);border-bottom:2px solid var(--yellow)}
+  .explain{border:1px solid var(--border);border-left:3px solid var(--growth);background:var(--charcoal);
+    border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:13px;max-width:1150px}
+  .explain b{color:var(--txt);font-family:var(--font-display)} .explain .steps{color:var(--mist);margin-top:6px}
+  .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+  .lbl{font:500 10.5px var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--mist);display:block;margin-bottom:4px}
+  .chip{border:1px solid var(--border);background:var(--charcoal);padding:6px 13px;border-radius:8px;
+    cursor:pointer;user-select:none;font-size:12.5px;color:var(--mist);border-bottom:2px solid transparent}
+  .chip.on{color:var(--txt);border-bottom:2px solid var(--yellow)}
+  .chip.small{padding:4px 10px;font-size:11.5px}
+  select,input{background:var(--charcoal);border:1px solid rgba(255,255,255,0.14);color:var(--txt);
+    padding:7px 10px;border-radius:8px;font:inherit}
+  button{background:var(--charcoal);border:1px solid var(--border);color:var(--txt);padding:7px 14px;
+    border-radius:8px;cursor:pointer;font:inherit;transition:transform 150ms,border-color 150ms}
+  button:hover:not(:disabled){border-color:var(--border-hover);transform:translateY(-1px)}
+  button:disabled{opacity:.42;cursor:not-allowed;transform:none}
+  button.primary{background:var(--yellow);border-color:var(--yellow);color:var(--charcoal);font-weight:600}
+  .banner{border:1px solid var(--warn);background:rgba(255,179,0,0.08);color:var(--warn);border-radius:10px;
+    padding:11px 15px;margin-bottom:14px;display:none;font-size:12.5px}
+  .banner.err{border-color:var(--neg);background:rgba(239,83,80,0.08);color:var(--neg)}
+  .banner.ok{border-color:var(--pos);background:rgba(102,187,106,0.08);color:var(--pos)}
+  .pane{display:none} .pane.on{display:block}
+  table{border-collapse:collapse;width:100%;font:13px var(--font-mono);font-variant-numeric:tabular-nums;margin-top:10px}
+  th,td{border-bottom:1px solid rgba(255,255,255,0.08);padding:7px 9px;text-align:left;vertical-align:top;height:32px}
+  th{font:500 10.5px var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--mist);position:sticky;top:0;background:var(--veld-floor)}
+  tr:nth-child(even) td{background:rgba(255,255,255,0.03)}
+  td.num,th.num{text-align:right}
+  .wellbox{background:var(--well);box-shadow:var(--well-shadow);border-radius:10px;padding:4px 10px}
+  .stratum{font:500 10.5px var(--font-mono);padding:2px 8px;border-radius:8px;border:1px solid var(--border);white-space:nowrap}
+  .s1{border-color:var(--neg);color:var(--neg)} .s2{border-color:var(--warn);color:var(--warn)}
+  .s3{border-color:#A78BFA;color:#A78BFA} .s4{border-color:var(--growth);color:var(--mist)}
+  .s5{border-color:var(--pos);color:var(--pos)} .s0{color:var(--mist)}
+  .story{color:var(--mist);font:11.5px var(--font-ui);max-width:460px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-top:8px}
+  .card{background:var(--charcoal);border:1px solid var(--border);border-radius:16px;padding:14px;
+    box-shadow:0 8px 32px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.05)}
+  .card h3{font:600 15px var(--font-display);margin:0 0 3px} .card .meta{color:var(--mist);font-size:11px;margin-bottom:8px}
+  .filebtn{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;
+    text-align:left;margin-bottom:6px;padding:8px 11px}
+  .filebtn small{color:var(--mist);font-size:11px;font-weight:400}
+  .inst{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;border-bottom:1px dashed rgba(255,255,255,0.08);font-size:12.5px}
+  .inst:last-child{border-bottom:none}
+  .inst .v{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+  .up .v{color:var(--pos)} .down .v{color:var(--warn)}
+  .instsub{color:var(--mist);font-size:10.5px;display:block;max-width:420px}
+  .note{font-size:11px;color:var(--mist);margin-top:8px;max-width:1150px}
+  #log{font:11px/1.5 var(--font-mono);color:var(--mist);margin-top:20px;white-space:pre-wrap;opacity:.75}
+  .summary{color:var(--mist);font-size:12.5px;margin:8px 0} .summary b{color:var(--txt)}
+  details.adv{font-size:12px;color:var(--mist)} details.adv input{margin-left:6px}
+  /* PROGRESS instruments */
+  .hero-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin:14px 0}
+  .kpi{background:rgba(12,16,12,0.55);border:1px solid var(--border);border-left:3px solid var(--growth);
+    border-radius:16px;padding:14px 16px;box-shadow:0 8px 32px rgba(0,0,0,0.30)}
+  .kpi .klabel{font:500 11px var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--mist)}
+  .kpi .knum{font:600 30px var(--font-display);font-variant-numeric:tabular-nums;margin:6px 0 2px}
+  .kpi .kwas{font:11px var(--font-mono);color:var(--mist)}
+  .delta{font:500 11.5px var(--font-mono);padding:2px 8px;border-radius:8px;margin-left:8px;white-space:nowrap}
+  .delta.good{color:var(--pos);background:rgba(102,187,106,0.12)}
+  .delta.bad{color:var(--neg);background:rgba(239,83,80,0.12)}
+  .delta.flat{color:var(--neutral);background:rgba(158,158,158,0.10)}
+  .gaugewrap{height:8px;background:var(--well);box-shadow:var(--lamp-bezel, inset 0 1px 2px rgba(0,0,0,0.6));border-radius:5px;margin-top:8px;overflow:hidden}
+  .gaugefill{height:100%;background:var(--growth);border-radius:5px}
+  @media print{
+    body{background:#F4F6F2;color:#121612;padding:0} .tabs,.bar,button,#log,.banner,.sub,.explain,.note,.hero-grid{display:none!important}
+    table{font-size:11px} th{color:#1E3F20;background:#F4F6F2;position:static} td,th{border-color:#999}
+    .story{color:#333} .stratum{color:#121612!important;border-color:#666!important}
+    td.countcol{border:1px solid #121612;min-width:70px}
+  }
+</style>
+</head>
+<body>
+<h1>Forge <span class="daisy">·</span> Operations Toolkit</h1>
+<div class="sub">The work-issuing side of the platform. The Engine decides, this page hands you the work. Nothing is calculated in the browser.</div>
+<div id="banner" class="banner"></div>
+
+<div class="tabs">
+  <span class="tab on" data-pane="progress">Progress</span>
+  <span class="tab" data-pane="composer">Stocktake Composer</span>
+  <span class="tab" data-pane="fixer">Fixer files &amp; TLX</span>
+  <span class="tab" data-pane="cost">Cost-Error Worklist</span>
+  <span class="tab" data-pane="integrity">Platform Integrity</span>
+</div>
+
+<div class="bar">
+  <div><span class="lbl">Stores</span><span id="stores"></span></div>
+</div>
+
+<!-- 0 · PROGRESS (landing) -->
+<div class="pane on" id="pane-progress">
+  <div class="explain">
+    <b>Where we were, where we are.</b> Every night the Engine records the scoreboard. This view compares today against a week ago for the stores you pick. Green means the week moved the right way. Red means it moved against us. The record starts 1 July, two measures (key lines out of stock, hidden family demand) start today.
+  </div>
+  <div class="bar"><button class="primary" id="loadprogress">Load progress</button></div>
+  <div class="hero-grid" id="progress-hero"></div>
+  <div class="plate" style="margin-top:6px">
+    <div class="lbl" style="margin-bottom:8px">Per store, this week vs last</div>
+    <div style="overflow:auto"><table id="progress-table"></table></div>
+  </div>
+  <div class="note">Trusted capital moves with cleanup AND with trading, so read it with its pool. Counts, negatives and debts are the work measures — those are ours to move.</div>
+</div>
+
+<!-- 1 · COMPOSER -->
+<div class="pane" id="pane-composer">
+  <div class="explain">
+    <b>What this does:</b> builds today's count list. The Engine picks which lines need counting and every line shows the reason it was picked, in plain words.
+    <div class="steps">
+      <b>Daily count list</b> is the standard morning list. It fills itself: new negatives and Engine suspects first, then old uncounted lines until the day's budget is full. The budget sizes itself per store (full store covered inside 12 weeks at a SPAR, 4 weeks at a TOPS).<br>
+      <b>Random spot check</b> pulls a surprise sample per department. Good for honesty checks.<br>
+      <b>Whole department</b> lists an entire department wall to wall.<br>
+      Then: <b>StockFlow file</b> to upload as an ad-hoc stocktake, or <b>Print count sheet</b> for the floor.
+    </div>
+  </div>
+  <div class="bar">
+    <div>
+      <span class="lbl">What kind of list</span>
+      <select id="mode">
+        <option value="daily">Daily count list (the standard)</option>
+        <option value="random">Random spot check</option>
+        <option value="targeted">Whole department</option>
+      </select>
+    </div>
+    <div id="nper-wrap" style="display:none">
+      <span class="lbl">Lines per department</span>
+      <input id="nper" type="number" value="50" style="width:110px">
+    </div>
+    <div>
+      <span class="lbl">&nbsp;</span>
+      <button class="primary" id="compose">Build the list</button>
+    </div>
+    <div>
+      <span class="lbl">&nbsp;</span>
+      <button id="dl-stockflow" disabled title="One product code per line. Upload straight into StockFlow as an ad-hoc stocktake.">StockFlow file</button>
+      <button id="dl-sheet" disabled title="Printable sheet with a blank COUNT column, grouped for walking.">Print count sheet</button>
+      <button id="dl-full" disabled title="Everything on one spreadsheet, reasons included.">Full list (.csv)</button>
+    </div>
+  </div>
+  <div class="bar">
+    <div style="width:100%">
+      <span class="lbl">Departments — leave all off to count across the whole store. Click store(s) first, then pick.</span>
+      <span id="depts"></span>
+    </div>
+  </div>
+  <details class="adv"><summary>Advanced</summary>
+    Sample seed <input id="seed" type="number" step="0.01" value="0.42" style="width:90px">
+    — the same seed always rebuilds the exact same list, so a count can be audited later. Change it to draw a fresh random sample.
+  </details>
+  <div class="summary" id="compose-summary"></div>
+  <div class="wellbox" style="max-height:56vh;overflow:auto"><table id="compose-table"></table></div>
+  <div class="note">Why lines are picked (the badges): <b style="color:var(--neg)">NEW negative</b> = stock went below zero since it was last counted. <b style="color:var(--warn)">Engine indictment</b> = the Engine suspects the shelf and the ledger disagree. <b style="color:#A78BFA">Inactive rotation</b> = holding stock but not selling, presence unproven. <b style="color:var(--mist)">Cyclical backbone</b> = routine rotation so the whole store gets counted every cycle. <b style="color:var(--pos)">Zero-SOH audit ⚑</b> = ledger says none, a spot check catches stock the system does not know it has. Deposits, production and non-stock lines never appear here, they have their own lists on the Fixer tab.</div>
+</div>
+
+<!-- 2 · FIXER -->
+<div class="pane" id="pane-fixer">
+  <div class="explain">
+    <b>What this does:</b> the Engine sorts every stock line into exactly one action. Each button below downloads one action file. Do the action, and tomorrow's push confirms the fix. The card shows how big each pile is and what rand value sits in it.
+  </div>
+  <div class="bar"><button class="primary" id="loadfixer">Load engine state</button></div>
+  <div class="cards" id="fixer-cards"></div>
+  <div class="note">The buckets in the grey line are the Engine's verdicts on every line it looked at. HEALTHY needs no action. The rand values show where the money sits.</div>
+</div>
+
+<!-- 3 · COST ERRORS -->
+<div class="pane" id="pane-cost">
+  <div class="explain">
+    <b>What this does:</b> finds lines where the cost loaded in Sigma is wrong, the cost is far above what the line sells for. A broken cost poisons GP and Capital Tied until someone fixes it. <b>The fix is always in Sigma:</b> open the PLU, load the right cost. The last column shows the rand GP recovers when you do.
+  </div>
+  <div class="bar">
+    <div><span class="lbl">Look back (days)</span><input id="cost-days" type="number" value="28" style="width:80px"></div>
+    <div><span class="lbl">Flag when cost is X times the selling price</span>
+      <select id="cost-ratio"><option value="1.5" selected>1.5× or worse</option><option value="2">2× or worse</option><option value="5">5× or worse</option></select></div>
+    <div><span class="lbl">&nbsp;</span><button class="primary" id="loadcost">Load worklist</button>
+      <button id="dl-cost" disabled>Download (.csv)</button></div>
+  </div>
+  <div class="summary" id="cost-summary"></div>
+  <div class="wellbox" style="max-height:56vh;overflow:auto"><table id="cost-table"></table></div>
+</div>
+
+<!-- 4 · INTEGRITY -->
+<div class="pane" id="pane-integrity">
+  <div class="explain">
+    <b>What this does:</b> the scoreboard for the North Star, right now. Eight measures per store, each shown against its full pool (for example "2,817 of 7,984 lines") so the number cannot be made to look good by shrinking the question. <span style="color:var(--pos)">▲</span> we want climbing, <span style="color:var(--warn)">▼</span> we want falling. Worst first, with a download of the exact lines behind every number. For the week-on-week view, use the Progress tab.
+  </div>
+  <div class="bar">
+    <button class="primary" id="loadintegrity">Load instruments</button>
+    <button id="dl-integrity" disabled>Download (.csv)</button>
+  </div>
+  <div class="cards" id="integrity-cards"></div>
+  <div class="note">Floor adoption (are the tools being used on the floor) has no data source yet. It is a named gap, not a hidden zero. These measures are provisional until the R33 ruling lands.</div>
+</div>
+
+<div id="log"></div>
+
+<script>
+"use strict";
+const SB_URL = "https://crklvhfwyxlisfcvqenc.supabase.co";
+const SB_KEY = "sb_publishable__5cXLbkpdth-iLFkeqTTNA_kRUvfYgr";
+const STORES = [
+  ["10116","SPAR Delareyville"],["21355","TOPS Delareyville"],
+  ["80175","SPAR Roosville"],["80176","TOPS Roosville"],["80579","TOPS Dice"]
+];
+const sel = new Set(STORES.map(s=>s[0]));   // progress lands group-wide by default
+const deptSel = new Set();
+const $ = id => document.getElementById(id);
+const log = m => { $("log").textContent += m + "\n"; };
+function banner(msg, cls){ const b=$("banner"); b.style.display="block"; b.className="banner"+(cls?" "+cls:""); b.textContent=msg; }
+function clearBanner(){ $("banner").style.display="none"; }
+
+STORES.forEach(([code,name])=>{
+  const c=document.createElement("span"); c.className="chip"+(sel.has(code)?" on":""); c.textContent=`${name} (${code})`;
+  c.onclick=()=>{ sel.has(code)?sel.delete(code):sel.add(code); c.classList.toggle("on"); loadDepts(); };
+  $("stores").appendChild(c);
+});
+document.querySelectorAll(".tab").forEach(t=>{
+  t.onclick=()=>{
+    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("on"));
+    document.querySelectorAll(".pane").forEach(x=>x.classList.remove("on"));
+    t.classList.add("on"); $("pane-"+t.dataset.pane).classList.add("on");
+  };
+});
+$("mode").onchange=()=>{ $("nper-wrap").style.display = $("mode").value==="random" ? "" : "none"; };
+
+async function rpc(fn, args){
+  const r = await fetch(`${SB_URL}/rest/v1/rpc/${fn}`, {
+    method:"POST",
+    headers:{ "apikey":SB_KEY, "Authorization":"Bearer "+SB_KEY, "Content-Type":"application/json" },
+    body: JSON.stringify(args||{})
+  });
+  if(!r.ok){ const t = await r.text(); throw new Error(`${fn} ${r.status}: ${t.slice(0,300)}`); }
+  return r.json();
+}
+function download(name, text, type){
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([text],{type:type||"text/plain"}));
+  a.download=name; a.click(); URL.revokeObjectURL(a.href);
+}
+const csvEsc = v => { v = v==null ? "" : String(v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
+const toCSV = (rows, cols) => cols.join(",")+"\n"+rows.map(r=>cols.map(c=>csvEsc(r[c])).join(",")).join("\n")+"\n";
+const R = n => n==null ? "" : Math.round(n).toLocaleString("en-ZA");
+function provenance(name, meta){ log(`${name} <- ${JSON.stringify(meta)} @ ${new Date().toISOString()}`); }
+
+// ---------- instrument metadata (shared) ----------
+const INST_META={
+  purified_capital_share:["Trusted capital","Rand of stock the Engine has verified as real and sellable, over everything in scope. The list = the lines NOT yet trusted.","UP",true],
+  ambiguity_debt:["Unsettled lines","Lines the Engine cannot yet classify. Every one is a data gap with a fix. Target 0.","DOWN",false],
+  unresolved_ean:["Unknown identities","Lines with no proven barcode. They block TLX and cross-store checks.","DOWN",false],
+  costless_real_stock:["Stock with no cost","Healthy stock carrying a zero cost. Its capital is invisible and its GP is fiction.","DOWN",false],
+  hidden_family_demand:["Hidden family demand","Lines that sell more through their pack family than their own till scans show.","DOWN",false],
+  count_coverage_91d:["Counted in 91 days","Share of countable lines a human has verified this quarter. The list = the lines still UNcounted.","UP",false],
+  negative_book:["Below-zero lines","Ledger lines in the negative. Each is a receiving or depletion error waiting for a count or GRV.","DOWN",false],
+  kvi_lines_oos:["Key lines out of stock","Your most important sellers at zero or below right now. The loudest ordering signal there is.","DOWN",false]
+};
+const HERO_ORDER=["purified_capital_share","negative_book","count_coverage_91d","kvi_lines_oos"];
+
+// ---------- 0 · PROGRESS ----------
+$("loadprogress").onclick = async ()=>{
+  clearBanner(); $("loadprogress").disabled=true;
+  try{
+    const rows = await rpc("rpc_forge_integrity_trend",{p_stores:[...sel]});
+    // group aggregate per instrument (sum across stores; only where both now+week exist for the delta)
+    const g={};
+    rows.forEach(r=>{
+      const o=(g[r.instrument]=g[r.instrument]||{nv:0,np:0,wv:0,wp:0,haveWeek:false,nowDate:r.now_date,weekDate:r.week_date});
+      if(r.now_value!=null){o.nv+=+r.now_value; o.np+=+(r.now_pool||0);}
+      if(r.week_value!=null){o.wv+=+r.week_value; o.wp+=+(r.week_pool||0); o.haveWeek=true; o.weekDate=r.week_date;}
+    });
+    const hero=$("progress-hero"); hero.innerHTML="";
+    HERO_ORDER.forEach(inst=>{
+      const m=INST_META[inst], o=g[inst]; if(!o) return;
+      const isRand=m[3];
+      const nowStr = isRand ? "R "+R(o.nv) : R(o.nv);
+      const ratio = o.np>0 ? (100*o.nv/o.np) : null;
+      let deltaHtml="", wasStr="tracking starts today";
+      if(o.haveWeek){
+        const d=o.nv-o.wv;
+        const goodDir = m[2]==="UP" ? d>0 : d<0;
+        const cls = d===0?"flat":(goodDir?"good":"bad");
+        const arrow = d===0?"–":(d>0?"▲":"▼");
+        deltaHtml=`<span class="delta ${cls}">${arrow} ${isRand?"R "+R(Math.abs(d)):R(Math.abs(d))}</span>`;
+        wasStr=`was ${isRand?"R "+R(o.wv):R(o.wv)} on ${o.weekDate}`;
+      }
+      hero.innerHTML+=`<div class="kpi">
+        <div class="klabel">${m[0]} ${m[2]==="UP"?"▲ want up":"▼ want down"}</div>
+        <div class="knum">${nowStr}${deltaHtml}</div>
+        <div class="kwas">${wasStr}${ratio!=null?` · ${ratio.toFixed(1)}% of ${isRand?"R "+R(o.np):R(o.np)}`:""}</div>
+        ${ratio!=null?`<div class="gaugewrap"><div class="gaugefill" style="width:${Math.min(ratio,100)}%"></div></div>`:""}
+      </div>`;
+    });
+    // per-store table: one row per store, one col per instrument, "now (Δwk)"
+    const insts=Object.keys(INST_META);
+    const byStore={};
+    rows.forEach(r=>{ (byStore[r.store_code]=byStore[r.store_code]||{})[r.instrument]=r; });
+    const tb=$("progress-table");
+    tb.innerHTML="<tr><th>store</th>"+insts.map(i=>`<th class=num title="${INST_META[i][1]}">${INST_META[i][0]}</th>`).join("")+"</tr>"+
+      Object.entries(byStore).map(([s,m])=>{
+        return `<tr><td>${STORES.find(x=>x[0]===s)?.[1]||s}</td>`+insts.map(i=>{
+          const r=m[i]; if(!r||r.now_value==null) return '<td class=num style="color:var(--mist)">no data</td>';
+          const isRand=INST_META[i][3];
+          let d="";
+          if(r.week_value!=null){
+            const diff=+r.now_value - +r.week_value;
+            const goodDir = INST_META[i][2]==="UP" ? diff>0 : diff<0;
+            const col = diff===0?"var(--neutral)":(goodDir?"var(--pos)":"var(--neg)");
+            d=` <span style="color:${col}">${diff===0?"–":(diff>0?"▲":"▼")}${R(Math.abs(diff))}</span>`;
+          } else { d=' <span style="color:var(--mist)" title="history starts today">new</span>'; }
+          return `<td class=num>${isRand?"R "+R(r.now_value):R(r.now_value)}${d}</td>`;
+        }).join("")+"</tr>";
+      }).join("");
+    provenance("progress",{stores:[...sel], rows:rows.length});
+  }catch(e){ banner(e.message,"err"); log("ERROR "+e.message); }
+  $("loadprogress").disabled=false;
+};
+
+// ---------- department picker ----------
+let deptLoadToken=0;
+async function loadDepts(){
+  const el=$("depts"); const token=++deptLoadToken;
+  deptSel.clear();
+  if(!sel.size){ el.innerHTML='<span class="note">pick a store first</span>'; return; }
+  el.innerHTML='<span class="note">loading departments…</span>';
+  try{
+    const rows = await rpc("rpc_forge_departments",{p_stores:[...sel]});
+    if(token!==deptLoadToken) return;
+    el.innerHTML="";
+    rows.forEach(r=>{
+      const c=document.createElement("span"); c.className="chip small";
+      c.textContent=`${r.dept_name} (${Number(r.lines).toLocaleString()})`;
+      c.onclick=()=>{ deptSel.has(r.dept_name)?deptSel.delete(r.dept_name):deptSel.add(r.dept_name); c.classList.toggle("on"); };
+      el.appendChild(c);
+    });
+    if(!rows.length) el.innerHTML='<span class="note">no departments found for this selection</span>';
+  }catch(e){ if(token===deptLoadToken){ el.innerHTML=""; banner(e.message,"err"); } }
+}
+loadDepts();
+
+// ---------- 1 · COMPOSER ----------
+let composeRows = [];
+$("compose").onclick = async ()=>{
+  clearBanner();
+  if(!sel.size) return banner("Pick at least one store first.", "err");
+  const mode=$("mode").value;
+  const depts = deptSel.size ? [...deptSel] : null;
+  if(mode==="targeted" && !depts) return banner("Whole-department mode needs at least one department picked below.", "err");
+  const seed=parseFloat($("seed").value)||0.42;
+  $("compose").disabled=true;
+  try{
+    const t0=performance.now();
+    composeRows = await rpc("rpc_forge_count_list", {
+      p_stores:[...sel], p_mode:mode, p_dept_names:depts,
+      p_n: mode==="random" ? (parseInt($("nper").value,10)||50) : null, p_seed:seed
+    });
+    const ms=Math.round(performance.now()-t0);
+    if(!composeRows.length){ banner("Checked and came back empty — nothing in this selection needs counting. That is an answer, not an error.", "ok"); }
+    const byStore={};
+    composeRows.forEach(r=>{ (byStore[r.store_code]=byStore[r.store_code]||{n:0,strata:{}}); byStore[r.store_code].n++;
+      byStore[r.store_code].strata[r.stratum_label]=(byStore[r.store_code].strata[r.stratum_label]||0)+1; });
+    $("compose-summary").innerHTML = Object.entries(byStore).map(([s,v])=>
+      `<b>${s}</b>: ${v.n} lines to count (${Object.entries(v.strata).map(([k,n])=>`${k} ${n}`).join(" · ")})`).join(" &nbsp;|&nbsp; ")
+      + (composeRows.length?` &nbsp;·&nbsp; ${ms}ms`:"");
+    const tb=$("compose-table");
+    tb.innerHTML = "<tr><th>store</th><th>code</th><th>description</th><th>sub-dept</th><th class=num>SOH</th><th class=num>capital R</th><th>why it is on the list</th><th>the story</th><th class=countcol>COUNT</th></tr>" +
+      composeRows.map(r=>`<tr><td>${r.store_code}</td><td>${r.product_code}</td><td>${csvEsc(r.description)}</td><td>${csvEsc(r.subdept_name||"")}</td><td class=num>${r.soh}</td><td class=num>${R(r.capital_value)}</td><td><span class="stratum s${r.stratum}">${r.stratum_label}${r.forced_zero_soh?" ⚑":""}</span></td><td class=story>${csvEsc(r.story)}</td><td class=countcol></td></tr>`).join("");
+    ["dl-stockflow","dl-sheet","dl-full"].forEach(id=>$(id).disabled=!composeRows.length);
+    provenance("count list", {lines:composeRows.length, mode, seed, stores:[...sel], depts});
+  }catch(e){ banner(e.message,"err"); log("ERROR "+e.message); }
+  $("compose").disabled=false;
+};
+$("dl-stockflow").onclick = ()=>{
+  [...sel].forEach(s=>{
+    const rows=composeRows.filter(r=>r.store_code===s && r.ean_status==="REAL");
+    if(!rows.length){ log(`${s}: no StockFlow-countable lines (StockFlow needs a real barcode).`); return; }
+    download(`${s}_stockflow.csv`, "product_code\n"+rows.map(r=>r.product_code).join("\n")+"\n","text/csv");
+    provenance(`${s}_stockflow.csv`,{rows:rows.length, seed:parseFloat($("seed").value)||0.42});
+  });
+};
+$("dl-full").onclick = ()=>{
+  const cols=["store_code","product_code","description","dept_name","subdept_name","soh","capital_value","ean_key","ean_status","tier","last_counted","last_sale","stratum_label","forced_zero_soh","story"];
+  download("forge_count_list.csv", toCSV(composeRows, cols), "text/csv");
+  provenance("forge_count_list.csv",{rows:composeRows.length});
+};
+$("dl-sheet").onclick = ()=> window.print();
+
+// ---------- 2 · FIXER ----------
+const SELECTORS=[
+  ["stockflow","StockFlow count list","Suspect lines that need a physical count. Upload into StockFlow as an ad-hoc stocktake."],
+  ["tlx","TLX auto-zero","Near-certain dead lines only. Load into Sigma's stocktake import to set them to zero."],
+  ["ambiguous","Ambiguous list","Lines the Engine cannot settle, each with its reason. This is a work queue, target 0."],
+  ["zero_manual","Manual zero list","No usable barcode, so no TLX. Zero these by hand on a stock sheet."],
+  ["source_fix","Source-fix list","Made-in-store lines. Fix the recipe or setup in Sigma. Never count or zero these."],
+  ["non_stock","Non-stock list","Accounting lines riding in the stock file. Not stock, no floor action."],
+  ["cost_error","Cost-error list","Broken costs. Fix the cost in Sigma first, then the line re-enters the normal flow."],
+  ["leave_counted","Removed-from-zero audit","Recently counted lines the Engine pulled OFF the zero list. Proof the guards work."],
+  ["deposit","Deposits / returnables","Crates, empties and returnable containers. Count these by hand. Never zero them and never put them on the routine count list."]
+];
+$("loadfixer").onclick = async ()=>{
+  clearBanner(); $("loadfixer").disabled=true;
+  try{
+    const data = await rpc("rpc_forge_summary",{p_stores:[...sel]});
+    const el=$("fixer-cards"); el.innerHTML="";
+    if(!data.length) banner("No engine state for the selection.","err");
+    data.forEach(s=>{
+      const b=s.buckets||{}, a=s.artifacts||{};
+      const card=document.createElement("div"); card.className="card";
+      card.innerHTML = `<h3>${STORES.find(x=>x[0]===s.store_code)?.[1]||""} (${s.store_code})</h3>
+        <div class="meta">engine snapshot ${s.snapshot_date} · ${s.pool_total.toLocaleString()} lines examined · <span title="lines with no proven barcode identity — these block TLX">unresolved identity <b style="color:${s.unresolved_ean? "var(--neg)":"var(--pos)"}">${s.unresolved_ean}</b></span></div>
+        <div style="font:11.5px var(--font-mono);color:var(--mist);margin-bottom:8px">${Object.entries(b).map(([k,v])=>`${k} <b style="color:var(--txt)">${v.rows}</b> (R${R(v.capital)})`).join(" · ")}</div>
+        ${SELECTORS.map(([selr,lbl,why])=>`<button class="filebtn" data-store="${s.store_code}" data-sel="${selr}"><span>${lbl}${a[selr]?` — ${a[selr].rows} lines`:""}</span><small>${why}</small></button>`).join("")}`;
+      el.appendChild(card);
+    });
+    el.querySelectorAll("button").forEach(btn=>{
+      btn.onclick=()=>fixerDownload(btn.dataset.store, btn.dataset.sel);
+    });
+  }catch(e){ banner(e.message,"err"); log("ERROR "+e.message); }
+  $("loadfixer").disabled=false;
+};
+async function fixerDownload(store, selector){
+  clearBanner();
+  try{
+    const rows = await rpc("rpc_forge_lines",{p_store:store,p_selector:selector});
+    if(!rows.length){ banner(`${store} ${selector}: checked and came back empty — nothing to do here.`, "ok"); return; }
+    if(selector==="tlx"){
+      const parts=rows.filter(r=>r.ean_key).map(r=>`${r.ean_key}+0`);
+      download(`${store}.tlx`, `${store}++${parts.join("+")}`, "text/plain");
+      provenance(`${store}.tlx`,{rows:parts.length, rule:"near-certain only (canon 8.12#3)"});
+    } else if(selector==="stockflow"){
+      download(`${store}_stockflow.csv`, "product_code\n"+rows.map(r=>r.product_code).join("\n")+"\n", "text/csv");
+      provenance(`${store}_stockflow.csv`,{rows:rows.length});
+    } else {
+      const cols=["product_code","description","dept_name","subdept_name","soh","capital_value","last_sale_date","last_receipt_date","bucket","bucket_reason","ean_key","ean_status"];
+      download(`${store}_${selector}.csv`, toCSV(rows, cols), "text/csv");
+      provenance(`${store}_${selector}.csv`,{rows:rows.length});
+    }
+  }catch(e){ banner(e.message,"err"); log("ERROR "+e.message); }
+}
+
+// ---------- 3 · COST ERRORS ----------
+let costRows=[];
+$("loadcost").onclick = async ()=>{
+  clearBanner(); $("loadcost").disabled=true;
+  try{
+    costRows = await rpc("rpc_cost_error_worklist",{
+      p_store_codes:[...sel], p_days:parseInt($("cost-days").value,10)||28, p_ratio:parseFloat($("cost-ratio").value)||1.5
+    });
+    if(!costRows.length) banner("Checked and came back empty — no broken costs above that level in the window.", "ok");
+    const overst = costRows.reduce((t,r)=>t+(+r.cogs_overstated||0),0);
+    $("cost-summary").innerHTML = costRows.length ? `<b>${costRows.length}</b> lines to fix · fixing them recovers <b>R${R(overst)}</b> of GP in the window` : "";
+    const tb=$("cost-table");
+    tb.innerHTML = costRows.length ? "<tr><th>store</th><th>code</th><th>description</th><th>dept</th><th class=num>units sold</th><th class=num>cost in Sigma</th><th class=num>sells for (ex VAT)</th><th class=num>how wrong</th><th class=num>sane cost</th><th class=num>GP recovered R</th></tr>" +
+      costRows.map(r=>`<tr><td>${r.store_code}</td><td>${r.product_code}</td><td>${csvEsc(r.description)}</td><td>${csvEsc(r.dept_name||"")}</td><td class=num>${r.units}</td><td class=num>${(+r.sigma_unit_cost).toFixed(2)}</td><td class=num>${(+r.ex_vat_sell_unit).toFixed(2)}</td><td class=num>${(+r.cost_to_sell_ratio).toFixed(1)}×</td><td class=num>${r.sane_unit_cost==null?"":(+r.sane_unit_cost).toFixed(2)}</td><td class=num>${R(r.cogs_overstated)}</td></tr>`).join("") : "";
+    $("dl-cost").disabled=!costRows.length;
+    provenance("cost worklist",{rows:costRows.length, days:$("cost-days").value, ratio:$("cost-ratio").value});
+  }catch(e){ banner(e.message,"err"); log("ERROR "+e.message); }
+  $("loadcost").disabled=false;
+};
+$("dl-cost").onclick=()=>{
+  const cols=["store_code","product_code","description","dept_name","units","sigma_unit_cost","ex_vat_sell_unit","cost_to_sell_ratio","sane_unit_cost","bad_cogs","sane_cogs","cogs_overstated"];
+  download("cost_error_worklist.csv", toCSV(costRows, cols), "text/csv");
+};
+
+// ---------- 4 · INTEGRITY ----------
+let instRows=[];
+const badness = r => r.ratio_pct==null ? -1 : (r.direction==="DOWN" ? +r.ratio_pct : 100 - r.ratio_pct);
+$("loadintegrity").onclick = async ()=>{
+  clearBanner(); $("loadintegrity").disabled=true;
+  try{
+    instRows = await rpc("rpc_forge_integrity",{p_stores:[...sel]});
+    const byStore={};
+    instRows.forEach(r=>{ (byStore[r.store_code]=byStore[r.store_code]||[]).push(r); });
+    const el=$("integrity-cards"); el.innerHTML="";
+    Object.entries(byStore).forEach(([s,rows])=>{
+      rows.sort((a,b)=>badness(b)-badness(a));
+      const card=document.createElement("div"); card.className="card";
+      card.innerHTML=`<h3>${STORES.find(x=>x[0]===s)?.[1]||""} (${s})</h3><div class="meta">worst first — work the top line down. Every number shows its full pool.</div>`+
+        rows.map((r,i)=>{
+          const m=INST_META[r.instrument]||[r.instrument,r.story,"DOWN",false];
+          const noData = r.pool_num==null;
+          return `<div class="inst ${r.direction==="UP"?"up":"down"}" title="${csvEsc(r.story)}">
+          <span>${i===0&&!noData?"● ":""}${m[0]} <span style="color:var(--mist)">${r.direction==="UP"?"▲":"▼"}</span><span class="instsub">${noData?"No data for this store yet — the Engine has not built this profile here. A named gap, not a zero.":m[1]}</span></span>
+          <span style="text-align:right;white-space:nowrap">${noData?`<span class="v" style="color:var(--mist)">no data yet</span>`:`<span class="v">${R(r.value_num)} / ${R(r.pool_num)}${r.ratio_pct!=null?` = ${r.ratio_pct}%`:""}</span><br>
+          <button data-store="${s}" data-inst="${r.instrument}" style="font-size:10.5px;padding:2px 8px;margin-top:3px" title="Download the exact lines behind this number, biggest capital first">⬇ the list</button>`}</span></div>`;
+        }).join("");
+      el.appendChild(card);
+    });
+    el.querySelectorAll("button").forEach(btn=>{ btn.onclick=()=>integrityLines(btn.dataset.store, btn.dataset.inst, btn); });
+    $("dl-integrity").disabled=!instRows.length;
+    provenance("integrity",{rows:instRows.length, stores:[...sel]});
+  }catch(e){ banner(e.message,"err"); log("ERROR "+e.message); }
+  $("loadintegrity").disabled=false;
+};
+async function integrityLines(store, instrument, btn){
+  clearBanner(); if(btn) btn.disabled=true;
+  try{
+    const rows = await rpc("rpc_forge_integrity_lines",{p_store:store, p_instrument:instrument});
+    if(!rows.length){ banner(`${store} ${instrument}: checked and came back empty — nothing behind this number right now.`, "ok"); }
+    else{
+      const cols=["product_code","description","dept_name","subdept_name","soh","capital_value","detail"];
+      const name=`${store}_${instrument}.csv`;
+      download(name, toCSV(rows, cols), "text/csv");
+      provenance(name,{rows:rows.length, note:instrument==="count_coverage_91d"?"list = the UNCOUNTED lines":instrument==="purified_capital_share"?"list = the lines excluded from trusted capital":"list rows = card number"});
+    }
+  }catch(e){ banner(e.message,"err"); log("ERROR "+e.message); }
+  if(btn) btn.disabled=false;
+}
+$("dl-integrity").onclick=()=>{
+  const cols=["store_code","instrument","value_num","pool_num","ratio_pct","direction","story"];
+  download("platform_integrity_"+new Date().toISOString().slice(0,10)+".csv", toCSV(instRows, cols), "text/csv");
+};
+// land on progress
+$("loadprogress").click();
+</script>
+</body>
+</html>

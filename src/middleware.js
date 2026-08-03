@@ -52,6 +52,14 @@ export async function middleware(request) {
     return NextResponse.rewrite(new URL('/bloom', request.url))
   }
 
+  // toolkit.socialbrand.africa hosts Forge, the operations toolkit (NORTH_STAR
+  // v1.4 app #7; SB-CC-TOOLKIT-001). Same deployment, host-based route.
+  // Placed AFTER the auth gate on purpose: Forge issues real floor work —
+  // count lists, TLX zero files — so it is authenticated, never public like /bt.
+  if (hostname.startsWith('toolkit.') && pathname === '/') {
+    return NextResponse.rewrite(new URL('/toolkit', request.url))
+  }
+
   return response
 }
 
