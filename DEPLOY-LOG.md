@@ -6,7 +6,9 @@ Reverse-chronological. Each entry = one production deploy.
 
 ## 2026-08-04 -- FORGE queue items 1-2: /toolkit folded into the repo, the compliance run-log built.
 
-**Four live database migrations. App code committed on `forge-toolkit-fold-001`, NOT merged and NOT deployed** -- the branch waits on the four account-level items below, because merging it would bind a host that does not resolve yet. Clock read fresh and cross-checked local / machine-UTC / DB `now()` at +2 with cron job 10 on its own slot as arbiter, because this session crossed midnight.
+**Four live database migrations. App code merged to `main` and pushed on Pieter's go** (`forge-toolkit-fold-001` -> `main`). Clock read fresh and cross-checked local / machine-UTC / DB `now()` at +2 with cron job 10 on its own slot as arbiter, because this session crossed midnight.
+
+**What merging does and does not do, stated plainly because an earlier draft of this entry said the branch was held.** It does NOT bind DNS or the Vercel domain -- those stay account-level actions and remain Pieter's. The `toolkit.<host>` rewrite is inert until `toolkit.socialbrand.africa` resolves. What it DOES do is make `/toolkit` reachable at the existing dashboard domain for a signed-in user, which is what lets the floor test happen before the domain lands (LANDING MODE: a tool nobody used is inventory, not product).
 
 **Item 1 -- the repo fold and the host bind (`302df68`).** `public/toolkit.html` is byte-identical to `Daisy/Forge/toolkit.html`, served by `src/app/toolkit/route.js`, the same thin GET handler `bt` and `pmini` already use -- deliberately not a port to React, so CD's design pass (CD-SPEC-FORGE-002) polishes a repo-served page rather than a stray file, and the standalone stays the same bytes. `toolkit.<host>` on `/` rewrites to `/toolkit` in `src/middleware.js`, placed **AFTER** the auth gate exactly like `orders.`/`/bloom` and never with `/bt`'s public exemption, because Forge issues real floor work -- count lists and TLX zero files.
 
