@@ -44,7 +44,18 @@ Reverse-chronological. Each entry = one production deploy.
 
 **TWO CORRECTIONS TO THE QUEUE ITSELF, both Rule 18 against the live database.** (a) **Queue item 3, the nightly `l2_last_counted` fact, was ALREADY BUILT** -- live since 2026-07-11, wired into `refresh_l2_pipeline` (`refreshed_at` 2026-08-03 20:15 UTC = the job-15 slot), 35,567 rows, read by `rpc_forge_count_list` and `rpc_forge_integrity`. It was never documented in DB-SCHEMA, which is exactly why the queue still carried it as unbuilt work three and a half weeks later (ENG-067b). (b) **Its attached perf claim is FALSE (ENG-067):** it closed ENG-006, but the 5-store `daily` list still runs **13.2s warm / 15.3s cold** against **7.3s** summed one store at a time. The cost scales with the store array, so it is not count-recency and never was. Left open and named; do not re-quote "~12s cleared".
 
-**🔴 STILL PIETER'S, and the branch is held on them (R30 §3):** the DNS CNAME for `toolkit.socialbrand.africa`, the Vercel domain binding, the Supabase auth-redirect allowlist entry, and the login allowlist. The fresh-user smoke test is the R31 DoD and cannot run until those four land.
+**✅ THE R30 §3 ONBOARDING CHECKLIST IS COMPLETE — `toolkit.socialbrand.africa` IS LIVE (2026-08-04 ~09:5x, CC on Pieter's mandate, in his own logged-in browser).** Checked at source rather than assumed, and two of the four were already done before this session touched them:
+
+| # | Item | State |
+|---|---|---|
+| 1 | DNS CNAME | **Already done.** The host resolved to Vercel (`64.29.17.65`) before any work here |
+| 2 | Vercel domain binding | **DONE THIS SESSION.** The sole blocker — the host resolved but returned `X-Vercel-Error: DEPLOYMENT_NOT_FOUND`, Vercel's signature for DNS-arrives-but-no-project. Added to `socialbrand-dashboard` → Production; verified instantly because DNS was already correct. Now **Valid Configuration** beside `orders.`, `dashboard.` and the `.vercel.app` |
+| 3 | Supabase auth-redirect allowlist | **Already done.** `https://toolkit.socialbrand.africa/auth/callback` was already the third entry — checked before adding, so no duplicate was created |
+| 4 | Login allowlist | Inherited. The login page states access is assigned by Pieter; no toolkit-specific gate exists or is needed |
+
+**Proven end to end:** the 404 is gone, `https://toolkit.socialbrand.africa/` returns 307 → `/login` and renders the Pulse sign-in. **The code half is confirmed by the Vercel production record itself — Status Ready, source `main`, commit `f6af604`** — which is the discriminator NOT available from outside, where `/toolkit` and `/zzz-nonexistent` 307 identically.
+
+**The one step CC does not take: signing in.** The R31 DoD is Pieter opening the URL, authenticating and completing a real action — a credential step, and his by definition.
 
 ---
 
