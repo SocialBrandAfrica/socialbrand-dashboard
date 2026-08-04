@@ -4,6 +4,26 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-04 07:58 SAST -- SB-CC-PMINI-WIRE-001 Gap B completed: the partner lockdown's PUBLIC-grant hole closed.
+
+**ONE live database migration** (`pmini_partner_lockdown_revoke_public_execute`, applied via MCP; clock read fresh at 07:58 SAST). Closes the last hole in the Pulse Mini partner read path.
+
+**The defect, stated plainly.** `pmini_partner_lockdown.sql` (the Route-3 partner role) revoked function EXECUTE **FROM the `pmini_partner` role** but never FROM **PUBLIC**. Postgres grants EXECUTE to PUBLIC on every function's creation and every role inherits PUBLIC, so `REVOKE ... FROM <role>` was a no-op: the partner key could still execute **167 of 229 public functions** -- including `rpc_dept_summary` / `rpc_top20` / `rpc_product_detail`, i.e. whole-store sales. The base-table lockdown was sound (no SELECT on any table); only the function surface leaked. This is the same PUBLIC-grant trap already recorded in memory and in BUG-LOG's SECURITY DEFINER firings -- the lockdown's OWN acceptance test ("no OTHER rpc callable") would have caught it, but was never run post-deploy.
+
+**Pre-flight, so the revoke could be proven non-breaking rather than hoped.** Read-only, at source: **0** functions are reachable by `anon` ONLY via PUBLIC, and **0** by `authenticated` ONLY via PUBLIC -- every RPC either role actually uses holds an explicit grant in the function's ACL. So revoking PUBLIC removes nothing anon/authenticated use; it strips only `pmini_partner`'s inherited surface.
+
+**Applied:** `REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC` + `ALTER DEFAULT PRIVILEGES ... REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`, then `GRANT EXECUTE ON rpc_feed_health_daily(text,text) TO pmini_partner` -- the partner's second RPC had been PUBLIC-inherited (the original lockdown never granted it explicitly), so the revoke removed it and it was restored explicitly.
+
+**Verified live, and the check was behavioural, not by reading the grant.** `pmini_partner`'s app-facing EXECUTE surface = **EXACTLY** `rpc_consignment_lines(text,text,integer,text,boolean)` + `rpc_feed_health_daily(text,text)` (`has_function_privilege` true), and **false** on `rpc_dept_summary`, `rpc_top20`, `rpc_product_detail`, `rpc_focus_chart` and every refresh_/classify_/kpi function. No base-table SELECT (`sigma_sales` / `daily_snapshots` / `sigma_articles` / `l2_consignment_daily` all false). `anon` + `authenticated` retain EXECUTE on every dashboard RPC. Gap B acceptance test now PASSES: with the partner key alone a browser reads the consignment lines + feed health and nothing else.
+
+**🟠 OWED to Pieter / supabase_admin, and named rather than hidden.** The MCP role could not revoke PUBLIC from ~113 functions it does not own -- these are SYSTEM / EXTENSION utilities (pg_cron, pgrst, supabase internals), NOT app data RPCs, confirmed by filtering the still-PUBLIC set to app prefixes (only the two intended consignment RPCs remain). Not a partner-data-exposure risk. For a spotless PUBLIC surface, re-run the REVOKE as `supabase_admin`.
+
+**SEPARATE, not bundled -- SEC-001 still open:** `anon`/`authenticated` still hold INSERT/UPDATE/DELETE on base tables (an outside key could delete the ledger). Broader than PMINI; tracked in `sql/pmini_partner_lockdown.sql` footer.
+
+**Committed** `0fb1882` on branch `pmini-partner-public-revoke` (`sql/pmini_partner_public_revoke.sql`) -- DB change already live; branch awaiting review/merge.
+
+---
+
 ## 2026-08-04 -- FORGE queue items 1-2: /toolkit folded into the repo, the compliance run-log built.
 
 **FIVE live database migrations** (`20260804050417` tables+RLS+grants · `…050433` the write function · `…050452` the per-line diff · `…050508` the summary · `…050638` the SECURITY DEFINER fix, which was its own migration because the defect was found after the first four landed — counted at source in `supabase_migrations.schema_migrations`, not from memory). **App code merged to `main` and pushed on Pieter's go** (`forge-toolkit-fold-001` -> `main`). Clock read fresh and cross-checked local / machine-UTC / DB `now()` at +2 with cron job 10 on its own slot as arbiter, because this session crossed midnight.
