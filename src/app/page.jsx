@@ -1117,6 +1117,33 @@ export default function Home() {
   const deptCache   = useRef(new Map())   // deptSummary + deptSohCounts
   const top20Cache  = useRef(new Map())   // top20Data
 
+  // ── ENG-069: the view caches were keyed on stores|dates ONLY — no freshness
+  // dimension, no TTL, and cleared only by the Reload button. A KPI fetch that ran
+  // BEFORE a nightly push landed cached an empty result for the current day and then
+  // served that zero for the life of the page, while sibling panels (departments,
+  // Top 20) fetched after the push and showed the real numbers. Two panels, one
+  // screen, two vintages, and nothing saying so. Caught live 2026-08-04 at SPAR
+  // Roosville: the card read R0 against a ledger holding R127,599.98.
+  //
+  // Two guards, because either alone leaves the hole open:
+  //   1. TTL — an entry cannot outlive a push by more than CACHE_TTL_MS.
+  //   2. NEVER CACHE AN EMPTY RESULT. Caching "no rows" is what made it permanent:
+  //      the day's data always starts empty and always fills, so an empty answer is
+  //      by definition the one answer that must not be remembered.
+  const CACHE_TTL_MS = 90_000
+
+  function cacheGet(ref, key) {
+    const e = ref.current.get(key)
+    if (!e) return null
+    if (Date.now() - e.at > CACHE_TTL_MS) { ref.current.delete(key); return null }
+    return e.val
+  }
+  // `nonEmpty` decides whether this payload is worth remembering at all.
+  function cacheSet(ref, key, val, nonEmpty = true) {
+    if (!nonEmpty) return
+    ref.current.set(key, { at: Date.now(), val })
+  }
+
   // ── dates & stores ──────────────────────────────────────────────────────────
   const [availableDates, setAvailableDates] = useState([])
   const [selectedDates,  setSelectedDates]  = useState([])
@@ -1435,7 +1462,7 @@ export default function Home() {
       setSelectedProduct(null)
 
       const vKey = [...storeCodes].sort().join(',') + '|' + [...selectedDates].sort().join(',')
-      const hit  = viewsCache.current.get(vKey)
+      const hit  = cacheGet(viewsCache, vKey)
       if (hit) {
         setKpiData(hit.kpiData)
         setAllSubDepts(hit.allSubDepts)
@@ -1495,7 +1522,9 @@ export default function Home() {
       if (kpiRes.error) console.error(`[${kpiTable}]`, kpiRes.error.message)
       const kpiData    = kpiRes.data ?? []
       const allSubDepts = [...new Set((subDeptRes.data ?? []).map(r => r.sub_dept_name))].filter(Boolean).sort()
-      viewsCache.current.set(vKey, { kpiData, allSubDepts })
+      // ENG-069: an empty KPI set for the selected date is never remembered — that is
+      // the exact state a pending push turns into real numbers minutes later.
+      cacheSet(viewsCache, vKey, { kpiData, allSubDepts }, kpiData.length > 0)
       setKpiData(kpiData)
       setAllSubDepts(allSubDepts)
       setViewsLoading(false)
@@ -1571,7 +1600,7 @@ export default function Home() {
 
     const subdeptParam = subDeptFilter !== 'all' ? subDeptFilter : null
     const dKey = [...storeCodes].sort().join(',') + '|' + [...selectedDates].sort().join(',') + '|' + (subdeptParam ?? '') + '|' + (focusEans ? focusEans.slice().sort().join(',') : '')
-    const dHit = deptCache.current.get(dKey)
+    const dHit = cacheGet(deptCache, dKey)
     if (dHit) {
       setDeptSummary(dHit.deptSummary)
       setDeptSohCounts(dHit.deptSohCounts)
@@ -1630,7 +1659,7 @@ export default function Home() {
       const lyds = lyDeptRes.data     ?? []
       const wds  = wowDeptRes.data    ?? []
       const lysc = lyDeptSohRes.data  ?? []
-      deptCache.current.set(dKey, { deptSummary: ds, deptSohCounts: dsc, lyKpiDeptSummary: lyds, wowKpiDeptSummary: wds, lyDeptSohCounts: lysc })
+      cacheSet(deptCache, dKey, { deptSummary: ds, deptSohCounts: dsc, lyKpiDeptSummary: lyds, wowKpiDeptSummary: wds, lyDeptSohCounts: lysc }, ds.length > 0)
       setDeptSummary(ds)
       setDeptSohCounts(dsc)
       setLyKpiDeptSummary(lyds)
@@ -1703,7 +1732,7 @@ export default function Home() {
                      (subDeptFilter !== 'all' ? subDeptFilter : '') + '|' +
                      top20Activity + '|' + String(includeParents) + '|' +
                      (focusEans ? focusEans.slice().sort().join(',') : '')
-      const t20Hit = top20Cache.current.get(t20Key)
+      const t20Hit = cacheGet(top20Cache, t20Key)
       if (t20Hit) {
         if (!cancelled) { setTop20Data(t20Hit); setTop20Loading(false) }
         return
@@ -1721,7 +1750,7 @@ export default function Home() {
       if (cancelled) return
       if (error) console.error('[rpc_top20]', error.message)
       const t20 = data ?? []
-      top20Cache.current.set(t20Key, t20)
+      cacheSet(top20Cache, t20Key, t20, t20.length > 0)
       setTop20Data(t20)
       setTop20Loading(false)
     }

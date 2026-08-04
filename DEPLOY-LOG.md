@@ -4,6 +4,33 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-04 ~20:0x SAST -- ENG-069: the KPI cards showed R0 for a day the ledger holds R127,599.98. A client-side cache, not a data gap.
+
+**Found by Pieter on the live dashboard**, SPAR Roosville, 2026-08-04: Sales R0, GP 0.0%, -100.0% and WoW -100.0% -- while the Departments and Top 20 panels on the SAME screen showed real numbers for the SAME date.
+
+**The data was never wrong.** `sigma_sales` holds **R127,599.98 incl-VAT / R114,166.24 ex-VAT across 2,137 lines** for 80175 on 2026-08-04, and all five stores have the day (10116 R258,963.47 · 21355 R21,539.06 · 80175 R127,599.98 · 80176 R15,789.83 · 80579 R18,894.67).
+
+**Ruled out at source before touching anything.** Not permissions: `v_kpi_by_date` queried **as `anon`** -- the role the browser actually uses -- returns R127,599.98 for 08-04 (checked behaviourally with `SET LOCAL ROLE`, the ENG-068 lesson, never by reading a grant). Not source selection: `page.jsx` correctly picks `v_kpi_by_date` for a single date and `mv_kpi_by_date` only for multi-date.
+
+**ROOT CAUSE.** `viewsCache` / `deptCache` / `top20Cache` were keyed on **stores|dates ONLY** -- no freshness dimension, no TTL, cleared only by the Reload button. A KPI fetch that ran BEFORE the day's push landed cached an **empty** result for the current date and served that zero for the life of the page. Departments and Top 20 happened to be fetched after the push, so they were current. **Two panels, one screen, two vintages, and nothing on screen saying so.**
+
+**The decisive evidence it was a cached empty and not a stale source: R0 matches NO date in the ledger.** 08-03 is R90,058.49 and 08-04 is R127,599.98. It was not "showing yesterday" -- it was showing a pre-push empty fetch, preserved.
+
+**THE FIX, two guards, because either alone leaves the hole open.** (1) **TTL** -- `CACHE_TTL_MS = 90_000`, so no entry can outlive a push by more than 90 seconds. (2) **NEVER CACHE AN EMPTY RESULT** -- caching "no rows" is what made this permanent: the current day always starts empty and always fills, so an empty answer is by definition the one answer that must not be remembered. All nine cache call sites now route through `cacheGet`/`cacheSet`; the Reload button's `clear()` is unchanged.
+
+**WHY THE COMPARISONS MADE IT WORSE, and it is the reason this ranks above a cosmetic bug:** `-100.0%`, `WoW -100.0%` and `GP 0.0%` are all computed off the false zero. A blank would have read as "no data". A confident **-100%** reads as "the store sold nothing today" -- **a wrong number is worse than no number** (R22).
+
+**AUDIT RUN ALONGSIDE, all reconciled to source:**
+- **Departments: 10 of 10 exact, delta R0.00** against raw `sigma_sales`, and the panel is genuinely on 2026-08-04 (08-03 figures are entirely different).
+- **Top 20: 10 of 10 exact, delta R0.00** against native per-item ex-VAT (`sales_incl_vat - vat_value`). Milk and vouchers reconcile identically incl and ex, which proves it is **not** using a flat 1.15 divisor.
+- **Negative SOH (195 vs live 211) and Capital Tied raw (R6.48M vs R6.42M) are a day behind BY DESIGN** -- point-in-time metrics read the latest L2 snapshot and the L2 pipeline runs 22:15 SAST. Not a defect; worth a freshness label on the card, which is not built here.
+
+**Verified:** `next build` clean, Middleware present at 81.7 kB; all cache access routed through the helpers (grepped); no console errors on load. **NOT verified by CC and stated rather than glossed: the logged-in KPI card itself.** The dashboard is behind a Google sign-in CC cannot pass, so **the end-to-end proof is Pieter's R31 walk** -- open SPAR Roosville on 2026-08-04 and see R127.6k where R0 was.
+
+**⚠️ CLOCK, and it is CC's own error.** CC's machine clock ran ~5 hours slow today. Cross-checked three ways at 13:31 SAST and all agreed; by the time of this audit the machine read 14:52 while DB `now()` read 19:48. **The arbiter settles it against CC** (standing constraint 3): a COMPLETED push sits in `push_log` at 17:43:49 UTC, `cron.job_run_details` is consistent with the DB, and the dashboard's own strip read "10m ago" -- a push that has run cannot be in the future. **DB time is right; the machine is wrong.** Consequence: SAST times stamped by CC in today's earlier DEPLOY-LOG, HANDOVER and canonical-SQL entries are ~5h early. **The DATES are correct and nothing crossed midnight**, so no dated fact moves. Fifth firing of the clock rule.
+
+---
+
 ## 2026-08-04 15:0x SAST -- SB-CC-FORGE-MAP-001: the WHOLE link-codes queue is resolved to a band. `l2_product_resolution` 0 -> 9,812 rows.
 
 **Supersedes this morning's bucket-B-only entry.** Buckets C, D and E built on top of B, per Pieter's "go ahead on that plan". Engine version `FORGE-MAP-001 all-buckets v3.0`.
