@@ -412,13 +412,52 @@ $("compose").onclick = async ()=>{
   }catch(e){ banner(e.message,"err"); log("ERROR "+e.message); }
   $("compose").disabled=false;
 };
-$("dl-stockflow").onclick = ()=>{
-  [...sel].forEach(s=>{
+// THE COMPLIANCE LOOP OPENS HERE (canon 15). Downloading the StockFlow count
+// request is the moment a list is ISSUED -- composing one on screen is not.
+// Every issued list becomes a run (who, when, selection, seed) so the engine
+// can diff it against booked I-movements tomorrow and a list nobody executed
+// stays loud (R22).
+//
+// Posted to /api/forge/run, NOT straight to PostgREST: this page talks to the
+// API with the publishable key and so runs as `anon`, while the write function
+// is granted to `authenticated` only and explicitly revoked from `anon`
+// (R30 addendum 2 + the addendum extension). The route carries the signed-in
+// user's session, so the grant stays correct instead of being widened to reach.
+async function logRun(store, rows){
+  const r = await fetch("/api/forge/run", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      store_code: store,
+      mode: $("mode").value,
+      source: "forge",
+      seed: String(parseFloat($("seed").value)||0.42),
+      params: { depts: deptSel.size ? [...deptSel] : null,
+                n_per_dept: $("mode").value==="random" ? (parseInt($("nper").value,10)||50) : null },
+      lines: rows.map(r=>({ product_code:r.product_code, stratum:r.stratum_label,
+                            description:r.description, soh:r.soh, capital_value:r.capital_value }))
+    })
+  });
+  if(!r.ok){ throw new Error(`run-log ${r.status}: ${(await r.text()).slice(0,200)}`); }
+  return r.json();
+}
+
+$("dl-stockflow").onclick = async ()=>{
+  for(const s of [...sel]){
     const rows=composeRows.filter(r=>r.store_code===s && r.ean_status==="REAL");
-    if(!rows.length){ log(`${s}: no StockFlow-countable lines (StockFlow needs a real barcode).`); return; }
+    if(!rows.length){ log(`${s}: no StockFlow-countable lines (StockFlow needs a real barcode).`); continue; }
     download(`${s}_stockflow.csv`, "product_code\n"+rows.map(r=>r.product_code).join("\n")+"\n","text/csv");
     provenance(`${s}_stockflow.csv`,{rows:rows.length, seed:parseFloat($("seed").value)||0.42});
-  });
+    // The file is already on the buyer's machine, so a failed log is reported
+    // LOUDLY and never swallowed -- but it does not pretend the download failed.
+    try{
+      const res = await logRun(s, rows);
+      log(`${s}: run logged ${res.run_id} (${res.lines_logged} lines) -- compliance is now tracked for this list.`);
+    }catch(e){
+      banner(`${s}: the count file downloaded but the run did NOT log -- ${e.message}. This list is untracked; re-issue it once the log is back.`, "err");
+      log(`ERROR run-log ${s}: ${e.message}`);
+    }
+  }
 };
 $("dl-full").onclick = ()=>{
   const cols=["store_code","product_code","description","dept_name","subdept_name","soh","capital_value","ean_key","ean_status","tier","last_counted","last_sale","stratum_label","forced_zero_soh","story"];
