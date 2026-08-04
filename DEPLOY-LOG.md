@@ -4,6 +4,20 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-04 13:51 SAST -- NO PRODUCTION CHANGE. Two live migrations applied and reversed, net zero residue (DB-SCHEMA de-derivation, CC-BRIEF-DBSCHEMA-DEDERIVE-001).
+
+**Logged because `list_migrations` keeps them forever and unexplained residue is the thing this project refuses.** No app code, no schema, no engine object, no grant on any existing object changed. Nothing shipped to prod.
+
+**What ran.** `tmp_column_inventory_csv_scaffold` and `tmp_column_inventory_csv_scaffold_v2` created one SECURITY DEFINER function, `public.tmp_column_inventory_csv()`, granted EXECUTE to `anon`; `..._drop` and `..._v2_drop` removed it. **Proven gone behaviourally, not asserted: `count(*)` on `pg_proc` for that name = 0.** The grant died with the function.
+
+**Why a scaffold at all, and why it was not a shortcut.** The brief's §6 asks for a column-level inventory CSV on disk. There is no psql, no `DATABASE_URL`, no `pg` driver and no service-role key on this machine, so the only alternative was to retype 1,684 rows of a query result by hand into a file. **That is precisely the hand-transcription defect recorded on 2026-07-30** (a working file hand-keyed from a result set silently dropped 8 of 63 rows), and the standing rule from it is "generate it, and assert the row count before saving". So the file was generated: fetched to disk over PostgREST and **asserted equal to the catalog's own `count(*)` — 1,865 rows across 143 objects.**
+
+**Exposure, stated rather than glossed.** The function was anon-executable for the minutes between create and drop. It returned schema STRUCTURE only -- object names, column names, types, nullability -- and no row of business data. `anon` can already enumerate exposed objects through PostgREST's own OpenAPI document, so the marginal exposure was small, and it is zero now. **v1 was replaced by v2 for a real reason: v1 read `information_schema.columns`, which returns ZERO rows for a materialized view, so it silently omitted 181 matview columns across 9 objects. v2 reads `pg_attribute` and covers tables, views and matviews alike.**
+
+**The same defect would have shipped into the documentation.** `DB-SCHEMA.md` is now **v2.0, de-derived** under FILE-GOVERNANCE §0g obligation 3: column transcriptions replaced by live catalog pointers, every business meaning, Sigma source mapping, formula, index trap, sentinel, retirement note and named debt attached to them promoted to prose. **The pointer it publishes is `pg_attribute`, not `information_schema`, and the file says why with the proof.** R22 no-loss gate over the pre-pass snapshot: **634 distinct tokens across 11 classes, 0 missing.** Full detail and the four ways reality differed from the brief: `Daisy/archive/briefs/CC-BRIEF-DBSCHEMA-DEDERIVE-001-de-derivation.md`.
+
+---
+
 ## 2026-08-04 07:58 SAST -- SB-CC-PMINI-WIRE-001 Gap B completed: the partner lockdown's PUBLIC-grant hole closed.
 
 **ONE live database migration** (`pmini_partner_lockdown_revoke_public_execute`, applied via MCP; clock read fresh at 07:58 SAST). Closes the last hole in the Pulse Mini partner read path.
