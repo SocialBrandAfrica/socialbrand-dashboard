@@ -4,6 +4,28 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-04 14:52 SAST -- SB-CC-FORGE-MAP-001 bucket B: `l2_product_resolution` goes from 0 rows to 6,772, and the nightly chain calls it.
+
+**FOUR live migrations.** Three schema/DDL on a zero-row zero-consumer scaffold, one asserted rewire of `refresh_l2_pipeline`. Two temporary scaffolds created and dropped, **both proven gone (0 `tmp_%` functions remain)**.
+
+**What shipped.** `refresh_l2_product_resolution(p_store)` -- SECURITY DEFINER, idempotent per store -- and its output, **6,772 rows across five stores**: `KEEP` 6,713, `CONVERT_TO_NON_DEPLETE` 24, `RESIDUE_HUMAN` 35. Wired into `refresh_l2_pipeline` immediately after that store's `refresh_l2_link_codes_queue`, because it reads that queue.
+
+**The gate this had to clear first, and it is the whole point.** Canon §17's item-12 ruling ends: *"if that residue is not published as a number before the build starts, this ruling has not been applied."* CC published it -- the queue decomposed into disjoint buckets summing to **6,712 exactly**: 847 out of scope, **3,953 the database decides**, 721 rank last, 37 blocked on a `product_catalog` derivative, and **1,154 the floor's question**. The build was then scoped to bucket B alone. **The floor is asked 1,154 questions instead of 6,712 -- an 83% cut in what a human ever sees.**
+
+**The zero-rows gate on this table was SUPERSEDED, not ignored (R28).** Its own condition (b) was "PM/Pieter explicitly rules the algorithm may propose verdicts engine-only". Canon's 2026-07-26 item-12 churn inverted it -- *the database decides first, the floor gets only the residue* -- so withholding a deterministic resolution became the defect. The original gate is kept verbatim in the canonical SQL file.
+
+**What the build refuses to assert, which matters more than what it writes.** `is_keeper` NULL on every row (the keeper-by-movement contest is a different question). `cost_error` **NULL, not false** -- this pass runs no cost test, and `false` would claim "tested and clean" on 6,772 untested rows. Its `NOT NULL DEFAULT false` was dropped precisely so NULL could mean UNTESTED. `confidence` **discriminates across 3 values** graded on price-vs-suffix agreement -- the direct answer to the flat 0.600 canon called *a constant wearing a confidence's clothes*. Every verdict is a RECOMMENDATION; nothing acts on one (canon §14 v5: a deviation is "a later floor recommendation with a report, not an engine assumption").
+
+**Two schema changes made rather than write a falsehood**, named because canon said Phase 3 would need none (true of TABLES): `pack_multiple` added, because the multiplier the rule is partly made of had nowhere to live; and `level` gained `'pack'`, because the original `single/six/twelve_rb/twentyfour` vocabulary was written for the SAB beer anchor while the live population carries price-confirmed multiples of 3,4,5,8,10,15,16,20 -- stamping those `'unknown'` would be a lie in a column the engine reads. `'twelve_rb'` is deliberately never assigned: it asserts a returnable container this pass cannot evidence.
+
+**R22, every gate green.** 6,772 written = 6,772 distinct bucket-B codes (measured before the build) · **determinism 6,772 rows, 0 differing on re-run** · 0 rows outside bucket B by code or by `queue_candidate_id` · `l2_link_codes_queue` unchanged at 6,712 with **0 statuses moved** (CHECK-lock intact) · `l2_product_map` still 0 · grants proven on BOTH legs of the five-times-fired trap (acl carries **no PUBLIC entry**, `anon` EXECUTE false, `authenticated` true).
+
+**Named honestly, not claimed.** The pipeline wiring is proven **structurally** -- one call, correct position, after its dependency. **Its first end-to-end run is job 15 tonight, and the falsifier is `computed_at` moving to the ~20:15 UTC slot.** Do not quote this object as nightly-fresh until that is checked. `sql/create_refresh_l2_pipeline.sql` owes a reconcile to the rewired body; `sql/create_l2_product_resolution.sql` is hash-proven identical to live (md5 `a4a63dff…`) and was **generated from `pg_get_functiondef`, never hand-transcribed**.
+
+**Out of scope and named so nothing is assumed done:** the 4 SHARED_EAN successor rows in bucket B are NOT written here -- a successor binding has no pack level, and forcing it into a family-shaped fact would be the wrong shape. They belong to the `identity` map_type on `l2_product_map`. So this pass delivers 3,949 of bucket B's 3,953 queue rows, and the 4 are still owed.
+
+---
+
 ## 2026-08-04 13:51 SAST -- NO PRODUCTION CHANGE. Two live migrations applied and reversed, net zero residue (DB-SCHEMA de-derivation, CC-BRIEF-DBSCHEMA-DEDERIVE-001).
 
 **Logged because `list_migrations` keeps them forever and unexplained residue is the thing this project refuses.** No app code, no schema, no engine object, no grant on any existing object changed. Nothing shipped to prod.
