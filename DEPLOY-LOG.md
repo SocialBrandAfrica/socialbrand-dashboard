@@ -4,6 +4,30 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-04 15:0x SAST -- SB-CC-FORGE-MAP-001: the WHOLE link-codes queue is resolved to a band. `l2_product_resolution` 0 -> 9,812 rows.
+
+**Supersedes this morning's bucket-B-only entry.** Buckets C, D and E built on top of B, per Pieter's "go ahead on that plan". Engine version `FORGE-MAP-001 all-buckets v3.0`.
+
+**Final state, 9,812 rows = every distinct code in the queue, nothing dropped:** `KEEP` 6,935 · `RESIDUE_HUMAN` 2,849 · `CONVERT_TO_NON_DEPLETE` 24 · `ZERO_AND_KILL` 4. **Askable 2,354**, each carrying its exact question.
+
+**Bucket E dissolved, and that is a correction to the published figures.** The 37 "blocked" rows were never a distinct population: **SHARED_EAN is 37 PAIRS queued TWICE, once per direction, every pair holding exactly one `product_catalog`-sourced row and one native row (37 of 37, zero exceptions).** Re-derived on native `sigma_scan_refs` as canon requires before anyone is asked: **native holds the shared barcode on BOTH codes in all 37 pairs**, so the derivative was not inventing the collision and the R25 §2 block is discharged. Pair-level split 24 C / 4 B / 9 D. **Canon §17's own SHARED_EAN counts (66 rows -> 40/8/18) are direction-doubled and really describe 33 pairs -> 20/4/9 -- a measurement correction for PM, not a rule change.**
+
+**THE REGRESSION THAT MATTERED, found by gating rather than assuming.** Rebuilding with the whole queue in view moved **332 of the previously-proven bucket-B rows**, every one of them `KEEP` -> `RESIDUE_HUMAN`, **none the other way**. Cause: v1.0 loaded only bucket-B slots, so it could not see that **329 of those codes are contested in another family or another candidate type** and resolved them confidently anyway. v3.0 sees the whole queue and declines. This is [[feedback_instrument_validated_only_for_what_it_tested]] firing on CC's own work -- the earlier "6,772 codes, 0 ambiguous" was true only within the slice it was measured on.
+
+**THREE DEFECTS CC FOUND IN ITS OWN OUTPUT BEFORE SHIP.** (1) **40 codes were unresolved AND unaskable** -- the engine could not resolve them and nobody would ever be asked: a silent drop, which canon forbids. (2) **25 singles carry `record_stock_qty=0`**, meaning neither side of the family tracks stock and canon §14 v5's milk template is broken at both ends -- they had fallen to a generic "left for a person" with no question. (3) The **8 SHARED_EAN successor codes** had no verdict branch at all, despite canon calling them "the clean successor signature the database can rule alone"; they now resolve to `KEEP` on the surviving code and `ZERO_AND_KILL` on the superseded one, **the only place `is_keeper` is asserted in the whole table**.
+
+**THE QUESTION IS NOW A STORED FIELD, NOT PROSE.** `evidence->>'question'` carries the exact words; `evidence->>'askable'` is the contract that says whether canon permits asking at all. **Three question forms, all physically observable and falsifiable:** *"Scan the pack on the shelf and tell me what code comes up."* · *"Count the singles inside the pack you are holding and tell me the number."* · *"Scan each of these two products in turn and tell me the code that comes up on each."* Canon §17 constraint 1 bans a question whose answer IS the resolution ("are these the same product"); storing the text instead of letting a UI compose it is what keeps that out. **Gate: 0 askable rows without a question, 0 unaskable rows carrying one, 0 banned judgement forms.**
+
+**Bands.** `B_DB_DECIDES` nobody is asked · `C_RANK_LAST` real question, nothing live moves · `D_ASK_FIRST` the floor's question, worst-first by capital · `A_OUT_OF_SCOPE_correct_by_s11` 547 weighed lines, correct by canon §11, never a question · `A_HELD_not_askable` 495 with no numeric suffix, which canon says need the mid-string matcher **before** they are queued at all.
+
+**R22, every gate green:** 9,812 written = 9,812 distinct queue codes · **determinism 0 differing** · 0 rows outside the queue · **0 unresolved-and-unaskable** · `is_keeper` asserted on exactly 8 rows · `cost_error` NULL on all 9,812 (NOT TESTED, never false) · queue unchanged at 6,712 with 0 statuses moved · `l2_product_map` still 0 · grants proven both legs.
+
+**Scaffolds: 0 left** (`tmp_%` functions and `_w2%` scratch tables both zero). Canonical `sql/create_l2_product_resolution.sql` **hash-proven identical to live** (md5 `de81b5cf…`), generated from `pg_get_functiondef`.
+
+**🔴 STILL OWED, AND THIS IS THE IMPORTANT ONE: NOTHING CONSUMES ANY OF IT.** 9,812 rows and 2,354 stored questions with **no reader** -- no Product-Mapper tab, no read RPC, no write path for the answers. That is the §0i PROSE state and the ENG-002/ENG-046 defect class exactly. The toolkit work and the direction it needs from PM are named in HANDOVER-CURRENT. **Nothing downstream reads this table, so no live number moved today.**
+
+---
+
 ## 2026-08-04 14:52 SAST -- SB-CC-FORGE-MAP-001 bucket B: `l2_product_resolution` goes from 0 rows to 6,772, and the nightly chain calls it.
 
 **FOUR live migrations.** Three schema/DDL on a zero-row zero-consumer scaffold, one asserted rewire of `refresh_l2_pipeline`. Two temporary scaffolds created and dropped, **both proven gone (0 `tmp_%` functions remain)**.
