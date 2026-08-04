@@ -6,7 +6,7 @@ Reverse-chronological. Each entry = one production deploy.
 
 ## 2026-08-04 -- FORGE queue items 1-2: /toolkit folded into the repo, the compliance run-log built.
 
-**Four live database migrations. App code merged to `main` and pushed on Pieter's go** (`forge-toolkit-fold-001` -> `main`). Clock read fresh and cross-checked local / machine-UTC / DB `now()` at +2 with cron job 10 on its own slot as arbiter, because this session crossed midnight.
+**FIVE live database migrations** (`20260804050417` tables+RLS+grants · `…050433` the write function · `…050452` the per-line diff · `…050508` the summary · `…050638` the SECURITY DEFINER fix, which was its own migration because the defect was found after the first four landed — counted at source in `supabase_migrations.schema_migrations`, not from memory). **App code merged to `main` and pushed on Pieter's go** (`forge-toolkit-fold-001` -> `main`). Clock read fresh and cross-checked local / machine-UTC / DB `now()` at +2 with cron job 10 on its own slot as arbiter, because this session crossed midnight.
 
 **What merging does and does not do, stated plainly because an earlier draft of this entry said the branch was held.** It does NOT bind DNS or the Vercel domain -- those stay account-level actions and remain Pieter's. The `toolkit.<host>` rewrite is inert until `toolkit.socialbrand.africa` resolves. What it DOES do is make `/toolkit` reachable at the existing dashboard domain for a signed-in user, which is what lets the floor test happen before the domain lands (LANDING MODE: a tool nobody used is inventory, not product).
 
