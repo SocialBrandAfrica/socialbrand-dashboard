@@ -1117,33 +1117,6 @@ export default function Home() {
   const deptCache   = useRef(new Map())   // deptSummary + deptSohCounts
   const top20Cache  = useRef(new Map())   // top20Data
 
-  // ── ENG-069: the view caches were keyed on stores|dates ONLY — no freshness
-  // dimension, no TTL, and cleared only by the Reload button. A KPI fetch that ran
-  // BEFORE a nightly push landed cached an empty result for the current day and then
-  // served that zero for the life of the page, while sibling panels (departments,
-  // Top 20) fetched after the push and showed the real numbers. Two panels, one
-  // screen, two vintages, and nothing saying so. Caught live 2026-08-04 at SPAR
-  // Roosville: the card read R0 against a ledger holding R127,599.98.
-  //
-  // Two guards, because either alone leaves the hole open:
-  //   1. TTL — an entry cannot outlive a push by more than CACHE_TTL_MS.
-  //   2. NEVER CACHE AN EMPTY RESULT. Caching "no rows" is what made it permanent:
-  //      the day's data always starts empty and always fills, so an empty answer is
-  //      by definition the one answer that must not be remembered.
-  const CACHE_TTL_MS = 90_000
-
-  function cacheGet(ref, key) {
-    const e = ref.current.get(key)
-    if (!e) return null
-    if (Date.now() - e.at > CACHE_TTL_MS) { ref.current.delete(key); return null }
-    return e.val
-  }
-  // `nonEmpty` decides whether this payload is worth remembering at all.
-  function cacheSet(ref, key, val, nonEmpty = true) {
-    if (!nonEmpty) return
-    ref.current.set(key, { at: Date.now(), val })
-  }
-
   // ── dates & stores ──────────────────────────────────────────────────────────
   const [availableDates, setAvailableDates] = useState([])
   const [selectedDates,  setSelectedDates]  = useState([])
@@ -1170,6 +1143,12 @@ export default function Home() {
 
   // ── aggregation view data ────────────────────────────────────────────────────
   const [kpiData,        setKpiData]        = useState([])
+  // ENG-069 — R22 §3: a failed KPI request must SURFACE, never render as R0.
+  // Holds the reason the sales figure could not be established, or null.
+  const [kpiError,       setKpiError]       = useState(null)
+  // Set when the sales figure resolved but the stock facts (neg SOH, slow movers,
+  // capital tied) did not — the cards stay truthful about which half is missing.
+  const [kpiStockError,  setKpiStockError]  = useState(null)
   const [deptSummary,    setDeptSummary]    = useState([])   // rpc_dept_summary — one aggregated row per dept
   const [deptSohCounts,  setDeptSohCounts]  = useState([])   // rpc_kpi_dept_counts — neg/slow per dept (Bug 3)
   const [top20Data,      setTop20Data]      = useState([])   // rpc_top20 — up to 40 pre-aggregated rows
@@ -1462,8 +1441,12 @@ export default function Home() {
       setSelectedProduct(null)
 
       const vKey = [...storeCodes].sort().join(',') + '|' + [...selectedDates].sort().join(',')
-      const hit  = cacheGet(viewsCache, vKey)
+      const hit  = viewsCache.current.get(vKey)
       if (hit) {
+        // ENG-069: only clean reads are cached (see below), so a cache hit clears
+        // any error left on screen from a previous selection.
+        setKpiError(null)
+        setKpiStockError(null)
         setKpiData(hit.kpiData)
         setAllSubDepts(hit.allSubDepts)
         setViewsLoading(false)
@@ -1488,7 +1471,24 @@ export default function Home() {
       //   single date  → v_kpi_by_date  (live view — catches today's push immediately)
       //   multi date   → mv_kpi_by_date (pre-aggregated MV — no timeout risk on MTD/25+ dates)
       // LY / WoW / trend are always historical so always use the MV.
-      const kpiTable = selectedDates.length === 1 ? 'v_kpi_by_date' : 'mv_kpi_by_date'
+      const isSingleDate = selectedDates.length === 1
+      const kpiTable = isSingleDate ? 'v_kpi_by_date' : 'mv_kpi_by_date'
+
+      // ENG-069 (2026-08-05) — THE SAME-DAY SALES FIGURE NO LONGER DEPENDS ON
+      // `v_kpi_by_date`. Measured at source: the single-date live view CANCELS on a
+      // statement timeout for a recent date (80175 / 2026-08-04 reproduced), while
+      // `rpc_dept_summary` returns the identical figure in about a second
+      // (R127,599.98 incl / R114,166.24 ex-VAT, verified against the ledger ×5 stores).
+      //
+      // Why the view times out and the RPC does not: PostgREST connects as
+      // `authenticator`, which carries statement_timeout=8s, and its mid-session
+      // `SET ROLE` does NOT re-apply the target role's rolconfig — so a plain VIEW is
+      // governed by 8s no matter what anon/authenticated are set to. A SECURITY
+      // DEFINER function can hold its own `SET LOCAL`; a view cannot.
+      //
+      // The stock facts (neg SOH, slow movers, capital tied, ghost value) still come
+      // from the view. If it fails, those chips report the failure — they never
+      // render as zero (R22 §3).
 
       // TWO-WAVE FETCH (dash-timeout-001, applied to main 2026-07-05 — item 3):
       // the authenticator role connects PostgREST to Postgres and carries
@@ -1503,28 +1503,114 @@ export default function Home() {
       // render immediately, then the comparison/trend data as a second wave, so
       // peak concurrency drops and the cards stop being held hostage by the
       // heaviest, least time-critical query.
-      const [kpiRes, subDeptRes] = await Promise.all([
+      // ENG-069 — THE HANG GUARD, and it is not defensive padding.
+      // Observed live on 2026-08-05 in a signed-in session, SPAR Roosville /
+      // 2026-08-04: the cards never rendered at all. They sat as empty skeletons
+      // through a full reload and 15+ seconds. That is NOT the error path — an
+      // errored supabase-js call still RESOLVES (it never rejects), which would have
+      // set viewsLoading(false) and drawn the cards. A promise that never settles
+      // means `await Promise.all` never returns, so the loading state is permanent.
+      //
+      // This matters for the repoint below: Promise.all waits for EVERY entry, so a
+      // hanging v_kpi_by_date would hold the rendered sales figure hostage even
+      // though rpc_dept_summary answered in about a second. Sourcing the number
+      // correctly is not enough if one dead request can stop it reaching the screen.
+      //
+      // So every entry is bounded. A request that outlives the budget resolves as a
+      // named error and the cards draw with whatever DID answer (R22 §3 — surface it,
+      // never hide it, and never let it block the figures that are healthy).
+      const withDeadline = (p, label, ms = 12000) => Promise.race([
+        Promise.resolve(p),
+        new Promise(resolve => setTimeout(
+          () => resolve({ data: null, error: { message: `${label} did not respond within ${ms / 1000}s (client deadline)` } }),
+          ms)),
+      ])
+
+      const [kpiRes, subDeptRes, sameDayRes] = await Promise.all([
         // Current KPI — includes total_sales_ex_vat (per-item vat_pct, no flat assumption)
-        supabase.from(kpiTable)
-          .select('store_code,store_name,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied,ghost_stock_value')
-          .in('store_code', storeCodes)
-          .in('snapshot_date', selectedDates),
+        withDeadline(
+          supabase.from(kpiTable)
+            .select('store_code,store_name,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied,ghost_stock_value')
+            .in('store_code', storeCodes)
+            .in('snapshot_date', selectedDates),
+          kpiTable),
 
         // Sub-dept names for the current store+date
-        supabase.rpc('rpc_subdepts', {
-          p_store_codes: storeCodes,
-          p_dates:       selectedDates,
-          p_dept_names:  null,
-        }),
+        withDeadline(
+          supabase.rpc('rpc_subdepts', {
+            p_store_codes: storeCodes,
+            p_dates:       selectedDates,
+            p_dept_names:  null,
+          }),
+          'rpc_subdepts'),
+
+        // ENG-069: the authoritative same-day sales source. Called per store because
+        // rpc_dept_summary returns no store_code — a multi-store call would collapse
+        // the stores into one total and silently mis-attribute every figure.
+        // Measured 2026-08-05: about a second per store, all five verified against
+        // the ledger. Bounded anyway — one slow store must not stop the other four.
+        isSingleDate
+          ? Promise.all(storeCodes.map(sc =>
+              withDeadline(
+                supabase.rpc('rpc_dept_summary', { p_store_codes: [sc], p_dates: selectedDates }),
+                `rpc_dept_summary(${sc})`)
+                .then(r => ({ storeCode: sc, data: r.data, error: r.error }))))
+          : Promise.resolve([]),
       ])
 
       if (cancelled) return
       if (kpiRes.error) console.error(`[${kpiTable}]`, kpiRes.error.message)
-      const kpiData    = kpiRes.data ?? []
+
+      const viewRows = kpiRes.data ?? []
+      let kpiData    = viewRows
+      let salesFail  = null
+      let stockFail  = kpiRes.error ? `${kpiTable}: ${kpiRes.error.message}` : null
+
+      if (isSingleDate) {
+        const day     = selectedDates[0]
+        const byStore = new Map(viewRows.map(r => [r.store_code, r]))
+        const merged  = []
+        const failed  = []
+
+        for (const r of sameDayRes) {
+          if (r.error) {
+            console.error('[rpc_dept_summary]', r.storeCode, r.error.message)
+            failed.push(r.storeCode)
+            // Keep the view's row if it has one, so a per-store RPC failure does not
+            // delete a figure we already hold. Never substitute a zero.
+            const held = byStore.get(r.storeCode)
+            if (held) merged.push(held)
+            continue
+          }
+          const rows = r.data ?? []
+          const base = byStore.get(r.storeCode) ?? { store_code: r.storeCode, snapshot_date: day }
+          merged.push({
+            ...base,
+            total_sales:        rows.reduce((s, x) => s + Number(x.total_sales ?? 0), 0),
+            total_sales_ex_vat: rows.reduce((s, x) => s + Number(x.total_sales_ex_vat ?? 0), 0),
+            total_cost:         rows.reduce((s, x) => s + Number(x.total_cost ?? 0), 0),
+            total_qty:          rows.reduce((s, x) => s + Number(x.total_qty ?? 0), 0),
+          })
+        }
+
+        kpiData = merged
+        // Sales are only unreportable where BOTH sources failed for a store.
+        const unresolved = failed.filter(sc => !byStore.has(sc))
+        if (unresolved.length) {
+          salesFail = `Sales could not be read for ${unresolved.join(', ')} — rpc_dept_summary failed and ${kpiTable} carries no row.`
+        }
+      } else if (kpiRes.error) {
+        // Multi-date reads the matview; if that fails there is no second source.
+        salesFail = `Sales could not be read — ${kpiTable}: ${kpiRes.error.message}`
+      }
+
       const allSubDepts = [...new Set((subDeptRes.data ?? []).map(r => r.sub_dept_name))].filter(Boolean).sort()
-      // ENG-069: an empty KPI set for the selected date is never remembered — that is
-      // the exact state a pending push turns into real numbers minutes later.
-      cacheSet(viewsCache, vKey, { kpiData, allSubDepts }, kpiData.length > 0)
+
+      setKpiError(salesFail)
+      setKpiStockError(stockFail)
+      // Only cache a clean read — caching a failed one would replay the failure as
+      // though it were data, which is the silent-empty defect wearing a cache.
+      if (!salesFail && !stockFail) viewsCache.current.set(vKey, { kpiData, allSubDepts })
       setKpiData(kpiData)
       setAllSubDepts(allSubDepts)
       setViewsLoading(false)
@@ -1600,7 +1686,7 @@ export default function Home() {
 
     const subdeptParam = subDeptFilter !== 'all' ? subDeptFilter : null
     const dKey = [...storeCodes].sort().join(',') + '|' + [...selectedDates].sort().join(',') + '|' + (subdeptParam ?? '') + '|' + (focusEans ? focusEans.slice().sort().join(',') : '')
-    const dHit = cacheGet(deptCache, dKey)
+    const dHit = deptCache.current.get(dKey)
     if (dHit) {
       setDeptSummary(dHit.deptSummary)
       setDeptSohCounts(dHit.deptSohCounts)
@@ -1659,7 +1745,7 @@ export default function Home() {
       const lyds = lyDeptRes.data     ?? []
       const wds  = wowDeptRes.data    ?? []
       const lysc = lyDeptSohRes.data  ?? []
-      cacheSet(deptCache, dKey, { deptSummary: ds, deptSohCounts: dsc, lyKpiDeptSummary: lyds, wowKpiDeptSummary: wds, lyDeptSohCounts: lysc }, ds.length > 0)
+      deptCache.current.set(dKey, { deptSummary: ds, deptSohCounts: dsc, lyKpiDeptSummary: lyds, wowKpiDeptSummary: wds, lyDeptSohCounts: lysc })
       setDeptSummary(ds)
       setDeptSohCounts(dsc)
       setLyKpiDeptSummary(lyds)
@@ -1732,7 +1818,7 @@ export default function Home() {
                      (subDeptFilter !== 'all' ? subDeptFilter : '') + '|' +
                      top20Activity + '|' + String(includeParents) + '|' +
                      (focusEans ? focusEans.slice().sort().join(',') : '')
-      const t20Hit = cacheGet(top20Cache, t20Key)
+      const t20Hit = top20Cache.current.get(t20Key)
       if (t20Hit) {
         if (!cancelled) { setTop20Data(t20Hit); setTop20Loading(false) }
         return
@@ -1750,7 +1836,7 @@ export default function Home() {
       if (cancelled) return
       if (error) console.error('[rpc_top20]', error.message)
       const t20 = data ?? []
-      cacheSet(top20Cache, t20Key, t20, t20.length > 0)
+      top20Cache.current.set(t20Key, t20)
       setTop20Data(t20)
       setTop20Loading(false)
     }
@@ -2901,6 +2987,29 @@ export default function Home() {
         <LayerFreshnessStrip rows={layerFresh} />
 
         <div style={{ display: 'grid', gap: 14 }}>
+
+          {/* ── ENG-069: THE FAILURE STATE. R22 §3 — missing data surfaces, never hides.
+                 Before this, a failed KPI request became `?? []` and rendered as R0 with a
+                 manufactured −100% beside it, which is worse than a visible failure because
+                 it reads as a real catastrophic number. A number that could not be read now
+                 says so, and names the cause. ───────────────────────────────────────────── */}
+          {!viewsLoading && (kpiError || kpiStockError) && (
+            <div style={{
+              border: '1px solid var(--data-neg)', borderRadius: 'var(--radius-md)',
+              padding: '10px 14px', background: 'rgba(220,60,60,0.08)',
+              color: 'var(--daisy-white)', fontSize: 13, lineHeight: 1.5,
+            }}>
+              {kpiError && (
+                <div><strong>Sales figure unavailable — this is not a zero.</strong> {kpiError}</div>
+              )}
+              {kpiStockError && (
+                <div style={{ marginTop: kpiError ? 6 : 0 }}>
+                  <strong>Stock figures unavailable</strong> (negative SOH, slow movers, capital tied).
+                  {' '}Sales above are unaffected and were read from <code>rpc_dept_summary</code>. {kpiStockError}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── KPI STRIP ─────────────────────────────────────────────────────── */}
           <KpiStrip
