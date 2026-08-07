@@ -4,6 +4,42 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-07 15:24 SAST -- ENG-074 SQL LIVE IN PRODUCTION. `rpc_kpi_stock_by_date` created. FRONTEND HELD on a branch for the R31 walk.
+
+**Clock cross-checked three ways at the moment of this write** (standing constraint 3): machine local 15:23:43 +02:00 / machine UTC 13:23:43 / DB `now()` SAST 15:23:56, UTC 13:23:56. All agree at +2, thirteen seconds apart. No drift.
+
+**Authority:** standing deploy authority (canon SS0d) on a green R22 gate. This is a NEW object only -- nothing was altered or dropped, so no existing consumer changes behaviour and the deploy is additive by construction.
+
+**Migration:** `eng074_rpc_kpi_stock_by_date`. Canonical source committed as `sql/create_rpc_kpi_stock_by_date.sql`. **Verified single overload, `prosecdef = true`, `provolatile = v`.** ACL reads `postgres=X | anon=X | authenticated=X | service_role=X` -- **no PUBLIC entry**, so the PUBLIC-grant trap (five firings: SEC-002, BLOOM-004, ENG-031, ENG-068, the PMINI lockdown) did NOT fire here. Grants match the `rpc_dept_summary` / `rpc_kpi_dept_counts` read-RPC precedent; R30's addendum extension scopes the anon revoke to MUTATING functions and this one reads.
+
+**WHAT IT CLOSES.** ENG-069 repointed the SALES half and deliberately left neg SOH / slow movers / capital tied / ghost value on `v_kpi_by_date`, so those four inherited the 8s `authenticator` ceiling and rendered UNAVAILABLE on a recent date. This is the same repoint applied to them: same four expressions, same column names, SECURITY DEFINER so it holds its own `SET LOCAL statement_timeout` (20s -- headroom over a measured 4.3s without reaching Kong's ~30s kill).
+
+**ROOT CAUSE, MEASURED AT SOURCE, AND IT IS BIGGER THAN THE BUG-LOG'S FRAMING.** Two independent faults compounding, neither of which is "a view cannot hold a timeout":
+1. **The index could not seek.** The view joins `l2_soh_daily` to `l2_stock_position` on `(store_code, product_code)` only, while `idx_l2_pos_pk` is `(client_id, store_code, product_code)` -- **client_id LEADING**. Every probe cost ~4,665. **This is CLEANUP-ENGINE-CANON SS17's own standing note ("any query against these two facts carries `client_id` in the predicate") firing on a live dashboard object.**
+2. **The estimate was 77,000x wrong.** `l2_soh_daily` filtered to a recent date estimates `rows=1` against a real **89,999** for one store (387,378 across five), so the planner chose a Nested Loop and ran ~90k of those probes.
+**The consequence is structural, not load-dependent flakiness:** the table gains ~387k rows/day, so the NEWEST date is always the worst-estimated one and the failure recurs by construction on the exact date the owner reads each morning.
+
+**MEASURED, same store, same date, same expressions:**
+
+| Case | Before (view shape) | After (RPC) |
+|---|---|---|
+| 80175 / 2026-08-06, one store | **CANCELLED past 25s** | **1,211 ms** |
+| five stores / 2026-08-06 | infeasible (90s budget also cancelled) | **5,404 ms** wall, 4,301 ms planned |
+| five stores / 2026-08-03 (second date) | -- | **2,052 ms** |
+| a date with no snapshot | -- | **0 rows in 1.6 ms** -- absent, never a fabricated zero |
+
+**R22 GREEN -- 20 of 20 values identical across five stores.** Reconciled against `v_kpi_by_date`'s **own algebra** (the join WITHOUT `client_id`, hash-joined so it could finish at all -- with a nested loop it cannot complete in 90s): `neg_soh_count`, `slow_mover_count`, `capital_tied` and `ghost_stock_value` match on every store, the rand figures to the cent. 10116 284 / 1,951 / R4,571,219.62 / R3,951,978.56 - 21355 59 / 295 / R868,055.04 / R11,278.28 - 80175 199 / 1,538 / R6,528,428.60 / R3,916,213.60 - 80176 25 / 252 / R4,454,988.22 / R29,581.02 - 80579 37 / 225 / R865,602.77 / R12,106.14.
+
+**SECURITY DEFINER IS LOAD-BEARING, PROVEN BEHAVIOURALLY (ENG-068 discipline -- never read a grant, run it as the role).** `SET ROLE anon` then counting `l2_soh_daily` for 2026-08-06 returns **0 rows**, because that table has **RLS ENABLED with ZERO policies** while its SELECT grant reads `true`. A SECURITY INVOKER version would therefore have reported a confident, permanent **ZERO** on every stock card -- a wrong number, which is worse than an absent one (R22 SS3, and the ENG-069 `?? []` lesson). Re-proven the other way after the build: called AS `anon`, the function returns the same 20 figures.
+
+**`client_id` in the join cannot move a number today, verified before relying on it:** one distinct `client_id` in each table, **zero** `(store_code, product_code)` pairs holding more than one, and the join returns 270,594 matched rows across five stores. Planner enabler today, correct scoping the day a second client lands.
+
+**THE ANON TRANSPORT PATH WAS TESTED, WHICH IS THE LAYER ENG-069 GOT WRONG.** A PostgREST POST to `/rest/v1/rpc/rpc_kpi_stock_by_date` with the publishable key returned **HTTP 200, five rows, 4,048 ms**, figures identical to the SQL. "The data is reachable in the database" was never a test of the request the browser actually makes.
+
+**FRONTEND HELD, NOT SHIPPED: branch `eng074-stock-kpi-repoint`, commit `99eb2e8`, pushed and NOT merged.** It drops `v_kpi_by_date` from the single-date path entirely -- on a single date it was never a working fallback (it cannot return inside the deadline), so keeping it meant 25s+ of database work competing with every other panel, which is ENG-070's root cause. `store_name` comes from `STORE_MAP`; the multi-date matview path is untouched. Build green 13/13; serves clean at the auth gate with zero console errors. **NOT verified by CC: the signed-in KPI cards themselves.** Shipping a frontend on an unwalked diagnosis is how `bac9ace` failed, so it waits for Pieter.
+
+---
+
 ## 2026-08-07 13:04 SAST -- ENG-070 + ENG-069 MERGED AND SHIPPED. Both frontends were the held half; both are now live.
 
 **Clock cross-checked three ways at the moment of this write** (standing constraint 3): machine local 13:04:44 +02:00 / machine UTC 11:04:44 / DB `now()` SAST 13:04:45, UTC 11:04:45. All agree at +2, one second apart. No drift.
