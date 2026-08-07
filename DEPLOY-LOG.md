@@ -4,6 +4,29 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-07 17:45 SAST -- ENG-074 FRONTEND MERGED AND SHIPPED. The stock KPI cards read the RPC in production, and the R31 walk was done on the exact date that used to fail.
+
+**Clock cross-checked three ways at the moment of this write** (standing constraint 3): machine local 17:45:05 +02:00 / machine UTC 15:45:05 / DB `now()` SAST 17:45:11, UTC 15:45:11. All agree at +2, six seconds apart. No drift.
+
+**Authority:** Pieter's word this session ("close fork" -> merge the branch), on top of standing deploy authority (canon SS0d). `origin/main` `8a6d89d` -> **`a58865e`** (merge commit, `--no-ff`). Branch `eng074-stock-kpi-repoint` pushed first (`99eb2e8..972eed3`) and **left alive**, per this repo's own convention -- no merged branch has ever been deleted here (eng069/eng070 are still on origin).
+
+**NO DB CHANGE. This was the held frontend half only.** All three SQL objects were already live: `rpc_kpi_stock_by_date` (ENG-074, migration `eng074_rpc_kpi_stock_by_date`) and ENG-073's `l2_family_ros` + `v_family_days_cover`. The merge brings their canonical `sql/create_*.sql` sources onto main. Verified at source before the merge: all three present, `rpc_kpi_stock_by_date` single overload, `refresh_l2_family_ros` wired inside `refresh_l2_pipeline`.
+
+**R22 RE-RUN AT SOURCE IMMEDIATELY BEFORE THE MERGE, not taken from the 15:24 entry's word.** `rpc_kpi_stock_by_date` against `v_kpi_by_date`'s own algebra on **2026-08-06** -- the date the view genuinely blew the 12s client deadline in production during the ENG-069 walk -- **20 of 20 values identical across all five stores, rand to the cent.** 10116 284 / 1,951 / R4,571,219.62 / R3,951,978.56 - 21355 59 / 295 / R868,055.04 / R11,278.28 - 80175 199 / 1,538 / R6,528,428.60 / R3,916,213.60 - 80176 25 / 252 / R4,454,988.22 / R29,581.02 - 80579 37 / 225 / R865,602.77 / R12,106.14. Build green 13/13.
+
+**R31 WALK DONE LIVE ON PRODUCTION, in Pieter's signed-in browser (standing permission), and it reconciles from the database to the card.** Single date **2026-08-06**, all five stores:
+- **NEGATIVE SOH reads 604.** The five store figures above sum to **exactly 604** (284+59+199+25+37).
+- **CAPITAL TIED reads R 17.29M.** The five capital figures sum to **exactly R17,288,294.25**.
+- **STOCK TURN 7.0 turns / 52d cover** now computes, where it needed capital tied and previously had none.
+- **No "Stock figures unavailable" banner anywhere on the page.** Zero page console errors (the three captured are Chrome-extension message-channel noise, not the app).
+**That chain is the point: the same four numbers reconcile view-algebra -> RPC -> screen, on the one date the old path could not answer at all.**
+
+**Deploy proven serving, never assumed.** The production bundle `page-1405d06cfe5882b7.js` was fetched from the live page and contains `rpc_kpi_stock_by_date` -- so the walk above tested the NEW build, not a cached old one. Checked because "the merge pushed" is not evidence that Vercel served it.
+
+**WHAT DID NOT MOVE, stated so nobody reads more into this ship than it earned.** ENG-073's frontend switch to `v_family_days_cover` is **NOT** in this merge -- `src/app/page.jsx` is ENG-074 only, so Top 20 cover and product detail still read `mv_rate_of_sale` and the 679 understated display lines are unchanged. The `mv_rate_of_sale` column repoint stays deliberately undone: it is CASCADE-class (canon SS13 -- seven downstream objects must be rebuilt in the same transaction) and rule 3 forbids a live rebuild during trading. Both legs stay owed.
+
+---
+
 ## 2026-08-07 15:24 SAST -- ENG-074 SQL LIVE IN PRODUCTION. `rpc_kpi_stock_by_date` created. FRONTEND HELD on a branch for the R31 walk.
 
 **Clock cross-checked three ways at the moment of this write** (standing constraint 3): machine local 15:23:43 +02:00 / machine UTC 13:23:43 / DB `now()` SAST 15:23:56, UTC 13:23:56. All agree at +2, thirteen seconds apart. No drift.
