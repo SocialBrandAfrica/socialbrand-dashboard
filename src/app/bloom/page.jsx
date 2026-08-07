@@ -1546,19 +1546,73 @@ function OrderDesksMode() {
   // R22-equal to what each scenario's own Generate press would return
   // (rpc_bloom_scenario_overview literally runs the same recipe RPC per
   // scenario server-side and aggregates, never a client-side estimate).
+  // ENG-070 (2026-08-05) -- ONE SCENARIO PER CALL, RENDERED AS EACH LANDS.
+  //
+  // The single call asked the database to run the FULL recipe FIVE times in one
+  // request: the four scenarios plus the ENG-018 yardstick. Measured at source:
+  //   80175  recipe 2.72s -> overview 13.6s  (5 x 2.72 = 13.6, reproduces exactly)
+  //   10116  recipe 8.11s -> overview ~40.6s -> dies on the function's own
+  //          `SET LOCAL statement_timeout = '45s'`
+  // It sat on the boundary, so it failed INTERMITTENTLY -- three panels timing out
+  // one minute and answering the next, which is why it read as flaky rather than
+  // broken. Confirmed live on 2026-08-05 at BOTH stores under real page load.
+  //
+  // The ceiling cannot be raised (Kong ~30s, canon standing constraint 4), so the
+  // work had to shrink PER REQUEST rather than be given more time. `p_scenarios`
+  // was added to the RPC for exactly this -- each call now runs ONE scenario plus
+  // the yardstick (~2 recipe runs), which is comfortably inside every limit at the
+  // heaviest store.
+  //
+  // Sequential, not parallel: four concurrent recipe runs on one small instance
+  // contend and would re-create the problem in a new shape. Sequential costs
+  // wall-clock but each scenario PAINTS AS IT ARRIVES, so the buyer sees Full
+  // Need almost immediately instead of a blank card for forty seconds.
+  //
+  // R22: the aggregation stays server-side and untouched. The surface requests a
+  // subset, it never re-cooks one (R21/R27). Verified before wiring -- the four
+  // subset calls return rows identical to the single call, and
+  // demonstrated_weekly_demand holds at the same value in every one.
+  const OVERVIEW_SCENARIOS = ['full', 'fitted', 'order_essentials', 'catch_up']
+
   useEffect(() => {
     if (!storeCode || !desk || !deliveryDate) { setOverview([]); return }
     let cancelled = false
-    setOverviewLoading(true); setOverviewError(null)
-    supabase.rpc('rpc_bloom_scenario_overview', {
-      p_store_code: storeCode, p_delivery_date: deliveryDate,
-      p_next_delivery: nextDeliveryDate || null, p_route: desk,
-    }).then(({ data, error: err }) => {
+    setOverviewLoading(true); setOverviewError(null); setOverview([])
+
+    ;(async () => {
+      const collected = []
+      const failures  = []
+
+      for (const scenario of OVERVIEW_SCENARIOS) {
+        if (cancelled) return
+        const { data, error: err } = await supabase.rpc('rpc_bloom_scenario_overview', {
+          p_store_code:    storeCode,
+          p_delivery_date: deliveryDate,
+          p_next_delivery: nextDeliveryDate || null,
+          p_route:         desk,
+          p_scenarios:     [scenario],
+        })
+        if (cancelled) return
+
+        if (err) {
+          // No silent skips: a scenario that failed is NAMED. The others still
+          // render -- one dead scenario must not blank the whole board.
+          console.error('[rpc_bloom_scenario_overview]', scenario, err.message)
+          failures.push(`${scenario}: ${err.message}`)
+        } else {
+          collected.push(...(data ?? []))
+          // Paint progressively, in the canon order the card row expects.
+          setOverview(collected
+            .slice()
+            .sort((a, b) => OVERVIEW_SCENARIOS.indexOf(a.scenario) - OVERVIEW_SCENARIOS.indexOf(b.scenario)))
+        }
+      }
+
       if (cancelled) return
       setOverviewLoading(false)
-      if (err) { setOverviewError(err.message); setOverview([]); return }
-      setOverview(data ?? [])
-    })
+      setOverviewError(failures.length ? failures.join(' · ') : null)
+    })()
+
     return () => { cancelled = true }
   }, [storeCode, desk, deliveryDate, nextDeliveryDate])
 

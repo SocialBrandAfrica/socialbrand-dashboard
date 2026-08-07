@@ -4,6 +4,39 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-05 16:04 SAST -- ENG-070: the scenario overview ran the full recipe FIVE times per request. SQL live, frontend held on a branch.
+
+**Clock cross-checked three ways at the moment of this write** (standing constraint 3, and the 08-04 five-hour drift is why): machine local 16:04:42 +02:00 / machine UTC 14:04:42 / DB `now()` SAST 16:04:45, UTC 14:04:45. All agree at +2, three seconds apart. **No drift today.** A `TZ=Africa/Johannesburg date` in Git Bash returned "GMT" and was discarded rather than used -- the zone did not apply, which is the exact trap the constraint names.
+
+**ONE live database migration** -- `eng070_scenario_overview_subset_and_optional_yardstick`, applied via MCP. **Frontend NOT deployed: branch `eng070-scenario-overview-per-scenario` is pushed and unmerged, so production behaviour is UNCHANGED by this entry.** The migration is additive with defaults, so the existing page calls it exactly as before.
+
+**Found by Pieter on the live order desk while placing a real Roosville order** -- Scenario Overview, Stock Now and Delivery Chain all reading `canceling statement due to statement timeout`.
+
+**The defect, measured rather than inferred.** `rpc_bloom_scenario_overview` ran the FULL recipe **five** times in a single request: the four scenarios plus the ENG-018 yardstick run. At source:
+
+| Store | recipe | overview | against |
+|---|---|---|---|
+| 80175 | 2.72s | **13.6s** (5 x 2.72 = 13.6, reproduces to the decimal) | its own 45s -- passes |
+| 10116 | 8.11s | **~40.6s** | its own `SET LOCAL statement_timeout = '45s'` -- dies |
+
+Sitting ON its own boundary is why it read as flaky rather than broken: **observed failing at both SPAR stores under real page load, and observed succeeding at 10116 minutes later.** Stock Now (7.9s) and Delivery Chain (6.4s) both fit on their own and fail by contention -- consistent with the evidence, **not proven**, and recorded as such.
+
+**Why more time was not the answer.** `anon`/`authenticated` carry `statement_timeout=30s`, Kong kills ~30s (standing constraint 4), and the function already grants itself 45s. The work had to shrink per REQUEST.
+
+**Applied:** `p_scenarios text[] DEFAULT NULL` and `p_include_yardstick boolean DEFAULT true`, both appended last so no positional caller shifts; each unrequested scenario is guarded by a zero-row `CROSS JOIN LATERAL` so its recipe call never executes. **Function Change Protocol run: overloads checked first (exactly one), old signature dropped, `pg_notify('pgrst','reload schema')` issued, one overload after.** Grants re-applied explicitly to the NEW signature -- `REVOKE ... FROM PUBLIC` then `GRANT ... TO anon, authenticated` (R30 addendum; a new function comes out of CREATE with PUBLIC EXECUTE).
+
+**A latent defect fixed in the same pass, which the wiring would have triggered:** `full_products` read from `full_run`, so any request not including `full` would have silently produced a **zero `demonstrated_weekly_demand`** and flipped the fitted `DEFECT_SIGNAL`. Re-sourced from `scenarios`; safe because all four runs were **proven** to share one identical 12,502-product pool, 0 rows differing in either direction.
+
+**R22, three arms, all green.** (1) The default call reproduces `full` **519 lines / R351,543.92** and `fitted` **487 / R333,487.15** -- both measured independently, by a different code path, BEFORE the change. (2) The four subset calls return rows identical to the single call. (3) `demonstrated_weekly_demand` holds at **192,607.05** in every one -- the invariant the `full_products` change could have broken.
+
+**A cut that was available and REFUSED, recorded because the reasoning is the point.** `full.suggested_packs == fitted.packs_before_fit` on all 12,502 rows, zero differing -- so `full` appears derivable from the fitted run, saving a whole recipe execution. **Not taken.** That proves ONE column, while the `full` row also aggregates `budget_fit_reason`, `protected_lines` and `trimmed_lines`, which are fit-state-dependent and unobservable from the fitted run. Deriving it would be an instrument validated only for what it was tested on -- the same failure that moved 332 bucket-B rows on FORGE-MAP-001.
+
+**Owed and named, not implied:** `sql/create_rpc_bloom_scenario_overview.sql` still needs its reconcile to live. It was ALREADY stale before this pass -- live carried four BLOOM-018 columns (`value_promo_lines`, `value_nonpromo_lines`, `promo_share_pct`, `promo_lines_pool`) the file does not -- which is why this migration was authored from `pg_get_functiondef` and not from the file. Reconcile by hash, generated never hand-keyed.
+
+**R31 outstanding:** the panel has not been walked on the live desk, because the frontend is unmerged.
+
+---
+
 ## 2026-08-04 ~20:0x SAST -- ENG-069: the KPI cards showed R0 for a day the ledger holds R127,599.98. A client-side cache, not a data gap.
 
 **Found by Pieter on the live dashboard**, SPAR Roosville, 2026-08-04: Sales R0, GP 0.0%, -100.0% and WoW -100.0% -- while the Departments and Top 20 panels on the SAME screen showed real numbers for the SAME date.
