@@ -4,6 +4,34 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-07 13:04 SAST -- ENG-070 + ENG-069 MERGED AND SHIPPED. Both frontends were the held half; both are now live.
+
+**Clock cross-checked three ways at the moment of this write** (standing constraint 3): machine local 13:04:44 +02:00 / machine UTC 11:04:44 / DB `now()` SAST 13:04:45, UTC 11:04:45. All agree at +2, one second apart. No drift.
+
+**Authority:** Pieter, 2026-08-06 -- "ENG-070 and ENG-069 are a go" -- plus the standing deploy authority (canon SS0d). `origin/main` verified still `bac9ace` immediately before the merge, and BOTH branches were verified to sit exactly on that commit, so neither carried a stale base.
+
+**Merged:** `aa71730` (eng070-scenario-overview-per-scenario) then `2f45bf2` (eng069-same-day-sales-source). Both `--no-ff`. Different files, no conflict, no DEPLOY-LOG conflict, `.git/index.lock` checked after every git command and never present. `npm run build` green before push (13/13 static pages, `/` 141 kB, `/bloom` 24.8 kB).
+
+**NO DATABASE CHANGE IN THIS DEPLOY.** ENG-070's migration went live 2026-08-05; ENG-069 never had one. This entry ships frontend only.
+
+**R22 gate re-run at source before the merge, NOT taken from the prior entries' word.**
+
+1. **ENG-070 -- the subset claim, which is the thing the wiring turns on.** `rpc_bloom_scenario_overview` verified as ONE overload carrying `p_scenarios text[]` and `p_include_yardstick boolean`. At 80175 / delivery 2026-08-12 / next 2026-08-15 / DC_AMBIENT, the four single-scenario calls return values **identical to the single whole call on every compared column** -- `lines`, `promo_lines`, `count_first_lines`, `value_normal`, `value_geared`, `protected_lines`, `trimmed_lines`, `budget_amount`, `yardstick_value`, `yardstick_deviation_pct`, `yardstick_flag`, `yardstick_reason`. `full`/`fitted` 333 lines R229,798.19; `order_essentials` 320 lines R225,381.12 normal / R228,994.10 geared; `catch_up` 4 lines R10,788.66 normal / R311,204.63 geared. The shared yardstick holds at **R47,788.68** in all four, and `full` still carries `full_is_luxury_by_definition`. **No cross-scenario contamination -- asking for one scenario returns what it returns alongside the others.**
+
+2. **ENG-069 -- the source repoint, proved against a THIRD source rather than the two the diagnosis names.** `rpc_dept_summary` reconciled to an independent `sigma_sales` sum (`period_kind='T' AND txn_kind=1`) for 2026-08-04, **all five stores, delta R0.00 VAT-inclusive**: 10116 R258,963.47 - 21355 R21,539.06 - 80175 R127,599.98 - 80176 R15,789.83 - 80579 R18,894.67. Ex-VAT deltas are 1c to 3c, per-item `vat_pct` rounding, immaterial. **80175 lands on exactly the R127,599.98 incl / R114,166.24 ex the root cause named.**
+
+**Corroborating evidence found while running the gate, worth recording:** a single statement joining `v_kpi_by_date` across five stores with five `rpc_dept_summary` laterals was **still running at 2m26s** and had to be cancelled, while the `rpc_dept_summary`-only half returned immediately. Consistent with the root cause -- the live view is the slow half -- though this ran as the MCP role, not `authenticator`, so it is corroboration and **not** a reproduction of the 8s PostgREST timeout.
+
+**What is now live on screen.** Bloom's Scenario Overview requests one scenario per call and paints each as it lands, so Delareyville's panels stop timing out. The dashboard's same-day sales figure comes from `rpc_dept_summary`, every request in the wave is deadline-bounded at 12s, and **a failed read renders a named red failure banner instead of R0** -- closing the `?? []` defect at `page.jsx:1495-1496`, which was shipped regardless of root cause because a confident wrong number is worse than a visible failure (R22 SS3).
+
+**R31 OUTSTANDING, and the go did not retire it (CC's own caveat, Pieter's instruction was walk AFTER deploy):** neither branch has been walked on a live desk. Owed: Pieter opens the Bloom order desk at 10116 and at 80175 and sees all four scenario cards render, and opens the dashboard on a single recent date at 80175. **Shipping on an unwalked diagnosis is how `bac9ace` failed** -- that lesson is not spent by this deploy.
+
+**Owed and unchanged by this deploy:** `sql/create_rpc_bloom_scenario_overview.sql` reconcile (already stale before ENG-070 -- live carries four BLOOM-018 columns the file lacks) and its DB-SCHEMA parameter entry.
+
+**Rule 18 closure, false at source:** the standing note that this repo's `CLAUDE.md` clock mirror uses `Get-Date -AsUTC` (a PowerShell 7+ parameter that throws on 5.1) is **wrong**. The string `AsUTC` has never appeared anywhere in this repo, in any file, in any commit -- `git log -S "AsUTC" --all` returns nothing, and the named commit `4ed33fb` prescribes only a generic `Get-Date` / `date`. **No fix is owed here.** For PM to strike from ON PIETER item 11.
+
+---
+
 ## 2026-08-05 16:04 SAST -- ENG-070: the scenario overview ran the full recipe FIVE times per request. SQL live, frontend held on a branch.
 
 **Clock cross-checked three ways at the moment of this write** (standing constraint 3, and the 08-04 five-hour drift is why): machine local 16:04:42 +02:00 / machine UTC 14:04:42 / DB `now()` SAST 16:04:45, UTC 14:04:45. All agree at +2, three seconds apart. **No drift today.** A `TZ=Africa/Johannesburg date` in Git Bash returned "GMT" and was discarded rather than used -- the zone did not apply, which is the exact trap the constraint names.
