@@ -1486,9 +1486,25 @@ export default function Home() {
       // governed by 8s no matter what anon/authenticated are set to. A SECURITY
       // DEFINER function can hold its own `SET LOCAL`; a view cannot.
       //
-      // The stock facts (neg SOH, slow movers, capital tied, ghost value) still come
-      // from the view. If it fails, those chips report the failure — they never
-      // render as zero (R22 §3).
+      // ENG-074 (2026-08-07) — THE STOCK HALF NOW MOVES TOO, and the view is no
+      // longer called at all on a single date.
+      //
+      // ENG-069 deliberately left neg SOH / slow movers / capital tied / ghost
+      // value on the view, so they inherited the same 8s ceiling and rendered
+      // UNAVAILABLE on a recent date. `rpc_kpi_stock_by_date` is the same repoint
+      // applied to them: same four expressions, same column names, SECURITY
+      // DEFINER so it holds its own SET LOCAL.
+      //
+      // WHY THE VIEW IS DROPPED HERE RATHER THAN KEPT AS A FALLBACK: on a single
+      // date it cannot answer at all. Measured at source 2026-08-07, ONE store on
+      // 2026-08-06 was still running past 25s — the join carries no `client_id`,
+      // so the (client_id, store_code, product_code) unique index cannot seek and
+      // every one of ~90,000 probes costs ~4,665 (canon §17's standing note), on
+      // top of a rows=1 estimate against a real 89,999 that picks a nested loop.
+      // A source that can never return inside the deadline is not a fallback; it
+      // is 25s+ of database work competing with every other panel on the page,
+      // which is exactly ENG-070's root cause. store_name comes from STORE_MAP.
+      // The matview path (multi-date) is untouched — it is pre-aggregated and fast.
 
       // TWO-WAVE FETCH (dash-timeout-001, applied to main 2026-07-05 — item 3):
       // the authenticator role connects PostgREST to Postgres and carries
@@ -1526,14 +1542,18 @@ export default function Home() {
           ms)),
       ])
 
-      const [kpiRes, subDeptRes, sameDayRes] = await Promise.all([
+      const [kpiRes, subDeptRes, sameDayRes, stockRes] = await Promise.all([
         // Current KPI — includes total_sales_ex_vat (per-item vat_pct, no flat assumption)
-        withDeadline(
-          supabase.from(kpiTable)
-            .select('store_code,store_name,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied,ghost_stock_value')
-            .in('store_code', storeCodes)
-            .in('snapshot_date', selectedDates),
-          kpiTable),
+        // ENG-074: single date no longer touches v_kpi_by_date (see the note above).
+        // Multi-date still reads mv_kpi_by_date, which is pre-aggregated and fast.
+        isSingleDate
+          ? Promise.resolve({ data: [], error: null })
+          : withDeadline(
+              supabase.from(kpiTable)
+                .select('store_code,store_name,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied,ghost_stock_value')
+                .in('store_code', storeCodes)
+                .in('snapshot_date', selectedDates),
+              kpiTable),
 
         // Sub-dept names for the current store+date
         withDeadline(
@@ -1556,6 +1576,20 @@ export default function Home() {
                 `rpc_dept_summary(${sc})`)
                 .then(r => ({ storeCode: sc, data: r.data, error: r.error }))))
           : Promise.resolve([]),
+
+        // ENG-074: the authoritative same-day STOCK source. One call for every
+        // store — unlike rpc_dept_summary this one returns store_code, so a
+        // multi-store call cannot collapse or mis-attribute. Measured at source
+        // 2026-08-07: 5 stores / 1 date = 4.3s planned, 5.4s wall, against a view
+        // that was still running past 25s for ONE store. Bounded anyway.
+        isSingleDate
+          ? withDeadline(
+              supabase.rpc('rpc_kpi_stock_by_date', {
+                p_store_codes: storeCodes,
+                p_dates:       selectedDates,
+              }),
+              'rpc_kpi_stock_by_date')
+          : Promise.resolve({ data: [], error: null }),
       ])
 
       if (cancelled) return
@@ -1567,38 +1601,67 @@ export default function Home() {
       let stockFail  = kpiRes.error ? `${kpiTable}: ${kpiRes.error.message}` : null
 
       if (isSingleDate) {
-        const day     = selectedDates[0]
-        const byStore = new Map(viewRows.map(r => [r.store_code, r]))
-        const merged  = []
-        const failed  = []
+        const day          = selectedDates[0]
+        const stockRows    = stockRes?.data ?? []
+        const stockByStore = new Map(stockRows.map(r => [r.store_code, r]))
+        const merged       = []
+        const failed       = []
+
+        if (stockRes?.error) console.error('[rpc_kpi_stock_by_date]', stockRes.error.message)
 
         for (const r of sameDayRes) {
+          const sc  = r.storeCode
+          // ENG-074: the view is not called on this path, so the row is built from
+          // its two authoritative sources. store_name comes from STORE_MAP.
+          let row   = { store_code: sc, snapshot_date: day, store_name: STORE_MAP[sc] ?? sc }
+
+          // ── SALES (ENG-069) ────────────────────────────────────────────────
           if (r.error) {
-            console.error('[rpc_dept_summary]', r.storeCode, r.error.message)
-            failed.push(r.storeCode)
-            // Keep the view's row if it has one, so a per-store RPC failure does not
-            // delete a figure we already hold. Never substitute a zero.
-            const held = byStore.get(r.storeCode)
-            if (held) merged.push(held)
-            continue
+            console.error('[rpc_dept_summary]', sc, r.error.message)
+            failed.push(sc)
+            // Leave the sales fields ABSENT rather than zero. An absent field
+            // reads as "no figure"; a zero reads as "the store sold nothing",
+            // and a wrong number is worse than no number (R22 §3).
+          } else {
+            const rows = r.data ?? []
+            row = {
+              ...row,
+              total_sales:        rows.reduce((s, x) => s + Number(x.total_sales ?? 0), 0),
+              total_sales_ex_vat: rows.reduce((s, x) => s + Number(x.total_sales_ex_vat ?? 0), 0),
+              total_cost:         rows.reduce((s, x) => s + Number(x.total_cost ?? 0), 0),
+              total_qty:          rows.reduce((s, x) => s + Number(x.total_qty ?? 0), 0),
+            }
           }
-          const rows = r.data ?? []
-          const base = byStore.get(r.storeCode) ?? { store_code: r.storeCode, snapshot_date: day }
-          merged.push({
-            ...base,
-            total_sales:        rows.reduce((s, x) => s + Number(x.total_sales ?? 0), 0),
-            total_sales_ex_vat: rows.reduce((s, x) => s + Number(x.total_sales_ex_vat ?? 0), 0),
-            total_cost:         rows.reduce((s, x) => s + Number(x.total_cost ?? 0), 0),
-            total_qty:          rows.reduce((s, x) => s + Number(x.total_qty ?? 0), 0),
-          })
+
+          // ── STOCK (ENG-074) ───────────────────────────────────────────────
+          // Applied independently of the sales outcome: one failing source must
+          // never delete the other's figures. A store with no row here has no
+          // l2_soh_daily snapshot for that date (the L2 batch runs 22:15 SAST and
+          // is a day behind BY DESIGN) — that is a legitimate absence, so the
+          // fields stay absent and nothing is invented.
+          const st = stockByStore.get(sc)
+          if (st) {
+            row = {
+              ...row,
+              neg_soh_count:     Number(st.neg_soh_count     ?? 0),
+              slow_mover_count:  Number(st.slow_mover_count  ?? 0),
+              capital_tied:      Number(st.capital_tied      ?? 0),
+              ghost_stock_value: Number(st.ghost_stock_value ?? 0),
+            }
+          }
+
+          merged.push(row)
         }
 
         kpiData = merged
-        // Sales are only unreportable where BOTH sources failed for a store.
-        const unresolved = failed.filter(sc => !byStore.has(sc))
-        if (unresolved.length) {
-          salesFail = `Sales could not be read for ${unresolved.join(', ')} — rpc_dept_summary failed and ${kpiTable} carries no row.`
+        if (failed.length) {
+          salesFail = `Sales could not be read for ${failed.join(', ')} — rpc_dept_summary failed.`
         }
+        // Stock is unreportable only when the RPC itself failed. No rows on a
+        // clean call means the snapshot does not exist yet, which is not a fault.
+        stockFail = stockRes?.error
+          ? `Stock figures unavailable — rpc_kpi_stock_by_date: ${stockRes.error.message}`
+          : null
       } else if (kpiRes.error) {
         // Multi-date reads the matview; if that fails there is no second source.
         salesFail = `Sales could not be read — ${kpiTable}: ${kpiRes.error.message}`
