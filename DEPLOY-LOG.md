@@ -4,6 +4,30 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-08 -- SEC-001 (atlas slice): anon write access removed schema-wide; the "delete the ledger" framing retired.
+
+**One live migration, `sec001_atlas_anon_write_lockdown`. No app code, no schema change, no frontend.** SEC-001 had never had a BUG-LOG row -- it lived in `sql/pmini_partner_lockdown.sql`'s footer and in handovers as "nobody has started it". It has one now.
+
+**THE DEBT AS WRITTEN WAS HALF WRONG, and the wrong half was the frightening one.** Recorded as "anon/authenticated still hold INSERT/UPDATE/DELETE on base tables, so an outside key could delete the ledger". Measured before touching anything: **8 of 113 public tables carried anon write grants, and all eight are `atlas_*`** -- the knowledgebase. **Zero `sigma_*`, zero `l2_*`, zero `order_*`, zero `daily_snapshots`. The retail ledger was never exposed.** Real exposure, different asset, different owner (the Librarian's project, section 0e), different severity. **Do not re-quote the ledger framing.**
+
+**The reporting defect is the durable lesson: the claim was read off a GRANT TABLE and never tested.** A grant is not a behaviour. The same session that carried this debt forward also logged ENG-068, where a grant table said `auth_select=true` and the rows were invisible because RLS had no policy. **Grants over-state and under-state, in both directions. Only `SET ROLE` settles it.**
+
+**Exposure proven behaviourally before the fix,** not inferred: `SET LOCAL ROLE anon`, then INSERT and DELETE against `atlas_settings`, both succeeded, inside a rolled-back transaction.
+
+**R30 section 2 pre-flight -- the step the ORIGINAL SEC-001 lockdown skipped when it silently emptied the Kitchen tab.** Consumers enumerated: the Atlas browser page calls `functions/v1/atlas` x4 with **zero** `rest/v1/atlas_*`; the Atlas engine is a Supabase **EDGE FUNCTION** whose every write goes through one header builder reading `SUPABASE_SERVICE_ROLE_KEY`, which **bypasses RLS and needs none of these grants**; the Knowledgebase project has 4 matches, all `.md`; the dashboard repo has zero. **No consumer writes as anon -- unaffected by construction, not by hope.**
+
+**Fix, both layers,** because every security incident here has been a single-layer fix that did not hold (SEC-002, BLOOM-004, ENG-031, ENG-068, the pmini PUBLIC hole -- five firings of one class): `REVOKE INSERT, UPDATE, DELETE, TRUNCATE ... FROM anon, authenticated` on all 8, **plus** the wide-open `atlas_anon_all` policy (`cmd=ALL`, `qual=true`, `with_check=true`) dropped and replaced with a SELECT-only `atlas_anon_select`. The loop is **count-gated** -- it RAISEs unless the atlas set is exactly 8, so it cannot silently lock down a set nobody measured.
+
+**R22, four behavioural gates, all passed:** anon INSERT blocked (`insufficient_privilege`) - anon DELETE blocked - anon SELECT still works - **`service_role` can still insert and delete, so Atlas is provably unaffected.** Row counts intact (settings 2 / projects 2 / agents 4). **Schema-wide after: anon INSERT/UPDATE/DELETE 8 -> 0, authenticated DELETE 8 -> 0, anon SELECT 106 unchanged.**
+
+**NAMED, NOT SILENTLY WIDENED:** `anon` can still SELECT the whole Atlas knowledgebase, and no consumer needs it -- the browser goes through the edge function. Closing it is one more line. **Who may READ the knowledgebase is a custody call for PM / the Librarian, not something CC decides inside a write-lockdown migration.**
+
+**Still open on SEC-001 beyond this slice:** ~113 PUBLIC functions the MCP role does not own (pg_cron/pgrst/supabase internals, no app data) still carry PUBLIC EXECUTE -- needs a re-run as `supabase_admin`, admin-only, not a data risk.
+
+**SQL:** `sql/sec001_atlas_anon_write_lockdown.sql`.
+
+---
+
 ## 2026-08-07 17:45 SAST -- ENG-074 FRONTEND MERGED AND SHIPPED. The stock KPI cards read the RPC in production, and the R31 walk was done on the exact date that used to fail.
 
 **Clock cross-checked three ways at the moment of this write** (standing constraint 3): machine local 17:45:05 +02:00 / machine UTC 15:45:05 / DB `now()` SAST 17:45:11, UTC 15:45:11. All agree at +2, six seconds apart. No drift.
