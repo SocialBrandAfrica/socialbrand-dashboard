@@ -4,7 +4,9 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
-## 2026-08-08 -- SEC-001 (atlas slice): anon write access removed schema-wide; the "delete the ledger" framing retired.
+## 2026-08-09 -- SEC-001 (atlas slice): anon write access removed schema-wide; the "delete the ledger" framing retired.
+
+**DATE CORRECTED (R28 lineage): this entry was first written as 2026-08-08 and is wrong by a day.** The migration's own recorded version is `20260809074035` = 07:40:35 UTC / 09:40 SAST on **2026-08-09**. The session crossed midnight a second time and the stamp was carried from the previous evening's clock read. Corrected against the migration version, the one witness that cannot drift. **Fourth firing of this defect; the rule stands -- re-read the clock at the moment of the write, and for anything already applied, take the date from the artefact rather than the session.**
 
 **One live migration, `sec001_atlas_anon_write_lockdown`. No app code, no schema change, no frontend.** SEC-001 had never had a BUG-LOG row -- it lived in `sql/pmini_partner_lockdown.sql`'s footer and in handovers as "nobody has started it". It has one now.
 

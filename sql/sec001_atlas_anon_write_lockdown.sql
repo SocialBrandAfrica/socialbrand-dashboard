@@ -3,7 +3,13 @@
 -- SEC-001 (the Atlas slice): remove anon/authenticated WRITE access from
 -- the atlas_* tables. Read access is deliberately untouched -- see SCOPE.
 --
--- Author: CC (Claude Code)   Date: 2026-08-08 (system clock, fresh read)
+-- Author: CC (Claude Code)   Date: 2026-08-09 (migration version 20260809074035
+--            = 07:40:35 UTC / 09:40 SAST. An earlier draft of this header, and the
+--            first BUG-LOG and DEPLOY-LOG entries, said 2026-08-08 -- wrong by a day,
+--            because the session crossed midnight AGAIN and the stamp was carried from
+--            a clock read the previous evening. Corrected against the migration's own
+--            recorded version, which is the only witness that cannot drift. This is the
+--            same defect canon logs three prior firings of; make it four.)
 -- Ref: SEC-001, carried in sql/pmini_partner_lockdown.sql's footer and in
 --      HANDOVER-CURRENT as "nobody has started it".
 --
@@ -13,7 +19,7 @@
 -- SEC-001 is recorded as: "anon/authenticated still hold INSERT/UPDATE/DELETE
 -- on base tables, so an outside key could delete the ledger."
 --
--- MEASURED 2026-08-08, and the second half is FALSE:
+-- MEASURED 2026-08-09, and the second half is FALSE:
 --   * 8 of 113 public tables carry anon INSERT/UPDATE/DELETE
 --   * ALL EIGHT are atlas_* -- the knowledgebase
 --   * ZERO sigma_*, ZERO l2_*, ZERO order_*, ZERO daily_snapshots
