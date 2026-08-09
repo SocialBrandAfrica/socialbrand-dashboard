@@ -81,6 +81,17 @@ CREATE TABLE public.l2_bloom_promo_pantry (
   -- | 'calendar_days_below_observable_floor' | 'calendar_days_no_rhythm_estimate'
   -- | 'no_completed_promo'. Supersedes the v1 blanket label (2026-07-27).
   uplift_ros_basis        text NOT NULL DEFAULT 'raw_net_qty_v1_not_oos_corrected',
+  -- ============ BUY-IN SUPPLY (ENG-052, 2026-08-09) ============
+  -- Did DC stock actually ARRIVE inside the window the engine would have permitted
+  -- a buy-in? A measured uplift on a line that was never resupplied is what the line
+  -- sold off a shelf nobody restocked -- a FLOOR on its rate, never a ceiling.
+  -- NULL on all three = no completed promo, so there was nothing to test.
+  bought_in_dc            boolean,
+  bought_in_qty           numeric,
+  -- The window's own lead, stored per row. On 2026-08-09 two seats published 2,291
+  -- and 2,449 for this same fact because neither stated its window. The definition
+  -- now travels with the number (R29) and that disagreement cannot recur.
+  bought_in_lead_days     int,
   pantry_refreshed_at     timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (store_code, product_code)
 );
@@ -115,11 +126,25 @@ DECLARE
   v_rows int;
   v_floor_share numeric;
   v_cap numeric;
+  v_buyin_lead int;
 BEGIN
   SELECT COALESCE(MAX(value_num),0.5) INTO v_floor_share FROM public.forge_config
    WHERE config_key='corrector_min_observable_share' AND retired_on IS NULL;
   SELECT COALESCE(MAX(value_num),5.0) INTO v_cap FROM public.forge_config
    WHERE config_key='promo_uplift_cap' AND retired_on IS NULL;
+
+  -- NAMED APPROXIMATION (R27 s6, s0h honesty): promo_buyin_lead_days is ROUTE-grained
+  -- in supplier_calendar while this pantry is STORE-grained. It reads 7 on all 20 rows
+  -- across all five stores today, so MAX is exact rather than a choice. THE MOMENT TWO
+  -- ROUTES AT ONE STORE DIFFER THIS IS WRONG and the fact moves to route grain.
+  -- Asserted below rather than assumed.
+  SELECT COALESCE(MAX(promo_buyin_lead_days), 7) INTO v_buyin_lead
+    FROM public.supplier_calendar WHERE store_code = p_store;
+
+  IF (SELECT count(DISTINCT promo_buyin_lead_days) FROM public.supplier_calendar
+       WHERE store_code = p_store) > 1 THEN
+    RAISE WARNING 'l2_bloom_promo_pantry %: routes carry different promo_buyin_lead_days. The store-grained buy-in window is no longer exact -- move this fact to route grain.', p_store;
+  END IF;
 
   DELETE FROM public.l2_bloom_promo_pantry WHERE store_code = p_store;
 
@@ -236,12 +261,44 @@ BEGIN
         ELSE 'in_stock_days_v2'
       END AS basis
     FROM resolved r
+  ),
+  -- ==================== BUY-IN SUPPLY (ENG-052, 2026-08-09) ====================
+  -- R32 s2: this is a PANTRY fact, paid once in L2 for every consumer. Computing it
+  -- in rpc_bloom_order_recipe or in the frontend would be Layer-2 logic in the wrong
+  -- layer -- the ENG-052 defect class itself, rebuilt while fixing ENG-052.
+  --
+  -- Supplier type Z ONLY, deliberately. The question is whether the store took the DC
+  -- BUY-IN, not whether any stock arrived from anywhere. Measured 2026-08-09: widening
+  -- it to any supplier moves the group count by 17 lines of 4,141, so the filter is
+  -- cheap to state and the number is not sensitive to it.
+  --
+  -- MEASURED AT BUILD (group, own_promo lines gearing above 1.0, n = 4,141):
+  --   2,291 supplied inside the window  /  1,850 never bought in  =  44.7% unsupplied.
+  -- Those 1,850 measured their uplift off a shelf nobody restocked, so on top of the
+  -- stockout censoring already found the rate is censored a second time, in the same
+  -- direction. It is a FLOOR on the line's rate, not a ceiling, and the surfacing says so.
+  supply AS (
+    SELECT pb.store_code, pb.product_code,
+           BOOL_OR(sc.supplier_type = 'Z')                          AS bought_in_dc,
+           SUM(m.qty) FILTER (WHERE sc.supplier_type = 'Z')         AS bought_in_qty
+    FROM published pb
+    LEFT JOIN public.sigma_movements m
+      ON  m.store_code   = pb.store_code
+      AND m.product_code = pb.product_code
+      AND m.movement_type IN ('R','W')
+      AND m.qty > 0
+      AND pb.start_date IS NOT NULL
+      AND m.movement_date BETWEEN pb.start_date - v_buyin_lead AND pb.end_date
+    LEFT JOIN public.v_supplier_class sc
+      ON sc.store_code = m.store_code AND sc.supplier_nr = m.supplier_nr
+    GROUP BY pb.store_code, pb.product_code
   )
   INSERT INTO public.l2_bloom_promo_pantry (
     store_code, product_code, ean, last_promo_nr, last_promo_start, last_promo_end,
     promo_period_ros, promo_period_ros_calendar, promo_period_duration_days,
     promo_period_oos_days, promo_period_observable_days,
-    pre_promo_28d_ros, promo_uplift, promo_uplift_source, uplift_ros_basis)
+    pre_promo_28d_ros, promo_uplift, promo_uplift_source, uplift_ros_basis,
+    bought_in_dc, bought_in_qty, bought_in_lead_days)
   SELECT pb.store_code, pb.product_code, pb.ean, pb.promo_nr, pb.start_date, pb.end_date,
     ROUND(pb.ros_published_exact, 4), ROUND(pb.ros_calendar_exact, 4),
     pb.duration_days, pb.oos_days, pb.observable_days,
@@ -250,8 +307,15 @@ BEGIN
          WHEN pb.pre_qty IS NULL OR pb.pre_qty <= 0 THEN NULL
          ELSE LEAST(ROUND(pb.ros_published_exact / (pb.pre_qty / 28.0), 4), v_cap) END,
     CASE WHEN pb.promo_nr IS NOT NULL AND pb.pre_qty > 0 THEN 'own_promo' ELSE NULL END,
-    pb.basis
-  FROM published pb;
+    pb.basis,
+    -- NULL rather than false where there was no completed promo to test: an absence
+    -- of evidence is not evidence of absence (R23 s2, uncertainty is never a zero).
+    CASE WHEN pb.promo_nr IS NULL THEN NULL ELSE COALESCE(sp.bought_in_dc, false) END,
+    sp.bought_in_qty,
+    CASE WHEN pb.promo_nr IS NULL THEN NULL ELSE v_buyin_lead END
+  FROM published pb
+  LEFT JOIN supply sp
+    ON sp.store_code = pb.store_code AND sp.product_code = pb.product_code;
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
 
