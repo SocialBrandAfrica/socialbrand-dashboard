@@ -4,6 +4,45 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-09 21:47 SAST -- ENG-052 leg 1: buy-in supply becomes a PANTRY fact on `l2_bloom_promo_pantry`. No quantity moved.
+
+**Clock read in the same exchange as this write: local 21:47:12 +02:00 / UTC 19:47:12.**
+
+**Two migrations, both live:** `eng052_promo_pantry_buyin_supply_columns` (Rule 19 DROP + clean CREATE, three new columns) and `eng052_refresh_promo_pantry_buyin_supply` (the refresh function computes them). Source of truth is `sql/create_l2_bloom_promo_pantry.sql` on branch `eng052-promo-supply-surfacing`, commit `c70bebe`. **No app code, no frontend, no config key, no cap change.** Section 6 of `Bloom/SB-CC-BLOOM-021` v1.1, the surfacing build, leg 1 of 3.
+
+**What it answers.** Did DC stock actually ARRIVE inside the window the engine would have permitted a buy-in? New columns `bought_in_dc`, `bought_in_qty`, `bought_in_lead_days`.
+
+**WHY IT IS A PANTRY FACT (R32 s2).** Computing it in `rpc_bloom_order_recipe` or the frontend would be Layer-2 logic in the wrong layer -- the ENG-052 defect class itself, rebuilt while fixing ENG-052. Paid once in L2 for every consumer.
+
+**THE FINDING THIS EXISTS TO CARRY: 1,850 of 4,141 measured gearing lines, 44.7%, were never bought in.** Their uplift is what the line sold off a shelf nobody restocked. On top of the stockout censoring already found, the rate is censored a second time in the same direction, so it is a FLOOR on that line's rate, never a ceiling. The surfacing will say exactly that.
+
+**THE WINDOW NOW TRAVELS WITH THE ROW (R29), and that is the point of the third column.** Two seats published **2,291 and 2,449 for this same fact on one day** because neither stated its window. `bought_in_lead_days` is stored per row so it can never again be quoted without its definition. **Sensitivity measured rather than assumed:** widening the supplier filter from type Z to any supplier moves the count 17 lines of 4,141; widening the lead from 7 to 14 days moves it 2,308 -> 2,667. **The LEAD is what the number is sensitive to. That is why the lead is the thing stored.**
+
+**R30 DEPENDENT PROOF, run BEFORE applying.** Zero cascade-class dependents -- no view or matview reads this table, so `DROP TABLE ... CASCADE` took nothing with it. Eight read-only function dependents (`refresh_l2_pipeline`, `refresh_l2_stock_band`, `rpc_bloom_order_recipe`, `fill_l2_bloom_promo_pantry_sibling_fallback`, `refresh_l2_bloom_promo_pantry`, plus 3 held R22 scratch shadows). Change is **additive only** -- no column renamed, none retyped -- so every dependent survives by construction.
+
+**R22 GATE: PASSED, and the drift is decomposed rather than waved through.**
+
+| Gate | Expected | Got |
+|---|---|---|
+| Rows, all 5 stores | 16,993 | **16,993** |
+| `default` / `sibling_store` / `own_promo` | 8,364 / 1,662 / 6,967 | **exact on all three** |
+| Lines at the 5.0 cap | 854 | **854** |
+| No-promo rows leaking a non-null on the new columns | 0 | **0** |
+| `bought_in_lead_days` distinct values | uniform | **7** |
+| Supplied / never bought in | 2,291 / 1,850 | 2,294 / 1,848 |
+
+**The five-line difference is two days of live trading and it closes to the unit.** Measured population 4,141 -> 4,142 and no-promo 4,879 -> 4,878: exactly one line gained a completed promo and crossed in. Eleven lines carry a promo ending on or after 07 Aug and four measured lines still have open windows, so stock landing since flipped two from unsupplied to supplied. **2,291 + 1 + 2 = 2,294. 1,850 - 2 = 1,848.** Direction correct -- more stock arriving, not less. **The legacy columns did not move at all, which is what made the drift safe to accept rather than roll back.**
+
+**NULL, not false, where there was no completed promo to test** -- an absence of evidence is not evidence of absence (R23 s2, uncertainty is never a zero). 4,878 rows.
+
+**NAMED APPROXIMATION (R27 s6), with a live guard rather than a comment.** `promo_buyin_lead_days` is ROUTE-grained in `supplier_calendar` while this pantry is STORE-grained. It reads 7 on all 20 rows across all five stores today, so `MAX` is exact rather than a choice. A `RAISE WARNING` now fires the moment two routes at one store disagree, which is the point the fact must move to route grain.
+
+**VERIFICATION:** re-run `SELECT refresh_l2_bloom_promo_pantry('<store>')` for all five, then `fill_l2_bloom_promo_pantry_sibling_fallback()`, then re-check the six gates above. **Confirmed working: yes** -- all five stores rebuilt live (10116 8,598 rows/38.6s, 80175 5,806/18.0s, 21355 956/3.7s, 80176 788/3.4s, 80579 845/3.1s), fallback re-run 1,662 sibling / 8,364 defaulted, both matching pre-change exactly.
+
+**NOT deployed:** the recipe's surfacing outputs and the frontend. Legs 2 and 3, branch-only, nothing on `main`.
+
+---
+
 ## 2026-08-09 -- SEC-001 (atlas slice): anon write access removed schema-wide; the "delete the ledger" framing retired.
 
 **DATE CORRECTED (R28 lineage): this entry was first written as 2026-08-08 and is wrong by a day.** The migration's own recorded version is `20260809074035` = 07:40:35 UTC / 09:40 SAST on **2026-08-09**. The session crossed midnight a second time and the stamp was carried from the previous evening's clock read. Corrected against the migration version, the one witness that cannot drift. **Fourth firing of this defect; the rule stands -- re-read the clock at the moment of the write, and for anything already applied, take the date from the artefact rather than the session.**
