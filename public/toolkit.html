@@ -108,6 +108,19 @@
   .delta.flat{color:var(--neutral);background:rgba(158,158,158,0.10)}
   .gaugewrap{height:8px;background:var(--well);box-shadow:var(--lamp-bezel, inset 0 1px 2px rgba(0,0,0,0.6));border-radius:5px;margin-top:8px;overflow:hidden}
   .gaugefill{height:100%;background:var(--growth);border-radius:5px}
+  /* COUNT COMPLIANCE (item 3) */
+  .chead{font:12.5px var(--font-mono);color:var(--mist);margin:2px 0 10px}
+  .ctitle{font:600 15px var(--font-display);margin-bottom:2px}
+  .ccards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin:10px 0}
+  .ccard{background:var(--charcoal);border:1px solid var(--border);border-radius:14px;padding:12px 14px}
+  .ccard .cname{font:600 14px var(--font-display)} .ccard .cmuted{color:var(--mist);font-size:11px;font-family:var(--font-mono)}
+  .ccard .clatest{font-size:12.5px;margin:4px 0 2px} .ccard .ctoday{font-size:12px;margin-bottom:9px}
+  .cstrip{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+  .ccell{font:500 10.5px var(--font-mono);text-align:center;line-height:1.4;padding:5px 2px;border-radius:6px;border:1px solid var(--border)}
+  .ccell.good{color:var(--pos);border-color:rgba(102,187,106,0.4);background:rgba(102,187,106,0.10)}
+  .ccell.mid{color:var(--warn);border-color:rgba(255,179,0,0.4);background:rgba(255,179,0,0.10)}
+  .ccell.bad{color:var(--neg);border-color:rgba(239,83,80,0.4);background:rgba(239,83,80,0.10)}
+  .ccell.nolist{color:var(--mist);border-style:dashed;background:transparent}
   @media print{
     body{background:#F4F6F2;color:#121612;padding:0} .tabs,.bar,button,#log,.banner,.sub,.explain,.note,.hero-grid{display:none!important}
     table{font-size:11px} th{color:#1E3F20;background:#F4F6F2;position:static} td,th{border-color:#999}
@@ -135,10 +148,14 @@
 
 <!-- 0 · PROGRESS (landing) -->
 <div class="pane on" id="pane-progress">
+  <div class="plate" id="compliance-wrap" style="margin-bottom:16px">
+    <div class="ctitle">Count compliance loading…</div>
+  </div>
   <div class="explain">
     <b>Where we were, where we are.</b> Every night the Engine records the scoreboard. This view compares today against a week ago for the stores you pick. Green means the week moved the right way. Red means it moved against us. The record starts 1 July, two measures (key lines out of stock, hidden family demand) start today.
   </div>
   <div class="bar"><button class="primary" id="loadprogress">Load progress</button></div>
+  <div id="progress-asof" class="note" style="margin-top:2px"></div>
   <div class="hero-grid" id="progress-hero"></div>
   <div class="plate" style="margin-top:6px">
     <div class="lbl" style="margin-bottom:8px">Per store, this week vs last</div>
@@ -285,6 +302,14 @@ const csvEsc = v => { v = v==null ? "" : String(v); return /[",\n]/.test(v) ? '"
 const toCSV = (rows, cols) => cols.join(",")+"\n"+rows.map(r=>cols.map(c=>csvEsc(r[c])).join(",")).join("\n")+"\n";
 const R = n => n==null ? "" : Math.round(n).toLocaleString("en-ZA");
 function provenance(name, meta){ log(`${name} <- ${JSON.stringify(meta)} @ ${new Date().toISOString()}`); }
+const dstr = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+function todayStr(){ return dstr(new Date()); }
+function lastNDates(n){ const out=[], t=new Date(); for(let i=n-1;i>=0;i--){ const x=new Date(t); x.setDate(t.getDate()-i); out.push(dstr(x)); } return out; }
+async function restGet(path){
+  const r = await fetch(`${SB_URL}/rest/v1/${path}`, { headers:{ "apikey":SB_KEY, "Authorization":"Bearer "+SB_KEY } });
+  if(!r.ok){ throw new Error(`${path.split("?")[0]} ${r.status}: ${(await r.text()).slice(0,200)}`); }
+  return r.json();
+}
 
 // ---------- instrument metadata (shared) ----------
 const INST_META={
@@ -353,10 +378,66 @@ $("loadprogress").onclick = async ()=>{
           return `<td class=num>${isRand?"R "+R(r.now_value):R(r.now_value)}${d}</td>`;
         }).join("")+"</tr>";
       }).join("");
-    provenance("progress",{stores:[...sel], rows:rows.length});
+    const snap = rows.reduce((a,r)=> (r.now_date && r.now_date>a) ? r.now_date : a, "");
+    const _t = todayStr();
+    $("progress-asof").innerHTML = !snap ? "" :
+      (snap===_t ? `Scoreboard as of ${snap} (today's snapshot).`
+        : `<span style="color:var(--warn)">Scoreboard as of ${snap}, NOT today (${_t}). Last night's snapshot has not refreshed yet, so these are ${snap}'s figures.</span>`);
+    provenance("progress",{stores:[...sel], rows:rows.length, snapshot:snap});
   }catch(e){ banner(e.message,"err"); log("ERROR "+e.message); }
   $("loadprogress").disabled=false;
 };
+
+// ---------- 0b · COUNT COMPLIANCE (item 3 -- issued vs counted, primary, auto-loads) ----------
+async function loadCompliance(){
+  const wrap=$("compliance-wrap");
+  try{
+    const rows = await restGet("v_forge_count_compliance?select=store_code,issued_date,lines_issued,lines_posted,mode&order=issued_date.desc");
+    const days = lastNDates(7), today = days[days.length-1];
+    const idx={};   // store -> date -> {issued, posted, runs}
+    rows.forEach(r=>{
+      const s=(idx[r.store_code]=idx[r.store_code]||{});
+      const c=(s[r.issued_date]=s[r.issued_date]||{issued:0,posted:0,runs:0});
+      c.issued+=+r.lines_issued; c.posted+=+r.lines_posted; c.runs++;
+    });
+    const issuedToday = STORES.filter(([code])=> idx[code] && idx[code][today]).length;
+    const cards = STORES.map(([code,name])=>{
+      const byDate = idx[code]||{};
+      const seen = Object.keys(byDate).sort();
+      const latest = seen[seen.length-1];
+      let latestHtml;
+      if(!latest){ latestHtml = `<span style="color:var(--neg)">Never issued a count list</span>`; }
+      else { const c=byDate[latest], pct = c.issued?Math.round(100*c.posted/c.issued):0;
+        latestHtml = `Latest <b>${pct}% counted</b> · ${c.posted}/${c.issued} lines · issued ${latest}`
+          + (c.runs>1?` <span style="color:var(--warn)">(${c.runs} lists same day — duplicate)</span>`:""); }
+      const t = byDate[today];
+      const todayHtml = t ? `<span style="color:var(--pos)">list issued today</span>`
+                          : `<span style="color:var(--warn)">no list issued today</span>`;
+      const strip = days.map(d=>{
+        const c=byDate[d];
+        if(!c) return `<span class="ccell nolist" title="${d}: no count list was issued">${d.slice(5)}<br>—</span>`;
+        const pct = c.issued?Math.round(100*c.posted/c.issued):0;
+        const cls = pct>=80?"good":pct>=40?"mid":"bad";
+        return `<span class="ccell ${cls}" title="${d}: ${c.posted} of ${c.issued} counted${c.runs>1?` (${c.runs} lists)`:""}">${d.slice(5)}<br>${pct}%</span>`;
+      }).join("");
+      return `<div class="ccard"><div class="cname">${name} <span class="cmuted">${code}</span></div>
+        <div class="clatest">${latestHtml}</div>
+        <div class="ctoday">Today: ${todayHtml}</div>
+        <div class="cstrip">${strip}</div></div>`;
+    }).join("");
+    wrap.innerHTML =
+      `<div class="ctitle">Count compliance — issued vs counted</div>`
+      + `<div class="chead">As of ${today} · `
+      + `<span style="color:${issuedToday? "var(--txt)":"var(--neg)"}">${issuedToday} of 5 stores issued a list today</span>`
+      + ` · last 7 days, newest on the right</div>`
+      + `<div class="ccards">${cards}</div>`
+      + `<div class="note">Counted = a Sigma count posting stands against the line (matched or variance), from the store's own ledger — a manual toolkit confirmation is not evidence. A day with no list is a gap, not a zero. StockFlow correction postings are not counts and are excluded on purpose.</div>`;
+    provenance("compliance",{rows:rows.length, issuedToday, today});
+  }catch(e){
+    wrap.innerHTML = `<div class="ctitle">Count compliance</div><div class="banner err" style="display:block;margin:0">Could not load: ${e.message}</div>`;
+  }
+}
+loadCompliance();
 
 // ---------- department picker ----------
 let deptLoadToken=0;
