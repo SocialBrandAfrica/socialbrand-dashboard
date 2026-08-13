@@ -4,6 +4,24 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-13 -- ENG-083 / canon SS14 v16 + 16.7: the DC ambient Standard over-order fix goes live.
+
+**Pieter ruling 2026-08-13 ("churn and test and then implement"). `rpc_bloom_order_recipe` over-ordered on live money on the DC ambient Standard order (80175 15 Aug R361,730 against recent real deliveries R194-217k). Two coupled defects fixed, R22 green across 5 stores x 3 presets, deployed under standing authority.**
+
+- **Bug 1 -- demand basis (canon v16):** in the Standard preset, minimum mode, both demand legs (`scan_raw`, `draw_corrected`) now read the stockout-corrected wide window (`ros_56d_published` / `ros_draw_56d_published`) instead of the raw 14-day spike. `ros_final = GREATEST(scan_raw, draw_used)` was locking the month-end/promo 14-day peak in. Build mode and the geared buy-in path keep the responsive short window by design (v16). Essentials/catch-up/full/fitted unchanged (`%10$L='standard'` gate). Scan-side `ros_56d_published` added to pool scope.
+- **Bug 2 -- build timing (canon 16.7 leg 2, ENG-056a's pending successor):** the month-end build window is DERIVED from the route's own `delivery_dows` around the community payday (new config key `month_end_build_anchor_dom` = 25, DEMO_CALIBRATION), never the hardcoded day-of-month 15. Build now starts on the 2nd-last DC drop before the 25th (80175 the 19th, 10116 the 20th). Standard preset + real DC `supplier_calendar` row only (TOPS DC_TOPS has no calendar row, so the guard holds and it is unaffected).
+- **R29:** `demand_source` and `ros_window_used` report `stable_56d` / `ros_56d STABLE` when the stable basis fires, so the reason matches the number.
+
+**R22 (live, to the rand):** 80175 DC_AMBIENT 15 Aug R353,017 -> **R274,108** (-22%); 10116 R909,053 -> **R781,387** (-14%). Essentials/catch-up **byte-identical** (80175 ess R338,569; 10116 ess R813,569 / cu R135,247, both sides). TOPS +2.6% (stockout-aware, Bug 2 guarded off). Direct desk flat. Milk 491 R42,706 -> R36,359, chicken 71524 R89,231 -> R57,738. Independently reproduces PM's `SB-CC-BLOOM-023` targets to the rand.
+
+**DB live via apply_migration `fix_bloom_recipe_dc_over_order_eng083_v16` + config key.** Deployed the exact body validated as the `_v16` shadow (renamed onto the live function; CREATE OR REPLACE preserved grants + SECURITY DEFINER). Scratch `rpc_bloom_order_recipe_v16` and PM's superseded `rpc_bloom_order_recipe_stable56` dropped. **Files:** `sql/2026-08-13_bloom_recipe_eng083_v16.sql` (idempotent config + transformation record). **OWED, named not silent:** the full-body regen of `sql/create_rpc_bloom_order_recipe.sql` from live rides with the ENG-063 reconcile (that file was already diverged before this change).
+
+**Still open, PM's call, NOT pre-empted -- ENG-084:** the corrected wide window over-fires on sell-while-negative KVIs (milk reads 247.7/day against its own 91-day 173). v16 KEEPS the correction by ruling; bounding it (cap at the 91-day) is a separate demand-rate call that needs the milk in-stock-rate test before it ships. Flagged, not guessed.
+
+**R31 (Pieter):** open Bloom, generate the 80175/10116 DC ambient standard order, confirm the numbers.
+
+---
+
 ## 2026-08-13 -- SB-CC-TOOLKIT-002 new rule: no forced count on Saturday, Sunday or a store's DC ambient delivery day.
 
 **Pieter ruling 2026-08-13.** `refresh_forge_daily_issue` gains a non-count-day skip: never force the daily list on Sat/Sun or the store's DC ambient delivery day (busy receiving). Config-driven from `supplier_calendar.delivery_dows` for the `DC%` route (DC_AMBIENT SPAR / DC_TOPS TOPS) -- no hardcoded store days (R25/R28); the manual Composer/pre-order/ad-hoc counts are unaffected. Today (Thu, isodow 4) is a DC day for 10116/21355/80579, a count day for 80175/80176 -- verified: the function skips all three DC-day stores; today's seeded runs for those three were deleted to realign.
