@@ -4,6 +4,28 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-13 -- SB-CC-TOOLKIT-002 the count-accountability set: the daily routine goes live (items 1, 2, 3 + item-5 decode).
+
+**Clock re-read at the write (5th-firing discipline): the session opened 2026-08-12 22:48 SAST and CROSSED MIDNIGHT; everything here is 2026-08-13 (git author dates confirm). Dates taken from the artefacts.** Pieter's explicit go, DoD = live on site.
+
+**DB (live via apply_migration, R22 x5 stores):**
+- **Item 5 decoded, no build:** count compliance reads I/M/DIWAINV and is complete -- `qty=0` = matched count (10,059/20,942), so accurate counters are not punished; S/DIWASOBE is transfers/write-offs, not counts (falsifier: 18 S-only lines ever). The "extend to S" item is retired with evidence. Also reconciled the two 08-12 views to `sql/create_*.sql` (no-divergence).
+- **Item 1 fixed volume:** `forge_config.daily_count_volume` SPAR 200 / TOPS 70, retiring the self-sizing budget (the 408-611 line lists). `refresh_forge_daily_issue()` + cron `forge-daily-issue` 06:30 SAST daily, same-day dedupe guard. Seeded once on 08-13: 5 runs issued 200/70/200/70/70, dedupe re-run skipped all 5.
+- **Item 2 priority law:** `rpc_forge_count_list` ranks by ORDERING IMPACT (on order / KVI / ranged-VERIFY / engine indictment), tier-1 never displaced by cosmetic ledger, tier decided by behaviour not label. R22: volumes exact, all-tier-1, deterministic, emission gate 0 leaks, a plain-words reason on every line.
+
+**Frontend (this deploy -- merged to main, Vercel prod):**
+- **Item 3:** count-compliance display is the first thing on the Progress pane, auto-loading (no click), reading `v_forge_count_compliance`/`_line_evidence` by REST GET. Per store, per day, 7-day strip. A store with no run reads "Never issued a count list"; a day with no list shows a gap, never a blank or an old number. Header states N of 5 issued today. **Walked in preview against live data before ship** (10116 54%/270:504, 80175 9%/38:408, 80579 97%/67:69, 21355+80176 never issued).
+- **Audit finding 3b-1 fixed:** the scoreboard stamps its real snapshot date and flags when it is not today (it fired on the midnight cross: "as of 08-12, NOT today 08-13").
+- **Composer text corrected** to the fixed-volume + ordering-impact reality (audit 3b-3/4): the old "self-sizing budget / negatives-first" copy and badge legend are replaced.
+
+**R31 (the buyer's test) is Pieter's step:** open `toolkit.socialbrand.africa`, Progress tab, read issued-vs-counted per store without clicking. Numbers stated above in rands/units and lines.
+
+**Still open on SB-CC-TOOLKIT-002 (not this deploy):** item 4 StockFlow morning export, item 6 terminology relabel, item 7 weekly Chairman/VP report. The StockFlow auto-feed permission is on Pieter (ask Sparrie).
+
+**SQL:** `sql/create_rpc_forge_count_list.sql`, `sql/create_refresh_forge_daily_issue.sql`, `sql/create_v_forge_count_compliance.sql`, `sql/create_v_forge_count_line_evidence.sql`.
+
+---
+
 ## 2026-08-09 -- SEC-001 (atlas slice): anon write access removed schema-wide; the "delete the ledger" framing retired.
 
 **DATE CORRECTED (R28 lineage): this entry was first written as 2026-08-08 and is wrong by a day.** The migration's own recorded version is `20260809074035` = 07:40:35 UTC / 09:40 SAST on **2026-08-09**. The session crossed midnight a second time and the stamp was carried from the previous evening's clock read. Corrected against the migration version, the one witness that cannot drift. **Fourth firing of this defect; the rule stands -- re-read the clock at the moment of the write, and for anything already applied, take the date from the artefact rather than the session.**

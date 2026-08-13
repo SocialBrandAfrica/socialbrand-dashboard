@@ -169,7 +169,7 @@
   <div class="explain">
     <b>What this does:</b> builds today's count list. The Engine picks which lines need counting and every line shows the reason it was picked, in plain words.
     <div class="steps">
-      <b>Daily count list</b> is the standard morning list. It fills itself: new negatives and Engine suspects first, then old uncounted lines until the day's budget is full. The budget sizes itself per store (full store covered inside 12 weeks at a SPAR, 4 weeks at a TOPS).<br>
+      <b>Daily count list</b> is the standard morning list, issued by the system every trading day. It ranks by ordering impact: the lines whose wrong number would buy wrong stock or miss a sale this week come first, always. A fixed volume, 200 lines at a SPAR and 70 at a TOPS. Nobody in the store picks the lines.<br>
       <b>Random spot check</b> pulls a surprise sample per department. Good for honesty checks.<br>
       <b>Whole department</b> lists an entire department wall to wall.<br>
       Then: <b>StockFlow file</b> to upload as an ad-hoc stocktake, or <b>Print count sheet</b> for the floor.
@@ -211,7 +211,7 @@
   </details>
   <div class="summary" id="compose-summary"></div>
   <div class="wellbox" style="max-height:56vh;overflow:auto"><table id="compose-table"></table></div>
-  <div class="note">Why lines are picked (the badges): <b style="color:var(--neg)">NEW negative</b> = stock went below zero since it was last counted. <b style="color:var(--warn)">Engine indictment</b> = the Engine suspects the shelf and the ledger disagree. <b style="color:#A78BFA">Inactive rotation</b> = holding stock but not selling, presence unproven. <b style="color:var(--mist)">Cyclical backbone</b> = routine rotation so the whole store gets counted every cycle. <b style="color:var(--pos)">Zero-SOH audit ⚑</b> = ledger says none, a spot check catches stock the system does not know it has. Deposits, production and non-stock lines never appear here, they have their own lists on the Fixer tab.</div>
+  <div class="note">Why lines are picked, by ordering impact (the badges): <b style="color:var(--neg)">Ordering influencer</b> = a wrong number here buys wrong stock or misses a sale this week (on order, key line, actively ranged, or the Engine suspects the shelf). Always first. <b style="color:var(--mist)">Buy-and-sell</b> = a real seller on routine rotation. <b style="color:#A78BFA">Cosmetic ledger</b> = below zero or dead, a procedural error to clean up, fills the tail and never pushes an ordering line off the list. <b style="color:var(--pos)">Zero-SOH audit ⚑</b> = ledger says none, a spot check catches stock the system does not know it has. Deposits, production and non-stock lines never appear here, they have their own lists on the Fixer tab.</div>
 </div>
 
 <!-- 2 · FIXER -->
