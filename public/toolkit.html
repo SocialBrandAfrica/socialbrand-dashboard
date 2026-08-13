@@ -121,6 +121,7 @@
   .ccell.mid{color:var(--warn);border-color:rgba(255,179,0,0.4);background:rgba(255,179,0,0.10)}
   .ccell.bad{color:var(--neg);border-color:rgba(239,83,80,0.4);background:rgba(239,83,80,0.10)}
   .ccell.nolist{color:var(--mist);border-style:dashed;background:transparent}
+  .ccell.rest{color:var(--mist);border-style:dotted;background:rgba(158,158,158,0.06)}
   @media print{
     body{background:#F4F6F2;color:#121612;padding:0} .tabs,.bar,button,#log,.banner,.sub,.explain,.note,.hero-grid{display:none!important}
     table{font-size:11px} th{color:#1E3F20;background:#F4F6F2;position:static} td,th{border-color:#999}
@@ -409,47 +410,61 @@ $("loadprogress").onclick = async ()=>{
 async function loadCompliance(){
   const wrap=$("compliance-wrap");
   try{
-    const rows = await restGet("v_forge_count_compliance?select=store_code,issued_date,lines_issued,lines_posted,mode&order=issued_date.desc");
+    const [rows, sched] = await Promise.all([
+      restGet("v_forge_count_compliance?select=store_code,issued_date,lines_issued,lines_posted,mode&order=issued_date.desc"),
+      rpc("rpc_forge_count_schedule", {})
+    ]);
+    const dcByStore={}; (sched||[]).forEach(s=>{ dcByStore[s.store_code]=s.dc_dows||[]; });
+    // A count is never FORCED on Sat, Sun, or a store's DC ambient delivery day.
+    const dayStatus=(dstr,dc)=>{ const jd=new Date(dstr+"T00:00:00").getDay(), iso=jd===0?7:jd;
+      if(iso===6) return {count:false,why:"Saturday",tag:"rest"};
+      if(iso===7) return {count:false,why:"Sunday",tag:"rest"};
+      if((dc||[]).includes(iso)) return {count:false,why:"DC delivery day",tag:"DC"};
+      return {count:true}; };
     const days = lastNDates(7), today = days[days.length-1];
-    const idx={};   // store -> date -> {issued, posted, runs}
-    rows.forEach(r=>{
-      const s=(idx[r.store_code]=idx[r.store_code]||{});
+    const idx={};
+    rows.forEach(r=>{ const s=(idx[r.store_code]=idx[r.store_code]||{});
       const c=(s[r.issued_date]=s[r.issued_date]||{issued:0,posted:0,runs:0});
-      c.issued+=+r.lines_issued; c.posted+=+r.lines_posted; c.runs++;
-    });
-    const issuedToday = STORES.filter(([code])=> idx[code] && idx[code][today]).length;
+      c.issued+=+r.lines_issued; c.posted+=+r.lines_posted; c.runs++; });
+    let dueToday=0, issuedToday=0, offToday=0;
+    STORES.forEach(([code])=>{ const ds=dayStatus(today,dcByStore[code]);
+      if(ds.count){ dueToday++; if(idx[code]&&idx[code][today]) issuedToday++; } else offToday++; });
     const cards = STORES.map(([code,name])=>{
-      const byDate = idx[code]||{};
-      const seen = Object.keys(byDate).sort();
-      const latest = seen[seen.length-1];
+      const byDate=idx[code]||{}, dc=dcByStore[code]||[];
+      const seen=Object.keys(byDate).sort(), latest=seen[seen.length-1];
       let latestHtml;
-      if(!latest){ latestHtml = `<span style="color:var(--neg)">Never issued a count list</span>`; }
-      else { const c=byDate[latest], pct = c.issued?Math.round(100*c.posted/c.issued):0;
-        latestHtml = `Latest <b>${pct}% counted</b> · ${c.posted}/${c.issued} lines · issued ${latest}`
-          + (c.runs>1?` <span style="color:var(--warn)">(${c.runs} lists same day — duplicate)</span>`:""); }
-      const t = byDate[today];
-      const todayHtml = t ? `<span style="color:var(--pos)">list issued today</span>`
-                          : `<span style="color:var(--warn)">no list issued today</span>`;
-      const strip = days.map(d=>{
-        const c=byDate[d];
-        if(!c) return `<span class="ccell nolist" title="${d}: no count list was issued">${d.slice(5)}<br>—</span>`;
-        const pct = c.issued?Math.round(100*c.posted/c.issued):0;
-        const cls = pct>=80?"good":pct>=40?"mid":"bad";
-        return `<span class="ccell ${cls}" title="${d}: ${c.posted} of ${c.issued} counted${c.runs>1?` (${c.runs} lists)`:""}">${d.slice(5)}<br>${pct}%</span>`;
+      if(!latest){ latestHtml=`<span style="color:var(--mist)">No count list issued yet</span>`; }
+      else { const c=byDate[latest], pct=c.issued?Math.round(100*c.posted/c.issued):0;
+        latestHtml=`Latest <b>${pct}% counted</b> · ${c.posted}/${c.issued} lines · issued ${latest}`
+          +(c.runs>1?` <span style="color:var(--warn)">(${c.runs} lists same day — duplicate)</span>`:""); }
+      const ts=dayStatus(today,dc), t=byDate[today];
+      let todayHtml;
+      if(!ts.count) todayHtml=`<span style="color:var(--mist)">no count today (${ts.why})</span>`;
+      else todayHtml = t ? `<span style="color:var(--pos)">list issued today</span>`
+                         : `<span style="color:var(--warn)">no list issued today</span>`;
+      const strip=days.map(d=>{
+        const c=byDate[d], ds=dayStatus(d,dc);
+        if(c){ const pct=c.issued?Math.round(100*c.posted/c.issued):0;
+          const cls=pct>=80?"good":pct>=40?"mid":"bad";
+          return `<span class="ccell ${cls}" title="${d}: ${c.posted} of ${c.issued} counted${c.runs>1?` (${c.runs} lists)`:""}">${d.slice(5)}<br>${pct}%</span>`; }
+        if(!ds.count) return `<span class="ccell rest" title="${d}: ${ds.why}, no count forced">${d.slice(5)}<br>${ds.tag}</span>`;
+        return `<span class="ccell nolist" title="${d}: no count list was issued">${d.slice(5)}<br>—</span>`;
       }).join("");
       return `<div class="ccard"><div class="cname">${name} <span class="cmuted">${code}</span></div>
         <div class="clatest">${latestHtml}</div>
         <div class="ctoday">Today: ${todayHtml}</div>
         <div class="cstrip">${strip}</div></div>`;
     }).join("");
+    const headOk = issuedToday>=dueToday;
     wrap.innerHTML =
       `<div class="ctitle">Count compliance — issued vs counted</div>`
-      + `<div class="chead">As of ${today} · `
-      + `<span style="color:${issuedToday? "var(--txt)":"var(--neg)"}">${issuedToday} of 5 stores issued a list today</span>`
-      + ` · last 7 days, newest on the right</div>`
-      + `<div class="ccards">${cards}</div>`
-      + `<div class="note">Counted = a Sigma count posting stands against the line (matched or variance), from the store's own ledger — a manual toolkit confirmation is not evidence. A day with no list is a gap, not a zero. StockFlow correction postings are not counts and are excluded on purpose.</div>`;
-    provenance("compliance",{rows:rows.length, issuedToday, today});
+      +`<div class="chead">As of ${today} · `
+      +`<span style="color:${dueToday===0?"var(--mist)":(headOk?"var(--txt)":"var(--neg)")}">${issuedToday} of ${dueToday} stores due a count today issued one</span>`
+      +(offToday?` · <span style="color:var(--mist)">${offToday} on a DC / rest day</span>`:"")
+      +` · last 7 days, newest on the right</div>`
+      +`<div class="ccards">${cards}</div>`
+      +`<div class="note">Counted = a Sigma count posting stands against the line (matched or variance), from the store's own ledger — a manual confirmation is not evidence. No count is forced on a Saturday, Sunday or a store's DC ambient delivery day (shown DC / rest). On a counting day, a missing list is a gap, not a zero.</div>`;
+    provenance("compliance",{rows:rows.length, dueToday, issuedToday, offToday, today});
   }catch(e){
     wrap.innerHTML = `<div class="ctitle">Count compliance</div><div class="banner err" style="display:block;margin:0">Could not load: ${e.message}</div>`;
   }

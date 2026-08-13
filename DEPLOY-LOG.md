@@ -4,6 +4,16 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-13 -- SB-CC-TOOLKIT-002 new rule: no forced count on Saturday, Sunday or a store's DC ambient delivery day.
+
+**Pieter ruling 2026-08-13.** `refresh_forge_daily_issue` gains a non-count-day skip: never force the daily list on Sat/Sun or the store's DC ambient delivery day (busy receiving). Config-driven from `supplier_calendar.delivery_dows` for the `DC%` route (DC_AMBIENT SPAR / DC_TOPS TOPS) -- no hardcoded store days (R25/R28); the manual Composer/pre-order/ad-hoc counts are unaffected. Today (Thu, isodow 4) is a DC day for 10116/21355/80579, a count day for 80175/80176 -- verified: the function skips all three DC-day stores; today's seeded runs for those three were deleted to realign.
+
+**Board honesty (frontend):** new `rpc_forge_count_schedule()` (anon) returns each store's DC dows; the compliance board shows a weekend/DC day as "no count (DC delivery day / rest)" in neutral, and the header reads "**N of M stores due a count today** issued one · K on a DC / rest day" -- a non-count day is never a compliance failure. Walked in preview: header "2 of 2 due issued · 3 on a DC / rest day", the three DC-day stores read "no count today (DC delivery day)", weekends show "rest", real counts still show %.
+
+**DB live (R22): `forge_no_force_count_on_weekend_or_dc_day` migration.** **Files:** `sql/create_refresh_forge_daily_issue.sql`, `public/toolkit.html`.
+
+---
+
 ## 2026-08-13 -- SB-CC-TOOLKIT-002 items 4, 6, 7: toolkit downloads + terminology (same-day follow-on).
 
 **Item 4 (interim, manual-StockFlow):** `GET /api/forge/export-stocktake` (nodejs, SheetJS) returns TODAY's daily count lists as ONE workbook, a tab per store, `product_code` in column A for the StockFlow upload + deletable detail columns. Button on the Progress tab. A one-off copy for today was also handed to Pieter directly. **Item 7:** `GET /api/forge/weekly-report` returns the weekly Chairman/VP report (Compliance 7-day + Unit progress from `v_forge_count_compliance` + `rpc_forge_integrity_trend`); not-yet-captured measures (waste/write-off, adjustments, exceptions, sales-vs-LY, GP%) are NAMED as pending gaps, never shown as zeros. Button on the Progress tab. **Item 6:** visible engine jargon relabelled to operating-rules words -- "TLX" -> "stocktake import" / "Zero-stock import" across the tab, Fixer labels and Integrity descriptions (the `.tlx` filenames are unchanged); the count-list badges already carry the tier names.
