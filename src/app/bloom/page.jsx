@@ -1025,22 +1025,21 @@ function RecipeMode({ stores }) {
     if (!storeCode || !deliveryDate) { setError('Pick a store and delivery date.'); return }
     setError(null); setGenerating(true)
     const override = daysCoverOverride === '' ? null : Number(daysCoverOverride)
-    const PAGE = 1000
-    let all = [], offset = 0
-    for (;;) {
-      const { data, error: err } = await supabase.rpc('rpc_bloom_order_recipe', {
-        p_store_code: storeCode, p_delivery_date: deliveryDate,
-        p_next_delivery: nextDeliveryDate || null,
-        p_preset: preset === 'standard' ? null : preset,
-        p_days_cover_override: override,
-        p_fit_to_budget: fitActive,
-      }).range(offset, offset + PAGE - 1)
-      if (err) { setGenerating(false); setError(err.message); return }
-      all = all.concat(data ?? [])
-      if (!data || data.length < PAGE) break
-      offset += PAGE
-    }
+    // BLOOM perf fix: rpc_bloom_order_recipe is a heavy set-returning function,
+    // and PostgREST RE-EXECUTES the whole function for every .range() page. Paged
+    // in 1000s a SPAR store ran the recipe ~13 times per order and timed the
+    // heavier store out (Delareyville). One call = one execution; no
+    // pgrst.db_max_rows cap is set, so every row returns in a single response.
+    const { data, error: err } = await supabase.rpc('rpc_bloom_order_recipe', {
+      p_store_code: storeCode, p_delivery_date: deliveryDate,
+      p_next_delivery: nextDeliveryDate || null,
+      p_preset: preset === 'standard' ? null : preset,
+      p_days_cover_override: override,
+      p_fit_to_budget: fitActive,
+    })
     setGenerating(false)
+    if (err) { setError(err.message); return }
+    const all = data ?? []
     const rows = all.sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
     const q = {}
     for (const r of rows) q[r.product_code] = r.suggested_packs ?? 0
