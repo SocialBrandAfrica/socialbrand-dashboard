@@ -4,6 +4,16 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-13 -- SB-CC-TOOLKIT-002 items 4, 6, 7: toolkit downloads + terminology (same-day follow-on).
+
+**Item 4 (interim, manual-StockFlow):** `GET /api/forge/export-stocktake` (nodejs, SheetJS) returns TODAY's daily count lists as ONE workbook, a tab per store, `product_code` in column A for the StockFlow upload + deletable detail columns. Button on the Progress tab. A one-off copy for today was also handed to Pieter directly. **Item 7:** `GET /api/forge/weekly-report` returns the weekly Chairman/VP report (Compliance 7-day + Unit progress from `v_forge_count_compliance` + `rpc_forge_integrity_trend`); not-yet-captured measures (waste/write-off, adjustments, exceptions, sales-vs-LY, GP%) are NAMED as pending gaps, never shown as zeros. Button on the Progress tab. **Item 6:** visible engine jargon relabelled to operating-rules words -- "TLX" -> "stocktake import" / "Zero-stock import" across the tab, Fixer labels and Integrity descriptions (the `.tlx` filenames are unchanged); the count-list badges already carry the tier names.
+
+**Both routes copy the ../run auth pattern** (same-origin session, `getUser()` belt behind middleware). Auth-gated, so not walkable locally; the SheetJS generation was proven with node against the app's own `xlsx` module and both outputs validated (openpyxl reads all sheets/headers). The toolkit page was walked in preview: both buttons render, relabels landed, no JS errors. **R31 (Pieter clicks the buttons live) confirms the downloads.**
+
+**Files:** `src/app/api/forge/export-stocktake/route.js`, `src/app/api/forge/weekly-report/route.js`, `public/toolkit.html`.
+
+---
+
 ## 2026-08-13 -- SB-CC-TOOLKIT-002 the count-accountability set: the daily routine goes live (items 1, 2, 3 + item-5 decode).
 
 **Clock re-read at the write (5th-firing discipline): the session opened 2026-08-12 22:48 SAST and CROSSED MIDNIGHT; everything here is 2026-08-13 (git author dates confirm). Dates taken from the artefacts.** Pieter's explicit go, DoD = live on site.

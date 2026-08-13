@@ -137,7 +137,7 @@
 <div class="tabs">
   <span class="tab on" data-pane="progress">Progress</span>
   <span class="tab" data-pane="composer">Stocktake Composer</span>
-  <span class="tab" data-pane="fixer">Fixer files &amp; TLX</span>
+  <span class="tab" data-pane="fixer">Fixer files &amp; imports</span>
   <span class="tab" data-pane="cost">Cost-Error Worklist</span>
   <span class="tab" data-pane="integrity">Platform Integrity</span>
 </div>
@@ -154,7 +154,11 @@
   <div class="explain">
     <b>Where we were, where we are.</b> Every night the Engine records the scoreboard. This view compares today against a week ago for the stores you pick. Green means the week moved the right way. Red means it moved against us. The record starts 1 July, two measures (key lines out of stock, hidden family demand) start today.
   </div>
-  <div class="bar"><button class="primary" id="loadprogress">Load progress</button></div>
+  <div class="bar">
+    <button class="primary" id="loadprogress">Load progress</button>
+    <button id="dl-allstores" title="One workbook, a tab per store, product_code in column A for the StockFlow upload. Today's lists.">Today's count lists — all stores (xlsx)</button>
+    <button id="dl-weekly" title="The weekly Chairman / VP report, built from the same platform facts as this page.">Weekly report (xlsx)</button>
+  </div>
   <div id="progress-asof" class="note" style="margin-top:2px"></div>
   <div class="hero-grid" id="progress-hero"></div>
   <div class="plate" style="margin-top:6px">
@@ -298,6 +302,19 @@ function download(name, text, type){
   a.href=URL.createObjectURL(new Blob([text],{type:type||"text/plain"}));
   a.download=name; a.click(); URL.revokeObjectURL(a.href);
 }
+// Server-generated downloads (xlsx) -- same-origin, carries the session (like /api/forge/run).
+async function apiDownload(btn, path){
+  const old=btn.textContent; btn.disabled=true; btn.textContent="preparing…";
+  try{
+    const r=await fetch(path);
+    if(!r.ok) throw new Error(`${r.status}: ${(await r.text()).slice(0,180)}`);
+    const blob=await r.blob();
+    const m=(r.headers.get("Content-Disposition")||"").match(/filename="([^"]+)"/);
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+    a.download=m?m[1]:"forge-download.xlsx"; a.click(); URL.revokeObjectURL(a.href);
+  }catch(e){ banner("Download failed: "+e.message,"err"); }
+  btn.disabled=false; btn.textContent=old;
+}
 const csvEsc = v => { v = v==null ? "" : String(v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
 const toCSV = (rows, cols) => cols.join(",")+"\n"+rows.map(r=>cols.map(c=>csvEsc(r[c])).join(",")).join("\n")+"\n";
 const R = n => n==null ? "" : Math.round(n).toLocaleString("en-ZA");
@@ -315,7 +332,7 @@ async function restGet(path){
 const INST_META={
   purified_capital_share:["Trusted capital","Rand of stock the Engine has verified as real and sellable, over everything in scope. The list = the lines NOT yet trusted.","UP",true],
   ambiguity_debt:["Unsettled lines","Lines the Engine cannot yet classify. Every one is a data gap with a fix. Target 0.","DOWN",false],
-  unresolved_ean:["Unknown identities","Lines with no proven barcode. They block TLX and cross-store checks.","DOWN",false],
+  unresolved_ean:["Unknown identities","Lines with no proven barcode. They block the stocktake import and cross-store checks.","DOWN",false],
   costless_real_stock:["Stock with no cost","Healthy stock carrying a zero cost. Its capital is invisible and its GP is fiction.","DOWN",false],
   hidden_family_demand:["Hidden family demand","Lines that sell more through their pack family than their own till scans show.","DOWN",false],
   count_coverage_91d:["Counted in 91 days","Share of countable lines a human has verified this quarter. The list = the lines still UNcounted.","UP",false],
@@ -438,6 +455,8 @@ async function loadCompliance(){
   }
 }
 loadCompliance();
+$("dl-allstores").onclick = function(){ apiDownload(this, "/api/forge/export-stocktake"); };
+$("dl-weekly").onclick    = function(){ apiDownload(this, "/api/forge/weekly-report"); };
 
 // ---------- department picker ----------
 let deptLoadToken=0;
@@ -550,9 +569,9 @@ $("dl-sheet").onclick = ()=> window.print();
 // ---------- 2 · FIXER ----------
 const SELECTORS=[
   ["stockflow","StockFlow count list","Suspect lines that need a physical count. Upload into StockFlow as an ad-hoc stocktake."],
-  ["tlx","TLX auto-zero","Near-certain dead lines only. Load into Sigma's stocktake import to set them to zero."],
+  ["tlx","Zero-stock import","Near-certain dead lines only. Load into Sigma's stocktake import to set them to zero."],
   ["ambiguous","Ambiguous list","Lines the Engine cannot settle, each with its reason. This is a work queue, target 0."],
-  ["zero_manual","Manual zero list","No usable barcode, so no TLX. Zero these by hand on a stock sheet."],
+  ["zero_manual","Manual zero list","No usable barcode, so it cannot go in the import. Zero these by hand on a stock sheet."],
   ["source_fix","Source-fix list","Made-in-store lines. Fix the recipe or setup in Sigma. Never count or zero these."],
   ["non_stock","Non-stock list","Accounting lines riding in the stock file. Not stock, no floor action."],
   ["cost_error","Cost-error list","Broken costs. Fix the cost in Sigma first, then the line re-enters the normal flow."],
@@ -569,7 +588,7 @@ $("loadfixer").onclick = async ()=>{
       const b=s.buckets||{}, a=s.artifacts||{};
       const card=document.createElement("div"); card.className="card";
       card.innerHTML = `<h3>${STORES.find(x=>x[0]===s.store_code)?.[1]||""} (${s.store_code})</h3>
-        <div class="meta">engine snapshot ${s.snapshot_date} · ${s.pool_total.toLocaleString()} lines examined · <span title="lines with no proven barcode identity — these block TLX">unresolved identity <b style="color:${s.unresolved_ean? "var(--neg)":"var(--pos)"}">${s.unresolved_ean}</b></span></div>
+        <div class="meta">engine snapshot ${s.snapshot_date} · ${s.pool_total.toLocaleString()} lines examined · <span title="lines with no proven barcode identity — these block the stocktake import">unresolved identity <b style="color:${s.unresolved_ean? "var(--neg)":"var(--pos)"}">${s.unresolved_ean}</b></span></div>
         <div style="font:11.5px var(--font-mono);color:var(--mist);margin-bottom:8px">${Object.entries(b).map(([k,v])=>`${k} <b style="color:var(--txt)">${v.rows}</b> (R${R(v.capital)})`).join(" · ")}</div>
         ${SELECTORS.map(([selr,lbl,why])=>`<button class="filebtn" data-store="${s.store_code}" data-sel="${selr}"><span>${lbl}${a[selr]?` — ${a[selr].rows} lines`:""}</span><small>${why}</small></button>`).join("")}`;
       el.appendChild(card);
