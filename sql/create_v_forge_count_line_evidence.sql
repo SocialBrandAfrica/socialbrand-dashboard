@@ -10,8 +10,10 @@
 -- the applied migration, so main and the live DB do not diverge
 -- (CLEANUP-ENGINE-CANON section 13 rule 3).
 --
--- Author: reconcile CC (Claude Code)   Created: 2026-08-12 (system clock,
--- local / machine-UTC / DB now() cross-checked at +2)
+-- Author: reconcile CC (Claude Code)   Reconciled: 2026-08-13 (system clock
+-- re-read at the write, +2). The session opened 2026-08-12 and CROSSED MIDNIGHT;
+-- the VIEW itself was PM-applied 2026-08-12 (migration 20260812202924), this
+-- source reconcile was written 2026-08-13 -- dates taken from the artefacts.
 -- Ref: SB-CC-TOOLKIT-002 item 3; companion to v_forge_count_compliance.
 --
 -- THE MEASURE IS THE INTERSECTION, STATED LINE BY LINE. The toolkit
