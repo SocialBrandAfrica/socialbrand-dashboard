@@ -4,6 +4,14 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-13 -- Bloom order screen: fetch the recipe in ONE call, not 13 paged re-runs (timeout fix).
+
+**Pieter-directed (checked the live orders.socialbrand.africa screen in his Chrome). `src/app/bloom/page.jsx` looped `supabase.rpc('rpc_bloom_order_recipe').range(offset, offset+999)` in 1000-row pages -- and PostgREST re-executes the whole SET-RETURNING function per page, so a ~12,700-row SPAR order ran the recipe ~13x. Roosville completes (R269,727/450 on screen); Delareyville TIMED OUT and rendered a partial total. No `pgrst.db_max_rows` cap is set, so one `.rpc()` call returns every row in a single ~3s execution.** Build-verified clean (`/bloom` prerenders). **BUG-LOG ENG-085.**
+
+**Deployed:** `origin/main bc5fe3c` (this commit + the ENG-083 v16 record `e118446`), Vercel production green -- the red deployments were PREVIEW builds of feature branches failing on `Missing Supabase environment variables` (both `NEXT_PUBLIC_SUPABASE_*` scoped Production-only), same code Ready on prod. **File:** `src/app/bloom/page.jsx`.
+
+---
+
 ## 2026-08-13 -- ENG-083 / canon SS14 v16 + 16.7: the DC ambient Standard over-order fix goes live.
 
 **Pieter ruling 2026-08-13 ("churn and test and then implement"). `rpc_bloom_order_recipe` over-ordered on live money on the DC ambient Standard order (80175 15 Aug R361,730 against recent real deliveries R194-217k). Two coupled defects fixed, R22 green across 5 stores x 3 presets, deployed under standing authority.**
