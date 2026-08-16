@@ -269,8 +269,16 @@ BEGIN
   JOIN public.v_ean_bridge b ON b.store_code=ic.store_code AND b.product_code=ic.product_code
   JOIN public.l2_stock_position sp ON sp.store_code=ic.store_code AND sp.product_code=ic.product_code AND sp.never_sold=false
   WHERE ic.class='NORMAL' AND ic.store_code=p_store
+    -- ENG-087: three arms. DC (supplier_type Z) OR the fresh merch groups OR this store's own
+    -- RULED direct-desk suppliers from bloom_route_config. Before ENG-087 the pool was DC-scoped,
+    -- so every direct desk built its order with NO pantry row and the recipe degraded to a RAW
+    -- scan window. Additive only: no product that qualified before can fall out.
     AND (sm.supplier_type='Z' OR (a.merch_group_nr IN (201,202,203,204,205,401)
-         AND COALESCE(sl.status,'')<>'S' AND sm.status='A'));
+         AND COALESCE(sl.status,'')<>'S' AND sm.status='A')
+      OR EXISTS (SELECT 1 FROM public.bloom_route_config rc
+                  WHERE rc.store_code=ic.store_code AND rc.status='RULED'
+                    AND rc.direct_supplier_nrs IS NOT NULL
+                    AND sl.supplier_nr = ANY(rc.direct_supplier_nrs)));
   CREATE UNIQUE INDEX ON tmp_bloom_ros_pool (store_code, product_code);
   ANALYZE tmp_bloom_ros_pool;
 
