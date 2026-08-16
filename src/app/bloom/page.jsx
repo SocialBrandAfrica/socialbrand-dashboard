@@ -1442,6 +1442,10 @@ function OrderDesksMode() {
   const [error, setError] = useState(null)
   const [generated, setGenerated] = useState(false)
   const [submitted, setSubmitted] = useState(false)
+  // ENG-088: where THIS order's rows came from -- the precomputed cache or a
+  // live recipe run. Surfaced, never silent: a buyer must be able to see that
+  // he is working a precomputed order and how old it is (R22/R29).
+  const [orderSource, setOrderSource] = useState(null)
   const [overview, setOverview] = useState([])
   const [overviewLoading, setOverviewLoading] = useState(false)
   const [overviewError, setOverviewError] = useState(null)
@@ -1695,19 +1699,50 @@ function OrderDesksMode() {
 
   async function generate() {
     if (!deliveryDate || !nextDeliveryDate) { setError('Dates not ready yet — wait for the calendar to load.'); return }
-    setError(null); setGenerating(true); setSubmitted(false)
-    const PAGE = 1000
-    let all = [], offset = 0
-    for (;;) {
+    setError(null); setGenerating(true); setSubmitted(false); setOrderSource(null)
+
+    // ENG-088. The desk READS a precomputed order (R32: "an applet READS, it never
+    // computes"). Measured at source 2026-08-16: recomputing this recipe live costs
+    // ~36s against a 30s statement_timeout carried by BOTH anon and authenticated as
+    // role settings -- so the screen could never legally finish, and the timeout is
+    // Postgres, not Kong. The same rows read from bloom_order_cache: 7ms warm.
+    //
+    // The pagination loop that stood here is gone with it -- one indexed read cannot
+    // page, so the ENG-085 re-execution cliff (each .range() page re-ran the WHOLE
+    // set-returning function) cannot come back on this path.
+    //
+    // Off-calendar dates fall back to the live recipe deliberately: that is the
+    // exception, slow is acceptable there, and it is better than a blank screen.
+    let all = null
+    const cached = await supabase.rpc('rpc_bloom_order_cached', {
+      p_store_code: storeCode, p_route: desk,
+      p_delivery_date: deliveryDate, p_next_delivery: nextDeliveryDate,
+      p_preset: preset === 'standard' ? null : preset,
+      p_fit_to_budget: fitToBudget,
+    })
+    // The reader returns ONE jsonb row carrying the whole array. That is deliberate:
+    // measured 2026-08-16, PostgREST answered the SETOF form with "206 Partial
+    // Content, Content-Range: 0-999/1065" -- a 1000-row cap IS live on this project,
+    // so a plain SETOF read would have silently dropped 65 lines off a 1,065-line
+    // order. Same pattern rpc_report_rows uses. `served` vs `line_count` is the
+    // R22 tripwire: if they ever disagree we say so instead of shipping a short order.
+    const payload = cached.data ?? null
+    if (!cached.error && payload?.found && (payload.lines?.length ?? 0) > 0) {
+      all = payload.lines
+      if (payload.served !== payload.line_count) {
+        setError(`Cached order incomplete: served ${payload.served} of ${payload.line_count} lines. Not safe to place — regenerate.`)
+        setGenerating(false); return
+      }
+      setOrderSource({ kind: 'cache', generatedAt: payload.generated_at ?? null })
+    } else {
       const { data, error: err } = await supabase.rpc('rpc_bloom_order_recipe', {
         p_store_code: storeCode, p_delivery_date: deliveryDate, p_next_delivery: nextDeliveryDate,
         p_route: desk, p_fit_to_budget: fitToBudget,
         p_preset: preset === 'standard' ? null : preset,
-      }).range(offset, offset + PAGE - 1)
+      })
       if (err) { setGenerating(false); setError(err.message); return }
-      all = all.concat(data ?? [])
-      if (!data || data.length < PAGE) break
-      offset += PAGE
+      all = data ?? []
+      setOrderSource({ kind: 'live', generatedAt: null })
     }
     setGenerating(false)
     const rows = all.sort((a, b) => (b.rhythm_adjusted_demand ?? 0) - (a.rhythm_adjusted_demand ?? 0))
@@ -2115,6 +2150,22 @@ function OrderDesksMode() {
             {budgetWeekSource === 'no_ledger_row'
               ? 'No budget row exists for this delivery week on this route — the order is priced against a budget of R0. Fit to budget will trim everything. Generate the budget rail before ordering.'
               : `This delivery week has no budget row. The engine fell back to the nearest PAST week (${budgetWeekPriced}) — the figure above is stale and the fit is judged against it.`}
+          </div>
+        )}
+        {/* ENG-088: name where these rows came from. A precomputed order is
+            legitimate and fast, but the buyer is told it is precomputed and how
+            old it is -- a stale read is surfaced, never silent (R22/R29). */}
+        {generated && orderSource && (
+          <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 11,
+            color: orderSource.kind === 'cache' ? 'var(--veld-mist)' : '#fcd34d',
+            background: orderSource.kind === 'cache' ? 'rgba(148,163,184,0.10)' : 'rgba(245,158,11,0.12)',
+            border: `1px solid ${orderSource.kind === 'cache' ? 'rgba(148,163,184,0.28)' : 'rgba(245,158,11,0.35)'}`,
+            borderRadius: 8, padding: '6px 12px' }}>
+            {orderSource.kind === 'cache'
+              ? `Precomputed order · built ${orderSource.generatedAt
+                  ? new Date(orderSource.generatedAt).toLocaleString('en-ZA', { dateStyle: 'medium', timeStyle: 'short' })
+                  : 'unknown'} · read in one call`
+              : 'Generated live off-calendar — this date is not precomputed, so it ran the full recipe.'}
           </div>
         )}
         {error && (
