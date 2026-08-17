@@ -4,6 +4,18 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-16 (later) -- ENG-088 partial fix + ENG-090: rpc_bloom_order_recipe performance (still open) and a real trim-not-zero defect.
+
+**Three migrations, all live, all correctness-neutral, R22'd:**
+
+1. **`eng064_normal_packs_ceiling_trim_not_zero` (ENG-090, not ENG-064 -- see BUG-LOG correction).** `packs_ceiled.normal_packs_calc` carried the same zero-instead-of-trim shape ENG-064 fixed in the sibling `geared_ceiled` CTE on 2026-08-03, untouched by that fix. One line: `THEN 0` -> `THEN LEAST(m.normal_packs_raw, m.packs_under_ceiling)`. R22: 0 net recovered value on tonight's sample (`packs_under_ceiling` was 0 wherever the flag fired), consistent with PM's sizing of the class (~R2k, immaterial, non-gating).
+2. **`eng088_recipe_output_filter_actionable_rows_only` -> superseded same session by `eng088_filter_before_surfacing_passes_not_after`.** Confirmed live 2026-08-16: DC Ambient at both 10116 and 80175 renders `R 0 / 0 lines` + `canceling statement due to statement timeout` on the live `/bloom` screen (DOM-read, not a screenshot). `EXPLAIN (ANALYZE, BUFFERS)` direct on the function: 52.7s. Filtered the final `RETURN QUERY` to actionable rows only (`suggested_packs>0 OR count_first OR keep_or_delist OR pack_forced_review OR min_presence_forced`) -- barely moved it (47.0s), because the three SB-CC-BLOOM-018 surfacing UPDATE passes ran over the full ~12,700-row pool BEFORE that filter applied. Moved the same filter to a `DELETE FROM _bloom_recipe_out` immediately after the pool materialises, before the three passes -- local/temp buffer writes dropped ~70%, wall clock only to 47.0s (the passes were real but not dominant).
+3. **`perf_sigma_supplier_link_store_supplier_idx`.** New index `sigma_supplier_link (store_code, supplier_nr)` -- none of the three existing indexes led with `supplier_nr`, so the DC pool's `lnk` CTE bitmap-scanned all 69,346 store rows from disk before it could filter to the ~27 type-Z suppliers. Confirmed by plan change (index-nested-loop from the small supplier set) and measurement: `lnk` 6.2s -> 3.5s, function total 47.0s -> **38.1s**.
+
+**Cumulative: 52.7s -> 38.1s (~28% faster). STILL OVER the ~30s ceiling (the function's own `SET LOCAL statement_timeout='30s'` and Kong's kill switch) -- the live UI is confirmed still broken on both SPAR stores at time of writing.** BUG-LOG ENG-088 carries the full diagnosis and the remaining-cost note (30-CTE chain, no single further hotspot identified this session). **Not walked (Pieter's DoD test failed live, twice, before these fixes; not re-tested against the UI after fix 3 -- do that first next session).** Files: none (all three are direct `CREATE OR REPLACE FUNCTION` / `CREATE INDEX`, no `sql/create_*.sql` regen this pass -- that file was already known rotted off live, see BLOOM-023 SOT map).
+
+---
+
 ## 2026-08-16 14:26 SAST -- ENG-087: direct desks widened into the ROS pantry pool (repo catch-up + reconcile).
 
 **Repo catch-up, not a new ship.** The migration `eng087_pantry_pool_include_direct_desk_suppliers` was already live (applied 14:26 SAST, pantry rebuilt ~14:28-14:29) when this session opened -- the working copy of `sql/create_l2_bloom_ros_pantry.sql` sat uncommitted, a live-DB-vs-repo divergence (SB-PRIORITY v1.4 Test 1). This entry commits the matching file (`e0cce3e`, merged to main in this deploy) and re-reconciles at source before calling item 0 walkable.
