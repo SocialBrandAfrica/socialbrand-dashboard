@@ -4,6 +4,37 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-16 (night) -- ENG-088 order-generation path moved to precompute-and-read (R32); ENG-093 silent-truncation defect found and fixed.
+
+> **⚠️ CORRECTED 21:43 SAST, same session. An earlier draft of this entry said "ENG-088 CLOSED". It is NOT closed.** Pieter's live prod screenshot at 21:4x shows `/bloom` unchanged: `R 0 / 0 lines`, SCENARIO OVERVIEW stuck LOADING, and STOCK NOW + DELIVERY CHAIN both `canceling statement due to statement timeout`. **Four surfaces on that screen breach the 30s ceiling -- `rpc_bloom_order_recipe`, `rpc_bloom_stock_state`, `rpc_bloom_delivery_chain`, `rpc_bloom_scenario_overview` -- and this deploy addresses only the first.** The 17:09 handover block had already recorded all four; the defect was under-scoping, not the fix. What ships here is the MECHANISM plus the ENG-093 fix, and it clears the live-DB-vs-`main` divergence. The DoD is unchanged and open.
+
+**Four migrations, all live. `rpc_bloom_order_recipe` IS NOT TOUCHED by any of them -- the whole change is additive.**
+
+**Why this shape, and it is the finding rather than the fix.** The optimisation route was executed to its conclusion FIRST. The recipe's dynamic SQL was extracted (the step named and not taken last session) by cloning the function via an asserted `replace()` on `pg_get_functiondef` into a probe that captures `v_sql` and returns before executing -- so the live money function was never edited in order to measure it. The materialised inner query is 26,915 chars / 37 CTEs; `EXPLAIN (ANALYZE, BUFFERS)` ran on it directly, outside the function's own 30s cap. **Every named suspect was refuted:** `promo_match`'s per-row `generate_series` runs `loops=58910` but costs ~0.5s (the 21s attributed to that node is the `banded2` CTE materialising inside it), and constant-folding it away -- a DEDUCTIVE rewrite R22-proven over 90,941 rows, 0 mismatches -- measured SLOWER in an alternating A/B (OLD 31.09/34.38s vs NEW 35.95/34.70s). Raising `work_mem` 2,184kB->96MB measured 65.6s vs 37.9s, worse. **The ~32s is distributed**, every node estimating `rows=83` against 12,741 actual. No hotspot remains, so fighting the ceiling was the wrong objective and sidestepping it is the right one (R32: an applet READS, it never computes).
+
+1. **`eng088_bloom_order_cache_tables`** -- `bloom_order_cache` (header; natural key on store/route/dates/preset/fit; carries `engine_md5` so a cache built by a superseded recipe body is detectable) + `bloom_order_cache_line`, whose columns are **generated from the recipe's own `RETURNS TABLE` spec** rather than hand-enumerated, so the cache cannot silently drift from the function's column set. RLS on, read policies, SELECT to anon/authenticated.
+2. **`eng088_refresh_and_read_bloom_order_cache`** -- `refresh_bloom_order_cache()` (SECURITY DEFINER writer, arms its own 300s timer because it is off the request thread, and resolves the next scheduled delivery from `supplier_calendar` via `rpc_bloom_next_deliveries` rather than making a caller guess) + `rpc_bloom_order_cached()` (reader) + `rpc_bloom_order_cache_status()` (freshness / `engine_current`). Grants: writer PUBLIC+anon revoked, authenticated+service_role only; readers anon+authenticated. Verified `has_function_privilege('anon', writer, 'EXECUTE') = false`.
+3. **`eng088_cache_line_carries_generated_at`** -- every cached line carries its own build timestamp (R29) so the screen can say the order is precomputed and how old it is.
+4. **`eng088_cached_reader_returns_jsonb_no_truncation` (ENG-093).** Found while verifying this work: PostgREST answered the SETOF reader with **`206 Partial Content, Content-Range: 0-999/1065`**. A 1,000-row cap IS live, correcting the recorded finding that none exists. Reader now returns ONE jsonb row carrying the array -- the `rpc_report_rows` pattern already proven here, which a max-rows cap cannot truncate -- plus `line_count` vs `served` as an R22 tripwire the frontend refuses the order on. **Consequence beyond tonight: ENG-085 removed pagination from the other `generate()` on the strength of the refuted claim (`bc5fe3c`), so desks over 1,000 lines have been serving short orders. Logged as BUG-LOG ENG-093, sweep owed, NOT fixed here.**
+
+**pg_cron `bloom-order-cache-refresh`, `30 23 * * *` UTC = 01:30 SAST** -- deliberately after `refresh-l2-pipeline` (20:15), `refresh-search-index` (20:30), `nightly-ros-refresh` (22:30) and `refresh-sparkline-14d` (23:00), so the cache is built on the night's FINISHED pantry, never mid-chain. Scoped to DC desks; direct desks answer inside the ceiling live and are deliberately NOT precomputed (named, not silently omitted).
+
+**Frontend:** `src/app/bloom/page.jsx` desk `generate()` reads the cache, falls back to the live recipe only for off-calendar dates, and renders a provenance line naming precomputed-vs-live with the build time. The `.range()` pagination loop is gone from that path -- one indexed read cannot page. `next build` green, 13/13, `/bloom` 25.1 kB.
+
+**R22, exact:** live recipe vs cached read, 10116 DC_AMBIENT delivery 2026-08-20 -> 08-22: **1,065 rows both ways, R307,007.66 both ways, delta R0.00** -- identical BY CONSTRUCTION, since the cache is populated `INSERT ... SELECT * FROM rpc_bloom_order_recipe(...)` (append-after-compute: structurally incapable of differing, not merely verified not to).
+
+**Measured end to end through PostgREST as `anon`, the path that was failing:**
+
+| path | result |
+|---|---|
+| live `rpc_bloom_order_recipe` | **HTTP 500 in 31.6s, `57014 canceling statement due to statement timeout`** |
+| `rpc_bloom_order_cached` | **HTTP 200 in 3.0s, 1,065 of 1,065 lines, R307,007.66** |
+
+In-DB the read is **7ms warm / 105ms cold, against 43,597ms to compute.** Cache populated for both SPAR DC-ambient desks x both fit values (10116 1,065 / 958 lines; 80175 575 / 529), `engine_current = true` on all four.
+
+**NOT WALKED. Pieter's R31 DoD is unchanged and outstanding: open the DC-ambient order on his own device and work it end to end -- render, paginate, download, 8-digit barcodes, generate, edit, export, place.** Everything above is R22, not DoD. Files: `sql/create_bloom_order_cache.sql`.
+
+**Repo note:** this worktree is off `main` `6d6f568` and its DEPLOY-LOG does NOT carry the prior session's "2026-08-16 (later)" ENG-088/ENG-090 entry -- that entry is uncommitted in another tree. Reconcile on merge rather than assuming this file is complete.
 ## 2026-08-16 (later) -- ENG-088 partial fix + ENG-090: rpc_bloom_order_recipe performance (still open) and a real trim-not-zero defect.
 
 **Three migrations, all live, all correctness-neutral, R22'd:**
