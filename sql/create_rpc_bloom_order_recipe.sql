@@ -1,4 +1,43 @@
 -- =============================================================================
+-- !!! THIS FILE'S BODY IS ROTTED AGAINST LIVE. DO NOT RECONCILE ANYTHING TO IT. !!!
+-- Stamped by CC 2026-08-19 20:4x SAST. Clock settled three ways at +2
+-- (local 20:39:50 / UTC 18:39:50 / DB now() 18:40:10 = 20:40 SAST).
+--
+-- THE AUTHORITY IS THE LIVE BODY, reached by:
+--     SELECT pg_get_functiondef(oid) FROM pg_proc
+--     WHERE proname = 'rpc_bloom_order_recipe';
+--
+-- LIVE PIN, verified at source in this same session:
+--     md5    = 48bdc629c142f68e7342e3ae15444ab8
+--     length = 44,383 chars
+--     = the ORDERING-CANON v1.4 reconciliation pin, unchanged.
+-- THIS FILE below the header: 48,747 bytes of body, hand-authored, DRIFTED.
+-- The two are NOT the same function. Every figure, CTE name and guard in the
+-- body below must be checked against live before it is believed or quoted.
+--
+-- WHY IT IS STILL ROTTED, stated rather than hidden (R28 / SS0i -- a named debt,
+-- never a silent one). PM asked for a regen from live so recipe changes become a
+-- git diff instead of archaeology (SB-PRIORITY v1.4, no-divergence). That regen
+-- needs the 44,383-char body moved byte-exactly into this file. This seat has no
+-- channel that can do that safely: there is no psql and no DATABASE_URL, .env.local
+-- carries only the public anon key (no service_role), and the recipe body is not
+-- reachable through PostgREST. The only remaining route is hand-transcription
+-- through the session, on SQL carrying nested $q$ dollar-quoting and
+-- LIKE 'DIRECT\_%' ESCAPE '\' -- where a single wrong character produces a file
+-- that is SILENTLY wrong. A known-rotted file is safer than a quietly-wrong one.
+--
+-- THE FIX, and it costs nothing when taken at the right moment: the next change to
+-- this recipe is authored as a migration BY CC, so at that moment the full new body
+-- exists as text CC wrote. Write THIS file from that text in the same commit, and
+-- from then on every recipe change is a real git diff. SB-CC-BLOOM-026 part (a)
+-- (the wider-window in-stock pantry read) and part (e) (the receipts tiebreak,
+-- ORDERING-CANON SSH8) both rewrite this function, so the debt closes on the next
+-- recipe-touching ship. Owner CC. Do not close it by transcription.
+--
+-- GATE for whoever does it: after writing, prove it rather than assert it --
+--     md5(pg_get_functiondef(oid)) on live  ==  md5 of the body written here,
+-- both normalised the same way. No hash, no claim.
+-- =============================================================================
 -- create_rpc_bloom_order_recipe.sql
 -- SB-CC-BLOOM-004 item 5 -- the profile-driven Recipe RPC.
 --
