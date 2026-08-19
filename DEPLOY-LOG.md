@@ -4,6 +4,38 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-19 -- Defect B (edit-invisibility) + TLX pack quantity on two screens + the nightly order cache generalised to every config-discovered desk.
+
+Clock read fresh in this write and cross-checked three ways at +2: local 11:47:34 SAST / machine UTC 09:47:34 / DB `now()` 11:47:37 SAST. Commit `f802773`, fast-forward to `main`. `next build` green, full route table, no prerender errors, `/bloom` 25.1 kB. **`rpc_bloom_order_recipe` IS NOT TOUCHED** -- md5 `48bdc629c142f68e7342e3ae15444ab8` / 44,383 chars, still exactly the ORDERING-CANON v1.1 pin. `bloom_order_cache` unchanged at 13 columns. Everything here is additive.
+
+### Frontend, `src/app/bloom/page.jsx`
+
+**DEFECT B -- the screen now agrees with the file it produces.** `RecipeOrderForm`'s ordered count and its Ordered filter read the recipe's RAW `suggested_packs`, so after an import or a hand edit they described the engine's ORIGINAL suggestion and never the buyer's: a line the buyer ADDED stayed invisible and uncounted, a line they ZEROED stayed listed as ordered, while the exporters read live `qty`. Both now read live `qty`, the same source as the exporters and the running total (R22, no silent divergence). A line just zeroed stays visible while `edited`, so it cannot vanish under the cursor and become impossible to undo.
+
+**ONE SEED FOR EVERY DESK.** Four desks seeded quantities four ways; `lineQty` is now the single home (FILE-GOVERNANCE SS0g write-forward). The shapes differ legitimately and are NOT collapsed: basis-aware desks (Order Desks, DC) read the split `normal_packs`/`geared_packs`; resolved-figure desks (Recipe, Direct Beer) have no basis toggle, and **`rpc_bloom_order_direct_beer` publishes ONLY `suggested_packs`** -- verified against `pg_get_function_result`, it returns neither split column. Routing those through the old body would have returned `normal_packs ?? 0` and **zeroed the entire direct-beer desk**. Provably zero-delta on every desk that works today.
+
+**TLX PACK QUANTITY, all three exporters now agree.** ORDERING-CANON SSA7 (ex-SS14 v7 item 11a): the TLX carries the PACK quantity, never units. `RecipeMode` and the `BloomPage` screen multiplied by `pack_size` and wrote UNITS, so Sigma would import an order `pack_size` times too large from either screen. The Order Desks exporter was corrected 2026-07-14 and these two were missed. Live defect, found by reading all three exporters rather than the one the report named.
+
+### Database, three migrations
+
+1. **`bloom_desk_discovery_config_driven`** -- `supplier_calendar` gains `display_label` and `desk_sort`, plus new **`rpc_bloom_desks(p_store_code)`**: the one home for "which desks exist", discovered from `supplier_calendar` x `stores.is_active`. Replaces the hardcoded `STORE_DESKS` / `DESK_STORES` / `TOPS_STORES` maps as the source of truth (SS0h config-key gate -- the values MOVE to config, they are never merely deleted; `desk_sort` preserves SB-CC-BLOOM-009 item 6 buyer priority, which alphabetical order would have silently destroyed). **R22, zero-delta against the hardcoded map at source: 10116 7=7, 80175 7=7, 21355 3=3, 80176 2=2, 80579 1=1 -- 20 desks, same labels, same order.** Keyed on the CALENDAR and not `bloom_route_config` deliberately: 80579 carries a RULED `DIRECT_BEER` row in route_config but no calendar row, and ORDERING-CANON SSA1 says that desk is deliberately absent (IBT-fed, no SAB receipts of its own). The calendar rule reproduces that intended omission; route_config would have resurrected it. `is_dc` derives from config presence, never from the `route_key` string (canon SSA5 7j).
+2. **`bloom_cache_all_routes_from_config`** -- `refresh_bloom_order_cache_all` p_routes now defaults to NULL meaning EVERY desk `rpc_bloom_desks()` finds. **The old default `ARRAY['DC_AMBIENT','DC_TOPS']` was the only thing deciding which desks got a precomputed order, so 15 of 20 desks never had one** and still ran the live recipe into the 30s role `statement_timeout`. `p_presets` / `p_drops` are parameterised for the scenario matrix but DEFAULT TO PRIOR BEHAVIOUR.
+3. **`bloom_cache_all_drop_superseded_1arg_overload`** -- see the trap below.
+
+**RETIRED, R28, with its successor.** The 2026-08-16 entry below and `sql/create_bloom_order_cache.sql` both stated *"direct desks answer inside the ceiling live and are deliberately NOT precomputed"*. **That claim is FALSE.** Direct desks run the same recipe and hit the same 30s cap. Retired in the source file with this successor, not deleted.
+
+**OVERLOAD TRAP, caught before it fired, recorded because it nearly took the nightly down.** Adding `p_presets`/`p_drops` changed the signature, so `CREATE OR REPLACE` left the old 1-arg function standing. Both were fully defaulted, which made pg_cron job 26's no-argument call `SELECT public.refresh_bloom_order_cache_all();` **ambiguous ("function is not unique") -- it would have killed tonight's entire nightly build.** Found by running the RULE-BOOK SS8 Function Change Protocol overload check AFTER the change instead of before. The 1-arg version is dropped; exactly one signature verified live.
+
+**MEASURED, not asserted.** DC-only nightly = 10 combinations / 212,334 ms = **3.54 min**. A direct desk measures ~7.5s (80176/DIRECT_BEER, 24 lines, 7,481 ms, a desk that had never been cached). All 20 desks x 2 fit = 40 combinations ~ **7.3 min**. The `order_essentials`+`catch_up` preset matrix measures ~43 min across 240 combinations and was **ruled NO-GO by PM** -- parameterised, not wired. Loop proven end to end on `DIRECT_BEER`: 4 combinations, 0 errors, 14.6s, and it correctly SKIPPED 80579 per SSA1.
+
+### What this deploy does NOT fix, stated so it is not assumed
+
+- **The five card timeouts remain OPEN.** `rpc_bloom_scenario_overview` (6 recipe call-sites, independently reproduced), `rpc_bloom_stock_state`, `rpc_bloom_delivery_chain`, `rpc_bloom_month_projection`, `rpc_bloom_promo_floor_gap` -- 11 recipe executions across the five. **Deferred behind `Bloom/SB-CC-BLOOM-026` per the 2026-08-19 ruling (SS9).** Finding that stopped the repoint: 4 of the 10 calls cannot read the cache at all -- two pass `p_days_cover_override=7` with same-day dates, two pass a `p_soh_override` derived from the previous drop's own result, and neither is in the cache key. Serving those from cache would have silently returned rows computed for different parameters. PM ruled STAY LIVE, no cache-key extension.
+- **Order-population completeness (`Bloom/SB-CC-BLOOM-026`) is the reprioritised top job** and is not touched here.
+- The frontend still reads the hardcoded desk maps; `rpc_bloom_desks` ships as the source of truth but the UI swap is a separate additive change.
+
+---
+
 ## 2026-08-16 (night) -- ENG-088 order-generation path moved to precompute-and-read (R32); ENG-093 silent-truncation defect found and fixed.
 
 > **⚠️ CORRECTED 21:43 SAST, same session. An earlier draft of this entry said "ENG-088 CLOSED". It is NOT closed.** Pieter's live prod screenshot at 21:4x shows `/bloom` unchanged: `R 0 / 0 lines`, SCENARIO OVERVIEW stuck LOADING, and STOCK NOW + DELIVERY CHAIN both `canceling statement due to statement timeout`. **Four surfaces on that screen breach the 30s ceiling -- `rpc_bloom_order_recipe`, `rpc_bloom_stock_state`, `rpc_bloom_delivery_chain`, `rpc_bloom_scenario_overview` -- and this deploy addresses only the first.** The 17:09 handover block had already recorded all four; the defect was under-scoping, not the fix. What ships here is the MECHANISM plus the ENG-093 fix, and it clears the live-DB-vs-`main` divergence. The DoD is unchanged and open.
