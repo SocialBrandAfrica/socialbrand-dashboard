@@ -17,8 +17,9 @@
 -- recipe falls back to the stockout-SUPPRESSED raw rate. The line then reads as
 -- well-stocked, need computes at or below zero, and it is dropped from the list
 -- with no reason shown. Worked case EXCELLA S/FLOWER OIL 2LT (3765 @ 80175):
--- on its own TOP_1000 28-day window the corrector measured 6.455/day, the floor
--- withheld it, the recipe read raw 2.536/day, and the line vanished.
+-- on the 56-day stable window the corrector measured 5.64/day, the floor withheld
+-- it, the recipe read raw 1.41/day, SOH 29 looked like 20 days of cover, and the
+-- line vanished. True cover is close to 5 days.
 --
 -- WHY IT KEYS ON THE WITHHELD FLAG AND NEVER ON BAND POSITION (brief SS6)
 -- ORDERING-CANON SSB5 claimed a withheld correction is safe because v12 minimum
@@ -39,11 +40,16 @@
 -- EXCLUDED. A suspended link, an expired link, a dropship line or another
 -- desk's line CANNOT appear here -- those are brief parts (d) and (e).
 --
--- THE WINDOW IS THE LINE'S OWN (ORDERING-CANON SSB2)
--- TOP_100 -> 14d, TOP_1000 -> 28d, else 56d. Never a cross-window maximum, and
--- never a single window applied to every tier. NOTE when comparing counts: a
--- figure quoted on 56d for every line will not equal a figure quoted on the
--- tier window, and both are legitimate. State which.
+-- THE WINDOW IS THE 56-DAY STABLE ONE (SB-CC-BLOOM-026 v1.1 SS11, PM ruling
+-- 2026-08-19). The first build read each line's OWN tier window (TOP_100 14d,
+-- TOP_1000 28d, else 56d, ORDERING-CANON SSB2). That ranked TOP_100 lines on 14
+-- days of evidence against BOR lines on 56 in one scrollable list, which is not
+-- comparable. v16 (SSB3) already established the Standard order reads the STABLE
+-- wide window so a short-window spike cannot buy the peak, and the same reasoning
+-- governs a surfacing card. One window, labelled on every row.
+-- COUNTS MOVE WITH THE WINDOW, so the window is stated: on the tier window 80175
+-- returned 12 lines at >=2/day, on 56d it returns 10, which reconciles exactly to
+-- the brief's own SS2a figure. Neither was wrong. They were different windows.
 --
 -- R28 SS5 ON THE SURFACE
 -- Every row carries days_removed / observable_days / observable_share, so a
@@ -78,12 +84,12 @@
 -- Postgres rejects SET inside a non-volatile function. Same note as
 -- rpc_dept_summary and rpc_kpi_stock_by_date -- third instance of one trap.
 --
--- MEASURED AT BUILD (2026-08-19), DC desks, hidden / >=2 per day / at SOH 0:
---   10116 609 / 25 / 75 - 80175 415 / 12 / 45 - 80579 48 / 9 / 23
---   21355  47 / 10 /  7 - 80176  24 /  1 /  2      group 1,143 / 57 / 152
--- 161 of the 1,143 rest on six observable days or fewer. The actionable head is
--- small; the tail is long. The card ranks by corrected rate and lets the buyer
--- scroll (brief SS3 point 2), it does not dump 1,143 rows at him.
+-- MEASURED AT BUILD ON THE 56d WINDOW (2026-08-19), DC desks, hidden / >=2 per day:
+--   10116 617 / 22 - 80175 421 / 10 - 21355 97 / 6 - 80579 76 / 8 - 80176 41 / 0
+-- 80175's 10 and EXCELLA 2LT's 1.41 -> 5.64 reproduce the brief's SS2a figures
+-- exactly. The actionable head is small and the tail is long, so the card ranks
+-- by corrected rate and lets the buyer scroll (brief SS3 point 2). It does not
+-- dump the whole tail at him.
 -- =====================================================================
 
 CREATE OR REPLACE FUNCTION public.rpc_bloom_hidden_demand(
@@ -123,6 +129,7 @@ DECLARE
   v_is_dc     boolean;
   v_soh_dt    date;
   v_floor     numeric;
+  v_win       constant smallint := 56;   -- the stable window (SSB3 / SS11 ruling)
 BEGIN
   SET LOCAL statement_timeout = '25s';
 
@@ -189,12 +196,11 @@ BEGIN
            COALESCE(so.soh, 0) AS soh_raw,
            COALESCE(rs.range_state, 'SLOW') AS range_state,
            lnk.ps, lnk.pack_cost,
-           rop.ros_14d, rop.ros_28d, rop.ros_56d,
-           rop.ros_14d_corrected, rop.ros_28d_corrected, rop.ros_56d_corrected,
-           rop.ros_14d_published, rop.ros_28d_published, rop.ros_56d_published,
-           rop.ros_14d_guard, rop.ros_28d_guard, rop.ros_56d_guard,
-           rop.correction_days_removed_14d, rop.correction_days_removed_28d,
-           rop.correction_days_removed_56d
+           rop.ros_56d                        AS w_raw,
+           rop.ros_56d_corrected              AS w_corr,
+           rop.ros_56d_published              AS w_pub,
+           rop.ros_56d_guard                  AS w_guard,
+           rop.correction_days_removed_56d    AS w_removed
       FROM public.l2_stock_band b
       JOIN lnk ON lnk.product_code = b.product_code
       LEFT JOIN public.l2_stock_position sp
@@ -206,47 +212,30 @@ BEGIN
      WHERE b.store_code = p_store_code
        AND COALESCE(rs.range_state,'') <> 'EXCLUDED'
        AND ( (v_is_dc AND sp.department_nr = ANY(v_dept_nrs)) OR (NOT v_is_dc) )
-  ),
-  tiered AS (
-    SELECT p.*,
-           CASE p.tier WHEN 'TOP_100' THEN 14 WHEN 'TOP_1000' THEN 28 ELSE 56 END::smallint AS win,
-           CASE p.tier WHEN 'TOP_100' THEN p.ros_14d      WHEN 'TOP_1000' THEN p.ros_28d      ELSE p.ros_56d      END AS w_raw,
-           CASE p.tier WHEN 'TOP_100' THEN p.ros_14d_corrected WHEN 'TOP_1000' THEN p.ros_28d_corrected ELSE p.ros_56d_corrected END AS w_corr,
-           CASE p.tier WHEN 'TOP_100' THEN p.ros_14d_published WHEN 'TOP_1000' THEN p.ros_28d_published ELSE p.ros_56d_published END AS w_pub,
-           CASE p.tier WHEN 'TOP_100' THEN p.ros_14d_guard     WHEN 'TOP_1000' THEN p.ros_28d_guard     ELSE p.ros_56d_guard     END AS w_guard,
-           CASE p.tier WHEN 'TOP_100' THEN p.correction_days_removed_14d WHEN 'TOP_1000' THEN p.correction_days_removed_28d ELSE p.correction_days_removed_56d END AS w_removed
-      FROM pool p
   )
-  SELECT t.product_code,
-         t.description,
-         t.dept_name,
-         t.tier,
-         t.kvi_band,
-         t.range_state,
-         ROUND(t.soh_raw, 2),
-         t.ps,
-         ROUND(t.pack_cost, 2),
-         t.win,
+  SELECT t.product_code, t.description, t.dept_name, t.tier, t.kvi_band, t.range_state,
+         ROUND(t.soh_raw, 2), t.ps, ROUND(t.pack_cost, 2),
+         v_win,
          ROUND(t.w_raw::numeric, 3),
          ROUND(t.w_corr::numeric, 3),
          CASE WHEN COALESCE(t.w_raw,0) > 0 THEN ROUND((t.w_corr / t.w_raw)::numeric, 1) END,
          t.w_guard,
          COALESCE(t.w_removed,0)::smallint,
-         (t.win - COALESCE(t.w_removed,0))::smallint,
-         ROUND(((t.win - COALESCE(t.w_removed,0))::numeric / NULLIF(t.win,0)), 3),
+         (v_win - COALESCE(t.w_removed,0))::smallint,
+         ROUND(((v_win - COALESCE(t.w_removed,0))::numeric / v_win), 3),
          CASE WHEN COALESCE(t.w_raw,0)  > 0 THEN ROUND((GREATEST(t.soh_raw,0) / t.w_raw)::numeric,  1) END,
          CASE WHEN COALESCE(t.w_corr,0) > 0 THEN ROUND((GREATEST(t.soh_raw,0) / t.w_corr)::numeric, 1) END,
          format(
-           'Correction withheld: %s of %s days in this line''s own %sd window were removed as presumed stockout, leaving %s observable (%s%% against the %s floor). The order read %s/day; the corrector measured %s/day. Cover %s days on the rate used, %s days on the corrected rate. JUDGE THE UNCERTAINTY: a rate resting on few observable days is thin evidence (R28 S5).',
-           COALESCE(t.w_removed,0), t.win, t.win,
-           (t.win - COALESCE(t.w_removed,0)),
-           ROUND(((t.win - COALESCE(t.w_removed,0))::numeric / NULLIF(t.win,0)) * 100, 0),
+           '56-day stable window. Correction withheld: %s of 56 days removed as presumed stockout, leaving %s observable (%s%% against the %s floor). The order read %s/day; the corrector measured %s/day. Cover %s days on the rate used, %s days on the corrected rate. JUDGE THE UNCERTAINTY: a rate resting on few observable days is thin evidence (R28 S5).',
+           COALESCE(t.w_removed,0),
+           (v_win - COALESCE(t.w_removed,0)),
+           ROUND(((v_win - COALESCE(t.w_removed,0))::numeric / v_win) * 100, 0),
            v_floor,
            ROUND(t.w_raw::numeric,2), ROUND(t.w_corr::numeric,2),
            CASE WHEN COALESCE(t.w_raw,0)  > 0 THEN ROUND((GREATEST(t.soh_raw,0)/t.w_raw)::numeric,1)  END,
            CASE WHEN COALESCE(t.w_corr,0) > 0 THEN ROUND((GREATEST(t.soh_raw,0)/t.w_corr)::numeric,1) END
          )
-    FROM tiered t
+    FROM pool t
    WHERE t.range_state IN ('HERO','CORE')
      AND t.w_guard = 'withheld_observable_floor'
      AND t.w_pub IS NULL
