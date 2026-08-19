@@ -1490,6 +1490,12 @@ function OrderDesksMode() {
   const [overviewError, setOverviewError] = useState(null)
   const [stockState, setStockState] = useState([])
   const [stockStateError, setStockStateError] = useState(null)
+  // SB-CC-BLOOM-026 part (b) -- THE HIDDEN SELLERS. Lines the order DROPPED
+  // because their stockout correction was withheld, so the recipe read a
+  // stockout-suppressed raw rate, the line looked covered and computed no need.
+  // These are NOT in `lines` (that is the whole defect), so they are fetched.
+  const [hiddenDemand, setHiddenDemand] = useState([])
+  const [hiddenDemandError, setHiddenDemandError] = useState(null)
   const [deliveryChain, setDeliveryChain] = useState(null)
   const [deliveryChainError, setDeliveryChainError] = useState(null)
   const [monthProjection, setMonthProjection] = useState(null)
@@ -1672,6 +1678,27 @@ function OrderDesksMode() {
         if (cancelled) return
         if (err) { setStockStateError(err.message); setStockState([]); return }
         setStockState(data ?? [])
+      })
+    return () => { cancelled = true }
+  }, [storeCode, desk])
+
+  // SB-CC-BLOOM-026 part (b) -- THE SURFACING SAFETY NET, read-only.
+  // Keyed on store/desk only, like the stock-state instrument: this is a
+  // property of the desk's pool, not of the delivery-date scenario. The engine
+  // owns the rule (rpc_bloom_hidden_demand); this screen only renders it -- the
+  // frontend never re-implements a gate (R32, and R33 clause 3: one L2 rule,
+  // every app inherits it by reading).
+  useEffect(() => {
+    if (!storeCode || !desk) { setHiddenDemand([]); return }
+    let cancelled = false
+    setHiddenDemandError(null)
+    supabase.rpc('rpc_bloom_hidden_demand', { p_store_code: storeCode, p_route: desk })
+      .then(({ data, error: err }) => {
+        if (cancelled) return
+        // Fail loudly. A silent empty here reads as "nothing hidden", which is
+        // exactly the false all-clear this whole card exists to end (R22 §3).
+        if (err) { setHiddenDemandError(err.message); setHiddenDemand([]); return }
+        setHiddenDemand(data ?? [])
       })
     return () => { cancelled = true }
   }, [storeCode, desk])
@@ -2403,6 +2430,139 @@ function OrderDesksMode() {
           )}
         </GlassCard>
       )}
+
+      {/* ===== SB-CC-BLOOM-026 part (b) -- THE HIDDEN SELLERS =====
+          Lines the order DROPPED with no reason shown. The stockout corrector
+          measured a real rate, the observable-day floor withheld it, the recipe
+          fell back to the stockout-SUPPRESSED raw rate, the line read as
+          covered and computed no need. Canon §B5's claim that minimum presence
+          covers this is FALSE and retired: min_band reads the same suppressed
+          rate, so both halves of that "paired" guard fail together.
+          Keyed on the withheld-correction FLAG, never band position.
+          Quantity-neutral -- this card shows, it does not order. ===== */}
+      {(hiddenDemandError || hiddenDemand.length > 0) && (() => {
+        const rows = hiddenDemand
+        const strong = rows.filter(r => Number(r.rate_corrected) >= 2)
+        const thin   = rows.filter(r => Number(r.observable_days) <= 6)
+        const empty  = rows.filter(r => Number(r.soh) <= 0)
+        const win    = rows.length ? Number(rows[0].window_days) : 56
+
+        function exportHidden() {
+          const header = ['product_code','description','dept','range_state','soh','pack_size',
+                          'window_days','rate_engine_read','rate_corrected','multiple',
+                          'days_removed','observable_days','cover_on_engine_rate',
+                          'cover_on_corrected_rate','reason'].join(',')
+          const body = rows.map(r => [
+            r.product_code, `"${String(r.description ?? '').replace(/"/g,'""')}"`,
+            `"${String(r.dept_name ?? '')}"`, r.range_state, r.soh, r.pack_size,
+            r.window_days, r.rate_raw, r.rate_corrected, r.rate_multiple ?? '',
+            r.days_removed, r.observable_days, r.cover_days_on_raw ?? '',
+            r.cover_days_on_corr ?? '', `"${String(r.reason ?? '').replace(/"/g,'""')}"`,
+          ].join(',')).join('\n')
+          downloadText(`${storeCode}_${desk}_hidden_sellers_${deliveryDate || 'nodate'}.csv`, header + '\n' + body)
+        }
+
+        return (
+          <GlassCard style={{ margin: '0 32px 20px', padding: '16px 22px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+              <Label style={{ color: 'var(--data-neg)' }}>Hidden sellers</Label>
+              {hiddenDemandError ? (
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--data-neg)' }}>
+                  Could not read the hidden-seller net: {hiddenDemandError}. This panel is NOT empty, it FAILED —
+                  do not read a blank here as &ldquo;nothing hidden&rdquo;.
+                </span>
+              ) : (
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)' }}>
+                  {rows.length} line{rows.length === 1 ? '' : 's'} dropped off this order with no reason shown ·
+                  {' '}{strong.length} at 2/day or more · {empty.length} sitting at zero stock
+                </span>
+              )}
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)', opacity: 0.8 }}>
+                {storeCode} · {desk} · {win}-day window
+              </span>
+              <div style={{ flex: 1 }} />
+              {rows.length > 0 && (
+                <button onClick={exportHidden}
+                  title="Export every hidden line with its evidence, including the days the rate was measured on."
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.06em',
+                    textTransform: 'uppercase', color: 'var(--daisy-white)', cursor: 'pointer',
+                    background: 'transparent', border: '1px solid var(--glass-border)',
+                    borderRadius: 4, padding: '4px 10px' }}>
+                  Export CSV
+                </button>
+              )}
+            </div>
+
+            {rows.length > 0 && (
+              <>
+                <p style={{ margin: '8px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10.5,
+                  color: 'var(--veld-mist)', lineHeight: 1.5 }}>
+                  Each of these was out of stock for most of the last {win} days, so the rate the order used is low
+                  <em> because</em> it was empty. <strong style={{ color: 'var(--daisy-white)' }}>Judge the evidence, not just the number:</strong>
+                  {' '}&ldquo;days seen&rdquo; is how many days of the {win} the line was actually on the shelf to be measured.
+                  {thin.length > 0 && <> {thin.length} of these rest on six days or fewer, so treat those rates as thin.</>}
+                </p>
+
+                <div style={{ marginTop: 10, maxHeight: '34vh', overflow: 'auto' }}>
+                  <div style={{ minWidth: 760 }}>
+                    <div style={{ display: 'grid',
+                      gridTemplateColumns: '72px minmax(150px,1.5fr) 96px 52px 74px 74px 62px 70px',
+                      position: 'sticky', top: 0, zIndex: 2, padding: '7px 8px',
+                      background: 'rgba(14,18,14,0.96)', borderBottom: '1px solid var(--glass-border)' }}>
+                      {['Code','Description','Dept','SOH','Order read','Measured','Days seen','True cover'].map((c,i) => (
+                        <span key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 500,
+                          letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--veld-mist)',
+                          textAlign: i >= 3 ? 'right' : 'left' }}>{c}</span>
+                      ))}
+                    </div>
+                    {rows.slice(0, 40).map(r => {
+                      const isThin = Number(r.observable_days) <= 6
+                      return (
+                        <div key={r.product_code} title={r.reason}
+                          style={{ display: 'grid',
+                            gridTemplateColumns: '72px minmax(150px,1.5fr) 96px 52px 74px 74px 62px 70px',
+                            padding: '6px 8px', borderBottom: '1px solid var(--hairline)',
+                            fontFamily: 'var(--font-mono)', fontSize: 10.5, fontVariantNumeric: 'tabular-nums' }}>
+                          <span style={{ color: 'var(--veld-mist)' }}>{String(r.product_code)}</span>
+                          <span style={{ color: 'var(--daisy-white)', whiteSpace: 'nowrap',
+                            overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.description}</span>
+                          <span style={{ color: 'var(--veld-mist)', whiteSpace: 'nowrap',
+                            overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.dept_name ?? '—'}</span>
+                          <span style={{ textAlign: 'right',
+                            color: Number(r.soh) <= 0 ? 'var(--data-neg)' : 'var(--veld-mist)' }}>
+                            {num(Number(r.soh))}
+                          </span>
+                          <span style={{ textAlign: 'right', color: 'var(--data-neg)' }}>
+                            {Number(r.rate_raw).toFixed(2)}
+                          </span>
+                          <span style={{ textAlign: 'right', color: 'var(--growth-green)' }}>
+                            {Number(r.rate_corrected).toFixed(2)}
+                          </span>
+                          {/* R28 §5 on the surface: the evidence the rate rests on, beside the rate. */}
+                          <span style={{ textAlign: 'right',
+                            color: isThin ? 'var(--core-yellow)' : 'var(--veld-mist)' }}
+                            title={isThin ? 'Thin evidence: this rate is measured on six days or fewer.' : undefined}>
+                            {r.observable_days}/{r.window_days}
+                          </span>
+                          <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>
+                            {r.cover_days_on_corr == null ? '—' : `${Number(r.cover_days_on_corr).toFixed(1)}d`}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {rows.length > 40 && (
+                  <p style={{ margin: '8px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)' }}>
+                    Showing the top 40 of {rows.length} by measured rate. Export for the full list.
+                  </p>
+                )}
+              </>
+            )}
+          </GlassCard>
+        )
+      })()}
 
       {/* ===== SB-CC-BLOOM-018 -- THE PROMO FLOOR GAP + THE TRUCK =====
           Item 2: every promo-in-window line finishing below its own promo-lifted
