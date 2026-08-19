@@ -42,11 +42,27 @@ function todayIso(offsetDays = 0) {
 // disagree with it (the select's own label showed the OLD suggested_packs
 // figure, which the RPC always computes as the geared value for ANY promo
 // line regardless of tier, while the row's number field held something
-// else). One column, one source of truth: normal_packs/geared_packs read
-// directly, never suggested_packs.
+// else). One column, one source of truth: on a desk that OFFERS the basis
+// toggle, normal_packs/geared_packs are read directly.
+//
+// 2026-08-19 — THE ONE SEED FOR EVERY DESK. Four desks seeded their quantities
+// four ways; this is now the single home for the rule (§0g write-forward).
+// The shape differs legitimately and is NOT collapsed:
+//   • Basis-aware desks (Order Desks, the DC screen) let the buyer choose
+//     normal vs geared before Generate, so the split columns are authoritative.
+//   • Resolved-figure desks (Recipe, Direct Beer) offer no such toggle, and
+//     rpc_bloom_order_direct_beer PUBLISHES ONLY suggested_packs — it returns
+//     neither normal_packs nor geared_packs (verified against
+//     pg_get_function_result, 2026-08-19). Routing those through the old body
+//     would have returned `normal_packs ?? 0` and ZEROED the whole desk.
+// So: read the split columns where the engine publishes them AND the buyer
+// chose a basis; otherwise take the engine's own resolved answer, which
+// already IS geared_packs on a promo line and normal_packs elsewhere.
+// Shape-driven, never a desk or store list (R21/R25).
 function lineQty(line, basis) {
   if (basis === 'geared' && line.promo_active && line.geared_packs != null) return line.geared_packs
-  return line.normal_packs ?? 0
+  if (basis === 'normal' && line.normal_packs != null) return line.normal_packs
+  return line.suggested_packs ?? line.normal_packs ?? 0
 }
 
 function downloadText(filename, text) {
@@ -560,7 +576,10 @@ function DeskMode() {
     if (err) { setError(err.message); return }
     const rows = (data ?? []).sort((a, b) => (b.ros_used ?? 0) - (a.ros_used ?? 0))
     const q = {}
-    for (const r of rows) q[r.product_code] = r.suggested_packs ?? 0
+    // One seed for every desk (see lineQty). No basis toggle on this screen, so
+    // the helper returns the engine's own resolved figure — same value as the
+    // direct suggested_packs read it replaces, now with one home for the rule.
+    for (const r of rows) q[r.product_code] = lineQty(r)
     setLines(rows); setQty(q); setEdited({}); setGenerated(true)
   }
 
@@ -837,8 +856,21 @@ function RecipeRow({ line, qty, isEdited, onQty, fitActive }) {
 
 function RecipeOrderForm({ store, deliveryDate, nextDeliveryDate, budgetRow, lines, qty, edited,
   onQty, total, filter, setFilter, fitActive, onExportCsv, onExportTlx, onSubmit }) {
-  const orderedCount = lines.filter(l => (l.suggested_packs ?? 0) > 0).length
-  const shown = filter === 'ordered' ? lines.filter(l => (l.suggested_packs ?? 0) > 0) : lines
+  // DEFECT B (2026-08-19) — EDIT-INVISIBILITY. These two read the recipe's RAW
+  // suggested_packs, so the count and the Ordered filter described the engine's
+  // ORIGINAL suggestion and never the buyer's. After an import or a hand edit a
+  // line the buyer ADDED stayed invisible under "Ordered" and uncounted, while a
+  // line they ZEROED stayed listed as ordered. The exporters already read live
+  // qty, so the screen and the file it produced disagreed — the exact failure
+  // that makes a buyer stop trusting the screen (R22, no silent divergence).
+  // The live qty is now the one source, same as the exporters and the running
+  // total. A line the buyer has just zeroed stays visible while `edited` so it
+  // does not vanish from under the cursor and become impossible to undo.
+  const isOrdered = l => (qty[l.product_code] ?? 0) > 0
+  const orderedCount = lines.filter(isOrdered).length
+  const shown = filter === 'ordered'
+    ? lines.filter(l => isOrdered(l) || edited[l.product_code])
+    : lines
   const cols = ['Code', 'Pack', 'Description', 'Dept', 'KVI', 'Mode', 'SOH', 'Need', 'Qty · packs', 'Value']
   const gridCols = '76px 44px minmax(160px,1.6fr) 110px 96px 84px 56px 64px 110px 100px'
   const budgetTotal = Number(budgetRow?.budget_amount) || 0
@@ -1042,7 +1074,10 @@ function RecipeMode({ stores }) {
     const all = data ?? []
     const rows = all.sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
     const q = {}
-    for (const r of rows) q[r.product_code] = r.suggested_packs ?? 0
+    // One seed for every desk (see lineQty). No basis toggle on this screen, so
+    // the helper returns the engine's own resolved figure — same value as the
+    // direct suggested_packs read it replaces, now with one home for the rule.
+    for (const r of rows) q[r.product_code] = lineQty(r)
     setLines(rows); setQty(q); setEdited({}); setFilter('ordered'); setPhase('B')
   }
 
@@ -1080,8 +1115,12 @@ function RecipeMode({ stores }) {
       const q = qty[l.product_code] ?? 0
       const e = elig.get(Number(l.product_code))
       if (!e || !e.export_eligible) { excluded.push(`${l.product_code} ${l.description ?? ''} (${e?.ineligible_reason ?? 'no engine identity row'})`); continue }
-      const units = q * (l.pack_size ?? 1)
-      parts.push(`${e.export_key}+${units}`)
+      // ORDERING-CANON §A7 (ex-§14 v7 item 11a): the TLX carries the PACK
+      // quantity, never units. This line multiplied by pack_size and wrote
+      // UNITS, so Sigma imported an order pack_size times too large on this
+      // screen. The Order Desks exporter was corrected on 2026-07-14 and these
+      // two were missed; all three now agree. (Confirmed live 2026-08-19.)
+      parts.push(`${e.export_key}+${q}`)
     }
     if (excluded.length) {
       window.alert(`TLX: ${parts.length} lines written, ${excluded.length} held back -- Sigma cannot match the key.\nOrder these by hand or fix the barcode at source:\n\n${excluded.join('\n')}`)
@@ -2781,8 +2820,12 @@ export default function BloomPage() {
       const q = qty[l.product_code] ?? 0
       const e = elig.get(Number(l.product_code))
       if (!e || !e.export_eligible) { excluded.push(`${l.product_code} ${l.description ?? ''} (${e?.ineligible_reason ?? 'no engine identity row'})`); continue }
-      const units = q * (l.pack_size ?? 1)
-      parts.push(`${e.export_key}+${units}`)
+      // ORDERING-CANON §A7 (ex-§14 v7 item 11a): the TLX carries the PACK
+      // quantity, never units. This line multiplied by pack_size and wrote
+      // UNITS, so Sigma imported an order pack_size times too large on this
+      // screen. The Order Desks exporter was corrected on 2026-07-14 and these
+      // two were missed; all three now agree. (Confirmed live 2026-08-19.)
+      parts.push(`${e.export_key}+${q}`)
     }
     if (excluded.length) {
       window.alert(`TLX: ${parts.length} lines written, ${excluded.length} held back -- Sigma cannot match the key.\nOrder these by hand or fix the barcode at source:\n\n${excluded.join('\n')}`)

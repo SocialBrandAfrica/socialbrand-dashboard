@@ -225,42 +225,94 @@ REVOKE EXECUTE ON FUNCTION public.rpc_bloom_order_cache_status(text,text) FROM P
 GRANT  EXECUTE ON FUNCTION public.rpc_bloom_order_cache_status(text,text) TO anon, authenticated;
 
 -- ---------- nightly builder ----------
--- Scoped to the DC desks: they are the heavy ones that breach the ceiling.
+-- ~~Scoped to the DC desks: they are the heavy ones that breach the ceiling.
 -- Direct desks answer inside the ceiling live, so they are deliberately NOT
--- precomputed (named, not silently omitted -- R21 SS5).
-CREATE OR REPLACE FUNCTION public.refresh_bloom_order_cache_all(p_routes text[] DEFAULT ARRAY['DC_AMBIENT','DC_TOPS'])
+-- precomputed (named, not silently omitted -- R21 SS5).~~
+-- RETIRED 2026-08-19 (R28: retire with a date and a successor, never delete).
+-- THE CLAIM WAS FALSE. Direct desks do NOT answer inside the ceiling -- they run
+-- the same recipe and hit the same 30s role statement_timeout, and the five
+-- /bloom cards that execute the recipe die on them exactly as they did on the DC
+-- desks before ENG-088. The route literal above was the only thing deciding who
+-- got a precomputed order, so 15 of 20 desks never had one.
+--
+-- SUCCESSOR: p_routes NULL = EVERY desk rpc_bloom_desks() discovers from config
+-- (supplier_calendar x stores.is_active). No route, store or desk is enumerated
+-- here. A desk seeded tonight is cached tonight with no deploy -- the store-#6
+-- test (R25 SS4 / R32 SS4). p_routes survives as an optional NARROWING filter
+-- for a manual run, never as the source of the list.
+--
+-- MEASURED, not assumed (2026-08-19): the DC-only run was 10 combinations /
+-- 212,334ms = 3.54 min. All 20 desks x 2 fit = 40 combinations, and a direct
+-- desk measures ~7.5s (80176/DIRECT_BEER, 24 lines, 7,481ms), so the generalised
+-- nightly is ~7.3 min. p_presets/p_drops are parameterised for the
+-- scenario-overview matrix but DEFAULT TO TODAY'S BEHAVIOUR: that matrix
+-- measures ~43 min across 240 combinations and is a decision, not a free
+-- widening.
+--
+-- OVERLOAD TRAP, recorded because it nearly fired: adding p_presets/p_drops
+-- changed the signature, so CREATE OR REPLACE left the old 1-arg function
+-- standing. Both were fully defaulted, making pg_cron job 26's no-argument call
+-- ambiguous ("function is not unique") -- it would have killed the whole nightly
+-- build. The 1-arg version is dropped; run the RULE-BOOK SS8 overload check
+-- BEFORE any signature change, not after.
+CREATE OR REPLACE FUNCTION public.refresh_bloom_order_cache_all(
+  p_routes  text[] DEFAULT NULL,
+  p_presets text[] DEFAULT ARRAY['standard'],
+  p_drops   int    DEFAULT 1
+)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
 DECLARE
-  rec record; r jsonb; v_ok int := 0; v_skip int := 0; v_err int := 0; v_detail jsonb := '[]'::jsonb;
+  rec record; r jsonb; v_ok int := 0; v_skip int := 0; v_err int := 0;
+  v_detail jsonb := '[]'::jsonb;
+  v_started timestamptz := clock_timestamp();
+  v_routes_seen int := 0;
 BEGIN
   SET LOCAL statement_timeout = '0';
   FOR rec IN
-    SELECT sc.store_code, sc.route_key, f.fit
-    FROM public.supplier_calendar sc
-    CROSS JOIN (VALUES (false),(true)) AS f(fit)
-    WHERE sc.route_key = ANY(p_routes)
-    ORDER BY sc.store_code, sc.route_key, f.fit
+    SELECT d.store_code, d.route_key, f.fit,
+           NULLIF(pr.preset, 'standard') AS preset_arg,   -- the recipe reads NULL as standard
+           pr.preset                     AS preset_label,
+           dr.n                          AS drop_n
+      FROM public.rpc_bloom_desks()                            d
+      CROSS JOIN (VALUES (false),(true))                       AS f(fit)
+      CROSS JOIN unnest(COALESCE(p_presets, ARRAY['standard'])) AS pr(preset)
+      CROSS JOIN generate_series(1, GREATEST(p_drops, 1))       AS dr(n)
+     WHERE p_routes IS NULL OR d.route_key = ANY(p_routes)
+     ORDER BY d.store_code, COALESCE(d.desk_sort, 32767), d.route_key,
+              dr.n, pr.preset, f.fit
   LOOP
+    v_routes_seen := v_routes_seen + 1;
     BEGIN
-      r := public.refresh_bloom_order_cache(rec.store_code, rec.route_key, NULL, NULL, NULL, rec.fit, 'nightly');
+      -- NULL dates let refresh_bloom_order_cache resolve the next scheduled
+      -- delivery from supplier_calendar via rpc_bloom_next_deliveries
+      -- (ORDERING-CANON SSA4), so drop 1 is byte-identical to prior behaviour.
+      r := public.refresh_bloom_order_cache(
+             rec.store_code, rec.route_key, NULL, NULL, rec.preset_arg, rec.fit, 'nightly');
       IF r->>'status' = 'ok' THEN v_ok := v_ok + 1; ELSE v_skip := v_skip + 1; END IF;
       v_detail := v_detail || jsonb_build_array(jsonb_build_object(
-        'store',rec.store_code,'route',rec.route_key,'fit',rec.fit,
+        'store',rec.store_code,'route',rec.route_key,'preset',rec.preset_label,
+        'fit',rec.fit,'drop',rec.drop_n,
         'status',r->>'status','lines',r->>'lines','ms',r->>'generation_ms'));
     EXCEPTION WHEN OTHERS THEN
       -- one bad desk never silently kills the rest, and the failure is reported (R22 SS3)
       v_err := v_err + 1;
       v_detail := v_detail || jsonb_build_array(jsonb_build_object(
-        'store',rec.store_code,'route',rec.route_key,'fit',rec.fit,'status','error','error',SQLERRM));
+        'store',rec.store_code,'route',rec.route_key,'preset',rec.preset_label,
+        'fit',rec.fit,'drop',rec.drop_n,'status','error','error',SQLERRM));
     END;
   END LOOP;
   RETURN jsonb_build_object('ok',v_ok,'skipped',v_skip,'errors',v_err,
+                            'combinations_attempted',v_routes_seen,
+                            'elapsed_ms',round(extract(epoch from (clock_timestamp()-v_started))*1000)::int,
                             'ran_at',clock_timestamp(),'detail',v_detail);
 END $fn$;
 
-REVOKE EXECUTE ON FUNCTION public.refresh_bloom_order_cache_all(text[]) FROM PUBLIC, anon;
-GRANT  EXECUTE ON FUNCTION public.refresh_bloom_order_cache_all(text[]) TO authenticated, service_role;
+-- The superseded 1-arg signature (see the OVERLOAD TRAP note above).
+DROP FUNCTION IF EXISTS public.refresh_bloom_order_cache_all(text[]);
+
+REVOKE EXECUTE ON FUNCTION public.refresh_bloom_order_cache_all(text[],text[],int) FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.refresh_bloom_order_cache_all(text[],text[],int) TO authenticated, service_role;
 
 -- 23:30 UTC = 01:30 SAST: after refresh-l2-pipeline (20:15 UTC job 15),
 -- refresh-search-index (20:30), nightly-ros-refresh (22:30 job 8) and
