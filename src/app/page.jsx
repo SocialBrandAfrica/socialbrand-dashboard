@@ -1639,14 +1639,30 @@ export default function Home() {
           // l2_soh_daily snapshot for that date (the L2 batch runs 22:15 SAST and
           // is a day behind BY DESIGN) — that is a legitimate absence, so the
           // fields stay absent and nothing is invented.
+          // 🔴 ENG-100 RIDER: NULL here means NOT YET COMPUTED, never zero.
+          // The comment above was already right in principle and the code
+          // contradicted it: `?? 0` coerced a NULL straight to 0, so an absent
+          // figure rendered as "R0 capital tied" / "0 negative SOH" -- a false
+          // statement about the owner's stock position, presented with the same
+          // confidence as a real reading.
+          // It became reachable on 2026-08-23: ENG-100 repointed these four
+          // columns onto mv_kpi_by_date, which refreshes 20:30 SAST, so for any
+          // date newer than that matview's max (the ~19:30-20:30 window) they
+          // come back NULL every night. Before the repoint they were computed
+          // inline and were never NULL for a fresh date, only slow.
+          // NULL is now PRESERVED and the card renders an em-dash (R22 §3,
+          // missing data surfaces and never hides; R30 §2, silent degradation
+          // is the worst outcome). A zero is only ever shown when zero is what
+          // the engine actually measured.
           const st = stockByStore.get(sc)
           if (st) {
+            const numOrNull = (v) => (v === null || v === undefined ? null : Number(v))
             row = {
               ...row,
-              neg_soh_count:     Number(st.neg_soh_count     ?? 0),
-              slow_mover_count:  Number(st.slow_mover_count  ?? 0),
-              capital_tied:      Number(st.capital_tied      ?? 0),
-              ghost_stock_value: Number(st.ghost_stock_value ?? 0),
+              neg_soh_count:     numOrNull(st.neg_soh_count),
+              slow_mover_count:  numOrNull(st.slow_mover_count),
+              capital_tied:      numOrNull(st.capital_tied),
+              ghost_stock_value: numOrNull(st.ghost_stock_value),
             }
           }
 
@@ -2324,7 +2340,12 @@ export default function Home() {
       return deptSohCounts.filter(r => normalizeDept(r.dept_name) === deptFilter).reduce((s, r) => s + (r.neg_soh_count ?? 0), 0)
     if (subDeptFilter !== 'all')
       return deptSohCounts.reduce((s, r) => s + (r.neg_soh_count ?? 0), 0)
-    return latestKpiByStore.reduce((s, r) => s + (r.neg_soh_count ?? 0), 0)
+    // ENG-100 rider: whole-store path only. A NULL means the stock figure is not
+    // yet computed for that date, so the TOTAL is unknown -- never a smaller
+    // number presented as measured. Dept paths above are unaffected (they come
+    // from rpc_kpi_dept_counts, which does not read the matview).
+    if (latestKpiByStore.some(r => r.neg_soh_count === null || r.neg_soh_count === undefined)) return null
+    return latestKpiByStore.reduce((s, r) => s + Number(r.neg_soh_count), 0)
   }, [deptFilter, subDeptFilter, deptSohCounts, latestKpiByStore])
 
   const kpiSlowMove = useMemo(() => {
@@ -2463,10 +2484,21 @@ export default function Home() {
 
   // Capital Tied: prefer dept-level capital_tied from rpc_dept_summary when a
   // filter is active and the RPC supplies it; else whole-store latest position.
+  //
+  // 🔴 ENG-100 RIDER: a NULL contributor makes the TOTAL unknowable, not smaller.
+  // `reduce((s,r) => s + (r.x ?? 0), 0)` silently treats "not yet computed" as
+  // zero, so one store missing its stock row would quietly under-report group
+  // capital and the card would show the shortfall as though it were measured.
+  // sumOrNull returns null the moment any contributor is null, so the card
+  // renders an em-dash instead of a confident wrong number (R22 §3).
+  const sumOrNull = (rows, field) => {
+    if (rows.some(r => r[field] === null || r[field] === undefined)) return null
+    return rows.reduce((s, r) => s + Number(r[field]), 0)
+  }
   const deptCapPresent = deptSummary.some(r => r.capital_tied != null)
   const kpiCapTied  = (filterActive && deptCapPresent)
     ? sumField(byDept(deptSummary), 'capital_tied')
-    : latestKpiByStore.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
+    : sumOrNull(latestKpiByStore, 'capital_tied')
 
   // Ghost stock: rand value removed from Capital Tied (SB-AP-003). Point-in-time from latest snapshot per store.
   // ghost_stock_value is 0 / null for stores without product_classification rows yet.
