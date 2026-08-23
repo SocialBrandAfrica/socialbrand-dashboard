@@ -1196,6 +1196,10 @@ export default function Home() {
   // via rpc_stock_report_engine, bridged to EAN). Slow Movers reads this; unbridged
   // lines (ean=null) are excluded from the table and footnoted.
   const [engineSlowRows, setEngineSlowRows] = useState([])
+  // ENG-101: a failed or short Slow Movers read must SAY SO. It used to be
+  // swallowed into an empty array by `.catch(() => [])`, which renders as
+  // "no slow movers" -- a blank standing in for a failure (R22 §3).
+  const [engineSlowError, setEngineSlowError] = useState(null)
   const [reportLoaded,  setReportLoaded]  = useState(false)
   const [reportLoading, setReportLoading] = useState(false)
   const [ghostStockRows,     setGhostStockRows]     = useState([])   // SB-AP-004 C -- ghost_stock report
@@ -2045,10 +2049,29 @@ export default function Home() {
         .catch(() => []),
       // Engine-backed Slow Movers (l2_stock_position.slow_mover_signal, §5 KPI4).
       // Bridged to EAN; unbridged rows return ean=null (excluded + footnoted).
+      //
+      // 🔴 ENG-101: reads the JSONB wrapper, NOT the SETOF function.
+      // The SETOF form was served through the live 1,000-row PostgREST cap with
+      // no .range(), so this drawer has been showing 1,000 of 4,836 slow-moving
+      // lines and presenting them as the whole population. Measured 2026-08-24:
+      // R350,966 of dead capital shown against R1,952,636 real -- R1,601,670
+      // invisible. Not slowness: a report that lies by omission (R22 §3).
+      // One jsonb row cannot be truncated by a row cap (the rpc_report_rows
+      // pattern), and `served` vs the array length is the tripwire.
       supabase
-        .rpc('rpc_stock_report_engine', { p_store_codes: storeCodes, p_signal: 'slowmovers' })
-        .then(r => r.data ?? [])
-        .catch(() => []),
+        .rpc('rpc_stock_report_engine_json', { p_store_codes: storeCodes, p_signal: 'slowmovers' })
+        .then(r => {
+          if (r.error) return { rows: [], err: r.error.message }
+          const p = r.data
+          const rows = Array.isArray(p?.rows) ? p.rows : []
+          // R22 tripwire: if the payload disagrees with its own count, say so
+          // rather than rendering a short report as though it were complete.
+          if (p && typeof p.served === 'number' && p.served !== rows.length) {
+            return { rows: [], err: `Slow Movers incomplete: served ${p.served} of ${rows.length} rows. Not safe to read — reload.` }
+          }
+          return { rows, err: null }
+        })
+        .catch(e => ({ rows: [], err: e?.message ?? 'Slow Movers read failed' })),
     ])
 
     // ROS / days-cover per (ean, store) comes off the report rows themselves —
@@ -2069,7 +2092,8 @@ export default function Home() {
     setReportRows(rows)
     setStoreRosData(rosRes)
     setSupplierMap(suppMap)
-    setEngineSlowRows(engineSlowRes)
+    setEngineSlowRows(engineSlowRes.rows)
+    setEngineSlowError(engineSlowRes.err)
     setReportLoaded(true)
     setReportLoading(false)
   }, [storeCodes, selectedDates])
@@ -3919,6 +3943,14 @@ export default function Home() {
                     {currentReport === 'slowmovers' && engineSlowRows.filter(r => r.ean == null).length > 0 &&
                       ` · ${num(engineSlowRows.filter(r => r.ean == null).length)} lines hidden (no EAN bridge)`}
                   </div>
+                  {/* ENG-101: a failed or short read is stated, never rendered as
+                      an empty report. A blank here would read as "no slow movers",
+                      which is the exact lie the 1,000-row cap was already telling. */}
+                  {currentReport === 'slowmovers' && engineSlowError && (
+                    <div style={{ padding: '10px 18px', borderTop: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.10)', fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#fca5a5', flexShrink: 0 }}>
+                      Slow Movers could not be read: {engineSlowError}
+                    </div>
+                  )}
                 </>
               )}
             </div>
