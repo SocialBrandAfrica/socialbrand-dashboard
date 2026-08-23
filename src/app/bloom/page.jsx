@@ -1485,6 +1485,10 @@ function OrderDesksMode() {
   // live recipe run. Surfaced, never silent: a buyer must be able to see that
   // he is working a precomputed order and how old it is (R22/R29).
   const [orderSource, setOrderSource] = useState(null)
+  // ENG-097: a cache MISS is its own state, deliberately NOT `error`. A miss
+  // ("this pairing was never precomputed") and a failure ("the read broke") are
+  // different facts and the buyer must be able to tell them apart on sight.
+  const [cacheMiss, setCacheMiss] = useState(null)
   const [overview, setOverview] = useState([])
   const [overviewLoading, setOverviewLoading] = useState(false)
   const [overviewError, setOverviewError] = useState(null)
@@ -1765,7 +1769,7 @@ function OrderDesksMode() {
 
   async function generate() {
     if (!deliveryDate || !nextDeliveryDate) { setError('Dates not ready yet — wait for the calendar to load.'); return }
-    setError(null); setGenerating(true); setSubmitted(false); setOrderSource(null)
+    setError(null); setGenerating(true); setSubmitted(false); setOrderSource(null); setCacheMiss(null)
 
     // ENG-088. The desk READS a precomputed order (R32: "an applet READS, it never
     // computes"). Measured at source 2026-08-16: recomputing this recipe live costs
@@ -1777,8 +1781,18 @@ function OrderDesksMode() {
     // page, so the ENG-085 re-execution cliff (each .range() page re-ran the WHOLE
     // set-returning function) cannot come back on this path.
     //
-    // Off-calendar dates fall back to the live recipe deliberately: that is the
-    // exception, slow is acceptable there, and it is better than a blank screen.
+    // ENG-097 (2026-08-23, PM ruling). The fall-through that stood here is GONE.
+    // It read: "off-calendar dates fall back to the live recipe deliberately, slow
+    // is acceptable there, and it is better than a blank screen." Every clause of
+    // that is falsified. The live recipe does not run slow off-calendar, it DIES --
+    // ~36s against the anon role's 30s ceiling, HTTP 500 -- so the buyer waited
+    // thirty seconds for "R 0 / 0 lines" while a complete order sat in the cache
+    // one date-pairing away. That is what Pieter was shown.
+    //
+    // A cache MISS now returns a LABELLED miss and stops. rpc_bloom_order_cached
+    // reports status HIT|MISS and, on a miss, names the pairings that ARE cached,
+    // so the screen says "no cached order for these dates" instead of dying.
+    // A MISS and a FAILURE are rendered differently and must stay that way.
     let all = null
     const cached = await supabase.rpc('rpc_bloom_order_cached', {
       p_store_code: storeCode, p_route: desk,
@@ -1793,23 +1807,34 @@ function OrderDesksMode() {
     // order. Same pattern rpc_report_rows uses. `served` vs `line_count` is the
     // R22 tripwire: if they ever disagree we say so instead of shipping a short order.
     const payload = cached.data ?? null
-    if (!cached.error && payload?.found && (payload.lines?.length ?? 0) > 0) {
-      all = payload.lines
-      if (payload.served !== payload.line_count) {
-        setError(`Cached order incomplete: served ${payload.served} of ${payload.line_count} lines. Not safe to place — regenerate.`)
-        setGenerating(false); return
-      }
-      setOrderSource({ kind: 'cache', generatedAt: payload.generated_at ?? null })
-    } else {
-      const { data, error: err } = await supabase.rpc('rpc_bloom_order_recipe', {
-        p_store_code: storeCode, p_delivery_date: deliveryDate, p_next_delivery: nextDeliveryDate,
-        p_route: desk, p_fit_to_budget: fitToBudget,
-        p_preset: preset === 'standard' ? null : preset,
-      })
-      if (err) { setGenerating(false); setError(err.message); return }
-      all = data ?? []
-      setOrderSource({ kind: 'live', generatedAt: null })
+
+    // FAILURE -- the read itself broke. Red, loud, and never a blank screen.
+    if (cached.error) {
+      setGenerating(false)
+      setError(`Could not read the cached order: ${cached.error.message}`)
+      return
     }
+
+    // MISS -- a valid answer that says this pairing is not cached. It STOPS here.
+    // No live-recipe fall-through (ENG-097). The payload names the pairings that
+    // are cached so the buyer can move to one instead of guessing.
+    if (!payload?.found) {
+      setGenerating(false)
+      setCacheMiss({
+        message:   payload?.message ?? 'No cached order for these dates on this desk.',
+        available: payload?.available ?? [],
+        requested: payload?.requested ?? null,
+      })
+      return
+    }
+
+    // HIT
+    all = payload.lines ?? []
+    if (payload.served !== payload.line_count) {
+      setError(`Cached order incomplete: served ${payload.served} of ${payload.line_count} lines. Not safe to place — regenerate.`)
+      setGenerating(false); return
+    }
+    setOrderSource({ kind: 'cache', generatedAt: payload.generated_at ?? null })
     setGenerating(false)
     const rows = all.sort((a, b) => (b.rhythm_adjusted_demand ?? 0) - (a.rhythm_adjusted_demand ?? 0))
     const q = {}
@@ -2216,6 +2241,28 @@ function OrderDesksMode() {
             {budgetWeekSource === 'no_ledger_row'
               ? 'No budget row exists for this delivery week on this route — the order is priced against a budget of R0. Fit to budget will trim everything. Generate the budget rail before ordering.'
               : `This delivery week has no budget row. The engine fell back to the nearest PAST week (${budgetWeekPriced}) — the figure above is stale and the fit is judged against it.`}
+          </div>
+        )}
+        {/* ENG-097: the CACHE MISS surface. Deliberately amber-informational and
+            NOT the red error state -- "this pairing was never precomputed" is a
+            different fact from "the read broke", and conflating them is what let
+            a 30-second timeout read as an empty order. It names the pairings that
+            ARE cached so the buyer moves to one instead of guessing (R21 §5). */}
+        {cacheMiss && (
+          <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: '#fcd34d',
+            background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)',
+            borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>No cached order for these dates</div>
+            <div style={{ opacity: 0.9 }}>{cacheMiss.message}</div>
+            {(cacheMiss.available?.length ?? 0) > 0 && (
+              <div style={{ marginTop: 6, opacity: 0.85 }}>
+                Cached on this desk:{' '}
+                {Array.from(new Set(cacheMiss.available.map(a => `${a.delivery_date} → ${a.next_delivery}`))).join(' · ')}
+              </div>
+            )}
+            <div style={{ marginTop: 6, opacity: 0.7 }}>
+              Nothing was generated. The nightly rebuild runs 01:30 SAST.
+            </div>
           </div>
         )}
         {/* ENG-088: name where these rows came from. A precomputed order is
