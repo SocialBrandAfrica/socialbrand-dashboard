@@ -41,86 +41,90 @@
 -- the double-revoke to MUTATING functions only).
 -- =============================================================================
 
-DROP FUNCTION IF EXISTS public.rpc_bloom_promo_floor_gap(text,date,date,text);
 
-CREATE FUNCTION public.rpc_bloom_promo_floor_gap(
-  p_store_code    text,
-  p_delivery_date date,
-  p_next_delivery date,
-  p_route         text
-)
-RETURNS TABLE (
-  rank_order            integer,
-  store_code            text,
-  route                 text,
-  product_code          bigint,
-  ean                   text,
-  description           text,
-  kvi_band              text,
-  is_bt_hero            boolean,
-  range_state           text,
-  priority_class        text,
-  soh                   numeric,
-  suggested_packs       integer,
-  pack_size             smallint,
-  pack_cost             numeric,
-  position_units        numeric,
-  promo_floor_units     numeric,
-  order_demand_per_day  numeric,
-  band_demand_per_day   numeric,
-  promo_uplift_band     numeric,
-  promo_uplift_source   text,
-  promo_uplift_basis    text,
-  uplift_confidence     text,
-  uplift_is_measured    boolean,
-  uplift_at_cap         boolean,
-  shortfall_units       numeric,
-  shortfall_packs       integer,
-  shortfall_rand        numeric,
-  days_cover_now        numeric,
-  days_cover_at_floor   numeric,
-  reason                text
-)
-LANGUAGE plpgsql
-STABLE
-SET search_path = public
-AS $fn$
+-- =============================================================================
+-- 2026-08-23 (ENG-088 Pulse/Bloom card repoint, CC) -- READS THE CACHE.
+--
+-- The `r` CTE called rpc_bloom_order_recipe LIVE with preset NULL / fit false /
+-- 15,24,25,3.0 -- byte-for-byte the combo the nightly cache already stores as
+-- preset='standard', fit_to_budget=false. So this is a SOURCE SWAP and the gap
+-- logic below is UNCHANGED. Measured: 0.151s for two full calls, against ~36s
+-- per live recipe run, which is why every card around the order was dying at
+-- the anon role's 30s ceiling while the order itself loaded.
+--
+-- SECURITY INVOKER is KEPT (PM ruling 2026-08-23). A DEFINER switch carries the
+-- R30 dependent check and does not belong inside a card repoint. Proven safe
+-- behaviourally FIRST, as the role, never by reading a grant: `SET ROLE anon`
+-- sees 64 cache headers and 15,750 cache lines, and this function returns the
+-- identical 22 lines / R64,917.28 as anon and as postgres.
+--
+-- 🔴 THE LOUD FAILURE, and the distinction is the whole point:
+--   cache header ABSENT -> RAISE. The card cannot answer, and a blank card
+--     would read as "no promo gap", which is a false statement about the
+--     buyer's promo exposure (R22 §3). This is the ENG-068 / ENG-074 shape --
+--     three firings of one mechanism, so it is a rule, not a coincidence.
+--   cache header PRESENT, zero gap rows -> return empty. That is a TRUE empty
+--     and must NOT raise: there genuinely is no promo floor gap.
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION public.rpc_bloom_promo_floor_gap(p_store_code text, p_delivery_date date, p_next_delivery date, p_route text)
+ RETURNS TABLE(rank_order integer, store_code text, route text, product_code bigint, ean text, description text, kvi_band text, is_bt_hero boolean, range_state text, priority_class text, soh numeric, suggested_packs integer, pack_size smallint, pack_cost numeric, position_units numeric, promo_floor_units numeric, order_demand_per_day numeric, band_demand_per_day numeric, promo_uplift_band numeric, promo_uplift_source text, promo_uplift_basis text, uplift_confidence text, uplift_is_measured boolean, uplift_at_cap boolean, shortfall_units numeric, shortfall_packs integer, shortfall_rand numeric, days_cover_now numeric, days_cover_at_floor numeric, reason text)
+ LANGUAGE plpgsql
+ STABLE
+ SET search_path TO 'public'
+AS $function$
 DECLARE
-  v_cap numeric;
+  v_cap      numeric;
+  v_cache_id bigint;
+  v_avail    text;
 BEGIN
-  -- canon SS14 v8 item 6 / the promo_uplift ladder cap. Config, never a literal (R25).
   SELECT value_num INTO v_cap
     FROM forge_config
    WHERE config_key = 'promo_uplift_cap' AND retired_on IS NULL
    ORDER BY store_format = '*' LIMIT 1;
 
+  SELECT c.cache_id INTO v_cache_id
+    FROM public.bloom_order_cache c
+   WHERE c.store_code = p_store_code AND c.route_key = p_route
+     AND c.delivery_date = p_delivery_date AND c.next_delivery = p_next_delivery
+     AND c.preset = 'standard' AND c.fit_to_budget = false
+   ORDER BY c.generated_at DESC LIMIT 1;
+
+  IF v_cache_id IS NULL THEN
+    SELECT string_agg(DISTINCT c.delivery_date::text || ' to ' || c.next_delivery::text, ', ')
+      INTO v_avail
+      FROM public.bloom_order_cache c
+     WHERE c.store_code = p_store_code AND c.route_key = p_route
+       AND c.delivery_date >= CURRENT_DATE - 1;
+
+    RAISE EXCEPTION
+      'Promo floor gap unavailable: no cached order for % % delivery % to %. Cached on this desk: %. Failing loudly rather than returning an empty card, because a blank here reads as "no promo gap" and that would be false.',
+      p_store_code, p_route, p_delivery_date, p_next_delivery,
+      COALESCE(v_avail, 'nothing yet -- the nightly rebuild runs 01:30 SAST');
+  END IF;
+
   RETURN QUERY
   WITH r AS (
-    SELECT * FROM public.rpc_bloom_order_recipe(
-      p_store_code, p_delivery_date, p_next_delivery,
-      NULL, NULL, NULL, false, 15, 24, 25, 3.0, p_route)
+    SELECT l.* FROM public.bloom_order_cache_line l WHERE l.cache_id = v_cache_id
   ),
   gap AS (
     SELECT r.*,
            (COALESCE(r.soh,0) + r.suggested_packs * r.pack_size)::numeric AS pos_units,
-           CASE WHEN r.is_bt_hero                THEN 'HERO'
-                WHEN r.kvi_band = 'KVI_CRITICAL' THEN 'KVI_CRITICAL'
+           CASE WHEN r.is_bt_hero                 THEN 'HERO'
+                WHEN r.kvi_band = 'KVI_CRITICAL'  THEN 'KVI_CRITICAL'
                 WHEN r.kvi_band = 'KVI_IMPORTANT' THEN 'KVI_IMPORTANT'
-                ELSE 'STANDARD' END              AS pri_class,
-           CASE WHEN r.is_bt_hero                THEN 1
-                WHEN r.kvi_band = 'KVI_CRITICAL' THEN 2
+                ELSE 'STANDARD' END               AS pri_class,
+           CASE WHEN r.is_bt_hero                 THEN 1
+                WHEN r.kvi_band = 'KVI_CRITICAL'  THEN 2
                 WHEN r.kvi_band = 'KVI_IMPORTANT' THEN 3
-                ELSE 4 END                       AS pri_rank,
+                ELSE 4 END                        AS pri_rank,
            -- ⭐ ENG-054: the uplift's CONFIDENCE, in words, derived ONCE here so no
-           -- consumer parses a basis string for itself (the ENG-047 defect class).
-           -- FOUR classes, because the population has four (measured group-wide
-           -- 2026-07-29, n = 1,436 promo-window lines):
-           --   AT_CAP   154 (10.7%) -- censored. A BOUND. True value >= cap, unknown.
-           --   SEED     436 (30.4%) -- the 2.00 ladder default. UNDERIVED (§0h).
-           --   BORROWED 141 ( 9.8%) -- measured on a same-format sibling (DF-1).
-           --   MEASURED 705 (49.1%) -- this line's own promo history. Bankable.
-           -- AT_CAP + SEED = 590 = 41.1% carrying an unmeasured number: PM's ruling
-           -- is that no model is fitted on that population until it is stated.
+           -- consumer parses a basis string for itself (that re-derivation is the
+           -- ENG-047 defect class). FOUR classes, because the population has four:
+           --   AT_CAP   -- censored. A BOUND, not a measurement. True value >= cap.
+           --   SEED     -- the 2.00 ladder default. UNDERIVED (FILE-GOVERNANCE SS0h).
+           --   BORROWED -- measured, but on a same-format sibling's ledger (DF-1).
+           --   MEASURED -- this line's own promo history.
            CASE
              WHEN v_cap IS NOT NULL AND r.promo_uplift_band >= v_cap THEN 'AT_CAP'
              WHEN r.promo_uplift_band_basis = 'default'              THEN 'SEED'
@@ -151,9 +155,8 @@ BEGIN
   FROM gap g
   ORDER BY g.pri_rank, g.promo_shortfall_rand DESC NULLS LAST, g.product_code;
 END;
-$fn$;
+$function$;
 
-COMMENT ON FUNCTION public.rpc_bloom_promo_floor_gap(text,date,date,text) IS
-  'SB-CC-BLOOM-018 item 2. The PROMO FLOOR GAP worklist: promo-in-window lines finishing below their own promo-lifted floor, ranked HERO then KVI_CRITICAL then KVI_IMPORTANT then by rand, with the packs and rand to close. SURFACING ONLY - reads rpc_bloom_order_recipe and changes no quantity (ENG-052 stays open until the model lands). uplift_at_cap flags a line sitting on the promo_uplift_cap, which is the ENG-053 input-disagreement signal. Figures are generate-specific: the buy-in window and the drop cover both move with the delivery date, so a published figure names its generate.';
-
+-- Grants: read RPC, anon-executable by design (R30 addendum extension scopes
+-- the double-revoke to MUTATING functions only).
 GRANT EXECUTE ON FUNCTION public.rpc_bloom_promo_floor_gap(text,date,date,text) TO anon, authenticated;

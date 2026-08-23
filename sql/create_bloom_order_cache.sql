@@ -157,7 +157,6 @@ END $fn$;
 
 REVOKE EXECUTE ON FUNCTION public.refresh_bloom_order_cache(text,text,date,date,text,boolean,text) FROM PUBLIC, anon;
 GRANT  EXECUTE ON FUNCTION public.refresh_bloom_order_cache(text,text,date,date,text,boolean,text) TO authenticated, service_role;
-
 -- ---------- the READER (what the screen calls) ----------
 -- RETURNS jsonb, ONE row, deliberately. MEASURED 2026-08-16: PostgREST answered
 -- the SETOF form with "206 Partial Content, Content-Range: 0-999/1065" -- a
@@ -165,15 +164,26 @@ GRANT  EXECUTE ON FUNCTION public.refresh_bloom_order_cache(text,text,date,date,
 -- exists. A SETOF read would have silently dropped 65 lines off a 1,065-line
 -- order. Same pattern rpc_report_rows already uses here: a max-rows cap cannot
 -- truncate a single row. `served` vs `line_count` is the R22 tripwire.
-CREATE OR REPLACE FUNCTION public.rpc_bloom_order_cached(
-  p_store_code    text,
-  p_route         text,
-  p_delivery_date date    DEFAULT NULL,
-  p_next_delivery date    DEFAULT NULL,
-  p_preset        text    DEFAULT NULL,
-  p_fit_to_budget boolean DEFAULT false)
-RETURNS jsonb
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
+--
+-- 🔴 ENG-097 (2026-08-23): A CACHE MISS MUST NEVER FALL THROUGH TO THE RECIPE.
+-- This function matches EXACTLY on delivery_date AND next_delivery. Any other
+-- pairing returned {found:false} with every field NULL, and the desk then
+-- called rpc_bloom_order_recipe live -- which dies at the anon role's 30s
+-- ceiling (~36s, HTTP 500). The buyer waited thirty seconds for "R 0 / 0 lines"
+-- while a complete order sat in the cache one date-pairing away. That is what
+-- Pieter was shown.
+-- The miss is now SELF-DESCRIBING: `status` HIT|MISS, `requested` (what was
+-- looked for, after date defaulting), `available` (what IS cached on this desk)
+-- and a plain-language `message`. `found` is retained unchanged so no existing
+-- caller can break. The frontend renders MISS and FAILURE differently -- a
+-- pairing that was never precomputed is a different fact from a broken read,
+-- and conflating them is what let a timeout read as an empty order.
+CREATE OR REPLACE FUNCTION public.rpc_bloom_order_cached(p_store_code text, p_route text, p_delivery_date date DEFAULT NULL::date, p_next_delivery date DEFAULT NULL::date, p_preset text DEFAULT NULL::text, p_fit_to_budget boolean DEFAULT false)
+ RETURNS jsonb
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
   WITH want AS (
     SELECT COALESCE(p_delivery_date, (SELECT nd.delivery_date  FROM public.rpc_bloom_next_deliveries(p_store_code,p_route) nd LIMIT 1)) AS del,
            COALESCE(p_next_delivery, (SELECT nd.following_date FROM public.rpc_bloom_next_deliveries(p_store_code,p_route) nd LIMIT 1)) AS nxt
@@ -184,19 +194,49 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
       AND c.delivery_date=w.del AND c.next_delivery=w.nxt
       AND c.preset=COALESCE(p_preset,'standard') AND c.fit_to_budget=p_fit_to_budget
     ORDER BY c.generated_at DESC LIMIT 1
+  ), avail AS (
+    -- what IS cached on this desk, so a miss can name the alternatives rather
+    -- than leaving the buyer to guess (R21 SS5, the exclusion carries its reason)
+    SELECT c.delivery_date, c.next_delivery, c.preset, c.fit_to_budget,
+           c.line_count, c.generated_at
+    FROM public.bloom_order_cache c
+    WHERE c.store_code=p_store_code AND c.route_key=p_route
+      AND c.delivery_date >= CURRENT_DATE - 1
+    ORDER BY c.delivery_date, c.preset, c.fit_to_budget
+    LIMIT 12
   )
   SELECT jsonb_build_object(
     'found',        (SELECT count(*) FROM hdr) > 0,
+    'status',       CASE WHEN (SELECT count(*) FROM hdr) > 0 THEN 'HIT' ELSE 'MISS' END,
     'generated_at', (SELECT generated_at FROM hdr),
     'delivery_date',(SELECT delivery_date FROM hdr),
     'next_delivery',(SELECT next_delivery FROM hdr),
     'line_count',   (SELECT line_count FROM hdr),
+    -- R22: the array length is reported beside the header's own count, so a
+    -- mismatch between what was cached and what was served is visible, not silent.
     'served',       (SELECT count(*) FROM public.bloom_order_cache_line l JOIN hdr ON hdr.cache_id=l.cache_id),
     'lines',        COALESCE((SELECT jsonb_agg(to_jsonb(l) ORDER BY l.line_no)
                               FROM public.bloom_order_cache_line l
-                              JOIN hdr ON hdr.cache_id=l.cache_id), '[]'::jsonb)
+                              JOIN hdr ON hdr.cache_id=l.cache_id), '[]'::jsonb),
+    -- ENG-097 miss payload
+    'requested',    (SELECT jsonb_build_object(
+                       'store_code', p_store_code, 'route', p_route,
+                       'delivery_date', w.del, 'next_delivery', w.nxt,
+                       'preset', COALESCE(p_preset,'standard'),
+                       'fit_to_budget', p_fit_to_budget) FROM want w),
+    'available',    COALESCE((SELECT jsonb_agg(to_jsonb(a)) FROM avail a), '[]'::jsonb),
+    'message',      CASE WHEN (SELECT count(*) FROM hdr) > 0 THEN NULL
+                    ELSE (SELECT format(
+                      'No cached order for %s on %s %s for delivery %s to %s. %s',
+                      COALESCE(p_preset,'standard'), p_store_code, p_route,
+                      w.del::text, w.nxt::text,
+                      COALESCE(
+                        (SELECT 'Cached on this desk: '||string_agg(DISTINCT a.delivery_date::text||' to '||a.next_delivery::text, ', ')||'.'
+                           FROM avail a),
+                        'Nothing is cached on this desk yet. The nightly rebuild runs 01:30 SAST.'))
+                      FROM want w) END
   );
-$fn$;
+$function$;
 
 REVOKE EXECUTE ON FUNCTION public.rpc_bloom_order_cached(text,text,date,date,text,boolean) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.rpc_bloom_order_cached(text,text,date,date,text,boolean) TO anon, authenticated;
