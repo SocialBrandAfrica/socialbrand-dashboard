@@ -36,26 +36,51 @@
 
 DROP FUNCTION IF EXISTS public.rpc_bloom_month_projection(text,text);
 
-CREATE FUNCTION public.rpc_bloom_month_projection(
-  p_store_code text,
-  p_route text
-)
-RETURNS TABLE(
-  row_kind text,
-  drop_number integer,
-  delivery_date date,
-  lines integer,
-  projected_value numeric,
-  running_purchases numeric,
-  month_to_date_landed numeric,
-  month_purchases_projected_total numeric,
-  route_budget_amount numeric,
-  drops_capped boolean,
-  sales_target_note text,
-  computed_at timestamptz
-)
-LANGUAGE plpgsql
-SECURITY DEFINER
+
+-- =============================================================================
+-- 2026-08-24 (ENG-088, CC). Drop 1 READS THE CACHE. Drops 2..N are LABELLED.
+--
+-- ⚠️ RULING C EXTENDED BY CC TO A SECOND OBJECT, and flagged as an extension
+-- rather than claimed as ruled. PM ruled (SB-CC-BLOOM-026 §13 Ruling C) that the
+-- delivery chain's order 2 returns a labelled "not precomputed" because it needs
+-- a p_soh_override variant the cache does not hold, and mechanism (e5) will own
+-- those. This function has the IDENTICAL dependency, only worse: it looped up to
+-- EIGHT recipe runs, drops 2..8 each fed by an override built from the drop
+-- before it. At ~36s per recipe run that is ~5 minutes against the anon role's
+-- 30s ceiling, so the card could never finish. Its in-body
+-- SET LOCAL statement_timeout '45s' was decorative anyway (ENG-096) -- the bound
+-- is armed by the caller or the role, never in-body, and it is now removed.
+--
+-- KEPT, because it is real and cheap:
+--   * the DROP DATES for the whole month, walked off supplier_calendar
+--   * drop 1's lines and value, READ from the cache
+--   * month-to-date landed and the route budget, off order_budget_ledger
+--
+-- LABELLED NOT PRECOMPUTED:
+--   * drops 2..N lines/value -> NULL, with the reason on the row
+--   * month_purchases_projected_total -> NULL, NOT a partial sum. Returning
+--     "MTD landed + drop 1" under a column called a month TOTAL would understate
+--     the month and read as measured. A partial presented as a total is the
+--     false-confidence class this project treats as worse than a blank (R22 §3),
+--     and it is the same reasoning that made the Capital Tied false-zero a
+--     defect the same night (ENG-100).
+--
+-- Verified 2026-08-24 00:3x SAST, 80175 DC_AMBIENT: drop 1 = 206 lines /
+-- R108,250.50 (ties to PM's independent figure), drop 2 2026-08-29 labelled,
+-- month summary NULL total with its reason.
+--
+-- 🔴 FRONTEND CHECK OWED: NULL here means NOT COMPUTED and must render as an
+-- em-dash, never R0 -- the exact coercion ENG-100 had to fix on Pulse hours
+-- earlier. Pre-existing and unrelated: month_to_date_landed reads 0.00 because
+-- landed_amount's writer is not in the nightly chain (ENG-091), and
+-- route_budget_amount is NULL where no monthly ledger row exists.
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION public.rpc_bloom_month_projection(p_store_code text, p_route text)
+ RETURNS TABLE(row_kind text, drop_number integer, delivery_date date, lines integer, projected_value numeric, running_purchases numeric, month_to_date_landed numeric, month_purchases_projected_total numeric, route_budget_amount numeric, drops_capped boolean, sales_target_note text, computed_at timestamp with time zone)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
 DECLARE
   v_now timestamptz := clock_timestamp();
@@ -63,16 +88,13 @@ DECLARE
   v_month_end date := (date_trunc('month', CURRENT_DATE) + interval '1 month' - interval '1 day')::date;
   v_ledger_route text;
   v_d_curr date; v_d_next date; v_d_check date; v_d_after date;
-  v_soh_override jsonb := NULL;
   v_drop_num int := 0;
-  v_lines int; v_value numeric;
-  v_running numeric := 0;
   v_mtd_landed numeric;
   v_budget numeric;
   v_capped boolean := false;
+  v_cache_id bigint;
+  v_d1_lines int; v_d1_value numeric;
 BEGIN
-  SET LOCAL statement_timeout = '45s';
-
   v_ledger_route := CASE
     WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER'
     WHEN p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN 'DIRECT'
@@ -89,12 +111,28 @@ BEGIN
   WHERE obl.store_code = p_store_code AND obl.route_key = v_ledger_route
     AND obl.grain = 'monthly' AND obl.year_month = v_month_start;
 
-  EXECUTE 'DROP TABLE IF EXISTS _month_chain';
+  DROP TABLE IF EXISTS _month_chain;
   CREATE TEMP TABLE _month_chain (drop_number int, delivery_date date, lines int, value numeric);
 
   SELECT nd.delivery_date, nd.following_date INTO v_d_curr, v_d_next
   FROM public.rpc_bloom_next_deliveries(p_store_code, p_route, CURRENT_DATE) nd;
 
+  -- Drop 1 ONLY comes from the cache. It is the one drop with no override.
+  SELECT c.cache_id INTO v_cache_id
+    FROM public.bloom_order_cache c
+   WHERE c.store_code = p_store_code AND c.route_key = p_route
+     AND c.delivery_date = v_d_curr AND c.next_delivery = v_d_next
+     AND c.preset = 'standard' AND c.fit_to_budget = false
+   ORDER BY c.generated_at DESC LIMIT 1;
+
+  IF v_cache_id IS NOT NULL THEN
+    SELECT count(*) FILTER (WHERE l.suggested_packs > 0), COALESCE(SUM(l.value),0)
+      INTO v_d1_lines, v_d1_value
+      FROM public.bloom_order_cache_line l WHERE l.cache_id = v_cache_id;
+  END IF;
+
+  -- Walk the month's drop DATES off the calendar. Cheap, and the dates are real
+  -- even where the values are not computed.
   WHILE v_d_curr IS NOT NULL AND v_d_curr <= v_month_end LOOP
     v_drop_num := v_drop_num + 1;
     IF v_drop_num > 8 THEN
@@ -102,29 +140,12 @@ BEGIN
       EXIT;
     END IF;
 
-    EXECUTE 'DROP TABLE IF EXISTS _month_chain_run';
-    CREATE TEMP TABLE _month_chain_run AS
-    SELECT r.product_code, r.rhythm_adjusted_demand AS demand, r.projected_soh AS proj,
-      r.pack_size, r.suggested_packs, r.value
-    FROM public.rpc_bloom_order_recipe(p_store_code, v_d_curr, v_d_next, NULL, NULL, NULL, false, 15, 24, 25, 3.0, p_route, v_soh_override) r;
-
-    SELECT count(*) FILTER (WHERE c.suggested_packs > 0), COALESCE(SUM(c.value), 0)
-    INTO v_lines, v_value
-    FROM _month_chain_run c;
-
-    INSERT INTO _month_chain VALUES (v_drop_num, v_d_curr, v_lines, v_value);
+    INSERT INTO _month_chain VALUES (
+      v_drop_num, v_d_curr,
+      CASE WHEN v_drop_num = 1 THEN v_d1_lines ELSE NULL END,
+      CASE WHEN v_drop_num = 1 THEN v_d1_value ELSE NULL END);
 
     EXIT WHEN v_d_next IS NULL OR v_d_next > v_month_end;
-
-    -- carry this drop's own landing forward into the NEXT drop's simulated
-    -- SOH, same literal formula as rpc_bloom_delivery_chain's own 2-drop
-    -- case (proj + this drop's units - demand over the gap to the next).
-    SELECT jsonb_object_agg(
-      c.product_code::text,
-      c.proj + (c.suggested_packs * c.pack_size) - c.demand * (v_d_next - v_d_curr)
-    )
-    INTO v_soh_override
-    FROM _month_chain_run c;
 
     SELECT nd.delivery_date, nd.following_date INTO v_d_check, v_d_after
     FROM public.rpc_bloom_next_deliveries(p_store_code, p_route, v_d_curr) nd;
@@ -133,30 +154,34 @@ BEGIN
     v_d_next := v_d_after;
   END LOOP;
 
-  EXECUTE 'DROP TABLE IF EXISTS _month_chain_run';
-
   RETURN QUERY
   WITH numbered AS (
     SELECT mc.drop_number, mc.delivery_date, mc.lines, mc.value,
       SUM(mc.value) OVER (ORDER BY mc.drop_number) AS running
     FROM _month_chain mc
   )
-  SELECT 'DROP'::text, n.drop_number, n.delivery_date, n.lines, ROUND(n.value,2), ROUND(n.running,2),
-    NULL::numeric, NULL::numeric, NULL::numeric, NULL::boolean, NULL::text, v_now
+  SELECT 'DROP'::text, n.drop_number, n.delivery_date, n.lines,
+    ROUND(n.value,2), ROUND(n.running,2),
+    NULL::numeric, NULL::numeric, NULL::numeric, NULL::boolean,
+    CASE WHEN n.drop_number = 1
+         THEN CASE WHEN v_cache_id IS NULL
+                   THEN 'Drop 1 not cached for these dates -- no value computed. Not zero: not computed.'
+                   ELSE 'Drop 1 read from the precomputed order.' END
+         ELSE 'Not precomputed. This drop needs a stock-override projection off the drop before it, which the cache does not hold; that lands with the pre-order stock pull (SB-CC-BLOOM-026 mechanism e5). The DATE is real, the value is not computed -- never read a blank here as zero.'
+    END,
+    v_now
   FROM numbered n
   UNION ALL
   SELECT 'MONTH_SUMMARY', NULL, NULL, NULL, NULL, NULL,
-    ROUND(v_mtd_landed,2), ROUND(v_mtd_landed + COALESCE((SELECT SUM(value) FROM _month_chain),0), 2),
+    ROUND(v_mtd_landed,2),
+    NULL::numeric,
     v_budget, v_capped,
-    'No sales-target figure exists in this schema (order_budget_ledger carries a budget, not a sales target) -- route_budget_amount shown instead, explicitly labelled. PM/Pieter to supply a real target before this compares purchases vs sales.',
+    'month_purchases_projected_total is NOT COMPUTED: only drop 1 is precomputed, and drops 2..N need per-drop stock-override projections that arrive with mechanism (e5). Returning "MTD landed + drop 1" under a month TOTAL would understate the month and read as measured, so it is NULL and said out loud rather than shown as a number (R22 §3). Separately, and unchanged: no sales-target figure exists in this schema -- order_budget_ledger carries a budget, not a sales target -- so route_budget_amount is shown instead, explicitly labelled.',
     v_now
   ORDER BY 1 ASC, 2;
 
-  EXECUTE 'DROP TABLE IF EXISTS _month_chain';
+  DROP TABLE IF EXISTS _month_chain;
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.rpc_bloom_month_projection(text,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.rpc_bloom_month_projection(text,text) TO anon, authenticated;
-
-SELECT pg_notify('pgrst', 'reload schema');

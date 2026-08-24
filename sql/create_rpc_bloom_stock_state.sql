@@ -40,35 +40,64 @@
 
 DROP FUNCTION IF EXISTS public.rpc_bloom_stock_state(text,text);
 
-CREATE FUNCTION public.rpc_bloom_stock_state(
-  p_store_code text,
-  p_route text
-)
-RETURNS TABLE(
-  group_name text,
-  lines integer,
-  selling_lines integer,
-  stock_at_cost numeric,
-  daily_cost_demand numeric,
-  stock_days numeric,
-  weekly_demand_dept numeric,
-  weekly_demand_orderable numeric,
-  weekly_demand_gap numeric,
-  weekly_demand_gap_lines integer,
-  weekly_demand_gap_label text,
-  computed_at timestamptz
-)
-LANGUAGE plpgsql
-SECURITY DEFINER
+
+-- =============================================================================
+-- 2026-08-24 (ENG-088, SB-CC-BLOOM-026 §13 Ruling B, CC).
+-- READS THE L2 POPULATION-VERDICT FACT. Not the order cache, not the recipe.
+--
+-- WHY THE VERDICT AND NOT THE CACHE. This card is POOL-shaped, not SHEET-shaped:
+-- it uses product_code, kvi_band, soh, pack_size, pack_cost and NO quantity, so
+-- it was using rpc_bloom_order_recipe as an expensive way to enumerate a
+-- population. The cache is the SHEET (428 lines at 80175). The verdict is the
+-- POOL (12,623). Pointing this at the cache would have summarised "stock now"
+-- over the ordered slice and called it the store. R33 one-fact shape: Bloom,
+-- Forge, Pulse and Capital Tied all read the same population.
+--
+-- WHAT IT WAS DOING WRONG, measured 2026-08-24 00:3x SAST at 80175 DC_AMBIENT:
+--   card showed   R201,348.82 over   428 lines  (the sheet)
+--   real position R1,333,489.43 over 12,623 lines  (the pool)
+-- 15% of the store's ambient stock, presented as the whole. And the breakdown is
+-- the story: KVI R269,441 at 18.2 days, CORE R772,296 at 44.3 days, TAIL
+-- R291,752 at 616.6 DAYS across 9,586 lines. Plus a R124,329/week demonstrated
+-- demand gap across 1,490 lines selling in the ambient departments but off the
+-- desk.
+--
+-- PERFORMANCE. It called the recipe live and PM measured it past 60s, abandoned;
+-- its in-body SET LOCAL was decorative (ENG-096) so the real bound was the anon
+-- role's 30s and the card could never legally finish.
+--   after the verdict repoint          9,692 ms
+--   after collapsing the sigma_sales   3,287 ms
+-- Four separate 28-day sigma_sales passes (sales28, dept_demand,
+-- orderable_demand, gap_lines) computed the same aggregate over the same window
+-- with different filters. They are all DERIVABLE from one MATERIALIZED scan, so
+-- the other three bought nothing. Same numbers by construction -- every leg
+-- still reads cost_value over the same window with period_kind='T', txn_kind=1.
+--
+-- DC IS THE PREFERRED SUPPLIER, ALWAYS (Pieter ruling 2026-08-23). The verdict
+-- holds ONE row per (store, product), ordered is_dc DESC, so a product carried
+-- by both a DC and a direct desk is filed under DC.
+--   DC desks     EXACT -- DC always wins the tie, the DC pool is complete.
+--   DIRECT desks a line shared with DC is counted on DC, not here.
+-- That is the RULE, not a shortfall, and the WARNING names the count so it is
+-- surfaced rather than silent (R21 §5). CC first flagged it as a defect owing a
+-- schema fix; Pieter's ruling settled that it is correct behaviour.
+--
+-- 🔴 RAISES LOUDLY if the verdict is unpopulated, rather than reporting a
+-- confident EMPTY store (R22 §3, the ENG-068/074/100 shape, four firings).
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION public.rpc_bloom_stock_state(p_store_code text, p_route text)
+ RETURNS TABLE(group_name text, lines integer, selling_lines integer, stock_at_cost numeric, daily_cost_demand numeric, stock_days numeric, weekly_demand_dept numeric, weekly_demand_orderable numeric, weekly_demand_gap numeric, weekly_demand_gap_lines integer, weekly_demand_gap_label text, computed_at timestamp with time zone)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
 DECLARE
-  v_now timestamptz := clock_timestamp();
-  v_delivery date := CURRENT_DATE + 1;
-  v_dept_nrs smallint[];
-  v_merch_nrs smallint[];
+  v_now       timestamptz := clock_timestamp();
+  v_dept_nrs  smallint[];
+  v_pool_rows int;
+  v_overlap   int;
 BEGIN
-  SET LOCAL statement_timeout = '30s';
-
   IF p_route IS NULL THEN
     RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS, DIRECT_BEER or a RULED DIRECT_<brand> desk';
   END IF;
@@ -77,29 +106,53 @@ BEGIN
     SELECT dc.dc_cycle_dept_nrs INTO v_dept_nrs
     FROM bloom_dc_config dc WHERE dc.store_code = p_store_code AND dc.status = 'RULED';
   ELSIF p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN
-    -- ENG-033 (2026-07-21): DIRECT_BEER lost its merch-group branch and joins the
-    -- DIRECT_* class, so the instrument describes the same population the order does.
-    -- SB-CC-BLOOM-009: no dept-wide-vs-orderable floor-debt concept exists
-    -- yet for a supplier-defined direct desk (that gap is a DC Z-link
-    -- concept) -- dept_scope below falls back to pool_run itself for this
-    -- route class, so weekly_demand_gap honestly reads 0 rather than
-    -- inventing a broader comparison set.
     NULL;
   ELSE
     RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS, DIRECT_BEER or a RULED DIRECT_<brand> desk';
   END IF;
 
+  SELECT count(*) INTO v_pool_rows
+    FROM l2_population_verdict v
+   WHERE v.store_code = p_store_code AND v.route_key = p_route;
+
+  IF v_pool_rows = 0 THEN
+    RAISE EXCEPTION
+      'Stock state unavailable: l2_population_verdict holds no rows for % %. It is refreshed on the nightly chain after refresh_l2_range_state. Failing loudly rather than reporting an empty store.',
+      p_store_code, p_route;
+  END IF;
+
+  IF p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN
+    SELECT count(*) INTO v_overlap
+      FROM l2_population_verdict v
+     WHERE v.store_code = p_store_code AND v.route_overlap;
+    IF v_overlap > 0 THEN
+      RAISE WARNING 'rpc_bloom_stock_state: % at % -- % line(s) shared with a DC desk are counted on DC, not here. That is the RULE, not a shortfall: DC is the preferred supplier always (Pieter ruling 2026-08-23), so a line DC supplies is ordered on DC and belongs on the DC desk.',
+        p_route, p_store_code, v_overlap;
+    END IF;
+  END IF;
+
   RETURN QUERY
   WITH pool_run AS (
-    SELECT r.product_code, r.kvi_band, r.soh, r.pack_size, r.pack_cost
-    FROM rpc_bloom_order_recipe(p_store_code, v_delivery, v_delivery, NULL, NULL, 7, false, 15, 24, 25, 3.0, p_route) r
+    SELECT v.product_code, v.kvi_band, v.soh,
+           v.chosen_pack_size AS pack_size, v.chosen_pack_cost AS pack_cost
+    FROM l2_population_verdict v
+    WHERE v.store_code = p_store_code AND v.route_key = p_route
   ),
-  sales28 AS (
+  -- ONE scan. Everything below derives from it.
+  sales28 AS MATERIALIZED (
     SELECT ss.product_code, SUM(ss.cost_value) AS cost28
     FROM sigma_sales ss
     WHERE ss.store_code = p_store_code AND ss.period_kind = 'T' AND ss.txn_kind = 1
       AND ss.sale_date > CURRENT_DATE - 28 AND ss.sale_date <= CURRENT_DATE
     GROUP BY ss.product_code
+  ),
+  dept_scope AS (
+    SELECT sp.product_code
+    FROM l2_stock_position sp
+    WHERE sp.store_code = p_store_code
+      AND ((p_route IN ('DC_AMBIENT','DC_TOPS') AND sp.department_nr = ANY(v_dept_nrs)))
+    UNION
+    SELECT pr.product_code FROM pool_run pr WHERE p_route LIKE 'DIRECT\_%' ESCAPE '\'
   ),
   lined AS (
     SELECT
@@ -116,49 +169,22 @@ BEGIN
     LEFT JOIN sales28 s28 ON s28.product_code = pr.product_code
   ),
   grouped AS (
+    SELECT grp, count(*) AS lines,
+           count(*) FILTER (WHERE is_selling) AS selling_lines,
+           SUM(stock_cost) AS stock_at_cost,
+           SUM(daily_cost) AS daily_cost_demand
+    FROM lined GROUP BY grp
+  ),
+  -- all three derived from the ONE scan
+  totals AS (
     SELECT
-      grp,
-      count(*) AS lines,
-      count(*) FILTER (WHERE is_selling) AS selling_lines,
-      SUM(stock_cost) AS stock_at_cost,
-      SUM(daily_cost) AS daily_cost_demand
-    FROM lined
-    GROUP BY grp
-  ),
-  -- dept-wide scope (no Z-link requirement) -- separate from the recipe's
-  -- own orderable pool, deliberately, to expose the no_active_dc_route gap.
-  dept_scope AS (
-    SELECT sp.product_code
-    FROM l2_stock_position sp
-    WHERE sp.store_code = p_store_code
-      AND (
-        (p_route IN ('DC_AMBIENT','DC_TOPS') AND sp.department_nr = ANY(v_dept_nrs))
-      )
-    UNION
-    SELECT pr.product_code FROM pool_run pr WHERE p_route LIKE 'DIRECT\_%' ESCAPE '\'
-  ),
-  dept_demand AS (
-    SELECT COALESCE(SUM(ss.cost_value), 0) / 4.0 AS v
-    FROM sigma_sales ss
-    WHERE ss.store_code = p_store_code AND ss.period_kind = 'T' AND ss.txn_kind = 1
-      AND ss.sale_date > CURRENT_DATE - 28 AND ss.sale_date <= CURRENT_DATE
-      AND ss.product_code IN (SELECT product_code FROM dept_scope)
-  ),
-  orderable_demand AS (
-    SELECT COALESCE(SUM(ss.cost_value), 0) / 4.0 AS v
-    FROM sigma_sales ss
-    WHERE ss.store_code = p_store_code AND ss.period_kind = 'T' AND ss.txn_kind = 1
-      AND ss.sale_date > CURRENT_DATE - 28 AND ss.sale_date <= CURRENT_DATE
-      AND ss.product_code IN (SELECT product_code FROM pool_run)
-  ),
-  gap_lines AS (
-    SELECT count(DISTINCT ss.product_code) AS c
-    FROM sigma_sales ss
-    WHERE ss.store_code = p_store_code AND ss.period_kind = 'T' AND ss.txn_kind = 1
-      AND ss.sale_date > CURRENT_DATE - 28 AND ss.sale_date <= CURRENT_DATE
-      AND ss.cost_value > 0
-      AND ss.product_code IN (SELECT product_code FROM dept_scope)
-      AND ss.product_code NOT IN (SELECT product_code FROM pool_run)
+      COALESCE(SUM(s.cost28) FILTER (WHERE ds.product_code IS NOT NULL), 0) / 4.0 AS dept_v,
+      COALESCE(SUM(s.cost28) FILTER (WHERE pr.product_code IS NOT NULL), 0) / 4.0 AS pool_v,
+      count(DISTINCT s.product_code) FILTER (
+        WHERE ds.product_code IS NOT NULL AND pr.product_code IS NULL AND s.cost28 > 0) AS gap_n
+    FROM sales28 s
+    LEFT JOIN dept_scope ds ON ds.product_code = s.product_code
+    LEFT JOIN pool_run   pr ON pr.product_code = s.product_code
   )
   SELECT g.grp, g.lines::int, g.selling_lines::int,
     ROUND(g.stock_at_cost, 2), ROUND(g.daily_cost_demand, 2),
@@ -167,14 +193,11 @@ BEGIN
   FROM grouped g
   UNION ALL
   SELECT 'TOTAL', NULL, NULL, NULL, NULL, NULL,
-    ROUND((SELECT v FROM dept_demand), 2), ROUND((SELECT v FROM orderable_demand), 2),
-    ROUND((SELECT v FROM dept_demand) - (SELECT v FROM orderable_demand), 2),
-    (SELECT c FROM gap_lines)::int, 'no_active_dc_route', v_now
+    ROUND((SELECT dept_v FROM totals), 2), ROUND((SELECT pool_v FROM totals), 2),
+    ROUND((SELECT dept_v - pool_v FROM totals), 2),
+    (SELECT gap_n FROM totals)::int, 'no_active_dc_route', v_now
   ORDER BY 1;
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.rpc_bloom_stock_state(text,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.rpc_bloom_stock_state(text,text) TO anon, authenticated;
-
-SELECT pg_notify('pgrst', 'reload schema');
