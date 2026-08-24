@@ -1,5 +1,6 @@
 -- =============================================================================
--- *** DIVERGED FROM LIVE, AND APPLYING IT IS DANGEROUS. *** (CC, 2026-08-24, ENG-115)
+-- *** DO NOT APPLY THIS FILE. DIVERGED FROM LIVE, AND APPLYING IT IS
+-- *** DANGEROUS: IT CREATES AN AMBIGUOUS OVERLOAD. *** (CC, 2026-08-24, ENG-115)
 --
 -- LIVE PIN, verified at source 2026-08-24 12:0x SAST:
 --   public.rpc_bloom_scenario_overview(
