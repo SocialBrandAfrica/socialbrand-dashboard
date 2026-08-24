@@ -1492,6 +1492,9 @@ function OrderDesksMode() {
   const [overview, setOverview] = useState([])
   const [overviewLoading, setOverviewLoading] = useState(false)
   const [overviewError, setOverviewError] = useState(null)
+  // HELD is not FAILED. A deliberately withheld card renders amber and says why;
+  // red is reserved for something that actually broke (the ENG-097 rule).
+  const [overviewHeld, setOverviewHeld] = useState(null)
   const [stockState, setStockState] = useState([])
   const [stockStateError, setStockStateError] = useState(null)
   // SB-CC-BLOOM-026 part (b) -- THE HIDDEN SELLERS. Lines the order DROPPED
@@ -1626,8 +1629,44 @@ function OrderDesksMode() {
   // demonstrated_weekly_demand holds at the same value in every one.
   const OVERVIEW_SCENARIOS = ['full', 'fitted', 'order_essentials', 'catch_up']
 
+  // 🔴 HELD 2026-08-24 (CC, PM-approved). The overview does NOT call the server.
+  //
+  // WHY IT IS OFF RATHER THAN SLOW. The loop below issues FOUR sequential calls,
+  // one per scenario, and each runs the recipe PLUS the ENG-018 yardstick. At
+  // 10116 the recipe is ~8s, so a single page load asks for ~64s of database
+  // work that can never finish inside Kong's ~30s. It did not merely fail
+  // itself -- it competed with every other card on the page. Measured through
+  // the live anon path 2026-08-24: rpc_bloom_stock_state takes 6.7s in
+  // isolation and 14.5s while this loop is running, which is how a card that
+  // works ends up breaching the 12s client deadline.
+  //
+  // WHY IT IS NOT SIMPLY REPOINTED YET. The repoint is gated on BUG-LOG ENG-104:
+  // PM's own pre-ship gate proved demonstrated_weekly_demand MOVES cached-vs-live
+  // (80175: live 477 products / R76,748.17 vs cached 428 / R70,296.48, 8.4%),
+  // and the reason it can move at all is that the metric is computed over the
+  // ORDER'S OWN returned rows rather than the route's demand -- so the yardstick
+  // contracts with the order it judges. PM's rider: if it moves, it does not
+  // ship. It has not shipped.
+  //
+  // The card now says so instead of showing "loading …" forever, which was a
+  // lie about what it was doing. HELD is not a FAILURE and must not render red
+  // (the ENG-097 miss-vs-failure rule).
+  //
+  // TO RE-ENABLE: set OVERVIEW_ENABLED true. Pass p_include_yardstick: false
+  // when doing so -- PM ruled the yardstick defaults OFF (§D6: it judges an
+  // order, it never prices one), which alone halves the recipe runs per call.
+  const OVERVIEW_ENABLED = false
+
   useEffect(() => {
     if (!storeCode || !desk || !deliveryDate) { setOverview([]); return }
+
+    if (!OVERVIEW_ENABLED) {
+      setOverview([]); setOverviewLoading(false)
+      setOverviewHeld('Not available. The scenario overview is held pending BUG-LOG ENG-104 — demonstrated weekly demand is measured over the order’s own lines rather than the route’s demand, so the benchmark moves with the order it judges. Held rather than shown wrong. Nothing else on this page depends on it.')
+      return
+    }
+    setOverviewHeld(null)
+
     let cancelled = false
     setOverviewLoading(true); setOverviewError(null); setOverview([])
 
@@ -2296,6 +2335,11 @@ function OrderDesksMode() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
           <Label style={{ color: 'var(--veld-mist)' }}>Scenario overview {overviewLoading ? '· loading …' : ''}</Label>
         </div>
+        {overviewHeld && (
+          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: '#fcd34d',
+            background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)',
+            borderRadius: 8, padding: '10px 12px', margin: 0 }}>{overviewHeld}</p>
+        )}
         {overviewError && (
           <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#fca5a5' }}>{overviewError}</p>
         )}
