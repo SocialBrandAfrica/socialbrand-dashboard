@@ -56,25 +56,60 @@
 --   engine table at its latest snapshot per store (small, indexed).
 -- =============================================================================
 
-DROP FUNCTION IF EXISTS public.rpc_dept_summary(text[], text[], text, text[]);
+-- =============================================================================
+-- 2026-08-23 PERFORMANCE FIX (live body committed 2026-08-24 by CC, closing the
+-- divergence). The file had sat July-dated while the live body carried the fix.
+--
+-- Two changes, both about doing expensive work ONCE and only when asked:
+--   1. The EAN -> product_code identity resolution is hoisted OUT of the hot
+--      query into the DECLARE/BEGIN block and runs ONLY when p_eans is supplied.
+--      Previously it rode inside the aggregate.
+--   2. l2_classification is bound explicitly by store_code rather than relying
+--      on the join to the `latest` CTE to bound it.
+-- p_dates is still pre-cast ONCE to date[] (RULE-BOOK §8) -- an inline
+-- `ANY(p_dates::date[])` kills the index.
+--
+-- ⚠️ STILL SLOW, AND THE REMAINING COST IS FIXED OVERHEAD, NOT PER-DATE SLOPE.
+-- Measured by CC 2026-08-23 on a quiet database, 5 stores, EXPLAIN ANALYZE:
+-- 5,315ms at ONE date. PM measured 7.0s at one date rising to 15.5s at 23, and
+-- rpc_top20 3.2s rising to 14.8s -- both breaching the frontend's 12s client
+-- deadline. The target is the fixed cost at one date. Owed work, not done here.
+--
+-- NOTE ON THE ID: the body cites ENG-103, which is ALSO used by an unrelated
+-- BUG-LOG row filed 2026-08-24 (MAX_TOP20_DATES unenforced / §0i PROSE). The ids
+-- collide; flagged to PM, not renumbered here.
+-- =============================================================================
 
-CREATE FUNCTION public.rpc_dept_summary(
-    p_store_codes text[],
-    p_dates       text[],
-    p_subdept     text   DEFAULT NULL,
-    p_eans        text[] DEFAULT NULL
-)
-RETURNS TABLE(dept_name text, total_sales numeric, total_cost numeric, total_qty numeric, total_sales_ex_vat numeric, capital_tied numeric)
--- NOT marked STABLE: the body does SET LOCAL statement_timeout, which Postgres
--- forbids in non-volatile functions (caught live 2026-07-02, hotfixed minutes
--- later via retire003_rpc_dept_summary_fix_volatility).
-LANGUAGE plpgsql SECURITY DEFINER
+CREATE OR REPLACE FUNCTION public.rpc_dept_summary(p_store_codes text[], p_dates text[], p_subdept text DEFAULT NULL::text, p_eans text[] DEFAULT NULL::text[])
+ RETURNS TABLE(dept_name text, total_sales numeric, total_cost numeric, total_qty numeric, total_sales_ex_vat numeric, capital_tied numeric)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
 AS $function$
 #variable_conflict use_column
 DECLARE
-    v_dates date[] := p_dates::date[];   -- pre-cast ONCE
+    v_dates  date[]   := p_dates::date[];   -- pre-cast ONCE (index-safe, RULE-BOOK §8)
+    v_pcodes bigint[] := NULL;              -- ENG-103: resolved once, ONLY when p_eans is supplied
+    v_bcodes bigint[] := NULL;
 BEGIN
-    SET LOCAL statement_timeout = '60s';
+  -- ENG-103: do the expensive identity resolution here, outside the hot query, and only if asked.
+  IF p_eans IS NOT NULL THEN
+    SELECT COALESCE(array_agg(DISTINCT x), '{}')
+      INTO v_pcodes
+      FROM (
+        SELECT NULLIF(regexp_replace(pc.sigma_product_code, '\D', '', 'g'), '')::bigint AS x
+        FROM   product_catalog pc
+        WHERE  pc.store_code = ANY(p_store_codes)
+          AND  pc.ean = ANY(p_eans)
+          AND  pc.sigma_product_code ~ '^[0-9]+$'
+      ) s
+     WHERE x IS NOT NULL;
+
+    SELECT COALESCE(array_agg(DISTINCT b.product_code), '{}')
+      INTO v_bcodes
+      FROM v_ean_bridge b
+     WHERE b.store_code = ANY(p_store_codes) AND b.ean = ANY(p_eans);
+  END IF;
+
   RETURN QUERY
   WITH sigma_dept AS (
     SELECT COALESCE(sd.name, 'UNMAPPED') AS dept_name,
@@ -83,29 +118,16 @@ BEGIN
            ROUND(SUM(ss.qty)::numeric, 2)                          AS total_qty,
            ROUND(SUM(ss.sales_incl_vat - ss.vat_value)::numeric, 2) AS total_sales_ex_vat
     FROM   sigma_sales ss
-    LEFT   JOIN sigma_articles a    ON a.store_code = ss.store_code AND a.product_code = ss.product_code
+    LEFT   JOIN sigma_articles a     ON a.store_code = ss.store_code AND a.product_code = ss.product_code
     LEFT   JOIN sigma_departments sd ON sd.store_code = a.store_code AND sd.department_nr = a.department_nr
-    LEFT   JOIN sigma_subdepts sub  ON sub.store_code = a.store_code AND sub.merch_group_nr = a.merch_group_nr
+    LEFT   JOIN sigma_subdepts sub   ON sub.store_code = a.store_code AND sub.merch_group_nr = a.merch_group_nr
     WHERE  ss.store_code = ANY(p_store_codes)
-      AND  ss.sale_date  = ANY(v_dates)                  -- pre-cast date[] (index-safe, Rule 4)
+      AND  ss.sale_date  = ANY(v_dates)
       AND  ss.period_kind = 'T' AND ss.txn_kind = 1
       AND  (p_subdept IS NULL OR sub.name = p_subdept)
-      AND  (p_eans IS NULL OR a.product_code IN (
-              SELECT NULLIF(regexp_replace(pc.sigma_product_code, '\D', '', 'g'), '')::bigint
-              FROM   product_catalog pc
-              WHERE  pc.store_code = ANY(p_store_codes)
-                AND  pc.ean = ANY(p_eans)
-                AND  pc.sigma_product_code ~ '^[0-9]+$'))
+      AND  (v_pcodes IS NULL OR a.product_code = ANY(v_pcodes))
     GROUP  BY COALESCE(sd.name, 'UNMAPPED')
   ),
-  -- SB-CC-RETIRE-003: capital_tied = ENGINE PURIFIED (canon 8.8), mirroring
-  -- v_l2_capital_by_store scope rules at dept grain: l2_classification at the
-  -- latest snapshot per store, SUM(capital_value) over the include-set buckets
-  -- HEALTHY / COUNT / AMBIGUOUS / LEAVE_COUNTED. Depts holding only excluded
-  -- buckets (NON_STOCK, COST_ERROR, DEPOSIT, zeros) return NULL capital by
-  -- design -- excluded capital is surfaced in its own reports, never here.
-  -- p_eans filter via v_ean_bridge is an EAN-FILTERED selection (R20 addendum:
-  -- INNER-style is correct for selections, never for totals).
   latest AS (
     SELECT lc.store_code, MAX(lc.snapshot_date) AS d
     FROM   l2_classification lc
@@ -120,11 +142,9 @@ BEGIN
       )::numeric, 2) AS capital_tied
     FROM l2_classification lc
     JOIN latest l ON l.store_code = lc.store_code AND lc.snapshot_date = l.d
-    WHERE (p_subdept IS NULL OR lc.subdept_name = p_subdept)
-      AND (p_eans    IS NULL OR lc.product_code IN (
-            SELECT b.product_code FROM v_ean_bridge b
-            WHERE b.store_code = ANY(p_store_codes) AND b.ean = ANY(p_eans)
-          ))
+    WHERE lc.store_code = ANY(p_store_codes)          -- ENG-103: bound explicitly, not via the join
+      AND (p_subdept IS NULL OR lc.subdept_name = p_subdept)
+      AND (v_bcodes IS NULL OR lc.product_code = ANY(v_bcodes))
     GROUP BY COALESCE(lc.dept_name, 'UNMAPPED')
   )
   SELECT COALESCE(s.dept_name, c.dept_name) AS dept_name,
@@ -139,5 +159,4 @@ BEGIN
 END;
 $function$;
 
-GRANT EXECUTE ON FUNCTION public.rpc_dept_summary(text[], text[], text, text[]) TO anon, authenticated;
-SELECT pg_notify('pgrst', 'reload schema');
+GRANT EXECUTE ON FUNCTION public.rpc_dept_summary(text[],text[],text,text[]) TO anon, authenticated;

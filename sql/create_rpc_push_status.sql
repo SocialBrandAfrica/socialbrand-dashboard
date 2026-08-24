@@ -22,6 +22,28 @@
 --   "4d ago" (honest -- extractor dark since 30 Jun, server-side, on Pieter).
 -- ============================================================================
 
+-- =============================================================================
+-- 2026-08-23 PERFORMANCE FIX (live body committed 2026-08-24 by CC, closing the
+-- divergence). The file had sat July-dated while the live body carried the fix.
+--
+-- The L1 high-water mark is taken PER STORE as a correlated MAX so it can use
+-- idx_sigma_sales_store_date (store_code, sale_date). The previous form
+-- aggregated the ENTIRE sigma_sales table with a GROUP BY just to return five
+-- rows, and was measured at 12.22s against this function's own 15s ceiling --
+-- i.e. it was already inside its last 20% of headroom.
+--
+-- Same numbers, index-shaped access. The lesson generalises: an aggregate that
+-- returns one row per store should be bounded per store, not computed over the
+-- whole table and then grouped down.
+--
+-- NOTE ON THE ID: the body cites ENG-101/102. Those numbers are ALSO used by two
+-- unrelated BUG-LOG rows filed 2026-08-24 (ENG-101 the Slow Movers 1,000-row
+-- truncation, ENG-102 the life-gate split). The ids collide -- these code
+-- comments were written without a BUG-LOG row, so the register was empty when
+-- the later rows were filed. Flagged to PM; the register owns the numbering and
+-- CC has not renumbered anything unilaterally.
+-- =============================================================================
+
 CREATE OR REPLACE FUNCTION public.rpc_push_status()
  RETURNS TABLE(store_code text, snapshot_date date, completed_at timestamp with time zone)
  LANGUAGE sql
@@ -37,19 +59,16 @@ WITH latest_push AS (
     AND pl.table_name = 'sigma_sales'
     AND pl.rows_pushed > 0
   ORDER BY pl.store_code, pl.completed_at DESC
-),
-l1 AS (
-  SELECT s.store_code, MAX(s.sale_date) AS l1_max
-  FROM public.sigma_sales s
-  GROUP BY s.store_code
 )
-SELECT st.store_code, l1.l1_max AS snapshot_date, lp.completed_at
+-- ENG-101/102 (2026-08-23): the L1 high-water mark is taken per store as a correlated MAX so it
+-- uses idx_sigma_sales_store_date. The previous GROUP BY aggregated the entire table to return
+-- five rows and was measured at 12.22s against this function's 15s ceiling.
+SELECT st.store_code,
+       (SELECT MAX(s.sale_date) FROM public.sigma_sales s WHERE s.store_code = st.store_code) AS snapshot_date,
+       lp.completed_at
 FROM public.stores st
 LEFT JOIN latest_push lp ON lp.store_code = st.store_code
-LEFT JOIN l1 ON l1.store_code = st.store_code
 WHERE st.is_active;
 $function$;
 
--- Reload the PostgREST schema cache (RULE-BOOK section 8; belt-and-braces --
--- verify live and use the Dashboard Reload schema button if the API still 404s).
-SELECT pg_notify('pgrst', 'reload schema');
+GRANT EXECUTE ON FUNCTION public.rpc_push_status() TO anon, authenticated;
