@@ -1,4 +1,34 @@
 -- =============================================================================
+-- *** DIVERGED FROM LIVE. DO NOT APPLY THIS FILE. *** (CC, 2026-08-24, ENG-115)
+--
+-- LIVE PIN, verified at source 2026-08-24 12:0x SAST:
+--   public.refresh_l2_pipeline()   [no arguments, exactly one overload]
+--   md5(pg_get_functiondef) = 9ed5f5bce31dac2ecd283d1ad7a81ada
+--   length                  = 13304 chars
+--   acl = postgres=X | authenticated=X | service_role=X   (no anon, no PUBLIC)
+--
+-- THE DIVERGENCE, stated exactly rather than as "this file is stale":
+--   Live calls THREE refresh legs this file does not contain at all --
+--     refresh_l2_product_resolution   (Identity Phase 2 / FORGE-MAP-001)
+--     refresh_l2_family_ros           (ENG-073, the family-resolved display rate)
+--     refresh_l2_population_verdict   (SB-CC-BLOOM-026 SS12, the cross-app fact)
+--   Applying this file would SILENTLY DROP all three from the nightly chain.
+--   l2_population_verdict would stop refreshing and go stale while still
+--   reading as populated -- the exact failure mode this platform keeps meeting.
+--
+-- WHY IT IS STAMPED AND NOT REGENERATED HERE:
+--   The close is a byte-exact regeneration from pg_get_functiondef, hash-gated
+--   against the pin above -- never a hand transcription of a 13KB nightly-chain
+--   body (canon's own precedent for the ROTTED recipe file: it "closes free on
+--   the next pipeline-touching ship, never by transcription"). CC declined to
+--   transcribe it on a morning Pieter is placing a live order.
+--
+-- HOW TO CLOSE IT: regenerate from live, keep this header, then prove the
+--   written body md5 equals the pin above BEFORE committing. A byte-identical
+--   file is proven; a carefully-typed one is only asserted.
+-- =============================================================================
+
+-- =============================================================================
 -- create_refresh_l2_pipeline.sql
 -- Canonical source for refresh_l2_pipeline(). Synced to LIVE 2026-07-26;
 -- de-hardcoded 2026-06-17 (SB-CC-RECONCILE-001 Phase 1).

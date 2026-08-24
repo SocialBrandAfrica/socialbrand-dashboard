@@ -1,4 +1,43 @@
 -- =============================================================================
+-- *** DIVERGED FROM LIVE, AND APPLYING IT IS DANGEROUS. *** (CC, 2026-08-24, ENG-115)
+--
+-- LIVE PIN, verified at source 2026-08-24 12:0x SAST:
+--   public.rpc_bloom_scenario_overview(
+--     p_store_code text, p_delivery_date date, p_next_delivery date,
+--     p_route text, p_yardstick_tolerance_pct numeric,
+--     p_scenarios text[], p_include_yardstick boolean)      <-- SEVEN arguments
+--   md5(pg_get_functiondef) = d4050249ecf050e0a6dceb163fc5e059
+--   length                  = 10328 chars
+--   exactly one overload lives; acl = postgres | anon | authenticated | service_role
+--
+-- THE DANGER, and it is not merely staleness:
+--   This file's DROP, REVOKE and GRANT all name the OLD FIVE-ARG signature
+--     (text, date, date, text, numeric).
+--   That signature no longer exists. So applying this file DROPS NOTHING and
+--   CREATES A SECOND FIVE-ARG OVERLOAD ALONGSIDE THE LIVE SEVEN-ARG ONE.
+--   Every existing 5-arg caller then becomes AMBIGUOUS -- the same class of
+--   near-miss that almost killed the nightly build on refresh_bloom_order_cache_all
+--   (RULE-BOOK SS8: run the overload check BEFORE a signature change, not after).
+--
+--   Missing from this file, both shipped by ENG-070 on 2026-08-05:
+--     p_scenarios         -- request ONE scenario per call (the 45s self-timeout fix)
+--     p_include_yardstick -- skip the extra yardstick recipe run
+--
+-- ALSO RECORDED HERE because the next seat will need it: the live body contains
+--   BOTH halves of the ENG-104 defect PM ruled on 2026-08-24 --
+--     full_products AS (SELECT DISTINCT product_code FROM scenarios)  <-- the
+--       benchmark is computed over the ORDER'S OWN ROWS, so it shrinks with the
+--       order (ENG-104 part 1: population must be the ROUTE POOL off
+--       l2_population_verdict.route_key)
+--     ss.sale_date > CURRENT_DATE - 28 AND ss.sale_date <= CURRENT_DATE  <-- the
+--       window anchors to TODAY, not to the order's delivery date (part 2)
+--   Confirmed by CC at source, independently of the ruling.
+--
+-- HOW TO CLOSE IT: regenerate from live, hash-gate the written body against the
+--   md5 above, and correct the DROP/REVOKE/GRANT to the seven-arg signature.
+-- =============================================================================
+
+-- =============================================================================
 -- create_rpc_bloom_scenario_overview.sql
 -- UX-003 (multiply amended, 2026-07-11 night) + CLEANUP-ENGINE-CANON SS14
 -- v7 item 9 -- the landing board. ONE published call returns every
