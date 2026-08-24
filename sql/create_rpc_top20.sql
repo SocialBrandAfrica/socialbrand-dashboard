@@ -1,4 +1,47 @@
 -- =============================================================================
+-- *** DO NOT APPLY THIS FILE. DIVERGED FROM LIVE. *** (CC, 2026-08-24, ENG-115)
+--
+-- LIVE PIN after the ENG-140 guard landed, verified at source 2026-08-24:
+--   public.rpc_top20(p_store_codes text[], p_dates text[], p_dept text,
+--                    p_subdept text, p_eans text[], p_activity text,
+--                    p_parents boolean)        [exactly one overload]
+--   md5(pg_get_functiondef) = ced3dfe2bfcf493286f254ae640e320a
+--   length                  = 6562 chars
+--   acl = postgres | anon | authenticated | service_role
+--
+-- THIS FILE WAS ALREADY DIVERGED BEFORE ENG-140 TOUCHED ANYTHING. It predates
+-- ENG-104b (PM, 2026-08-23), so it does not carry the aggregate-then-decorate
+-- rewrite -- no `picked`, no `keyed AS MATERIALIZED` -- and it still references
+-- `daily_snapshots`, of which the live body now has ZERO. Third instance of the
+-- ENG-115 class: a hand-authored source that could never be hash-gated, so the
+-- drift accumulated unwatched.
+--
+-- WHAT ENG-140 ADDED TO LIVE (and what this file must carry when regenerated):
+--   IF COALESCE(p_activity,'movers') NOT IN ('movers','non_movers') THEN
+--     RAISE EXCEPTION 'unknown p_activity: %. Valid: movers, non_movers', p_activity;
+--   END IF;
+--   Before it, ANY unrecognised value fell through to the movers branch and
+--   returned a confident wrong answer. Measured 2026-08-24 at 80175 over 23
+--   August dates: 'movers' 29 rows, 'non_movers' 40 rows with ZERO EANs shared,
+--   'non-movers' 29 rows identical to movers, 'banana' 29 rows identical to
+--   movers. The toggle was never lying to the buyer; a hyphen in a hand-written
+--   test call was. An input the callee does not understand must SAY SO, never
+--   substitute another population (canon SS8.6 guard 4, the same rule
+--   rpc_bloom_scenario_overview already enforces on p_scenarios).
+--   R22 after: movers 29 and non_movers 40 BOTH UNCHANGED, NULL still defaults
+--   to movers, one overload, grants intact.
+--
+-- ALSO STILL TRUE AND UNFIXED, recorded so it is not rediscovered:
+--   The non-movers branch ignores p_dates entirely -- it reads
+--   l2_stock_position and returns the same 40 rows with dates NULL. That is
+--   correct as point-in-time per RULE-BOOK SS5, but the date picker silently
+--   does nothing on that toggle and no label says so.
+--
+-- HOW TO CLOSE IT: regenerate from live, hash-gate the written body to the md5
+--   above. A file not GENERATED from live cannot be reconciled, only replaced.
+-- =============================================================================
+
+-- =============================================================================
 -- create_rpc_top20.sql
 -- SB-CC-DASH-SOURCE-002 (SB-INDEX-005 Phase 2) -- canonical rpc_top20.
 -- Deployed live via Supabase MCP migration dash_source_002_rpc_top20_movers_to_sigma.

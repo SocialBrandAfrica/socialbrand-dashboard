@@ -1155,6 +1155,7 @@ export default function Home() {
   const [deptNormMap,    setDeptNormMap]    = useState(new Map())
   const [viewsLoading,   setViewsLoading]   = useState(false)
   const [top20Loading,   setTop20Loading]   = useState(false)
+  const [top20Error,     setTop20Error]     = useState(null)  // ENG-141 — a failed read is NOT an empty list
   const [refreshKey,     setRefreshKey]     = useState(0)
 
   function handleReload() {
@@ -1842,13 +1843,23 @@ export default function Home() {
       if (cancelled) return
       if (deptRes.error)      console.error('[rpc_dept_summary]',    deptRes.error.message)
       if (deptSohRes.error)   console.error('[rpc_kpi_dept_counts]', deptSohRes.error.message)
+      // ENG-141, second instance. These two errors were not logged at all, so an
+      // LY or WoW failure was invisible AND cached -- the comparison silently
+      // read as "no sales last year" rather than "we could not find out".
+      if (lyDeptRes.error)    console.error('[rpc_dept_summary LY]',  lyDeptRes.error.message)
+      if (wowDeptRes.error)   console.error('[rpc_dept_summary WoW]', wowDeptRes.error.message)
       if (lyDeptSohRes.error) console.error('[rpc_kpi_dept_counts LY]', lyDeptSohRes.error.message)
       const ds   = deptRes.data       ?? []
       const dsc  = deptSohRes.data    ?? []
       const lyds = lyDeptRes.data     ?? []
       const wds  = wowDeptRes.data    ?? []
       const lysc = lyDeptSohRes.data  ?? []
-      deptCache.current.set(dKey, { deptSummary: ds, deptSohCounts: dsc, lyKpiDeptSummary: lyds, wowKpiDeptSummary: wds, lyDeptSohCounts: lysc })
+      // ENG-141. Same rule as top20Cache and viewsCache: only a clean read is
+      // cacheable. This one matters more than Top 20 -- rpc_dept_summary feeds
+      // TOTAL SALES whenever a dept filter is active, so a cached failure pins a
+      // wrong money number under that selection key for the whole session.
+      const deptFail = deptRes.error || deptSohRes.error || lyDeptRes.error || wowDeptRes.error || lyDeptSohRes.error
+      if (!deptFail) deptCache.current.set(dKey, { deptSummary: ds, deptSohCounts: dsc, lyKpiDeptSummary: lyds, wowKpiDeptSummary: wds, lyDeptSohCounts: lysc })
       setDeptSummary(ds)
       setDeptSohCounts(dsc)
       setLyKpiDeptSummary(lyds)
@@ -1939,7 +1950,17 @@ export default function Home() {
       if (cancelled) return
       if (error) console.error('[rpc_top20]', error.message)
       const t20 = data ?? []
-      top20Cache.current.set(t20Key, t20)
+      // ENG-141. Only cache a clean read, and leave the key UNSET on failure so
+      // the next render retries. Caching a failure replays it as though it were
+      // data -- and because [] is truthy, the `if (t20Hit)` above then short-
+      // circuits every later identical selection, so ONE transient failure
+      // pinned an empty panel to that key for the life of the session while the
+      // RPC stayed healthy throughout. Proven 2026-08-24: the RPC returns 29
+      // rows for 80175/August as `anon`, and the panel renders on a fresh
+      // session -- the fault was never in the database. Same rule the KPI cache
+      // already applies at viewsCache above; this site and deptCache missed it.
+      setTop20Error(error ? `Top 20 could not be read — rpc_top20: ${error.message}` : null)
+      if (!error) top20Cache.current.set(t20Key, t20)
       setTop20Data(t20)
       setTop20Loading(false)
     }
@@ -3467,7 +3488,16 @@ export default function Home() {
                           </span>
                         </div>
                       )}
-                      {top20.length === 0 && (
+                      {/* ENG-141 — a failed read and an empty list are DIFFERENT
+                          statements about the store, and only one of them is a
+                          fact. Never render a failure as "nothing found". Same
+                          discipline as the KPI cards' "this is not a zero". */}
+                      {top20.length === 0 && top20Error && (
+                        <p style={{ color: 'rgba(251,191,36,0.85)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>
+                          Top 20 unavailable — this is not an empty list. {top20Error}
+                        </p>
+                      )}
+                      {top20.length === 0 && !top20Error && (
                         <p style={{ color: 'rgba(245,245,244,0.3)', fontSize: 13, padding: '20px 0', textAlign: 'center', fontStyle: 'italic' }}>
                           {top20Activity === 'non_movers'
                             ? `No non-moving stock · ${selectedDates.length} date${selectedDates.length !== 1 ? 's' : ''} · ${deptFilter !== 'all' ? deptFilter : 'all depts'}`
