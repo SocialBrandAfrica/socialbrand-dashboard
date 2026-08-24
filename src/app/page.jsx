@@ -1539,10 +1539,26 @@ export default function Home() {
       // So every entry is bounded. A request that outlives the budget resolves as a
       // named error and the cards draw with whatever DID answer (R22 §3 — surface it,
       // never hide it, and never let it block the figures that are healthy).
+      // 🔴 THE MESSAGE MUST NOT ASSERT WHAT THE CLIENT CANNOT KNOW (2026-08-24).
+      // This used to read "<label> did not respond within 12s", which blames the
+      // thing being asked. A client-side deadline knows exactly ONE fact: no
+      // response reached the browser in time. It does NOT know the database was
+      // slow, and often it wasn't — mv_kpi_by_date was measured at 0ms for the
+      // exact page shape that produced this banner, while the page was starving
+      // it of a connection behind five other in-flight requests.
+      //
+      // Naming the object it never reached, instead of the request that was never
+      // served, sends the next person to debug the wrong thing. That is worse
+      // than a blank error, because it is confidently wrong.
+      //
+      // Fixed at the TEMPLATE, not at one call site: every caller of withDeadline
+      // inherited the same false assertion, so patching the one message anyone
+      // happened to notice would have left the class alive (R21 §3).
       const withDeadline = (p, label, ms = 12000) => Promise.race([
         Promise.resolve(p),
         new Promise(resolve => setTimeout(
-          () => resolve({ data: null, error: { message: `${label} did not respond within ${ms / 1000}s (client deadline)` } }),
+          () => resolve({ data: null, error: { message:
+            `${label}: no response reached the browser within ${ms / 1000}s (client deadline — the request was abandoned here). This does not by itself mean the query was slow; it can also be a request starved of a connection behind others in flight.` } }),
           ms)),
       ])
 
@@ -1557,7 +1573,11 @@ export default function Home() {
                 .select('store_code,store_name,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied,ghost_stock_value')
                 .in('store_code', storeCodes)
                 .in('snapshot_date', selectedDates),
-              kpiTable),
+              // Name the REQUEST, not the object. Every other caller here passes
+              // an RPC name; this one passed a bare table name, so its failure
+              // read as "mv_kpi_by_date is broken" rather than "this select never
+              // came back".
+              `select ${kpiTable}`),
 
         // Sub-dept names for the current store+date
         withDeadline(
