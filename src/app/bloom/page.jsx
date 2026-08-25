@@ -803,22 +803,44 @@ function RecipeRow({ line, qty, isEdited, onQty, fitActive }) {
   const code = line.product_code
   const value = (qty ?? 0) * (Number(line.pack_cost) || 0)
   const protectedKvi = line.kvi_band === 'KVI_CRITICAL' || line.kvi_band === 'KVI_IMPORTANT'
-  const wash = protectedKvi
-    ? 'linear-gradient(90deg, rgba(255,179,0,0.13), rgba(255,179,0,0.02))'
-    : line.mode === 'build'
-      ? 'linear-gradient(90deg, rgba(149,117,255,0.12), rgba(149,117,255,0.02))'
-      : 'transparent'
+  // SB-CC-BLOOM-026 §5(b2). A withheld correction outranks the KVI and build
+  // washes, because it is a statement about whether the NUMBER can be trusted
+  // and those are statements about what the line is for.
+  const warned = !!line.withheld_correction
+  const wash = warned
+    ? 'linear-gradient(90deg, rgba(251,191,36,0.16), rgba(251,191,36,0.03))'
+    : protectedKvi
+      ? 'linear-gradient(90deg, rgba(255,179,0,0.13), rgba(255,179,0,0.02))'
+      : line.mode === 'build'
+        ? 'linear-gradient(90deg, rgba(149,117,255,0.12), rgba(149,117,255,0.02))'
+        : 'transparent'
+  // The row states BOTH rates and the evidence under them (R28 §5 on the
+  // surface). A rate resting on six observable days SHOWS it, so the buyer
+  // judges the uncertainty in front of him instead of inheriting it.
+  const warnTitle = warned
+    ? `${line.hidden_reason ?? 'Stockout correction withheld'}\n`
+      + `Order read ${Number(line.hidden_rate_engine_read ?? 0).toFixed(2)}/day · `
+      + `corrector measured ${Number(line.hidden_rate_corrected ?? 0).toFixed(2)}/day\n`
+      + `Seen ${line.hidden_observable_days ?? '?'} of ${line.hidden_window_days ?? 56} days`
+      + (line.line_kind === 'hidden' ? '\nDROPPED by the order — shown at zero so it does not leave silently' : '')
+    : null
   return (
     <div style={{
       display: 'grid', gridTemplateColumns: '76px 44px minmax(160px,1.6fr) 110px 96px 84px 56px 64px 110px 100px',
       alignItems: 'center', gap: 0, padding: '9px 18px', background: wash,
       borderBottom: '1px solid var(--hairline)', fontSize: 12, fontFamily: 'var(--font-mono)',
       fontVariantNumeric: 'tabular-nums',
-    }} title={line.story}>
+    }} title={warnTitle ? `${warnTitle}\n\n${line.story ?? ''}` : line.story}>
       <span style={{ color: 'var(--veld-mist)' }}>{String(line.product_code)}</span>
       <span style={{ color: 'var(--veld-mist)' }}>{line.pack_size ?? '—'}</span>
       <span style={{ color: 'var(--daisy-white)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {line.description}
+        {warned && (
+          <span title={warnTitle} style={{ marginLeft: 6, fontSize: 9, color: 'rgb(251,191,36)',
+            border: '1px solid rgb(251,191,36)', borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>
+            {line.line_kind === 'hidden' ? 'DROPPED' : 'RATE'} · seen {line.hidden_observable_days ?? '?'}/{line.hidden_window_days ?? 56}
+          </span>
+        )}
         {line.is_bt_hero && (
           <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--growth-green)', border: '1px solid var(--growth-green)',
             borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>BT HERO</span>
@@ -868,9 +890,19 @@ function RecipeOrderForm({ store, deliveryDate, nextDeliveryDate, budgetRow, lin
   // does not vanish from under the cursor and become impossible to undo.
   const isOrdered = l => (qty[l.product_code] ?? 0) > 0
   const orderedCount = lines.filter(isOrdered).length
+  // SB-CC-BLOOM-026 §5(b2). A line the recipe DROPPED (line_kind 'hidden') and a
+  // line it ordered while its correction was withheld (withheld_correction) are
+  // DIFFERENT facts and the count says so. The warning count is what the buyer is
+  // being told about; the ordered count is his order and hidden rows carry zero,
+  // so they can never inflate it. An R22 on the DB side proved that collapsing
+  // the two moved R18,761.51 of real order value out of the ordered bucket.
+  const hiddenCount  = lines.filter(l => l.line_kind === 'hidden').length
+  const warnedCount  = lines.filter(l => l.withheld_correction).length
   const shown = filter === 'ordered'
     ? lines.filter(l => isOrdered(l) || edited[l.product_code])
-    : lines
+    : filter === 'hidden'
+      ? lines.filter(l => l.withheld_correction)
+      : lines
   const cols = ['Code', 'Pack', 'Description', 'Dept', 'KVI', 'Mode', 'SOH', 'Need', 'Qty · packs', 'Value']
   const gridCols = '76px 44px minmax(160px,1.6fr) 110px 96px 84px 56px 64px 110px 100px'
   const budgetTotal = Number(budgetRow?.budget_amount) || 0
@@ -903,7 +935,9 @@ function RecipeOrderForm({ store, deliveryDate, nextDeliveryDate, budgetRow, lin
         <Label style={{ color: 'var(--veld-mist)' }}>Sorted by value · protected KVI lines never trimmed</Label>
         <div style={{ flex: 1 }} />
         <SegmentedControl size="sm" value={filter} onChange={setFilter}
-          options={[{ value: 'ordered', label: `Ordered ${orderedCount}` }, { value: 'all', label: `All ${lines.length}` }]} />
+          options={[{ value: 'ordered', label: `Ordered ${orderedCount}` },
+                                 ...(warnedCount ? [{ value: 'hidden', label: `Suppressed rate ${warnedCount}` }] : []),
+                                 { value: 'all', label: `All ${lines.length}` }]} />
       </div>
 
       <div style={{ maxHeight: '52vh', overflow: 'auto' }}>
@@ -1875,7 +1909,15 @@ function OrderDesksMode() {
     }
     setOrderSource({ kind: 'cache', generatedAt: payload.generated_at ?? null })
     setGenerating(false)
-    const rows = all.sort((a, b) => (b.rhythm_adjusted_demand ?? 0) - (a.rhythm_adjusted_demand ?? 0))
+    // SB-CC-BLOOM-026 §5(b2). Hidden lines are PINNED ABOVE the ordered lines,
+    // then both groups sort by rate of sale (§3 requirement 2, so the buyer never
+    // hand-sorts again). A hidden line is one the recipe DROPPED because its
+    // stockout correction was withheld, so it read as covered on a suppressed
+    // rate -- it carries zero quantity and its reason, and it is the first thing
+    // the buyer sees rather than something he has to go and find in a second list.
+    const rows = all.sort((a, b) =>
+      ((b.line_kind === 'hidden') - (a.line_kind === 'hidden'))
+      || ((b.rhythm_adjusted_demand ?? 0) - (a.rhythm_adjusted_demand ?? 0)))
     const q = {}
     for (const r of rows) q[r.product_code] = lineQty(r, basis)
     setLines(rows); setQty(q); setEdited({}); setFilter('all'); setGenerated(true)
