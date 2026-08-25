@@ -2,6 +2,39 @@
 
 Reverse-chronological. Each entry = one production deploy.
 
+⚠️ **THIS LOG IS BEHIND. Its previous top entry was 2026-08-19 while `main` had moved through several ships (`3d679a9`, `ac873ed`, `5bf2b9b`, `9c27f0f`, `bf23d41`) on 08-23/08-24.** Named by CC 2026-08-25 rather than quietly backfilled — a deploy log that skips deploys is the "what's actually live" source lying, and Rule 18 points at this file too. Backfilling 08-23/08-24 is owed and is not mine to invent from commit messages alone.
+
+---
+
+## 2026-08-25 -- ENG-140, ENG-141, ENG-144, and the BLOOM-026 §5(b2) database half. Three database objects changed, one frontend ship, one frontend HELD.
+
+**Clock:** written 2026-08-25 19:2x SAST (device `19:25:57` / UTC `17:25:57`, +2). Session opened 08-24 and crossed one midnight, so every date here is the date the work happened.
+
+**PUSHED TO PRODUCTION:** `c7b4498` (sql stamps, no runtime change) and **`97f097e`** (ENG-140 + ENG-141). `main` = `origin/main` at push.
+
+**HELD, DELIBERATELY NOT PUSHED:** `761724d`, the §5(b2) frontend. Pieter ruled it goes out **after tonight's nightly build**, because the 01:30 cache rebuild is what populates every desk and 10116 is the desk he orders off today.
+
+### ENG-140 — `rpc_top20` now refuses an unrecognised `p_activity`
+Pin **`ced3dfe2bfcf493286f254ae640e320a` / 6,562 chars**, exactly one overload. Any value other than `movers` / `non_movers` fell through to the movers branch and returned a confident wrong population. Measured at 80175 over 23 August dates: `movers` 29, `non_movers` **40 with zero EANs shared**, `non-movers` 29 identical to movers, `banana` 29 identical to movers. **The buyer's toggle was never lying — a hyphen in a hand-written test call was.** Now raises. **R22: movers 29 and non_movers 40 BOTH UNCHANGED, NULL still defaults to movers, grants intact for `anon` and `authenticated`.**
+
+### ENG-141 — a failed read is not an empty list (Pulse, `src/app/page.jsx`)
+Three caches on that page. `viewsCache` guarded correctly **and carried the reason in a comment**; `top20Cache` and `deptCache` sat unguarded 226 and 135 lines away. `const t20 = data ?? []` turned an error into `[]`, cached it, and because `[]` is truthy the cache hit short-circuited every later identical selection — **one transient failure pinned an empty panel to that key for the life of the session while the RPC stayed healthy.** Proven: the RPC returns 29 rows for 80175 as `anon` and the panel renders on a fresh session. Now caches on success only, leaves the key unset on failure so the next render retries, and renders a failure as a failure. `deptCache` had the same defect **and two of its five errors were never logged at all** — and it feeds TOTAL SALES under a dept filter, so a cached failure pinned a wrong money number.
+
+### ENG-144 — `rpc_atlas_sql` read-only guard was present and INERT
+Pin **`613f72b99403e5ef2e18e496fa243ef9`**. The body ran `set_config('default_transaction_read_only', …)`, which governs only transactions that BEGIN AFTER it is set and therefore could not bind the transaction already running. Changed to `transaction_read_only`. **Proven behaviourally, not reasoned:** identical probe, one INSERT under each setting — `default_` **WRITE SUCCEEDED**, the other **`25006`**. **R22 through the real routine: BEFORE, a `select` calling a writing function returned "wrote a row" and the row landed — an arbitrary write as `postgres` past the shape test, the keyword blocklist and every guard in Atlas's `tools.ts`, because a string test cannot see what a function does.** AFTER: same call returns 25006, table unchanged, legitimate reads unaffected. `anon`/`authenticated` EXECUTE remain **revoked** (Pieter, earlier the same day) and were **not** re-granted.
+
+### BLOOM-026 §5(b2) — hidden lines are rows in the order sheet (DATABASE HALF ONLY)
+`bloom_order_cache_line` gains `line_kind`, `withheld_correction` and seven `hidden_*` columns, **all nullable and appended after `generated_at`**, so the positional `INSERT … SELECT v_cache_id, row_number(), r.*, v_gen` is untouched and **no quantity can move**. `bloom_order_cache` gains `ordered_line_count` and `hidden_line_count` — `line_count` stays TOTAL ROWS because the ENG-093 tripwire compares it against what PostgREST delivered. `refresh_bloom_order_cache` flags hidden lines **in place** where already present and appends only genuine absentees at zero quantity.
+
+**R22 at 80579 DC_TOPS: 171 ordered, 62 appended, 86 warned (24 + 62, matching the fact exactly), ordered value = total value = R85,453.19, appended rows contributing R0.00.** Reader proven end to end: **233 served against 233 `line_count`**, so the tripwire passes at the larger row count. `rpc_bloom_order_cached` needed **no change** — it serialises with `to_jsonb(l)` on the whole row.
+
+**🔴 AN R22 FAILURE ON THE WAY, RECORDED BECAUSE IT IS THE POINT.** The first cut set `line_kind='hidden'` on lines already on the sheet carrying real quantity — **24 lines holding R18,761.51 reclassified out of `ordered`**, so ordered read 147 against a true 171. `line_kind` answers *where the row came from*; `withheld_correction` answers *what is true of the line*. Collapsing them moved money. Split, re-run, green.
+
+### Also live
+Scratch `public._promo_pricecheck_rollback_20260818` **DROPPED** — its two saved definitions were byte-identical to live, so the rollback point was a no-op, which independently re-confirms the recipe pin unmoved since 08-18. `l2_population_verdict`'s own `COMMENT` corrected: it claimed "deliberately empty, do not read yet" on a table holding **36,526 rows across 5 stores, wired in job 15**.
+
+**`rpc_bloom_order_recipe` NOT TOUCHED at any point today — pin `48bdc629c142f68e7342e3ae15444ab8` / 44,383 re-verified at source.**
+
 ---
 
 ## 2026-08-19 -- Defect B (edit-invisibility) + TLX pack quantity on two screens + the nightly order cache generalised to every config-discovered desk.
