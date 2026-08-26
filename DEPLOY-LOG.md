@@ -6,6 +6,36 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-26 -- BLOOM-026 §5(b2) FRONTEND SHIPPED. The held commit went out on its stated gate, verified at source.
+
+**Clock:** written 2026-08-26 13:3x SAST (device `13:30:25` / UTC `11:30:26`, +2). This session opened 2026-08-25 and crossed one midnight, so the 08-25 entry below keeps its own date.
+
+**PUSHED TO PRODUCTION:** **`761724d`** (the §5(b2) frontend) and `19c7230` (the 08-25 deploy-log entry). `main` = `origin/main` = **`19c7230`**, zero unpushed. The SB-PRIORITY v1.4 no-divergence test is satisfied.
+
+**THE GATE WAS VERIFIED, NOT ASSUMED.** The entry below held this commit on one condition, that the 01:30 cache rebuild populate every desk first. Before the build, `bloom_order_cache` held **80 headers and exactly ONE carried hidden lines**, the 80579 desk hand-refreshed for the R22. Shipping into that state would have put a dark feature on 79 of 80 desks.
+
+**The chain ran clean overnight:** `refresh-l2-pipeline` succeeded 08-25 22:15 in **3,503s** under its 7,200s armed ceiling, `refresh-search-index` 2,675s, and **`bloom-order-cache-refresh` succeeded 08-26 01:30 in 329s**. After it: **94 headers, 40 carrying hidden lines, 2,710 hidden rows**, all 20 desks rebuilt between 01:30 and 01:35 SAST.
+
+**WHAT THE BUYER SEES, per DC desk, fit-to-budget off.** "Overlap" is lines already on the sheet carrying a withheld correction, flagged in place rather than appended twice.
+
+| desk | ordered | warned | appended | overlap | rows on sheet |
+|---|---|---|---|---|---|
+| 10116 DC_AMBIENT | 723 | 587 | 550 | 37 | 1,273 |
+| 80175 DC_AMBIENT | 601 | 389 | 365 | 24 | 966 |
+| 21355 DC_TOPS | 252 | 106 | 62 | 44 | 314 |
+| 80579 DC_TOPS | 177 | 84 | 57 | 27 | 234 |
+| 80176 DC_TOPS | 166 | 39 | 28 | 11 | 194 |
+
+**1,355 lines across 20 desks that the buyer could not see yesterday are on the sheet today**, each carrying its reason, both rates and its observable-day basis.
+
+**R22 on tonight's build, 80579 DC_TOPS:** 234 rows served against `line_count` 234, so the ENG-093 truncation tripwire holds at the larger row count. 177 ordered plus 57 appended equals 234. 84 warned decomposes exactly to 27 already on the sheet plus 57 appended. **Ordered value R88,493.12 equals total value R88,493.12**, so the appended rows contribute R0.00 and no quantity moved.
+
+**The two counters are still not collapsed, which is the whole lesson of the 08-25 R22 failure.** At that desk **27 lines carry `withheld_correction` while sitting in `line_kind='ordered'`**. `line_kind` answers where the row came from, `withheld_correction` answers what is true of the line, and the first cut collapsed them and moved R18,761.51 out of the ordered bucket.
+
+**NOT WALKED.** R31 stays open. The build is live and the payload is proven at the database. I have not seen the screen render.
+
+---
+
 ## 2026-08-25 -- ENG-140, ENG-141, ENG-144, and the BLOOM-026 §5(b2) database half. Three database objects changed, one frontend ship, one frontend HELD.
 
 **Clock:** written 2026-08-25 19:2x SAST (device `19:25:57` / UTC `17:25:57`, +2). Session opened 08-24 and crossed one midnight, so every date here is the date the work happened.
