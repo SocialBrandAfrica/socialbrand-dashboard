@@ -6,6 +6,56 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-27 -- TWO ORDERING DEFECTS CLOSED ON AN ORDER MORNING: ENG-123 (frontend) and ENG-147 (database, no deploy)
+
+**Clock:** written 2026-08-27 11:4x SAST, settled three ways at +2 (device local `11:35:33` / UTC `09:35:33` / DB `now()` 11:35:12 SAST). Session opened 09:51, no midnight crossed. ⚠️ **A `TZ=Africa/Johannesburg date` in Git Bash returned UTC labelled SAST during this session — Standing Constraint 3 firing exactly as written. Every stamp here is from PowerShell.**
+
+**PUSHED TO PRODUCTION:** **`a089d06`** (ENG-123) and **`b56b214`** (the CLAUDE.md §0g byte-report correction). `main` = `origin/main` = **`b56b214`**, zero unpushed, verified after the push.
+
+### ENG-123 -- the Hidden Sellers panel stops calling a bought line dropped (frontend, `a089d06`)
+
+The panel told the buyer *"N lines dropped off this order"* for every line carrying a withheld stockout correction. `withheld_correction` says WHAT IS TRUE of a line, `line_kind` says WHERE THE ROW CAME FROM, and an ordered line can carry the flag. The panel has an EXPORT CSV button and reads as a worklist, so working it re-ordered lines already on the sheet, and with no quantity column nothing on screen revealed which.
+
+**Measured at source across all five DC desks before the fix, and it is bigger than the row first recorded:**
+
+| Store | panel called "dropped" | already bought | value | share |
+|---|---|---|---|---|
+| 10116 DC_AMBIENT | 600 | 81 | R25,514.31 | 14% |
+| 21355 DC_TOPS | 109 | 48 | R38,876.91 | **44%** |
+| 80579 DC_TOPS | 81 | 30 | R22,614.43 | **37%** |
+| 80175 DC_AMBIENT | 395 | 26 | R8,016.19 | 7% |
+| 80176 DC_TOPS | 40 | 12 | R8,965.39 | 30% |
+| **group** | **1,225** | **197** | **R103,987.23** | |
+
+**The TOPS desks are worst by share, which inverts where you would look first** — the panel was most wrong exactly where the list is short enough for a buyer to work all of it.
+
+Display-side only, no engine object touched. The panel joins its rows to the buyer's LIVE qty so it tracks his edits; the headline splits dropped from an amber *"already on this order at R X"*; a new ON ORDER column carries the packs; bought rows take an amber tint; the CSV leads with a `status` column so it cannot be worked blind; and **the 40-row cap now applies to the DROPPED list only, with every bought row always rendered** — a combined top-40 would have pushed all 81 of 10116's bought rows off screen, which is the defect itself.
+
+**R22:** the panel's RPC population and the cache `withheld_correction` column are proven the SAME SET at 80175 (395 = 395, `rpc_only` 0, `cache_only` 0). Withheld lines carrying zero packs contribute exactly R0.00 on every desk, so BLOOM-026 §5(b2) quantity-neutrality holds and this was only ever display. **R30 addendum 3 site count: 5 sites carry the distinction, 4 were already correct (they key on `line_kind`), 1 was defective, the change touches that 1, none skipped.**
+
+**Open, and it is PM's:** `PROJECT-LEXICON` owes the definition separating hidden / dropped / `withheld_correction` / "warned". CC does not write canon.
+
+### ENG-147 -- a promo line ordered off the hidden panel no longer exports to the normal TLX (database, NO DEPLOY)
+
+Pieter's own floor report at 09:5x: *"i see the liqui fruit is on promotion but it pulled through on the normal(tlx) order."* The §5(b2) hidden-append leg never computed promo membership, so every appended line carried `promo_active = false`, and the frontend export split reads that flag. **The fix is entirely in the database, so it needed no frontend deploy and reached the desk the same morning.**
+
+**Migrations:** `eng147_promo_membership_one_home`, `eng147_hidden_append_reads_promo_membership`.
+
+- **NEW `rpc_bloom_promo_for_delivery(text,text,date)` is THE ONE HOME for promo membership (R33).** Its rule was lifted **verbatim out of `rpc_bloom_order_recipe`'s own `promo_match` CTE via `pg_get_functiondef`**, never re-derived from canon prose, so the two cannot disagree.
+- **`refresh_bloom_order_cache` STEP 3 respliced by ASSERTED `replace()` on the live body** — three anchors, each asserted to appear exactly once, raise-or-nothing. The 6KB function was never hand-transcribed. New pin **`983b7708bd40c7e133fb6e211bc3ab8c`**.
+- **The recipe is NOT touched.** Pin **`48bdc629c142f68e7342e3ae15444ab8`** verified unmoved after every rebuild.
+- All **8 DC cache combos rebuilt on the spot** so it is live today rather than at 01:30.
+
+**R22.** Packs delta **0.0000** and value delta **R0.00** on four desks. **10116 moved +R188.17 on IDENTICAL packs and an identical line count** — traced at source to **247 supplier links re-costed at that store inside 24 hours** (`cost_date` 2026-08-26) and CLOSED by a live-recipe-vs-cache comparison returning **R0.00**. That is upstream DC re-pricing (ORDERING-CANON §A5 7d), not this change, and the rebuilt cache is now more current than the one it replaced. Hidden lines still contribute exactly R0.00 everywhere. **Population reproduces the filed figure exactly: 66 / 64 / 8 / 7 / 3 = 148 DC + 4 direct = 152.** Grants proven behaviourally: `anon` EXECUTE **false**, `authenticated` true.
+
+**NAMED RESIDUAL, not hidden:** the recipe still carries the same promo rule inline as a second site. It was **not** edited today — that is the pinned money function on an order morning. Logged, not refactored: it repoints on its next legitimate touch, the discipline canon already applies to the 23 in-body `statement_timeout`s.
+
+### R31 -- NOT WALKED, and both need different walks
+
+ENG-123 needs a **page refresh** on a desk with hidden lines (10116 or 80175 ambient thickest): the headline must read *"N the order dropped"* plus an amber *"M already on this order at R X"*, and the ON ORDER column must show packs on those rows. ENG-147 needs a **regenerate** and then an export: a promo line ordered off the hidden panel must land on the **promo sheet**, not the TLX. Both are Pieter's; neither is done.
+
+---
+
 ## 2026-08-26 -- BLOOM-026 §5(b2) FRONTEND SHIPPED. The held commit went out on its stated gate, verified at source.
 
 **Clock:** written 2026-08-26 13:3x SAST (device `13:30:25` / UTC `11:30:26`, +2). This session opened 2026-08-25 and crossed one midnight, so the 08-25 entry below keeps its own date.
