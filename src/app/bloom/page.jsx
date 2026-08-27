@@ -1789,8 +1789,28 @@ function OrderDesksMode() {
   // a genuine second recipe run per edit would be a real round-trip cost,
   // documented limitation, same class as the promo toy's own live-reactivity
   // gap noted elsewhere in this file.
+  // ENG-124 (2026-08-27). THIS EFFECT WAS CLOBBERING THE GENERATED ORDER'S OWN
+  // TEASER. It calls the chain with NO overrides, so the RPC falls back to the
+  // recipe's `suggested_packs` (the GEARED quantity on a promo line), while the
+  // post-generate call 135 lines below passes the buyer's real on-screen qty.
+  // Both write `deliveryChain`, so whichever landed last won -- and on 10116 the
+  // two answers were 1049 lines / R572,567.67 against 1027 / R458,050.06, a gap
+  // of 22 lines and R114,517.61 at a ratio of exactly 1.2500, the promo gearing.
+  //
+  // Proved at source before touching this: the RPC is NOT at fault. Called with
+  // no overrides it returns 1049 / R572,567.67; with the normal-basis overrides
+  // it returns 1027 / R458,050.06 to the cent; with all-zero overrides it returns
+  // 0 / R0.00. It honours them exactly.
+  //
+  // The teaser is KEPT for the pre-generate state -- the buyer sees the next two
+  // drops before he generates, and removing that would be dropping capability to
+  // fix a bug. It simply stops overwriting a generated order's own figure.
+  // R30 addendum 3: the sibling site already carried the reasoning in a comment
+  // and this one never got it, which is the ENG-141 shape exactly.
   useEffect(() => {
     if (!storeCode || !desk) { setDeliveryChain(null); return }
+    // Once an order is on screen its own overridden teaser is the truth.
+    if (generated) return
     let cancelled = false
     setDeliveryChainError(null)
     supabase.rpc('rpc_bloom_delivery_chain', { p_store_code: storeCode, p_route: desk })
@@ -1800,7 +1820,7 @@ function OrderDesksMode() {
         setDeliveryChain(data?.[0] ?? null)
       })
     return () => { cancelled = true }
-  }, [storeCode, desk])
+  }, [storeCode, desk, generated])
 
   // SB-CC-BLOOM-008 item 16(b) -- THE MONTH PICTURE. Read-only, chained off
   // the same recipe/simulated-SOH mechanism as the two-drop teaser above,
