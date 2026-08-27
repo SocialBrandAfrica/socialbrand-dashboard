@@ -2572,20 +2572,65 @@ function OrderDesksMode() {
           covers this is FALSE and retired: min_band reads the same suppressed
           rate, so both halves of that "paired" guard fail together.
           Keyed on the withheld-correction FLAG, never band position.
-          Quantity-neutral -- this card shows, it does not order. ===== */}
+          Quantity-neutral -- this card shows, it does not order.
+
+          ENG-123 (2026-08-27): the flag is NOT the state. A line already on the
+          order can carry a withheld correction, so this panel now joins its rows
+          to the buyer's live order and splits DROPPED from ALREADY ON ORDER --
+          in the headline, in an ON ORDER column, in the row shading, and as the
+          leading column of the CSV. It never again calls a bought line dropped.
+          ===== */}
       {(hiddenDemandError || hiddenDemand.length > 0) && (() => {
-        const rows = hiddenDemand
-        const strong = rows.filter(r => Number(r.rate_corrected) >= 2)
-        const thin   = rows.filter(r => Number(r.observable_days) <= 6)
-        const empty  = rows.filter(r => Number(r.soh) <= 0)
+        // ENG-123 (2026-08-27). This panel called EVERY withheld-correction line
+        // "dropped off this order", and that is not true. `withheld_correction`
+        // says WHAT IS TRUE of a line; `line_kind` says WHERE THE ROW CAME FROM;
+        // an ORDERED line can carry the flag. Measured on Pieter's own downloads:
+        // 77 of 600 at 10116 were already on the order carrying R22,950.59
+        // (80175: 21 of 389, R4,492.46). The panel has an EXPORT CSV button and
+        // reads as a worklist, so working all 600 re-ordered lines already on the
+        // sheet -- and with no quantity column, nothing on screen revealed which.
+        // Same conflation as the 2026-08-25 R22 failure that moved R18,761.51 out
+        // of the ordered bucket, one layer up in the surface built to fix it.
+        // The join is against the buyer's OWN live qty, so it tracks his edits
+        // rather than the recipe's raw suggestion.
+        const orderIndex = new Map(lines.map(l => [String(l.product_code), l]))
+        const withOrder = hiddenDemand.map(r => {
+          const l = orderIndex.get(String(r.product_code))
+          const packs = l ? Number(qty[l.product_code] ?? 0) : 0
+          return { ...r, onOrderPacks: packs, onOrderValue: packs * (Number(l?.pack_cost) || 0) }
+        })
+        const dropped = withOrder.filter(r => r.onOrderPacks <= 0)
+        const onOrder = withOrder.filter(r => r.onOrderPacks > 0)
+        const onOrderValue = onOrder.reduce((s, r) => s + r.onOrderValue, 0)
+        // Dropped first: that is the actionable work. On-order rows stay listed
+        // and flagged rather than hidden -- the buyer still needs to see that the
+        // engine read a suppressed rate on a line he is buying.
+        const rows = [...dropped, ...onOrder]
+        // The 40-row cap is on the DROPPED list only. Every already-bought row
+        // renders, always: at 10116 that is 77 rows which a combined top-40 would
+        // have pushed off screen entirely, leaving the panel still unable to show
+        // the buyer WHICH lines he has already bought -- the whole of ENG-123.
+        // The on-order population is bounded and small (77 / 21 measured).
+        const visible = [...dropped.slice(0, 40), ...onOrder]
+        // The sub-counts are arguments for ORDERING a line, so they are scoped to
+        // the lines actually still absent. Counting a line already on the order as
+        // "at 2/day or more" overstates the work in front of the buyer.
+        const strong = dropped.filter(r => Number(r.rate_corrected) >= 2)
+        const thin   = dropped.filter(r => Number(r.observable_days) <= 6)
+        const empty  = dropped.filter(r => Number(r.soh) <= 0)
         const win    = rows.length ? Number(rows[0].window_days) : 56
 
         function exportHidden() {
-          const header = ['product_code','description','dept','range_state','soh','pack_size',
+          // `status` leads the row so the CSV cannot be worked blind -- the first
+          // column says whether the line is already bought (ENG-123).
+          const header = ['status','on_order_packs','on_order_value',
+                          'product_code','description','dept','range_state','soh','pack_size',
                           'window_days','rate_engine_read','rate_corrected','multiple',
                           'days_removed','observable_days','cover_on_engine_rate',
                           'cover_on_corrected_rate','reason'].join(',')
           const body = rows.map(r => [
+            r.onOrderPacks > 0 ? 'ALREADY_ON_ORDER' : 'DROPPED',
+            r.onOrderPacks, r.onOrderValue.toFixed(2),
             r.product_code, `"${String(r.description ?? '').replace(/"/g,'""')}"`,
             `"${String(r.dept_name ?? '')}"`, r.range_state, r.soh, r.pack_size,
             r.window_days, r.rate_raw, r.rate_corrected, r.rate_multiple ?? '',
@@ -2606,8 +2651,14 @@ function OrderDesksMode() {
                 </span>
               ) : (
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)' }}>
-                  {rows.length} line{rows.length === 1 ? '' : 's'} dropped off this order with no reason shown ·
+                  {dropped.length} line{dropped.length === 1 ? '' : 's'} the order dropped with no reason shown ·
                   {' '}{strong.length} at 2/day or more · {empty.length} sitting at zero stock
+                  {onOrder.length > 0 && (
+                    <span style={{ color: 'var(--core-yellow)' }}
+                      title="These carry a suppressed rate too, but they are already bought on this order. They are listed below, flagged, and they are NOT work.">
+                      {' · '}{onOrder.length} already on this order at {zar(onOrderValue)} — not dropped
+                    </span>
+                  )}
                 </span>
               )}
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)', opacity: 0.8 }}>
@@ -2634,27 +2685,35 @@ function OrderDesksMode() {
                   <em> because</em> it was empty. <strong style={{ color: 'var(--daisy-white)' }}>Judge the evidence, not just the number:</strong>
                   {' '}&ldquo;days seen&rdquo; is how many days of the {win} the line was actually on the shelf to be measured.
                   {thin.length > 0 && <> {thin.length} of these rest on six days or fewer, so treat those rates as thin.</>}
+                  {onOrder.length > 0 && (
+                    <> <strong style={{ color: 'var(--core-yellow)' }}>The last {onOrder.length} row{onOrder.length === 1 ? ' is' : 's are'} already
+                    on this order</strong> and carr{onOrder.length === 1 ? 'ies' : 'y'} the packs in the ON ORDER column. Do not re-order {onOrder.length === 1 ? 'it' : 'them'}.</>
+                  )}
                 </p>
 
                 <div style={{ marginTop: 10, maxHeight: '34vh', overflow: 'auto' }}>
-                  <div style={{ minWidth: 760 }}>
+                  <div style={{ minWidth: 838 }}>
                     <div style={{ display: 'grid',
-                      gridTemplateColumns: '72px minmax(150px,1.5fr) 96px 52px 74px 74px 62px 70px',
+                      gridTemplateColumns: '72px minmax(150px,1.5fr) 96px 52px 78px 74px 74px 62px 70px',
                       position: 'sticky', top: 0, zIndex: 2, padding: '7px 8px',
                       background: 'rgba(14,18,14,0.96)', borderBottom: '1px solid var(--glass-border)' }}>
-                      {['Code','Description','Dept','SOH','Order read','Measured','Days seen','True cover'].map((c,i) => (
+                      {['Code','Description','Dept','SOH','On order','Order read','Measured','Days seen','True cover'].map((c,i) => (
                         <span key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 500,
                           letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--veld-mist)',
                           textAlign: i >= 3 ? 'right' : 'left' }}>{c}</span>
                       ))}
                     </div>
-                    {rows.slice(0, 40).map(r => {
+                    {visible.map(r => {
                       const isThin = Number(r.observable_days) <= 6
+                      const bought = r.onOrderPacks > 0
                       return (
                         <div key={r.product_code} title={r.reason}
                           style={{ display: 'grid',
-                            gridTemplateColumns: '72px minmax(150px,1.5fr) 96px 52px 74px 74px 62px 70px',
+                            gridTemplateColumns: '72px minmax(150px,1.5fr) 96px 52px 78px 74px 74px 62px 70px',
                             padding: '6px 8px', borderBottom: '1px solid var(--hairline)',
+                            // ENG-123: a line already bought reads differently from one
+                            // the order dropped, on sight, without reading the column.
+                            background: bought ? 'rgba(214,178,58,0.07)' : undefined,
                             fontFamily: 'var(--font-mono)', fontSize: 10.5, fontVariantNumeric: 'tabular-nums' }}>
                           <span style={{ color: 'var(--veld-mist)' }}>{String(r.product_code)}</span>
                           <span style={{ color: 'var(--daisy-white)', whiteSpace: 'nowrap',
@@ -2664,6 +2723,16 @@ function OrderDesksMode() {
                           <span style={{ textAlign: 'right',
                             color: Number(r.soh) <= 0 ? 'var(--data-neg)' : 'var(--veld-mist)' }}>
                             {num(Number(r.soh))}
+                          </span>
+                          {/* ENG-123: the column that was missing. A dash here means
+                              the line really is off the order; a number means it is
+                              already bought and must not be worked again. */}
+                          <span style={{ textAlign: 'right',
+                            color: bought ? 'var(--core-yellow)' : 'var(--veld-mist)' }}
+                            title={bought
+                              ? `Already on this order: ${r.onOrderPacks} pack${r.onOrderPacks === 1 ? '' : 's'} · ${zar(r.onOrderValue)}. Do not re-order.`
+                              : 'Not on this order.'}>
+                            {bought ? `${num(r.onOrderPacks)} pk` : '—'}
                           </span>
                           <span style={{ textAlign: 'right', color: 'var(--data-neg)' }}>
                             {Number(r.rate_raw).toFixed(2)}
@@ -2686,9 +2755,11 @@ function OrderDesksMode() {
                   </div>
                 </div>
 
-                {rows.length > 40 && (
+                {dropped.length > 40 && (
                   <p style={{ margin: '8px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)' }}>
-                    Showing the top 40 of {rows.length} by measured rate. Export for the full list.
+                    Showing the top 40 dropped lines of {dropped.length} by measured rate
+                    {onOrder.length > 0 && <>, plus all {onOrder.length} already on this order</>}.
+                    {' '}Export for the full list — the CSV leads with a status column.
                   </p>
                 )}
               </>
