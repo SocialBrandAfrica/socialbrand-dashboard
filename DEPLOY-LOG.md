@@ -6,6 +6,57 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-30 (evening) -- ENG-048 CLOSED: the typed placement-day literal is out of the engine (database, no deploy). A3 condition 1 unblocked.
+
+**Clock:** written 2026-08-30 19:5x SAST (device local `19:50:49` / UTC `17:50:49`, +2). Re-read at the moment of writing, not carried from the entry above it.
+
+**DATABASE-SIDE, NO DEPLOY:** migration `eng048_placement_dows_derived_from_ledger`, live on apply, plus one enacting run of `refresh_supplier_calendar_cutoff` across all five stores (20 rows written).
+**PUSHED:** `sql/create_rpc_derive_order_cutoff.sql`, regenerated from live and hash-gated on BOTH objects it carries.
+
+**Recipe pin `48bdc629c142f68e7342e3ae15444ab8` verified UNMOVED.** Nothing here touched `rpc_bloom_order_recipe`.
+
+---
+
+### What it was
+
+`rpc_derive_order_cutoff` carried `unnest(ARRAY[1,2])` -- a typed Mon/Tue placement-day seed -- in its `base` CTE, under a comment naming *v9 item 7l*, whose own last sentence reads **"No date/day literal in any function."** The comment cited the rule the code beneath it broke. No `placement_dows` object has ever existed in `public`.
+
+**It was live on 8 of 20 routes, not 7.** Measured at source: seven rows on `(no derivable pair)` plus one (10116 DIRECT_NATBRANDS) on `(6a fallback)` = 8 of 20 = 40%. Canon SSA5 states n=8 and is correct; the 7/35% figure in the ruling memo is one route light. Flagged back to PM rather than absorbed, because the count IS the population the ruling weighed.
+
+**The deciding fact was PM's and it holds:** `no derivable pair` means the order->GRV PAIR is missing, not the placement day. Those routes carry 26-60 observed placements. The engine typed a guess where the ledger could have answered.
+
+### What it is now
+
+Placement day derives from `extract(isodow from sigma_orders.order_date)` per route: the modal day plus its +/- `dow_tolerance_days` scatter, gated on `dow_confidence_min` (60) -- **the same floor and tolerance the delivery dow has used since v9 item 7i. No new config key, no new table.**
+
+`sigma_orders` was verified HEADER grain before any share was computed (5,495 rows against 5,495 distinct orders, 1.00 per order). Counting order LINES would have inflated every confidence figure in the build.
+
+PRE-FLIGHT, before writing rather than after: one overload confirmed, signature kept identical so no `DROP` was needed and grants survive (verified identical before and after -- service_role/authenticated/postgres, no anon, no PUBLIC), every column qualified because the `RETURNS TABLE` output names shadow bare CTE columns in a `LANGUAGE sql` body, and the confidence divisor guarded with `NULLIF`. `ARRAY[1,2]` asserted absent from the live body after apply.
+
+### R22 -- all 20 routes, before -> after in DAYS
+
+**19 of 20 unchanged. The delivery date moved on ZERO of 20 desks.** Five routes newly carry a flag: four VERIFY plus the pre-existing 6a anomaly.
+
+**On the four routes that clear both gates, the DERIVED cutoff equalled the TYPED one exactly** -- 3=3, 1=1, 3=3, 3=3. The literal was right everywhere it was checkable and unknowable everywhere else. **The win here is honesty, not accuracy:** four routes stop asserting a number they cannot support -- 80175 DIRECT_COCACOLA (47.1% of 51 placements, PM's coin flip), 10116 DIRECT_SIMBA (58.1% of 43), and both DIRECT_BEER routes on volume at n=1 and n=4.
+
+**The load-bearing design call, and it inverts the obvious reading of the ruling: a below-floor route KEEPS its cutoff and is FLAGGED, never nulled.** `rpc_bloom_next_deliveries` reads that column through `COALESCE(v_cutoff, 2)` at three sites. Nulling would not surface VERIFY -- it would silently substitute the very literal 2 ENG-048 exists to retire, moving the guess out of a visible column and into a default nobody can see. **Flagging beats nulling wherever a consumer defaults.**
+
+### 🔴 One route DID move, and it is not this change
+
+**10116 DC_AMBIENT, 2 -> 3 days; placement deadline 2026-08-27 -> 2026-08-26.** The store's biggest desk. Its basis reads `demonstrated_pair_lead` on both sides -- a leg this work never touched.
+
+Proven at source before reporting either way: the row was last written **2026-07-28**, the median pair lead was 2 as at 2026-07-31, and has been **3 since at least 2026-08-16**. The stored value was **33 days stale**. This change did not move it; it exposed it. Until today the desk was telling the buyer they had a day more than they did, and the correction moves the deadline EARLIER, which is the safe direction.
+
+### 🔴 Root cause of that staleness -- filed, not fixed
+
+**`refresh_supplier_calendar_cutoff` is on no schedule at all.** `refresh_l2_pipeline` contains ZERO references to `supplier_calendar`, verified by line sweep. The cutoff is derived by hand and then rots -- the `l2_last_counted` class again, and it will re-rot from today unless it is wired. That is its own ship and it queues behind the ordering freeze; it was not ridden in on this commit.
+
+### Source parity
+
+`sql/create_rpc_derive_order_cutoff.sql` was hand-authored and still described the retired typed seed, so it could never have been hash-gated -- only replaced (ENG-115's class rule). Regenerated from live, both objects gated in the same pass: `rpc_derive_order_cutoff` `174de2459be7c0117e0259811c92441c`, `refresh_supplier_calendar_cutoff` `037d18521144d562153c41037ca0fbc8`.
+
+---
+
 ## 2026-08-30 -- ENG-112 both sites (database, no deploy) + EIGHT `sql/` sources brought onto `main` and hash-gated. THE SOURCE-PARITY DEBT, CLOSED.
 
 **Clock, cross-checked three ways before anything was stamped** (canon SS17, the 07-23/07-26 contamination): device local `2026-08-30 18:27:52 +02:00`, device UTC `16:27:52`, database `now()` SAST `18:28:05` / UTC `16:28:05`. All three agree on the +2 offset and on the wall clock within 13 seconds. This session has crossed **three midnights**, so the clock was re-read at the moment of writing rather than carried from the session start -- a start-of-session reading quoted hours later is the exact defect that mis-stamped two config keys on 2026-07-27.
