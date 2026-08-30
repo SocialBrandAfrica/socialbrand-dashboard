@@ -6,6 +6,91 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-27 -- ENG-124 (frontend), ENG-148 and ENG-106 legs (a)+(b) (database, no deploy). THE ORDERING BACKLOG UNDER PIETER'S ORDERING-ONLY RE-CUT.
+
+**Clock, and the gap is itself the finding.** The three ships below all happened **2026-08-27**. This entry is written **2026-08-30 11:3x SAST** (device local `11:36:41` / UTC `09:36:41`, +2). The session stayed open across **three midnights**, so every date in the entry is the date the WORK happened, not the date of the write. **Three live ships stood for three days with no deploy-log entry, which is SB-PRIORITY v1.4's no-divergence test failing quietly — the exact class CC had been catching in other seats' work the same week.** Logged as a lapse, not tidied away. Pieter ruled it first in the queue: *"three live ships without entries is the no-divergence test failing quietly."*
+
+**PUSHED TO PRODUCTION (frontend):** **`93b7ea1`** (ENG-124). `main` = `origin/main` = **`93b7ea1`**, zero unpushed, verified after the push.
+**DATABASE-SIDE, NO DEPLOY (live on apply):** ENG-148 and ENG-106 legs (a) and (b). These land in objects the desk already reads, so they reached the floor the same morning without a frontend ship.
+
+**Recipe pin `48bdc629c142f68e7342e3ae15444ab8` verified UNMOVED after every one of the changes below.** Nothing here touched `rpc_bloom_order_recipe`.
+
+---
+
+### ENG-124 -- the pre-generate teaser stops clobbering the real order (frontend, `93b7ea1`)
+
+Two frontend writers to one piece of state. A `useEffect` on `[storeCode, desk]` called `rpc_bloom_delivery_chain` with **no overrides**, so the RPC fell back to the recipe's `suggested_packs` (the GEARED quantity on a promo line), while the post-generate call 135 lines below passed the buyer's real on-screen qty. Whichever landed last won.
+
+**Measured at 10116:** 1049 lines / **R572,567.67** against 1027 / **R458,050.06** — 22 lines and **R114,517.61** apart, at a ratio of **exactly 1.2500**, the promo gearing. PM filed the cause as likely and explicitly unverified; it is now confirmed, and both line counts and both values reproduce the filed figures (each R188 higher, which is that morning's DC re-cost, traced under ENG-147).
+
+**MY OWN FIRST HYPOTHESIS WAS REFUTED BY THE TEST, and that is why the test was run.** I suspected the RPC ignored `p_order1_overrides`. It does not:
+
+| run | lines | value |
+|---|---|---|
+| no overrides | 1049 | R572,567.67 |
+| normal-basis overrides | 1027 | R458,050.06 (to the cent) |
+| all-zero overrides | 0 | R0.00 |
+
+**The fix keeps the pre-generate teaser** — the buyer still sees the next two drops before generating, and removing it would have been dropping capability to fix a bug. It returns early once `generated` is true, so a generated order's own overridden figure can never be overwritten. **R30 addendum 3 site count: `rpc_bloom_month_projection` and `rpc_bloom_stock_state` have one call site each, so this was the only two-writer clobber, none skipped.** This is the ENG-141 shape — the correct site carried its reasoning in a comment and the sibling never got it.
+
+**Named residual, logged not folded in:** the month-picture call passes no overrides either, so that card still projects off the engine's suggestion rather than the buyer's edits. Different fact, different card. **R22 is at the RPC layer above; the effect-ordering half is proven by construction and needs the R31 walk.**
+
+---
+
+### ENG-148 -- the order engine stops erasing a truck that is on the road (database, no deploy)
+
+Pieter, placing the 10116 order: *"the in transit stock is not displaying in the order generated for 10116 order preview... we receive stock from dc today, so it should have shown."* Built to **ORDERING-CANON v1.12 §E2.1**, ruled and churned the same hour.
+
+The v15 partition `(store, supplier, status_2)` cancelled a live ambient order because two FRESH orders followed it on the same partition. `status_2` measurably does not encode the stream (CONTROLLED n=203 DC orders: pure-ambient orders ride D/E/M at 18/121/29, one stream across three letters).
+
+**Migration `eng148_on_order_population_partition_e21`.** `refresh_l2_on_order` respliced by **asserted `replace()` on the live body — ten anchors, each asserted, raise-or-nothing** — so the 8KB function was never hand-transcribed. Pin `9211cdf05e83d315ccc5e1fe23e5dfe1` → **`f18ed7c194db06fea175da266d9651be`**, one overload throughout. New nullable column `l2_on_order.delivery_populations text[]` so the row names its own partition key (R29). **R33 checked BEFORE building, as clause 5 requires: no second implementation exists.**
+
+**R22, exactly what clause 4 predicted:**
+
+| desk | lines before → after | value before → after | delta |
+|---|---|---|---|
+| **10116 DC_AMBIENT** | 1,447 → **1,266** | R572,567.73 → **R509,504.44** | **−R63,063.29 (−11.01%)** |
+| 80175 DC_AMBIENT | 546 → 546 | unchanged | **R0.00** |
+| 21355 / 80176 / 80579 | unchanged | unchanged | **R0.00** |
+
+Order 167588 is **counted on all 299 products**. Ambient and fresh now count independently at 10116 (DC_AMBIENT 624 products R239,182.73, DC_OTHER 235 products R135,261.47). **The buyer SEES the truck (§14 v15 6a): 135 lines carry a visible in-transit quantity and ALL 135 carry a landing date — 80 fully covered, 55 reduced but still ordering.** Only the overlapping desk moved, which is the correction stated in advance, never a regression.
+
+**🔴 ONE CORRECTION OWED TO CANON, and it is the acceptance figure, not the engine.** §E2.1 clause 4 sets the R22 target at **R103,104.65**, which is `sigma_orders.order_cost_total` — the STORED HEADER AGGREGATE. §12e point 4b (ENG-050) forbids presenting that as the same measure as a line-derived figure. The line basis (`ordered_qty*cost/pack_size`, §12e point 4) is **R102,090.22**, a **R1,014.43** disagreement that is the documented header-vs-line defect. The engine is on the line basis, which is the canon-correct one. Clause 4 needs its literal corrected, or better, restated as the METHOD — the same catch CC made on §D6.1.
+
+**On the manual list:** the engine deduction (−181 lines, −R63,063.29) is smaller than the 225-line R76,315.24 overlap CSV because where the truck only PARTLY covers a line the engine reduces the quantity rather than removing the line. The manual deduction is superseded and the buyer guard is retired.
+
+---
+
+### ENG-106 legs (a) and (b) -- the two populations, built as two objects (database, no deploy)
+
+Built to **ORDERING-CANON v1.13 §D6.1**, re-read at source before leg (b) per the §0d cross-seat protocol (canon moved v1.11 → v1.12 → v1.13 while this seat held v1.11).
+
+**Leg (b), migration `eng106_route_benchmark_leg_b_watermark_anchor`.** New **`rpc_bloom_route_benchmark(text,text,date)`** is THE ONE HOME for the §D6.1 basis-B route benchmark: cycle dept set off `sigma_sales`, 28d cost ÷ 4, **NO class/world/link filter** (R21, behaviour not label), ≤1.24% packaging carried as a named bounded over-count. **Anchored on the LEDGER WATERMARK and disclosing it** per clause 2 v1.13 — never `CURRENT_DATE` (drifts under a fixed artefact), never the delivery date (a future-dated window counts unobserved days in a fixed divisor and deflates the mean BY CONSTRUCTION). Accepts a stored anchor so a frozen artefact reproduces exactly. **SECURITY DEFINER is load-bearing:** `sigma_sales` carries RLS with no anon read policy, so an invoker build would hand the browser key a confident ZERO — the ENG-068 / ENG-074 shape, proven behaviourally.
+
+**Leg (a), migration `eng106_leg_a_per_line_cost_demand_columns`.** `l2_population_verdict` gains `cost_demand_28d` and `cost_demand_anchor_date`, populated on the nightly chain by **APPEND-AFTER-COMPUTE** — a plain join written AFTER every verdict row is committed, so the leg is *structurally incapable* of moving a `population_state`, a flag or any verdict figure. Anchored on the watermark for the same reason as leg (b): storing a `CURRENT_DATE`-anchored figure in a nightly column would bake the retired anchor into the pantry and put the columns ~3% out of step with the benchmark by construction. **36,613 of 36,613 rows populated, every one anchored 2026-08-26, zero NULLs** — a pool line with no sales is a real zero, never an unknown. Only the FACT is stored, not its divisions; a recipe picks /28 or /4 (R27 §2).
+
+**⭐ THE CHECK THAT PROVES THE DEFECT WAS NOT REBUILT INSIDE ITS OWN FIX, and it extends canon's control from n=2 to n=5.** §D6.1 forbids summing the pool columns for a route total. Measured on all five DC desks:
+
+| desk | pool sum (leg a) | benchmark (leg b) | understated if summed |
+|---|---|---|---|
+| 10116 DC_AMBIENT | 506,530.27 | 766,679.12 | R260,148.85 — **33.9%** |
+| 80175 DC_AMBIENT | 241,657.85 | 370,596.64 | R128,938.79 — **34.8%** |
+| 21355 DC_TOPS | 73,491.02 | 177,921.52 | R104,430.50 — **58.7%** |
+| 80176 DC_TOPS | 65,784.79 | 159,384.15 | R93,599.36 — **58.7%** |
+| 80579 DC_TOPS | 59,655.92 | 127,867.37 | R68,211.45 — **53.3%** |
+
+Canon measured 35.3% at 80175 and 34.3% at 10116; this reproduces 34.8% and 33.9% within drift, and **the TOPS trio — never previously measured — runs 53 to 59%.** The instruction bites roughly twice as hard at TOPS as at SPAR, which fits §D6.1's own finding that the class filter drops 48.5% of route rand at 21355. **PM corroborated the two SPAR benchmark figures independently to the cent by a different method the same morning — two seats, two methods, same rand.** PM ruled it a MEASUREMENT and therefore recordable freely (R28 / the churn gate's own boundary); it lands in the canon clause on the next legitimate §D6.1 touch, which is the repoint ship, never as its own pass.
+
+**🔴 FOUND WHILE BUILDING, AND IT WIDENS AN EXISTING ROW RATHER THAN OPENING ONE.** The retired `CURRENT_DATE` anchor sits at **TWO live objects**, not one: `rpc_bloom_scenario_overview` (which ENG-112 names) and **`rpc_bloom_stock_state`, whose `weekly_demand_dept` IS the basis-B benchmark computed inline at a second site** — R30 addendum 3's exact shape. Neither consumer reads the new one home yet, so clause 2's fix has landed at neither. **PM ruled: no new id, amend ENG-112's site count from one to two.** The repoint ships as its own R22 with a before/after in rands on named desks, because a displayed number moving ~3% is never folded in quietly (SB-PRIORITY v1.4 test 2).
+
+---
+
+### R31 -- NOT WALKED, and each needs a different walk
+
+**ENG-124:** generate a 10116 DC_AMBIENT order and confirm the drop-1 teaser and the running total now agree — both should read the buyer's own basis, not 1049 lines / R572,567. **ENG-148:** open the same preview and confirm the truck is visible — 135 lines should carry an in-transit quantity with a landing date, and the order should be R63k lighter than it was. **ENG-106:** nothing to walk yet; both legs are engine facts with no surface until the card re-enables behind ENG-111 and the repoint. All Pieter's; none done.
+
+---
+
 ## 2026-08-27 -- TWO ORDERING DEFECTS CLOSED ON AN ORDER MORNING: ENG-123 (frontend) and ENG-147 (database, no deploy)
 
 **Clock:** written 2026-08-27 11:4x SAST, settled three ways at +2 (device local `11:35:33` / UTC `09:35:33` / DB `now()` 11:35:12 SAST). Session opened 09:51, no midnight crossed. ⚠️ **A `TZ=Africa/Johannesburg date` in Git Bash returned UTC labelled SAST during this session — Standing Constraint 3 firing exactly as written. Every stamp here is from PowerShell.**
