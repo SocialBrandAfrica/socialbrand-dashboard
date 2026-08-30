@@ -1,90 +1,56 @@
--- =============================================================================
 -- create_rpc_bloom_stock_state.sql
--- SB-CC-BLOOM-008 item 7 -- THE STOCK-STATE INSTRUMENT (Pieter ruling
--- 2026-07-12, wants it ON SCREEN Monday). Read-only, zero formula risk --
--- FORMULA FREEZE holds (Pieter/PM ruling, same night): this object reads
--- current SOH and raw sales history, it never touches
--- rpc_bloom_order_recipe's quantity logic, gearing legs or presets.
 --
--- "Where does the store end in the 3 categories" (Pieter): per group
--- KVI (KVI_CRITICAL+KVI_IMPORTANT) / Core (STANDARD+CONSUMABLE_CARVE) /
--- Tail (LONG_TAIL) -- lines, stock at cost, daily cost demand (28d sales
--- cost / 28, PURE history, sigma_sales.cost_value, never the engine's own
--- demand estimate -- same discipline as ENG-018's demonstrated-demand
--- cross-check), stock-days = stock_at_cost / daily_cost_demand.
+-- REPLACED FROM LIVE 2026-08-30 (ENG-115 class rule: a sql/ file that was not
+-- generated from live can never be hash-gated, only replaced -- so this file is
+-- regenerated wholesale via pg_get_functiondef, never hand-reconciled against
+-- the previous version). Hash-gated against the database in the same pass.
 --
--- Population = the recipe's OWN resolved orderable pool (active Z-link
--- required) -- verified against PM's reference figures at 10116/
--- DC_AMBIENT: 178+4,981+7,456 = 12,615, matching the recipe's own pool
--- size (12,617, small drift = live SOH/sales movement between PM's calc
--- and this build). Built by reusing rpc_bloom_order_recipe itself (R21,
--- never a parallel pool-resolution formula) -- calls it once with a
--- neutral p_days_cover_override so soh/kvi_band/pack_cost are read off
--- its own resolved rows, never re-derived.
+-- Migration that shaped the current body:
+--   eng112_repoint_stock_state_to_one_home_watermark (2026-08-30)
 --
--- A 4th synthetic row (group_name='TOTAL') carries the SEPARATE dept-wide
--- demand comparison PM ruled on the same night: the whole dept-cycle set
--- (every sigma_articles-backed line in the route's own dept/merch scope,
--- Z-link or not) vs the orderable pool's own weekly demand, gap labelled
--- `no_active_dc_route` -- the ENG-008 floor debt expressed in demand rand
--- (a store can never fund the sales sitting on a dead/missing Z-link).
--- This DOES need its own dept-scope query (department_nr/merch_group_nr,
--- no Z-link join) -- a plain scope lookup, not a derived formula, so R21
--- doesn't apply the same way it does to the recipe's own demand/band math.
+-- WHAT THIS RETURNS. Per-group (KVI / CORE / TAIL) line counts, stock at cost,
+-- daily cost demand and stock-days, plus a TOTAL row carrying the two
+-- populations and their gap.
 --
--- Days-after per scenario is NOT computed here -- it recomputes live,
--- client-side, from this call's per-group daily_cost_demand plus the
--- desk's own in-memory qty state as the buyer edits (canon: "recomputing
--- live as quantities edit"), never a server round-trip per keystroke.
--- =============================================================================
-
-DROP FUNCTION IF EXISTS public.rpc_bloom_stock_state(text,text);
-
-
--- =============================================================================
--- 2026-08-24 (ENG-088, SB-CC-BLOOM-026 §13 Ruling B, CC).
--- READS THE L2 POPULATION-VERDICT FACT. Not the order cache, not the recipe.
+-- ⚠️ TWO POPULATIONS, NEVER ONE (ORDERING-CANON §D6.1). weekly_demand_dept is the
+-- ROUTE's sales scope -- the cycle DEPARTMENT set. weekly_demand_orderable is the
+-- POOL. They are different numbers on purpose and the gap between them is the
+-- point: measured 2026-08-30, summing the pool understates the route by 33.9%
+-- (10116), 34.8% (80175) and 53.3-58.7% across the TOPS trio.
 --
--- WHY THE VERDICT AND NOT THE CACHE. This card is POOL-shaped, not SHEET-shaped:
--- it uses product_code, kvi_band, soh, pack_size, pack_cost and NO quantity, so
--- it was using rpc_bloom_order_recipe as an expensive way to enumerate a
--- population. The cache is the SHEET (428 lines at 80175). The verdict is the
--- POOL (12,623). Pointing this at the cache would have summarised "stock now"
--- over the ordered slice and called it the store. R33 one-fact shape: Bloom,
--- Forge, Pulse and Capital Tied all read the same population.
+-- ENG-112, the reason this file moved:
+--   weekly_demand_dept IS the basis-B route benchmark, and it was computed inline
+--   here at a SECOND site on the retired CURRENT_DATE - 28 window. It now READS
+--   the one home, rpc_bloom_route_benchmark (R33: the fix lives in L2 once for
+--   everyone, never re-implemented per surface).
 --
--- WHAT IT WAS DOING WRONG, measured 2026-08-24 00:3x SAST at 80175 DC_AMBIENT:
---   card showed   R201,348.82 over   428 lines  (the sheet)
---   real position R1,333,489.43 over 12,623 lines  (the pool)
--- 15% of the store's ambient stock, presented as the whole. And the breakdown is
--- the story: KVI R269,441 at 18.2 days, CORE R772,296 at 44.3 days, TAIL
--- R291,752 at 616.6 DAYS across 9,586 lines. Plus a R124,329/week demonstrated
--- demand gap across 1,490 lines selling in the ambient departments but off the
--- desk.
+--   THE WHOLE WINDOW MOVED WITH IT, AND THAT IS THE TRAP IN A NAIVE REPOINT. This
+--   function derives THREE numbers from ONE sales28 scan -- the dept total, the
+--   pool total and the per-line daily cost. Moving only the dept total onto the
+--   watermark would leave weekly_demand_gap subtracting a CURRENT_DATE-anchored
+--   pool from a watermark-anchored dept: two different windows in one
+--   subtraction. All three move together or none does.
 --
--- PERFORMANCE. It called the recipe live and PM measured it past 60s, abandoned;
--- its in-body SET LOCAL was decorative (ENG-096) so the real bound was the anon
--- role's 30s and the card could never legally finish.
---   after the verdict repoint          9,692 ms
---   after collapsing the sigma_sales   3,287 ms
--- Four separate 28-day sigma_sales passes (sales28, dept_demand,
--- orderable_demand, gap_lines) computed the same aggregate over the same window
--- with different filters. They are all DERIVABLE from one MATERIALIZED scan, so
--- the other three bought nothing. Same numbers by construction -- every leg
--- still reads cost_value over the same window with period_kind='T', txn_kind=1.
+--   R22 at ship, weekly_demand_dept before -> after, each now equal to the one
+--   home to the cent: 10116 733,844.15 -> 767,786.01 · 80175 354,000.58 ->
+--   370,518.10 · 21355 175,015.08 -> 177,301.49 · 80176 164,837.73 -> 167,575.46
+--   · 80579 127,248.80 -> 129,505.70. THE MOVEMENT IS 100% ANCHOR: the one home
+--   at the OLD anchor reproduced the displayed figure EXACTLY (delta R0.00 on all
+--   five), so the dept-source difference between l2_stock_position.department_nr
+--   and sigma_articles.department_nr is worth NOTHING.
 --
--- DC IS THE PREFERRED SUPPLIER, ALWAYS (Pieter ruling 2026-08-23). The verdict
--- holds ONE row per (store, product), ordered is_dc DESC, so a product carried
--- by both a DC and a direct desk is filed under DC.
---   DC desks     EXACT -- DC always wins the tie, the DC pool is complete.
---   DIRECT desks a line shared with DC is counted on DC, not here.
--- That is the RULE, not a shortfall, and the WARNING names the count so it is
--- surfaced rather than silent (R21 §5). CC first flagged it as a defect owing a
--- schema fix; Pieter's ruling settled that it is correct behaviour.
+--   CONSEQUENCE WORTH STATING: stock_days came DOWN on every desk (10116 CORE
+--   36.3 -> 34.6, 80175 KVI 14.8 -> 14.0). The old anchor understated demand and
+--   therefore OVERSTATED cover -- every desk read better covered than it was.
 --
--- 🔴 RAISES LOUDLY if the verdict is unpopulated, rather than reporting a
--- confident EMPTY store (R22 §3, the ENG-068/074/100 shape, four firings).
--- =============================================================================
+-- ⚠️ SECURITY DEFINER IS LOAD-BEARING, NOT BOILERPLATE. l2_soh_daily and
+-- sigma_sales carry RLS with no anon read policy, so an invoker build returns a
+-- confident permanent ZERO to the browser key (the ENG-068 / ENG-074 shape).
+--
+-- ⚠️ DIRECT desks keep their existing basis via the COALESCE fallback. §D6.1 rules
+-- the cycle-dept basis for DC routes ONLY, so the one home returns NULL there and
+-- nothing is invented for a population canon has not ruled. That fallback is
+-- still CURRENT_DATE-anchored -- a NAMED residual, filed, not hidden.
 
 CREATE OR REPLACE FUNCTION public.rpc_bloom_stock_state(p_store_code text, p_route text)
  RETURNS TABLE(group_name text, lines integer, selling_lines integer, stock_at_cost numeric, daily_cost_demand numeric, stock_days numeric, weekly_demand_dept numeric, weekly_demand_orderable numeric, weekly_demand_gap numeric, weekly_demand_gap_lines integer, weekly_demand_gap_label text, computed_at timestamp with time zone)
@@ -97,6 +63,7 @@ DECLARE
   v_dept_nrs  smallint[];
   v_pool_rows int;
   v_overlap   int;
+  v_anchor    date;   -- ENG-112 / SSD6.1 clause 2: the ledger watermark, never CURRENT_DATE
 BEGIN
   IF p_route IS NULL THEN
     RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS, DIRECT_BEER or a RULED DIRECT_<brand> desk';
@@ -131,6 +98,16 @@ BEGIN
     END IF;
   END IF;
 
+  -- SSD6.1 clause 2: demonstrated demand can only be demonstrated up to the
+  -- watermark. CURRENT_DATE drags one or more unobserved days into a fixed
+  -- 28-day divisor and deflates every figure below it.
+  SELECT max(ss.sale_date) INTO v_anchor
+    FROM sigma_sales ss
+   WHERE ss.store_code = p_store_code AND ss.sale_date >= CURRENT_DATE - 90;
+  IF v_anchor IS NULL THEN
+    RAISE EXCEPTION 'rpc_bloom_stock_state(%): no ledger watermark in 90 days; refusing to anchor demonstrated demand on a calendar', p_store_code;
+  END IF;
+
   RETURN QUERY
   WITH pool_run AS (
     SELECT v.product_code, v.kvi_band, v.soh,
@@ -143,7 +120,7 @@ BEGIN
     SELECT ss.product_code, SUM(ss.cost_value) AS cost28
     FROM sigma_sales ss
     WHERE ss.store_code = p_store_code AND ss.period_kind = 'T' AND ss.txn_kind = 1
-      AND ss.sale_date > CURRENT_DATE - 28 AND ss.sale_date <= CURRENT_DATE
+      AND ss.sale_date > v_anchor - 28 AND ss.sale_date <= v_anchor
     GROUP BY ss.product_code
   ),
   dept_scope AS (
@@ -178,7 +155,13 @@ BEGIN
   -- all three derived from the ONE scan
   totals AS (
     SELECT
-      COALESCE(SUM(s.cost28) FILTER (WHERE ds.product_code IS NOT NULL), 0) / 4.0 AS dept_v,
+      -- ENG-112: READ the one home, never a second inline implementation (R33).
+      -- COALESCE keeps DIRECT desks on their existing basis, which canon has not ruled.
+      COALESCE(
+        (SELECT b.weekly_cost_demand
+           FROM rpc_bloom_route_benchmark(p_store_code, p_route, v_anchor) b),
+        COALESCE(SUM(s.cost28) FILTER (WHERE ds.product_code IS NOT NULL), 0) / 4.0
+      ) AS dept_v,
       COALESCE(SUM(s.cost28) FILTER (WHERE pr.product_code IS NOT NULL), 0) / 4.0 AS pool_v,
       count(DISTINCT s.product_code) FILTER (
         WHERE ds.product_code IS NOT NULL AND pr.product_code IS NULL AND s.cost28 > 0) AS gap_n
@@ -200,4 +183,9 @@ BEGIN
 END;
 $function$;
 
-GRANT EXECUTE ON FUNCTION public.rpc_bloom_stock_state(text,text) TO anon, authenticated;
+-- Grants stated explicitly (R30 addendum). Read RPC: anon stays executable by
+-- design; PUBLIC revoked so the default-privilege trap cannot re-open it.
+REVOKE EXECUTE ON FUNCTION public.rpc_bloom_stock_state(text,text) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.rpc_bloom_stock_state(text,text) TO anon;
+GRANT  EXECUTE ON FUNCTION public.rpc_bloom_stock_state(text,text) TO authenticated;
+GRANT  EXECUTE ON FUNCTION public.rpc_bloom_stock_state(text,text) TO service_role;

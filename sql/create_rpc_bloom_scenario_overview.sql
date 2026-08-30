@@ -1,212 +1,72 @@
--- =============================================================================
--- *** DO NOT APPLY THIS FILE. DIVERGED FROM LIVE, AND APPLYING IT IS
--- *** DANGEROUS: IT CREATES AN AMBIGUOUS OVERLOAD. *** (CC, 2026-08-24, ENG-115)
---
--- LIVE PIN, verified at source 2026-08-24 12:0x SAST:
---   public.rpc_bloom_scenario_overview(
---     p_store_code text, p_delivery_date date, p_next_delivery date,
---     p_route text, p_yardstick_tolerance_pct numeric,
---     p_scenarios text[], p_include_yardstick boolean)      <-- SEVEN arguments
---   md5(pg_get_functiondef) = d4050249ecf050e0a6dceb163fc5e059
---   length                  = 10328 chars
---   exactly one overload lives; acl = postgres | anon | authenticated | service_role
---
--- THE DANGER, and it is not merely staleness:
---   This file's DROP, REVOKE and GRANT all name the OLD FIVE-ARG signature
---     (text, date, date, text, numeric).
---   That signature no longer exists. So applying this file DROPS NOTHING and
---   CREATES A SECOND FIVE-ARG OVERLOAD ALONGSIDE THE LIVE SEVEN-ARG ONE.
---   Every existing 5-arg caller then becomes AMBIGUOUS -- the same class of
---   near-miss that almost killed the nightly build on refresh_bloom_order_cache_all
---   (RULE-BOOK SS8: run the overload check BEFORE a signature change, not after).
---
---   Missing from this file, both shipped by ENG-070 on 2026-08-05:
---     p_scenarios         -- request ONE scenario per call (the 45s self-timeout fix)
---     p_include_yardstick -- skip the extra yardstick recipe run
---
--- ALSO RECORDED HERE because the next seat will need it: the live body contains
---   BOTH halves of the ENG-104 defect PM ruled on 2026-08-24 --
---     full_products AS (SELECT DISTINCT product_code FROM scenarios)  <-- the
---       benchmark is computed over the ORDER'S OWN ROWS, so it shrinks with the
---       order (ENG-104 part 1: population must be the ROUTE POOL off
---       l2_population_verdict.route_key)
---     ss.sale_date > CURRENT_DATE - 28 AND ss.sale_date <= CURRENT_DATE  <-- the
---       window anchors to TODAY, not to the order's delivery date (part 2)
---   Confirmed by CC at source, independently of the ruling.
---
--- HOW TO CLOSE IT: regenerate from live, hash-gate the written body against the
---   md5 above, and correct the DROP/REVOKE/GRANT to the seven-arg signature.
--- =============================================================================
-
--- =============================================================================
 -- create_rpc_bloom_scenario_overview.sql
--- UX-003 (multiply amended, 2026-07-11 night) + CLEANUP-ENGINE-CANON SS14
--- v7 item 9 -- the landing board. ONE published call returns every
--- scenario's totals AND its visible breakdown for a desk, so the orders
--- landing page shows the full picture BEFORE anyone hits Generate.
 --
--- R22 (Pieter, 22:0x/22:3x amendments): "every overview value AND
--- breakdown must equal what generating that scenario returns... the
--- overview is the same engine run aggregated, not an estimate." Built
--- literally that way -- this function calls rpc_bloom_order_recipe() once
--- per scenario (full/fitted/order_essentials/catch_up) and aggregates the
--- SAME rows the desk screen's own Generate button would show, never a
--- parallel/duplicate formula (R21).
+-- REPLACED FROM LIVE 2026-08-30 (ENG-115 class rule: a sql/ file that was not
+-- generated from live can never be hash-gated, only replaced). Hash-gated against
+-- the database in the same pass.
 --
--- ⭐ BUG-LOG ENG-018 (2026-07-11 night, Pieter ruled) -- THE YARDSTICK
--- RE-ANCHORED. The old flat-7-day DC-form reference (rpc_bloom_order_dc)
--- embedded a stale anchor->delivery lead on top of its own 7-day cover
--- AND geared promo lines up to 5x -- it was ITSELF the defect, not the
--- desk (desk standard R767,763 ties demonstrated 28d/4 weekly cost
--- demand to 0.07%, live-verified). Old DC-form reference RETIRED WITH
--- LINEAGE as this function's yardstick source (rpc_bloom_order_dc itself
--- stays live, still used by the DC tab -- only this function stops
--- reading it).
+-- ⚠️ THIS FILE SUPERSEDES A KNOWN-DANGEROUS PREDECESSOR. The previous version was
+-- stamped DO NOT APPLY under ENG-115: it named the RETIRED FIVE-ARG signature in
+-- its DROP/REVOKE/GRANT against a live SEVEN-ARG function, so applying it dropped
+-- nothing and CREATED AN AMBIGUOUS OVERLOAD -- the same class as the
+-- refresh_bloom_order_cache_all near-miss that would have killed the nightly
+-- build. This version carries no DROP and its grants name the real signature.
 --
--- NEW yardstick formula, PM's exact wording: "pure tier-window demand x7
--- - clamp(soh,0), ungeared promo-flat, with demonstrated weekly demand
--- (28d/4) beside it." Built by reusing rpc_bloom_order_recipe itself
--- (R21, never a parallel formula) called with p_next_delivery=
--- p_delivery_date (forces v_lead=0, so the override branch's own
--- target_level - proj resolves to EXACTLY demand*7 - GREATEST(soh,0),
--- no anchor-lead inflation) and p_days_cover_override=7, summed on
--- normal_packs*pack_cost (never geared_packs, never promo_unit_cost --
--- "ungeared, promo-flat" per the ruling, same flat basis for every
--- line regardless of promo_active).
+-- Migration that shaped the current body:
+--   eng112_repoint_scenario_overview_to_one_home (2026-08-30)
 --
--- "demonstrated weekly demand (28d/4)" is a SEPARATE, independent
--- cross-check -- real trailing-28-day sales cost (sigma_sales.cost_value,
--- not the engine's own demand estimate at all) over the SAME resolved
--- route pool (product_code list from the 'full' scenario run), divided
--- by 4. Never used to compute yardstick_deviation_pct/yardstick_flag --
--- informational only, so PM/Pieter can eyeball the engine's tier-window
--- yardstick against a pure sales-history number with no engine logic in
--- either direction.
+-- WHAT IT DOES. One row per scenario (full / fitted / order_essentials /
+-- catch_up), each calling rpc_bloom_order_recipe once and aggregating -- R22 by
+-- construction, never a parallel formula.
 --
--- ⭐ v10 RE-ANCHOR OF THE DEVIATION TARGET (canon SS14 v7 item 9, PM ruling
--- under Pieter's delegated authority, 2026-07-14 -- supersedes ONLY which
--- scenario the flag judges; the formula itself is unchanged). Under v10
--- FULL is the luxury order by definition (v8 item 2) and is EXPECTED to
--- exceed any 7-day reference -- flagging it was the ~500% false read CC
--- caught at the v10 ship. FULL never trips DEFECT_SIGNAL any more; its
--- deviation now carries a PERMANENT named reason (`full_is_luxury_by_
--- definition`, R29 -- the reason travels with the number even when there
--- is no flag). The flag MOVES to FITTED -- the order actually sent: it
--- fires only when fitted deviates beyond `p_yardstick_tolerance_pct` from
--- BOTH references (the 7-day yardstick AND demonstrated weekly demand)
--- AND no named scenario reason explains it. Essentials/catch_up are
--- unchanged by this ruling -- still never flagged, still no reason column
--- populated (they are deliberately not flat-rule scenarios).
+-- ENG-112 + §D6.1 PART 1, both closed in one line. The `demonstrated` CTE carried
+-- BOTH defects at once:
+--   (1) CIRCULARITY (ENG-104): the benchmark was computed over `full_products`,
+--       i.e. THE ORDER'S OWN ROWS, so it contracted with the thing it measured
+--       and the fitted DEFECT_SIGNAL could never catch an order that was too
+--       small. Measured worth 2.9x at 80175.
+--   (2) DRIFT (ENG-112): CURRENT_DATE - 28, so a cached order judged tomorrow was
+--       judged against a different window than it was built with.
+-- Reading rpc_bloom_route_benchmark (the one home) fixes both, because it is
+-- dept-scoped (independent of the order) AND watermark-anchored.
 --
--- NAMED-REASON EXEMPTIONS -- honestly scoped, not guessed. The ruling
--- names three: cash constraint, catch-up, month-end build. Only CASH
--- CONSTRAINT has a clean, already-stored, unambiguous per-week signal
--- (`order_budget_ledger.cash_constrained`) -- used here. CATCH-UP has no
--- stored "this store is mid catch-up" flag (catch_up is computed on
--- demand as its own scenario, never a standing weekly state) and
--- MONTH-END BUILD is a per-LINE fact (archetype x day-of-month), not a
--- single store-level boolean -- translating either into an auto-detected
--- exemption would mean inventing a threshold with no ruling behind it.
--- Both are left OUT of the auto-exemption on purpose (R27 SS7: confront
--- on ambiguity, do not silently resolve a policy call). Flagged to
--- PM/Pieter for either a stored signal or an explicit threshold.
+-- R22 at ship, all five DC desks: demonstrated_weekly_demand equals the one home
+-- to the cent, AND THE CIRCULARITY IS PROVEN DEAD -- requesting one scenario
+-- instead of four returns an IDENTICAL benchmark (narrow minus wide = 0.00 x5),
+-- where the old full_products basis would have shrunk it.
 --
--- ⭐ CORRECTED SAME DAY (PM ruling, 2026-07-14, after CC's R22 above proved
--- the dual-reference flag fires on ~100% of live orders under v10's band-
--- depth model -- "a flag that always fires means nothing"). Judging fitted
--- against the 7-day yardstick was the wrong comparison in the first place:
--- under v10 fitted's own MAGNITUDE is governed by the budget (Fit-to-
--- Budget scales to it), so the flat 7-day tier-window line can never be a
--- fair yardstick for it -- only DEMONSTRATED WEEKLY DEMAND (real trailing
--- sales history, 28d/4) can legitimately call fitted wrong. `yardstick_flag`
--- now judges fitted against demonstrated demand ALONE. The 7-day yardstick
--- stays on every card as a DISPLAY REFERENCE LINE ONLY (`yardstick_value`/
--- `yardstick_deviation_pct` unchanged, still computed and shown) -- it
--- flags nothing any more. `cash_constrained` remains the one stored
--- exemption; the catch-up/month-end signal gap above still stands.
+-- ⚠️ NAMED RESIDUAL, DELIBERATE AND ASSERTED. Exactly ONE CURRENT_DATE - 28
+-- survives: the DIRECT-desk fallback. §D6.1 rules the cycle-dept basis for DC
+-- routes only, so a direct desk keeps its existing (still circular, still
+-- CURRENT_DATE) basis rather than inheriting a basis nobody churned. The
+-- migration asserted it is exactly one -- zero would mean the fallback broke, two
+-- would mean a site was missed. PM has ruled this NOT acceptable standing: it is
+-- filed §0i PROSE and the DEFECT_SIGNAL stays HELD on direct desks the same as DC.
 --
--- ⭐ ENG-025 STEP 2b -- DIRECT MINIMUM ORDER VALUE AS A FLAG (PM ruling
--- 2026-07-17, queue item 2; canon SS14 v7 item 7e). A direct supplier
--- carries a minimum order value (its own commercial term, config
--- `bloom_route_config.direct_min_order_value`, DEMO_CALIBRATION R5,000).
--- Surfaced here, per scenario, as a FLAG that NEVER blocks -- below the
--- minimum the desk says so, shows the shortfall and its reason (R29), and
--- the BUYER decides (accumulate to next cycle, or send as is). No
--- generate-path change, no quantity change -- three read-only output
--- columns computed off `value_normal`, the order value each scenario would
--- actually submit. NULL on DC routes (no supplier minimum). The home stays
--- on bloom_route_config: the minimum is a term of the ROUTE, not a calendar
--- fact (7e), so unlike cadence it does not move to supplier_calendar.
--- Accumulate-to-next-cycle stays canon (v9 item 7) and stays unautomated
--- this pass -- the flag informs, it does not act.
+-- ⚠️ THE CARD IS HELD. §D6.1 has three conditions; parts 1 and 2 are now enacted,
+-- and part 3 -- order_budget_ledger.cash_constrained -- is false on every row
+-- (ENG-111). Re-enabling on parts 1 and 2 alone would trade a gate that never
+-- fires for one that always fires, which ENG-041 already proved is the same
+-- defect wearing opposite clothes.
 --
--- Breakdowns (Pieter 22:3x): by KVI band, by mode, by tier, count-first
--- line count, protected/trimmed counts (fit outcome) -- all read straight
--- off the same aggregated rows, jsonb per scenario.
+-- ⚠️ SECURITY DEFINER WITH NO `SET search_path` -- one of the 75 of 117 unpinned
+-- SECURITY DEFINER functions measured under ENG-145 item 2. NOT fixed here: the
+-- security second-half is PAUSED under Pieter's 2026-08-27 ordering-only re-cut.
+-- Named so the next seat does not read its absence as intentional.
 --
--- BUG-LOG UX-004 (Pieter ruled 2026-07-12, "no conflict, ENG-014 stands --
--- fix UX-004 instead"): count_first_lines was counting count_first ACROSS
--- THE WHOLE POOL (every band_blocked row the recipe returns, ordered or
--- not) while `lines` only counts the ORDERED set (suggested_packs>0) --
--- the two numbers were never comparable and count_first could exceed
--- `lines` outright (4,826 vs 1,780 lines, live, before this fix).
--- `count_first_lines` now means the SAME thing `lines` does -- count_first
--- rows that ARE in the ordered set. The whole-pool figure rides separately
--- as `count_first_pool`, explicitly labelled, never blended with the
--- ordered count again.
---
--- ⭐ REAL BUG CAUGHT 2026-07-12 (CC, during the SAB weekly-budget-seed
--- verification, not named in any brief): `value_normal` summed
--- `normal_packs` -- the recipe's PRE-FIT quantity -- on every scenario,
--- including 'fitted'. Fit-to-Budget's own final answer lives in
--- `suggested_packs` (`final_packs`), which is what Generate actually
--- submits -- the overview was silently ignoring it, so 'Fitted' always
--- showed the exact same total as 'Full' regardless of whether a real
--- trim happened underneath (the "= full need, no trim required" caption
--- and the yardstick deviation calc were both reading the wrong number
--- too). Fixed: `value_normal` now sums `suggested_packs` -- the TRUE,
--- fit-applied, promo-resolved order value, matching what Generate would
--- actually produce, for every scenario. This is an aggregation-layer fix
--- inside THIS function only -- rpc_bloom_order_recipe's own quantity
--- logic, gearing legs and presets are untouched (FORMULA FREEZE holds).
--- `value_geared` stays a PRE-FIT normal-vs-geared comparison (informational
--- only, "what would this cost fully geared before any budget trim") --
--- never the number a fit-applied scenario's own caption reasons about.
--- =============================================================================
+-- ⚠️ The in-body `SET LOCAL statement_timeout = '45s'` is DECORATIVE (DB-SCHEMA
+-- Architecture Rules, proven by probe): the bound is armed by the caller or the
+-- role. As `anon` this function actually gets the role's 30s.
 
--- Signature unchanged; return shape gains 3 columns (additive) -- DROP required
--- because RETURNS TABLE changes. Frontend keys by column name, so unknown-to-old
--- callers is safe (a named-column read ignores columns it does not consume).
-DROP FUNCTION IF EXISTS public.rpc_bloom_scenario_overview(text,date,date,text,numeric);
-
-CREATE FUNCTION public.rpc_bloom_scenario_overview(
-  p_store_code text,
-  p_delivery_date date,
-  p_next_delivery date DEFAULT NULL::date,
-  p_route text DEFAULT NULL::text,
-  p_yardstick_tolerance_pct numeric DEFAULT 20  -- DEMO_CALIBRATION, canon v7 item 9
-)
-RETURNS TABLE(
-  scenario text,
-  lines integer, promo_lines integer, count_first_lines integer,
-  value_normal numeric, value_geared numeric,
-  protected_lines integer, trimmed_lines integer,
-  budget_amount numeric, budget_week_start date,
-  yardstick_value numeric, yardstick_source text,
-  yardstick_deviation_pct numeric, yardstick_flag text, yardstick_reason text,
-  by_kvi_band jsonb, by_mode jsonb, by_tier jsonb, by_kvi_band_lines jsonb,
-  demonstrated_weekly_demand numeric,
-  count_first_pool integer,
-  min_order_value numeric, min_shortfall numeric, min_reason text,  -- ENG-025 step 2b
-  computed_at timestamptz
-)
-LANGUAGE plpgsql
-SECURITY DEFINER
+CREATE OR REPLACE FUNCTION public.rpc_bloom_scenario_overview(p_store_code text, p_delivery_date date, p_next_delivery date DEFAULT NULL::date, p_route text DEFAULT NULL::text, p_yardstick_tolerance_pct numeric DEFAULT 20, p_scenarios text[] DEFAULT NULL::text[], p_include_yardstick boolean DEFAULT true)
+ RETURNS TABLE(scenario text, lines integer, promo_lines integer, count_first_lines integer, value_normal numeric, value_geared numeric, protected_lines integer, trimmed_lines integer, budget_amount numeric, budget_week_start date, yardstick_value numeric, yardstick_source text, yardstick_deviation_pct numeric, yardstick_flag text, yardstick_reason text, by_kvi_band jsonb, by_mode jsonb, by_tier jsonb, by_kvi_band_lines jsonb, demonstrated_weekly_demand numeric, count_first_pool integer, min_order_value numeric, min_shortfall numeric, min_reason text, computed_at timestamp with time zone, value_promo_lines numeric, value_nonpromo_lines numeric, promo_share_pct numeric, promo_lines_pool integer)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
 AS $function$
 DECLARE
   v_yardstick numeric;
   v_yardstick_source text;
   v_now timestamptz := clock_timestamp();
+  v_bad text;
 BEGIN
   SET LOCAL statement_timeout = '45s';
 
@@ -214,26 +74,44 @@ BEGIN
     RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS, DIRECT_BEER or a RULED DIRECT_<brand> desk';
   END IF;
 
-  -- ENG-018 re-anchor: lead forced to 0 (p_next_delivery=p_delivery_date)
-  -- so the override branch resolves to exactly demand*7 - clamp(soh,0),
-  -- summed on normal_packs (never geared) -- same formula for every route,
-  -- DIRECT_BEER no longer needs an apologetic proxy footnote.
-  SELECT COALESCE(SUM(r.normal_packs * r.pack_cost), 0) INTO v_yardstick
-  FROM rpc_bloom_order_recipe(p_store_code, p_delivery_date, p_delivery_date, NULL, NULL, 7, false, 15, 24, 25, 3.0, p_route) r;
-  v_yardstick_source := 'tier-window demand x7 - clamp(soh,0), ungeared/promo-flat (BUG-LOG ENG-018 re-anchor, canon v7 item 9) -- rpc_bloom_order_recipe(lead=0, p_days_cover_override=7), summed on normal_packs*pack_cost';
+  -- No silent skips (canon 8.6 guard 4): an unknown scenario name is an error,
+  -- never an empty result the caller reads as "this scenario has nothing".
+  IF p_scenarios IS NOT NULL THEN
+    IF array_length(p_scenarios,1) IS NULL THEN
+      RAISE EXCEPTION 'p_scenarios is empty: pass NULL for all scenarios, never an empty array';
+    END IF;
+    SELECT string_agg(s,', ') INTO v_bad FROM unnest(p_scenarios) s
+     WHERE s NOT IN ('full','fitted','order_essentials','catch_up');
+    IF v_bad IS NOT NULL THEN
+      RAISE EXCEPTION 'unknown scenario(s): %. Valid: full, fitted, order_essentials, catch_up', v_bad;
+    END IF;
+  END IF;
+
+  IF p_include_yardstick THEN
+    SELECT COALESCE(SUM(r.normal_packs * r.pack_cost), 0) INTO v_yardstick
+    FROM rpc_bloom_order_recipe(p_store_code, p_delivery_date, p_delivery_date, NULL, NULL, 7, false, 15, 24, 25, 3.0, p_route) r;
+    v_yardstick_source := 'tier-window demand x7 - clamp(soh,0), ungeared/promo-flat (BUG-LOG ENG-018 re-anchor, canon v7 item 9) -- rpc_bloom_order_recipe(lead=0, p_days_cover_override=7), summed on normal_packs*pack_cost';
+  ELSE
+    v_yardstick := NULL;
+    v_yardstick_source := NULL;
+  END IF;
 
   RETURN QUERY
   WITH full_run AS (
-    SELECT * FROM rpc_bloom_order_recipe(p_store_code, p_delivery_date, p_next_delivery, NULL, NULL, NULL, false, 15,24,25,3.0, p_route)
+    SELECT r.* FROM (SELECT 1 WHERE p_scenarios IS NULL OR 'full' = ANY(p_scenarios)) g
+    CROSS JOIN LATERAL rpc_bloom_order_recipe(p_store_code, p_delivery_date, p_next_delivery, NULL, NULL, NULL, false, 15,24,25,3.0, p_route) r
   ),
   fitted_run AS (
-    SELECT * FROM rpc_bloom_order_recipe(p_store_code, p_delivery_date, p_next_delivery, NULL, NULL, NULL, true, 15,24,25,3.0, p_route)
+    SELECT r.* FROM (SELECT 1 WHERE p_scenarios IS NULL OR 'fitted' = ANY(p_scenarios)) g
+    CROSS JOIN LATERAL rpc_bloom_order_recipe(p_store_code, p_delivery_date, p_next_delivery, NULL, NULL, NULL, true, 15,24,25,3.0, p_route) r
   ),
   ess_run AS (
-    SELECT * FROM rpc_bloom_order_recipe(p_store_code, p_delivery_date, p_next_delivery, NULL, 'order_essentials', NULL, false, 15,24,25,3.0, p_route)
+    SELECT r.* FROM (SELECT 1 WHERE p_scenarios IS NULL OR 'order_essentials' = ANY(p_scenarios)) g
+    CROSS JOIN LATERAL rpc_bloom_order_recipe(p_store_code, p_delivery_date, p_next_delivery, NULL, 'order_essentials', NULL, false, 15,24,25,3.0, p_route) r
   ),
   cu_run AS (
-    SELECT * FROM rpc_bloom_order_recipe(p_store_code, p_delivery_date, p_next_delivery, NULL, 'catch_up', NULL, false, 15,24,25,3.0, p_route)
+    SELECT r.* FROM (SELECT 1 WHERE p_scenarios IS NULL OR 'catch_up' = ANY(p_scenarios)) g
+    CROSS JOIN LATERAL rpc_bloom_order_recipe(p_store_code, p_delivery_date, p_next_delivery, NULL, 'catch_up', NULL, false, 15,24,25,3.0, p_route) r
   ),
   scenarios AS (
     SELECT 'full'::text AS scenario_key, r.* FROM full_run r
@@ -245,17 +123,17 @@ BEGIN
     SELECT
       s.scenario_key,
       count(*) FILTER (WHERE s.suggested_packs > 0) AS lines,
-      count(*) FILTER (WHERE s.promo_active) AS promo_lines,
-      -- UX-004: ordered-set count_first (matches `lines`' own population).
+      count(*) FILTER (WHERE s.promo_active AND s.suggested_packs > 0) AS promo_lines,
+      count(*) FILTER (WHERE s.promo_active) AS promo_lines_pool,
       count(*) FILTER (WHERE s.count_first AND s.suggested_packs > 0) AS count_first_lines,
       count(*) FILTER (WHERE s.count_first) AS count_first_pool,
-      -- TRUE fit-applied order value -- what Generate actually submits.
       SUM(s.suggested_packs * s.pack_cost) AS value_normal,
-      -- PRE-fit informational comparison only (see header note).
       SUM((CASE WHEN s.promo_active THEN s.geared_packs ELSE s.normal_packs END) * s.pack_cost) AS value_geared,
       count(*) FILTER (WHERE s.budget_fit_reason = 'protected_kvi') AS protected_lines,
       count(*) FILTER (WHERE s.budget_fit_reason IN ('trimmed_partial','trimmed_to_zero')) AS trimmed_lines,
-      MAX(s.budget_week_start) AS budget_week_start
+      MAX(s.budget_week_start) AS budget_week_start,
+      COALESCE(SUM(s.suggested_packs * s.pack_cost) FILTER (WHERE s.promo_active), 0)     AS value_promo_lines,
+      COALESCE(SUM(s.suggested_packs * s.pack_cost) FILTER (WHERE NOT s.promo_active), 0) AS value_nonpromo_lines
     FROM scenarios s
     GROUP BY s.scenario_key
   ),
@@ -264,9 +142,6 @@ BEGIN
     FROM scenarios s GROUP BY s.scenario_key, COALESCE(s.kvi_band,'NONE')
   ),
   kvi_json AS (SELECT scenario_key, jsonb_object_agg(k, ROUND(v,2)) AS by_kvi_band FROM kvi_agg GROUP BY scenario_key),
-  -- Line-COUNT breakdown by KVI band (pie-chart source: percentage of
-  -- ORDERED LINES, never rand value) -- only lines with suggested_packs>0
-  -- count as "ordered", same population the pie chart labels "ordered".
   kvi_lines_agg AS (
     SELECT s.scenario_key, COALESCE(s.kvi_band,'NONE') AS k, count(*) AS c
     FROM scenarios s WHERE s.suggested_packs > 0
@@ -283,28 +158,31 @@ BEGIN
     FROM scenarios s GROUP BY s.scenario_key, COALESCE(s.tier,'NONE')
   ),
   tier_json AS (SELECT scenario_key, jsonb_object_agg(t, ROUND(v,2)) AS by_tier FROM tier_agg GROUP BY scenario_key),
-  -- ENG-018: demonstrated weekly demand, PURE sales history (sigma_sales.
-  -- cost_value, never the engine's own demand estimate), trailing 28d/4,
-  -- scoped to the SAME resolved route pool ('full' scenario's own
-  -- product_code list) -- an independent cross-check beside the yardstick,
-  -- never fed into yardstick_deviation_pct/yardstick_flag.
-  full_products AS (SELECT DISTINCT product_code FROM full_run),
+  -- ENG-070: was `SELECT DISTINCT product_code FROM full_run`, which returned an
+  -- empty set (and a zero demonstrated_weekly_demand, silently changing the
+  -- fitted DEFECT_SIGNAL) whenever 'full' was not among the requested scenarios.
+  -- Sourced from `scenarios` instead. Safe because all four runs were PROVEN to
+  -- share one identical 12,502-product pool, 0 rows differing either way.
+  full_products AS (SELECT DISTINCT product_code FROM scenarios),
   demonstrated AS (
-    SELECT COALESCE(SUM(ss.cost_value), 0) / 4.0 AS v
+    SELECT COALESCE(
+             -- ENG-106 leg (b): THE ONE HOME. Dept-scoped so it cannot contract
+             -- with the order, watermark-anchored so it cannot drift under it.
+             (SELECT b.weekly_cost_demand
+                FROM rpc_bloom_route_benchmark(p_store_code, p_route, NULL) b),
+             -- Fallback fires ONLY on a direct desk, where canon rules no basis.
+             -- Still circular, still CURRENT_DATE. Named residual, not hidden.
+             COALESCE(SUM(ss.cost_value), 0) / 4.0
+           ) AS v
     FROM sigma_sales ss
     WHERE ss.store_code = p_store_code AND ss.period_kind = 'T' AND ss.txn_kind = 1
       AND ss.sale_date > CURRENT_DATE - 28 AND ss.sale_date <= CURRENT_DATE
       AND ss.product_code IN (SELECT product_code FROM full_products)
   ),
-  -- weekly budget: one lookup, same for every scenario at this desk/week.
-  -- cash_constrained rides along -- the ONE clean, already-stored named
-  -- reason this week can carry (see header note on the other two).
   budget AS (
     SELECT COALESCE(obl.budget_amount,0) AS budget_amt, COALESCE(obl.cash_constrained,false) AS cash_constrained
     FROM order_budget_ledger obl
     WHERE obl.store_code = p_store_code
-      -- SB-CC-BLOOM-009: mirrors rpc_bloom_order_recipe's own v_ledger_route
-      -- CASE exactly -- must stay in lockstep with it, R21.
       AND obl.route_key = (CASE
         WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER'
         WHEN p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN 'DIRECT'
@@ -313,11 +191,6 @@ BEGIN
       AND obl.grain = 'weekly'
       AND obl.year_month = (SELECT MAX(a.budget_week_start) FROM agg a)
   ),
-  -- ENG-025 step 2b: the desk's own supplier minimum. Keyed on p_route
-  -- directly -- a DIRECT_<brand> or DIRECT_BEER desk's route_key IS its
-  -- bloom_route_config key. NULL for DC routes (no row / no minimum), which
-  -- makes below_min NULL and the flag absent, exactly right (DC has no
-  -- supplier-minimum concept).
   mincfg AS (
     SELECT rc.direct_min_order_value AS min_val
     FROM bloom_route_config rc
@@ -331,10 +204,6 @@ BEGIN
     COALESCE((SELECT budget_amt FROM budget), 0), a.budget_week_start,
     ROUND(v_yardstick,2), v_yardstick_source,
     (CASE WHEN v_yardstick > 0 THEN ROUND(((a.value_normal - v_yardstick) / v_yardstick) * 100, 1) ELSE NULL END),
-    -- Same-day correction: full never flags; fitted flags ONLY against
-    -- demonstrated weekly demand (the 7-day yardstick is display-only --
-    -- see header note), with no named reason (cash_constrained is the
-    -- only one auto-detected).
     (CASE
        WHEN a.scenario_key = 'fitted'
          AND (SELECT v FROM demonstrated) > 0
@@ -351,7 +220,6 @@ BEGIN
     kj.by_kvi_band, mj.by_mode, tj.by_tier, klj.by_kvi_band_lines,
     ROUND((SELECT v FROM demonstrated), 2),
     a.count_first_pool::int,
-    -- ENG-025 step 2b -- minimum-order FLAG (never blocks; R29 reason travels).
     (SELECT min_val FROM mincfg),
     (CASE WHEN (SELECT min_val FROM mincfg) IS NULL THEN NULL
           ELSE GREATEST(0, (SELECT min_val FROM mincfg) - a.value_normal) END),
@@ -363,7 +231,11 @@ BEGIN
             || ' below the R' || trim(to_char((SELECT min_val FROM mincfg),'FM999999990'))
             || ' supplier minimum -- accumulate to the next cycle or send as is (buyer decides)'
      END),
-    v_now
+    v_now,
+    ROUND(a.value_promo_lines, 2),
+    ROUND(a.value_nonpromo_lines, 2),
+    ROUND(100.0 * a.value_promo_lines / NULLIF(a.value_promo_lines + a.value_nonpromo_lines, 0), 1),
+    a.promo_lines_pool::int
   FROM agg a
   LEFT JOIN kvi_json kj ON kj.scenario_key = a.scenario_key
   LEFT JOIN mode_json mj ON mj.scenario_key = a.scenario_key
@@ -373,7 +245,10 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.rpc_bloom_scenario_overview(text,date,date,text,numeric) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.rpc_bloom_scenario_overview(text,date,date,text,numeric) TO anon, authenticated;
-
-SELECT pg_notify('pgrst', 'reload schema');
+-- Grants stated explicitly (R30 addendum), naming the REAL seven-arg signature.
+-- No DROP: the predecessor's DROP named the retired five-arg form and would have
+-- left an ambiguous overload (ENG-115).
+REVOKE EXECUTE ON FUNCTION public.rpc_bloom_scenario_overview(text,date,date,text,numeric,text[],boolean) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.rpc_bloom_scenario_overview(text,date,date,text,numeric,text[],boolean) TO anon;
+GRANT  EXECUTE ON FUNCTION public.rpc_bloom_scenario_overview(text,date,date,text,numeric,text[],boolean) TO authenticated;
+GRANT  EXECUTE ON FUNCTION public.rpc_bloom_scenario_overview(text,date,date,text,numeric,text[],boolean) TO service_role;

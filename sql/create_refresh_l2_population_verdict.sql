@@ -1,36 +1,55 @@
--- refresh_l2_population_verdict -- THE CROSS-APP POPULATION FACT
--- SB-CC-BLOOM-026 §12 / SB-CC-BLOOM-027 §3.2. R33 clause 3, R32.
+-- create_refresh_l2_population_verdict.sql
 --
--- ONE fact per (client, store, product): the standing population state with its
--- reason, so Bloom (order sheet), Forge (count list), Pulse (diagnoses) and
--- Capital Tied (classification scope) stop re-implementing the same rule.
+-- REPLACED FROM LIVE 2026-08-30 (ENG-115 class rule: a sql/ file that was not
+-- generated from live can never be hash-gated, only replaced). Hash-gated against
+-- the database in the same pass.
 --
--- v2.1  2026-08-23  ENG-099 FIXED. NEW_RANGE was over-inclusive because
---                   `first_dt IS NULL` swept in every never-RECEIVED catalogue
---                   stub -- absence of evidence read as evidence of absence
---                   (R23 §2). The ranging signal is now:
---                       never_sold AND (first_receipt <= 120d
---                                       OR sigma_articles.created_date <= 120d)
---                   so a never-DELIVERED new range still qualifies (brief §5(c),
---                   the Old Spice / Clere class) while a stub catalogued years
---                   ago does not. `sigma_supplier_link.cost_date` was TESTED AND
---                   REJECTED as the ranging signal -- the DC re-prices routinely
---                   (ORDERING-CANON §A5 7d).
---                   Stubs now fall to SLOW_BELOW_GATE carrying their OWN reason,
---                   never silently (R21 §5).
--- v2.0  2026-08-21  Desk loop in plpgsql with scalars. Killed the 329,640-run
---                   SubPlan and the seven-fold Materialize rescan (rpc_bloom_desks
---                   function-scans at rows=750 against 7 actual).
+-- Migration that shaped the current body:
+--   eng106_leg_a_per_line_cost_demand_columns (2026-08-27)
 --
--- Signature UNCHANGED from v2.0, so CREATE OR REPLACE is the sanctioned form
--- (CLAUDE-CODE-RULES Rule 3). The DROP below is typed, never CASCADE, so it
--- cannot take a future dependent down with it (Rule 19 reproducibility).
+-- WHAT IT IS. The CROSS-APP POPULATION FACT (SB-CC-BLOOM-026 §12 / R33 clause 3):
+-- ONE fact per (client, store, product) carrying the standing population state
+-- and its reason, so Bloom (order sheet), Forge (count list), Pulse (diagnoses)
+-- and Capital Tied stop re-implementing the same rule.
 --
--- Grants: PUBLIC and anon REVOKEd, authenticated + service_role granted.
--- The bound is armed by the CALLER, never in-body -- an in-body SET LOCAL
--- statement_timeout is DECORATIVE (BUG-LOG ENG-096, PM ruling 2026-08-20).
-
-DROP FUNCTION IF EXISTS public.refresh_l2_population_verdict(text);
+-- ⚠️ population_state is FIRST-MATCH-WINS (§2 cascade discipline). The flag_*
+-- booleans are INDEPENDENT, because one line can be a hidden seller AND priced
+-- off a zero-cost link. Read the flags for the conditions, the state for the
+-- headline. They are not interchangeable.
+--
+-- ⚠️ NEVER SUM cost_demand_28d FOR A ROUTE TOTAL. §D6.1: "a category or route
+-- total is NEVER published off l2_population_verdict." Measured 2026-08-30,
+-- summing the pool understates the route by 33.9% (10116), 34.8% (80175) and
+-- 53.3-58.7% across the TOPS trio -- R260,148.85 at 10116 alone. The route
+-- benchmark is a SEPARATE dept-scope leg and it lives in
+-- rpc_bloom_route_benchmark (ENG-106 leg b).
+--
+-- ENG-106 leg (a), the columns this file added: cost_demand_28d and
+-- cost_demand_anchor_date, written by APPEND-AFTER-COMPUTE -- a plain join AFTER
+-- every verdict row is committed, so the leg is STRUCTURALLY INCAPABLE of moving
+-- a population_state, a flag, or any figure the verdict computes. Anchored on the
+-- LEDGER WATERMARK per §D6.1 clause 2, never CURRENT_DATE: storing a
+-- CURRENT_DATE-anchored figure in a nightly column would bake the retired anchor
+-- into the pantry and put these columns ~3% out of step with the benchmark by
+-- construction. Only the FACT is stored, not its divisions -- daily is /28,
+-- weekly is /4, and a recipe picks its own divisor (R27 §2).
+--
+-- ⚠️ A pool line with no sales in the window is written as a REAL ZERO, never left
+-- NULL. NULL would let a consumer read "not measured" as "no demand".
+--
+-- ⚠️ THE `1339` LITERAL IN THE `chosen` CTE IS DELIBERATE AND IS A NAMED §0h DEBT.
+-- supplier_nr is store-local and collides: 1339 is SPAR SOUTHRAND (the DC) at
+-- 80175 ONLY, and a DROPSHIP at the other four stores. This fact reproduces the
+-- recipe's own link pick INCLUDING that literal ON PURPOSE, so the fact describes
+-- the order the buyer is actually looking at. It does NOT re-pick. ORDERING-CANON
+-- §H8 v1.5: the recipe is not changed and the literal is removed only when the
+-- recipe is next legitimately opened -- which is the §H opening gate, bundled.
+--
+-- ⚠️ ENG-099: NEW_RANGE requires never_sold AND (first receipt <=120d OR
+-- created_date <=120d). Without the receipt leg a never-sold, never-RECEIVED line
+-- reads as new when it is a catalogue stub -- that was 8,387 at 80175 alone.
+-- sigma_supplier_link.cost_date stays TESTED AND REJECTED as the ranging signal:
+-- the DC re-prices routinely (§A5 7d).
 
 CREATE OR REPLACE FUNCTION public.refresh_l2_population_verdict(p_store_code text)
  RETURNS jsonb
@@ -58,14 +77,11 @@ BEGIN
     RAISE EXCEPTION 'no l2_soh_daily rows for store % -- refusing to write a verdict with no stock position', p_store_code;
   END IF;
 
-  -- ON COMMIT DROP does NOT clean up between calls inside one transaction (the
-  -- l2_sales_budget collision). Explicit drops both ends, pre-empted not hit.
   DROP TABLE IF EXISTS _pv_recv;
   DROP TABLE IF EXISTS _pv_first;
   DROP TABLE IF EXISTS _pv_soh;
   DROP TABLE IF EXISTS _pv_pool;
 
-  -- STORE-SCOPED, COMPUTED ONCE (v1 recomputed these per desk).
   CREATE TEMP TABLE _pv_recv AS
     SELECT m.product_code AS pc, m.supplier_nr AS sup, count(*)::int AS n
       FROM sigma_movements m
@@ -106,7 +122,6 @@ BEGIN
 
   ANALYZE _pv_recv;  ANALYZE _pv_first;  ANALYZE _pv_soh;
 
-  -- ONE DESK AT A TIME. Scalars, so no SubPlan and no cross-join rescan.
   FOR v_desk IN SELECT d.route_key, d.is_dc FROM rpc_bloom_desks(p_store_code) d LOOP
 
     v_dept := NULL; v_direct := NULL;
@@ -170,9 +185,6 @@ BEGIN
       LEFT JOIN l2_bloom_ros_pantry rop ON rop.store_code = p_store_code AND rop.product_code = ch.pc
       LEFT JOIN _pv_soh   so ON so.pc = ch.pc
       LEFT JOIN _pv_first fr ON fr.pc = ch.pc
-      -- ENG-099: the catalogue-age leg of the ranging signal. TWO-KEY join --
-      -- sigma_articles is grained on (store_code, product_code) and a one-key
-      -- join fans out ~2.2x (RULE-BOOK §2 / PROJECT-LEXICON quantity family).
       LEFT JOIN sigma_articles    sa ON sa.store_code = p_store_code AND sa.product_code = ch.pc
      WHERE COALESCE(rs.range_state,'') <> 'EXCLUDED'
        AND ( (v_desk.is_dc AND sp.department_nr = ANY(v_dept)) OR (NOT v_desk.is_dc) );
@@ -203,23 +215,12 @@ BEGIN
       FROM _pv_pool p
   ),
   f AS (
-    -- EVERY flag is COALESCEd to false. The flag_* columns are NOT NULL, and a
-    -- NULL boolean in a flag has no meaning anyway -- "did this fire" is a
-    -- two-valued question. Learned the hard way on the v2.1 first run: with
-    -- `first_dt IS NULL` removed, a stub with an old created_date evaluates
-    -- `NULL OR false` = NULL, not false, and the INSERT failed the NOT NULL.
-    -- f_hidden carried the SAME latent hazard (a HERO/CORE line with no pantry
-    -- row has a NULL ros_56d_guard), so the contract is now satisfied
-    -- structurally rather than by luck.
     SELECT r.*,
       COALESCE(r.range_state IN ('HERO','CORE') AND r.ros_56d_guard = 'withheld_observable_floor'
         AND r.ros_56d_published IS NULL
         AND COALESCE(r.ros_56d_corrected,0) > COALESCE(r.ros_56d,0), false)    AS f_hidden,
       COALESCE(COALESCE(r.lc,0) = 0, false)                                    AS f_cost,
       COALESCE(r.range_state = 'VERIFY', false)                                AS f_phantom,
-      -- ENG-099 FIX. `first_dt IS NULL` is GONE: a never-received line is a
-      -- catalogue stub, not a new range. A never-DELIVERED new range still
-      -- qualifies on catalogue age, which is what brief §5(c) requires.
       COALESCE(COALESCE(r.never_sold,true)
         AND (   r.first_dt   >= CURRENT_DATE - 120
              OR r.created_dt >= CURRENT_DATE - 120), false)                    AS f_new,
@@ -260,8 +261,6 @@ BEGIN
               WHEN COALESCE(f.passes_life_gate,false) THEN
                 format('Accounted for on a trusted rate (%s/day published, guard %s).',
                   ROUND(COALESCE(f.ros_56d_published,0),2), COALESCE(f.ros_56d_guard,'none'))
-              -- ENG-099: the stubs displaced out of NEW_RANGE land here and say
-              -- so in their own words. Same state, truthful reason (R21 §5, R29).
               WHEN COALESCE(f.never_sold,true) AND f.first_dt IS NULL THEN
                 format('Catalogue stub. Never sold and never received, catalogued %s. A listing with no trading history at all, so it is neither a new range nor a slow seller.',
                   COALESCE(f.created_dt::text,'date unknown'))
@@ -280,6 +279,38 @@ BEGIN
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
 
+  -- ENG-106 leg (a). APPEND-AFTER-COMPUTE (DB-SCHEMA Architecture Rules): the
+  -- per-line cost demand is written by a plain join AFTER every verdict row is
+  -- already committed above, so this leg is STRUCTURALLY INCAPABLE of moving a
+  -- population_state, a flag or any figure the verdict computes. Anchored on the
+  -- ledger watermark per SSD6.1 clause 2, never CURRENT_DATE.
+  WITH anchor AS (
+    SELECT max(sale_date) AS a FROM sigma_sales
+     WHERE store_code = p_store_code AND sale_date >= CURRENT_DATE - 90
+  ),
+  s AS (
+    SELECT ss.product_code, SUM(ss.cost_value) AS cost28, (SELECT a FROM anchor) AS anch
+      FROM sigma_sales ss, anchor
+     WHERE ss.store_code = p_store_code
+       AND ss.period_kind = 'T' AND ss.txn_kind = 1
+       AND ss.sale_date >  anchor.a - 28
+       AND ss.sale_date <= anchor.a
+     GROUP BY 1
+  )
+  UPDATE l2_population_verdict v
+     SET cost_demand_28d = ROUND(s.cost28, 4), cost_demand_anchor_date = s.anch
+    FROM s
+   WHERE v.store_code = p_store_code AND v.product_code = s.product_code;
+
+  -- A pool line with no sales in the window is a REAL ZERO, not an unknown.
+  -- Leaving it NULL would let a consumer read "not measured" as "no demand".
+  UPDATE l2_population_verdict v
+     SET cost_demand_28d = 0,
+         cost_demand_anchor_date = (SELECT max(sale_date) FROM sigma_sales
+                                     WHERE store_code = p_store_code
+                                       AND sale_date >= CURRENT_DATE - 90)
+   WHERE v.store_code = p_store_code AND v.cost_demand_anchor_date IS NULL;
+
   DROP TABLE IF EXISTS _pv_recv;
   DROP TABLE IF EXISTS _pv_first;
   DROP TABLE IF EXISTS _pv_soh;
@@ -297,6 +328,9 @@ BEGIN
   RETURN v_out;
 END $function$;
 
+-- Grants stated explicitly (R30 addendum extension: PUBLIC and anon BOTH revoked
+-- on a mutating function, because a role-specific grant survives a REVOKE FROM
+-- PUBLIC -- the trap has fired three times on this project).
 REVOKE EXECUTE ON FUNCTION public.refresh_l2_population_verdict(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.refresh_l2_population_verdict(text) FROM anon;
 GRANT  EXECUTE ON FUNCTION public.refresh_l2_population_verdict(text) TO authenticated;
