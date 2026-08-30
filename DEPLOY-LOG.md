@@ -6,6 +6,62 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-30 (night) -- THE A3 RECIPE GATE EVALUATED. It does NOT open tonight, and the queue behind it is TWO items, not six.
+
+**Clock:** written 2026-08-30 20:1x SAST (device local `20:13:43` / UTC `18:13:43`, +2), re-read at the moment of writing.
+
+**THE RECIPE WAS NOT OPENED. Pin `48bdc629c142f68e7342e3ae15444ab8` / 44,383 chars, verified UNMOVED at the end of this work exactly as at the start.**
+
+**DATABASE-SIDE, NO DEPLOY:** migration `eng142_budget_week_start_dow_key_and_helper` -- prep only, nothing wired.
+**PUSHED:** `sql/create_rpc_budget_week_start.sql`, generated from live and gated.
+
+---
+
+### Condition 1, evaluable for the first time, and it does not pass
+
+ENG-048 made the placement day derivable this afternoon, so A3 condition 1 could finally be tested instead of assumed.
+
+Today is **Sunday 2026-08-30, isodow 7**. Eight of 20 routes carry 7 in their derived placement set. **The honest caveat, stated because it cuts against the conclusion: 7 is in those sets as +/-1 tolerance scatter around Monday, not as a modal day in its own right** -- so the tolerance set is arguably the wrong instrument for a "is today a placement day" question, being built to derive a cutoff.
+
+So it was measured directly rather than inferred: **Sunday carries 78 placements, 2.9% of all placements, across 11 routes.** Thin, but not zero.
+
+What settles it is the calendar, not the classification:
+- **Two desks have a placement deadline TOMORROW** -- 10116 DIRECT_NATBRANDS and 80176 DIRECT_BEER, both 2026-08-31.
+- **Tomorrow is Monday: 22.2% of all placements, across 19 of 20 routes** -- the estate's second-biggest placement day after Thursday (35.3%).
+
+Opening a pinned money function on the eve of that is precisely what condition 1 exists to prevent. **Condition 5 -- Pieter's word on the day -- is also not given, and is not CC's to assume.**
+
+### The queue behind the gate is TWO items, not six. Four dissolved on inspection.
+
+Every candidate was checked against the LIVE recipe body rather than against the queue list.
+
+| item | verdict | evidence |
+|---|---|---|
+| **ENG-142** sites 9+10 | **IN the bundle** | recipe lines 117, 128 -- identical inline expression, `budget_week_start_dow` absent from the body |
+| **ENG-147** residual | **IN the bundle** | `promo_match` inline present, `rpc_bloom_promo_for_delivery` absent from the body |
+| ENG-061 | **OUT -- needs no recipe edit, and never did** | line 144 ALREADY reads `committed_amount`; producer built and on the nightly chain; 65 of 370 weekly rows populated |
+| ENG-064 | **OUT -- already fixed** | landed 2026-08-03 by asserted `regexp_replace`, R22 green |
+| §H8 `supplier_nr=1339` | **OUT -- ruled to STAY** | PM 2026-08-30 on CC's own simulation: passed over a receipting link on ONE line group-wide; a re-pick moves ~600 onto an arbitrary basis. Surface, do not re-pick |
+| ENG-052 + ENG-058 | **OUT -- one pass together, and NOT ready** | the shadow fix trades a known under-order for an UNMEASURED over-order on 30 of 136 lines (median predicted/observed 0.89, only 47% within 1.5x). Needs the uplift re-derivation first |
+
+**🔴 REGISTER DEFECT: `ENG-063` HAS NO BUG-LOG ROW. Zero occurrences in the file.** It has been carried in the queued-behind-the-gate list as though it were a known item. An id nobody can read cannot be built, verified or closed, and it inflated the apparent cost of opening the recipe. Same class as the six unclaimed ids written up earlier in this session -- reported, not silently dropped.
+
+**Both surviving items are quantity-neutral repoints to an existing one home.** That is the right shape for opening a pinned money function: the R22 proves zero movement rather than negotiating a delta.
+
+### What was built instead -- the half that does not need the gate
+
+`forge_config.budget_week_start_dow` = 6 (ISODOW Saturday) and `rpc_budget_week_start(date)`, the one home. **§0i: PARKED. Nothing reads it yet** -- all 13 sites stay inline until the bundled pass. This satisfies the §0h config-key gate ("complete only when the config key EXISTS AND IS POPULATED") without touching the recipe.
+
+**The algebra:** the inline `- ((isodow + 1) % 7)` IS the general `- ((isodow - dow + 7) % 7)` at dow=6.
+
+**Proven exhaustively rather than asserted: 1,095 dates (2025-01-01 → 2027-12-31), 1,095 agree, 0 disagree**, all seven isodows present as input, every result landing on isodow 6. **When the bundled pass lands, its ruled R22 is a formality confirming a proof rather than an experiment hoping for one.**
+
+Loud-failure behaviour tested, not assumed: with the key the helper returns 2026-08-29 for 2026-08-30; with the key absent it returns NULL rather than silently falling back to a guessed day.
+
+**The seed needs no `SEED, UNDERIVED` stamp (§0h): 6 is not a fitted constant, it is the anchor the 13 sites already implement, recovered from them and confirmed by the date equality.**
+
+---
+
 ## 2026-08-30 (evening) -- ENG-048 CLOSED: the typed placement-day literal is out of the engine (database, no deploy). A3 condition 1 unblocked.
 
 **Clock:** written 2026-08-30 19:5x SAST (device local `19:50:49` / UTC `17:50:49`, +2). Re-read at the moment of writing, not carried from the entry above it.
