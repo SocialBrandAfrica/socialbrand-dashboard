@@ -1,16 +1,58 @@
 -- =============================================================================
 -- !!! THIS FILE'S BODY IS ROTTED AGAINST LIVE. DO NOT RECONCILE ANYTHING TO IT. !!!
--- Stamped by CC 2026-08-19 20:4x SAST. Clock settled three ways at +2
--- (local 20:39:50 / UTC 18:39:50 / DB now() 18:40:10 = 20:40 SAST).
+-- RE-STAMPED by CC 2026-08-30 20:2x SAST, after the A3 bundled pass moved the
+-- live body. Clock settled three ways at +2 in that session.
+--
+-- ⚠ THE PIN MOVED TODAY. The A3 bundled pass (ENG-142 sites 9+10 + ENG-147
+-- residual) repointed two blocks to their one homes:
+--     OLD  48bdc629c142f68e7342e3ae15444ab8  / 44,383 chars
+--     NEW  6204ae7bf6b12f1a17e8bcb3d72028ea  / 44,251 chars
+-- R22 was exact: 2,679 lines across all 20 desks, before vs after, ZERO rows
+-- differing in either direction, 4,161 packs = 4,161 packs, R1,180,357.11 =
+-- R1,180,357.11, delta R0.00. Both repoints were proven neutral BEFORE they were
+-- made (1,095-date exhaustive equality; 23,583 promo rows, 0 diffs).
+--
+-- 🔴 AND THE FILE IS STILL ROTTED. THE 2026-08-19 CLOSE PLAN BELOW IS
+-- STRUCTURALLY UNREACHABLE, WHICH IS THE REAL FINDING AND IT IS NEW.
+-- That plan said: the debt closes on the next recipe-touching ship, because at
+-- that moment CC will have authored the full new body as text. **Today WAS that
+-- ship and the plan did not work, for a reason that will recur every single
+-- time.** PRE-FLIGHT forbids hand-transcribing a 44KB body into a migration, so
+-- the pass was applied by ASSERTED replace() on the live body -- ten anchor
+-- assertions, raise-or-nothing. That is the correct and safer method for the
+-- DATABASE, and it structurally means CC NEVER HOLDS THE FULL TEXT. The two
+-- disciplines are in direct tension: the method that protects the live function
+-- is the method that cannot produce this file. No future recipe ship closes this
+-- debt either, unless the channel changes.
+--
+-- ⚠ THE TRANSCRIPTION ROUTE IS NOT MERELY TEDIOUS, IT IS UNSAFE, AND THAT IS NOW
+-- MEASURED RATHER THAN ASSERTED. The live body contains EXACTLY 13 backslashes
+-- (counted at source, 2026-08-30). They live in `LIKE 'DIRECT\_%' ESCAPE '\'`
+-- clauses on the route branch. The session channel that carries the body to a
+-- seat re-escapes backslashes ambiguously -- two displayed lines alone imply
+-- eight, against a true whole-body total of thirteen. A wrong count yields a
+-- file that LOOKS right, APPLIES cleanly, and silently changes LIKE-pattern
+-- semantics on the DC/DIRECT split of the money function. A known-rotted file is
+-- safer than a quietly-wrong one, so nothing was written.
+--
+-- ⭐ THE ACTUAL FIX IS A CHANNEL, NOT A DISCIPLINE. Give the repo a mechanical
+-- dump path and this closes in seconds, forever, for every object and not just
+-- this one: a service_role-scoped script (`npm run dump-sql <proname>`) writing
+-- pg_get_functiondef straight to sql/, or a paste from the Supabase SQL editor
+-- (browser to file, no lossy hop). The service key must NOT come into
+-- .env.local, which correctly carries only the anon key. Owner: needs Pieter's
+-- word on where the key lives. Until then this debt cannot be closed by effort.
 --
 -- THE AUTHORITY IS THE LIVE BODY, reached by:
 --     SELECT pg_get_functiondef(oid) FROM pg_proc
 --     WHERE proname = 'rpc_bloom_order_recipe';
 --
--- LIVE PIN, verified at source in this same session:
---     md5    = 48bdc629c142f68e7342e3ae15444ab8
---     length = 44,383 chars
---     = the ORDERING-CANON v1.4 reconciliation pin, unchanged.
+-- LIVE PIN, verified at source 2026-08-30 AFTER the A3 bundled pass:
+--     md5    = 6204ae7bf6b12f1a17e8bcb3d72028ea
+--     length = 44,251 chars
+--     (superseding 48bdc629c142f68e7342e3ae15444ab8 / 44,383, which every
+--      brief and BUG-LOG row written before 2026-08-30 cites. R28: that pin is
+--      `retired_on` 2026-08-30, `superseded_by` this one.)
 -- THIS FILE below the header: 48,747 bytes of body, hand-authored, DRIFTED.
 -- The two are NOT the same function. Every figure, CTE name and guard in the
 -- body below must be checked against live before it is believed or quoted.

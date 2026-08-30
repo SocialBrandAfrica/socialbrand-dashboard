@@ -6,6 +6,54 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-30 (night, later) -- THE A3 BUNDLED PASS SHIPPED ON PIETER'S WORD. The recipe pin moved for the first time since 2026-08-19, and every line is identical.
+
+**Clock, and the session crossed midnight between the work and this write -- the exact trap canon names.** The work below happened **2026-08-30** (pass applied 20:2x SAST, R22 measured 20:2x-20:3x). This entry is **written 2026-08-31 00:3x SAST**, re-read at the moment of writing rather than carried: device local `2026-08-31 00:31:47 +02:00`, device UTC `2026-08-30 22:31:47`, database `now()` SAST `2026-08-31 00:31:49` / UTC `2026-08-30 22:31:49` -- all three agreeing on the offset. A draft of this entry carried "written 2026-08-30 20:3x" and was corrected before it landed; that is the 2026-07-27 config-key defect exactly, caught this time. **Every date in the entry is the date the WORK happened, not the date of the write.**
+
+**DATABASE-SIDE, NO DEPLOY:** migration `a3_bundled_pass_eng142_sites_and_eng147_residual`, live on apply.
+**PUSHED:** the re-stamped `sql/create_rpc_bloom_order_recipe.sql` (stamp only -- see the honest failure below).
+
+**🔴 THE RECIPE PIN MOVED. `48bdc629c142f68e7342e3ae15444ab8` / 44,383 chars -> `6204ae7bf6b12f1a17e8bcb3d72028ea` / 44,251 chars.** R28: the old pin is `retired_on` 2026-08-30, `superseded_by` the new one. **Every brief and BUG-LOG row written before today still cites the old pin.**
+
+---
+
+### The gate: four conditions met, one overridden by its owner
+
+The entry above this one records condition 1 failing on a Sunday with two placement deadlines falling the next day. **Pieter's answer was "today".** Condition 5 is literally *Pieter's word on the day*, and it is his ordering floor the gate protects, so his word carries it. Recorded plainly rather than argued: **condition 1 was not satisfied, and the pass shipped anyway on the owner's explicit instruction, with both repoints already proven quantity-neutral so tomorrow's deadlines could not be harmed.**
+
+Condition 2 (ONE bundled pass): both repoints in a single migration, one opening of the function.
+Condition 4 (re-pin): done. Regeneration: **failed honestly, see below.**
+
+### What changed -- two repoints, nothing else
+
+**ENG-142 sites 9+10.** Recipe lines 117 and 128 carried the identical inline `p_delivery_date - ((EXTRACT(ISODOW FROM p_delivery_date)::int + 1) % 7)`. Both now call `rpc_budget_week_start()`. **2 of 13 sites; the 11 remaining need no gate and can go any day.**
+
+**ENG-147 residual.** The inline `promo_match` CTE now reads the one home, `rpc_bloom_promo_for_delivery(%1$L, %15$L, %23$L::date)`. **The residual narrows from THREE inline sites to TWO** (`rpc_bloom_order_dc`, `refresh_l2_stock_band`). `promo_description` is still returned so the downstream `promo_suffix_calc` regex is untouched -- the diff stops at that CTE.
+
+Applied by **asserted `replace()` on the live body**: overload count asserted 1, the OLD PIN asserted before patching, anchor counts asserted exactly 2 and exactly 1, old fragments asserted gone, new fragments asserted present at the right multiplicity, no-op refused. Raise-or-nothing. The 44KB body was never hand-transcribed.
+
+### R22 -- the ruled one, and it is exact
+
+**2,679 lines across all 20 desks, before vs after. ZERO rows differing in EITHER direction.** Packs 4,161 = 4,161. Value **R1,180,357.11 = R1,180,357.11, delta R0.00**, and R0.00 on each of the 20 desks individually. Promo-active lines 730 = 730.
+
+**Both repoints were proven neutral BEFORE they were made, not after:**
+- ENG-142: 1,095 dates (2025-01-01 → 2027-12-31) against the exact inline expression -- 1,095 agree, 0 disagree.
+- ENG-147: the one home vs a replication of the inline logic across all 20 desks -- **23,583 rows both sides, 0 differences either direction.**
+
+**One divergence found and it is a store #6 case, not a live one:** the one home `CROSS JOIN LATERAL`s `supplier_calendar` with no fallback, while the recipe applies `COALESCE(v_dows, ARRAY[1..7])` and `COALESCE(v_buyin_lead_days, 7)`. For a route with no calendar row the recipe treats every day as a delivery day and the one home returns nothing. Measured: 0 NULL dows, 0 NULL buyin leads, all buyin = 7 across 20 routes -- so nothing moves today, but the one home is the weaker of the two for a fresh store (§0h). Named, not fixed.
+
+### 🔴 Condition 4's second half FAILED, and the reason is structural, not effort
+
+`sql/create_rpc_bloom_order_recipe.sql` is **still rotted.** It was NOT regenerated, and it was not for want of trying.
+
+**The 2026-08-19 close plan is unreachable, which is new and worth more than the file.** That plan said the debt closes on the next recipe-touching ship because CC would by then have authored the full new body as text. **Today WAS that ship and the plan did not work, for a reason that recurs every time:** PRE-FLIGHT forbids hand-transcribing a 44KB body into a migration, so the pass was applied by asserted `replace()` on the live body -- which is the correct, safer method for the DATABASE, and which structurally means **CC never holds the full text.** The method that protects the live function is the method that cannot produce the file.
+
+**And transcription is not merely tedious, it is unsafe -- now measured rather than asserted.** The live body contains **exactly 13 backslashes**, counted at source. They sit in `LIKE 'DIRECT\_%' ESCAPE '\'` clauses on the route branch. The channel carrying the body to a seat re-escapes backslashes ambiguously: two displayed lines alone imply eight, against a true whole-body total of thirteen. A wrong count yields a file that **looks right, applies cleanly, and silently changes LIKE-pattern semantics on the DC/DIRECT split of the money function.** A known-rotted file is safer than a quietly-wrong one, so nothing was written and the banner was re-stamped with the new pin and this finding.
+
+**⭐ THE FIX IS A CHANNEL, NOT A DISCIPLINE, and it closes this for every object rather than just this one:** a service_role-scoped dump (`npm run dump-sql <proname>` writing `pg_get_functiondef` straight to `sql/`), or a paste from the Supabase SQL editor -- browser to file, no lossy hop. `.env.local` correctly carries only the anon key, so **this needs Pieter's word on where a service key lives.** Until then the debt cannot be closed by effort, and no amount of care by a future seat will change that.
+
+---
+
 ## 2026-08-30 (night) -- THE A3 RECIPE GATE EVALUATED. It does NOT open tonight, and the queue behind it is TWO items, not six.
 
 **Clock:** written 2026-08-30 20:1x SAST (device local `20:13:43` / UTC `18:13:43`, +2), re-read at the moment of writing.
