@@ -6,6 +6,67 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-08-30 -- ENG-112 both sites (database, no deploy) + EIGHT `sql/` sources brought onto `main` and hash-gated. THE SOURCE-PARITY DEBT, CLOSED.
+
+**Clock, cross-checked three ways before anything was stamped** (canon SS17, the 07-23/07-26 contamination): device local `2026-08-30 18:27:52 +02:00`, device UTC `16:27:52`, database `now()` SAST `18:28:05` / UTC `16:28:05`. All three agree on the +2 offset and on the wall clock within 13 seconds. This session has crossed **three midnights**, so the clock was re-read at the moment of writing rather than carried from the session start -- a start-of-session reading quoted hours later is the exact defect that mis-stamped two config keys on 2026-07-27.
+
+**PUSHED TO PRODUCTION:** **`97d525d`** (seven `sql/` sources) and **`a107c82`** (the eighth, ENG-115's nightly chain). `main` = `origin/main` = **`a107c82`**, zero unpushed, verified after the push.
+**DATABASE-SIDE, NO DEPLOY:** ENG-112 at both sites, live on apply -- it lands in objects the desk already reads.
+
+**Recipe pin `48bdc629c142f68e7342e3ae15444ab8` verified UNMOVED throughout.** Nothing here touched `rpc_bloom_order_recipe`.
+
+---
+
+### ENG-112 -- the benchmark stops drifting under the artefact it judges (database, no commit)
+
+Two live sites carried the retired `CURRENT_DATE - 28` window, not one. The row named `rpc_bloom_scenario_overview`; building ENG-106 leg (b) found the second, **`rpc_bloom_stock_state`, whose `weekly_demand_dept` IS the basis-B route benchmark computed inline**. Both now READ the one home, `rpc_bloom_route_benchmark`, watermark-anchored per ORDERING-CANON v1.13 SSD6.1 clause 2. Migrations `eng112_repoint_stock_state_to_one_home_watermark` and `eng112_repoint_scenario_overview_to_one_home`, both by asserted `replace()` on the live bodies.
+
+**R22, site 1 -- a number on the buyer's screen today.** `weekly_demand_dept` before -> after: **10116 733,844.15 -> 767,786.01 - 80175 354,000.58 -> 370,518.10 - 21355 175,015.08 -> 177,301.49 - 80176 164,837.73 -> 167,575.46 - 80579 127,248.80 -> 129,505.70**, every one now equal to the one home to the cent.
+
+**The movement was DECOMPOSED before shipping, and it is 100% anchor.** The one home at the OLD anchor reproduces each displayed figure EXACTLY (delta R0.00 on all five), so the dept-source difference between `l2_stock_position.department_nr` and `sigma_articles.department_nr` is worth NOTHING and every rand of the move is the ruled anchor change. **I had told Pieter this would be about 3%; the real range is 1.31% to 4.67%.** Decomposing it is what turned a plausible number into a measured one.
+
+**The consequence is worth stating plainly rather than burying in the delta: `stock_days` came DOWN on every desk** (10116 CORE 36.3 -> 34.6, 80175 KVI 14.8 -> 14.0). The old anchor understated demand and therefore **OVERSTATED cover -- every desk read better covered than it actually was.**
+
+**Site 2, the card:** `demonstrated_weekly_demand` equals the one home to the cent on all five desks, **and ENG-104's circularity is proven dead** -- requesting one scenario instead of all four now returns an IDENTICAL benchmark (narrow minus wide = R0.00 x5), where the old `full_products` basis shrank it. Measured at 2.9x at 80175 before; structurally impossible now, not merely corrected.
+
+**NAMED RESIDUAL, deliberate and asserted at exactly one site in the migration:** the DIRECT-desk fallback keeps its `CURRENT_DATE` basis. SSD6.1 rules the cycle-dept basis for **DC routes only**, so a direct desk keeps its existing basis rather than inheriting one canon has not ruled. Written down, not hidden. **The overview card stays HELD on ENG-111** (`cash_constrained`), the last of the three SSD6.1 conditions and still unbuilt.
+
+---
+
+### A4 + ENG-115 -- eight `sql/` sources now match live, proven, not asserted (`97d525d`, `a107c82`)
+
+SB-PRIORITY v1.4 test 1: **a live database object whose code is not on `main` is an open incident from the moment it ships.** Eight were open. Eight are closed.
+
+**Four had NO SOURCE AT ALL** and were generated from live: `create_rpc_bloom_route_benchmark.sql`, `create_rpc_bloom_promo_for_delivery.sql`, `create_refresh_l2_on_order.sql`, `create_refresh_bloom_order_cache.sql`.
+
+**Four had files that had DIVERGED** and were replaced wholesale, never hand-reconciled -- ENG-115's own class rule, *a `sql/` file that was not generated from live can never be hash-gated, only replaced*: `create_rpc_bloom_stock_state.sql`, `create_rpc_bloom_scenario_overview.sql`, `create_refresh_l2_population_verdict.sql`, `create_refresh_l2_pipeline.sql`.
+
+**THE GATE, both sides, same pass.** File body awk-extracted, all whitespace stripped, md5 -- against `md5(regexp_replace(pg_get_functiondef(oid),'\s','','g'))` in the database. All eight identical:
+
+| file | gate |
+|---|---|
+| `create_rpc_bloom_route_benchmark.sql` | `b8ea363e3b2401b1f95f7e0e30e3fed9` |
+| `create_rpc_bloom_promo_for_delivery.sql` | `8d637c68165820092e5091941b36a4c7` |
+| `create_refresh_l2_on_order.sql` | `c822885626e577e597b0eb9ff9af79c8` |
+| `create_refresh_bloom_order_cache.sql` | `e6d98ca2b5de3bbe009a3aebc6a915a0` |
+| `create_rpc_bloom_stock_state.sql` | `22bfde3522e47a3e3726d2afe6113e77` |
+| `create_rpc_bloom_scenario_overview.sql` | `c1a3292cd85ab21c7893dec668e62c10` |
+| `create_refresh_l2_population_verdict.sql` | `a7542b6ed27200d5794ac1239e699743` |
+| `create_refresh_l2_pipeline.sql` | `06b5b19039e2c9e26c8c036c7ba10654` |
+
+**`create_refresh_l2_pipeline.sql` was the dangerous one and is why ENG-115 was not merely tidy-up.** It was missing three refresh legs that run live nightly -- `refresh_l2_product_resolution`, `refresh_l2_family_ros` and `refresh_l2_population_verdict` -- so applying it would have **silently dropped all three from the chain and left `l2_population_verdict` stale while still reading as populated.** It had carried a `DO NOT APPLY` banner since 2026-08-24; the banner is discharged because the file **is** live, not because someone re-read it and felt better.
+
+**Two findings from the pass itself, both worth more than the files.**
+
+**1. The gate had to be fixed before it was worth running.** The first extractor -- a `sed` range anchored on a line containing only the dollar-quote terminator -- did not match `END` followed by that terminator on ONE line, so it silently swallowed the GRANT block and **failed a file that was already correct** (6,090 normalised chars against live's 5,571). **A gate that fails on the instrument rather than the artefact is worse than no gate:** it spends the seat rewriting a right answer, and it would just as happily have passed a wrong one for the same reason. Replaced with an `awk` extractor that terminates on the real line.
+
+**2. A sentinel proves nothing except against the same sentinel.** The pipeline's 2026-08-24 stamp is a **raw** md5; the gate is a **whitespace-stripped** one. Compared directly they differ, and that difference looks exactly like drift on a body of **identical length** -- the precise shape Standing Constraint 1 warns about, arriving from the opposite direction. Verified properly, the live body **has not moved since the stamp** (`9ed5f5bce31dac2ecd283d1ad7a81ada`, 13,304 chars); only the file was stale. I nearly reported a phantom regression on it.
+
+**RESIDUALS NAMED IN THE FILE HEADERS, not fixed in passing** -- each is its own ship with its own R22, never a rider on a source-parity commit:
+- `refresh_l2_pipeline` is SECURITY DEFINER with **no `SET search_path`**, alone among these eight. A real advisory.
+- `refresh_l2_pipeline`'s consignment leg is **hardcoded to `'10116'`**, and `refresh_l2_population_verdict` reproduces the recipe's **`supplier_nr = 1339`** link pick. Both are store literals inside general canon (SS0h). The 1339 one is deliberate -- the fact must describe the order the buyer actually sees -- and clears when the recipe next opens under the A3 gate (SSH8).
+- `rpc_bloom_stock_state` keeps the DIRECT-desk `CURRENT_DATE` fallback described above.
+
 ## 2026-08-27 -- ENG-124 (frontend), ENG-148 and ENG-106 legs (a)+(b) (database, no deploy). THE ORDERING BACKLOG UNDER PIETER'S ORDERING-ONLY RE-CUT.
 
 **Clock, and the gap is itself the finding.** The three ships below all happened **2026-08-27**. This entry is written **2026-08-30 11:3x SAST** (device local `11:36:41` / UTC `09:36:41`, +2). The session stayed open across **three midnights**, so every date in the entry is the date the WORK happened, not the date of the write. **Three live ships stood for three days with no deploy-log entry, which is SB-PRIORITY v1.4's no-divergence test failing quietly — the exact class CC had been catching in other seats' work the same week.** Logged as a lapse, not tidied away. Pieter ruled it first in the queue: *"three live ships without entries is the no-divergence test failing quietly."*
