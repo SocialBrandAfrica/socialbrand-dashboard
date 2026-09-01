@@ -29,13 +29,34 @@
 -- path, not dead code.
 --
 -- ---------------------------------------------------------------------------
--- THE EXPOSURE IS TWICE WHAT THE BUG-LOG ROW RECORDS
+-- THE EXPOSURE -- CORRECTED 2026-09-01 ON PM'S CATCH. MY FIRST FIGURE USED THE
+-- WRONG POPULATION AND OVERSTATED IT.
 -- ---------------------------------------------------------------------------
--- ENG-093 records 10116 DC_AMBIENT at 1,065 lines, so 65 dropped. Measured from
--- bloom_order_cache 2026-09-01: that desk now returns **2,071 lines**, so a
--- truncated read drops **1,071**. The SB-CC-BLOOM-026 5(b2) hidden-line append
--- roughly doubled the sheet and doubled this exposure with it. The row's figure
--- is not wrong, it is stale, and it understates by 16x.
+-- RETIRED (R28, retired_on 2026-09-01, superseded_by this block): "that desk now
+-- returns 2,071 lines, so a truncated read drops 1,071." That used
+-- bloom_order_cache.line_count, which is the CACHE total -- recipe rows PLUS the
+-- 5(b2) hidden rows the cache appends AFTER the recipe returns. The recipe never
+-- returns those, so they cannot be truncated. Counting them was a population
+-- error in the headline of a sweep whose whole point is stating populations.
+--
+-- THE RIGHT COLUMN IS ordered_line_count -- the recipe's own output. Measured
+-- across the build history of 10116 DC_AMBIENT, the desk that proved the cap:
+--
+--   built 2026-08-20  delivery 08-22   1,848 rows   -> 848 DROPPED
+--                     (pre-5(b2); line_count IS the recipe count on that build)
+--   built 2026-08-25  delivery 08-27     723 rows   -> under
+--   built 2026-08-27  delivery 08-29   1,563 rows   -> 563 DROPPED
+--   built 2026-08-31  delivery 09-03     799 rows   -> under
+--
+-- SO THE DEFECT IS INTERMITTENT, NOT CONSTANT, AND THAT IS WORSE FOR A WALK
+-- THAN A PERMANENT BREAK: the screen is correct on most days and silently short
+-- on the heavy ones, so checking it on a light day proves nothing. The buyer
+-- cannot tell the two apart, because a truncated read renders as a complete
+-- order.
+--
+-- ENG-093's own recorded figure (1,065 lines, 65 dropped) was true on
+-- 2026-08-16 and is neither wrong nor the current worst. The worst MEASURED is
+-- 848 lines on the 08-20 build.
 --
 -- ---------------------------------------------------------------------------
 -- THE SWEEP RESULT (R30 addendum 3 -- a population with its denominator)
@@ -45,7 +66,11 @@
 -- (supabase .rpc(, a local helper building a REST path, and a raw rest/v1/rpc/
 -- URL) -- a .rpc( grep alone misses all nine readers in public/toolkit.html.
 --
---   OVER THE CAP AND UNPAGINATED ......... 1 site, this one. 2,071 vs 1,000.
+--   OVER THE CAP AND UNPAGINATED ......... 1 site, this one. Intermittently:
+--                                          1,848 rows on the 08-20 build, 1,563
+--                                          on 08-29, 799 today. Recipe rows
+--                                          (ordered_line_count), NOT the cache
+--                                          total -- see the corrected block above.
 --   STRUCTURALLY SAFE ALREADY (jsonb) .... 3 sites: rpc_bloom_order_cached,
 --                                          rpc_stock_report_engine_json,
 --                                          rpc_report_rows.
@@ -172,9 +197,22 @@ COMMENT ON FUNCTION public.rpc_bloom_order_recipe_json(text,date,date,date,text,
 --
 --    EXPECT: identical row count and identical value to the cent, both ways.
 --
--- 2. THE CAP IS BEATEN ON THE DESK THAT PROVED IT. 10116 DC_AMBIENT:
---    EXPECT line_count = served = the full figure (2,071 at the 2026-08-31
---    cache build), never 1,000. Re-count at run time -- it moves nightly.
+-- 2. THE CAP IS BEATEN -- BUT ONLY A BUILD OVER THE CAP CAN PROVE IT, AND
+--    TODAY'S IS NOT (corrected 2026-09-01, PM's catch; the first wording of this
+--    check compared against line_count and could not have failed honestly).
+--    The recipe's own row count is ordered_line_count, not line_count. 10116
+--    DC_AMBIENT reads 799 today and read 1,563 on the 08-29 build, so the desk
+--    crosses the cap intermittently.
+--    THE CHECK: run it on a build whose ordered_line_count EXCEEDS 1,000 and
+--    confirm line_count = served = the full figure, never 1,000. Running it on a
+--    sub-1,000 build proves the function works and proves NOTHING about the cap.
+--    Find a qualifying desk first:
+--      SELECT store_code, route_key, delivery_date, ordered_line_count
+--      FROM bloom_order_cache WHERE ordered_line_count > 1000
+--      ORDER BY generated_at DESC;
+--    If none is current, the honest report is "not reproducible today", never a
+--    pass. THE FRONTEND REPOINT AND PIETER'S R31 WALK BOTH WAIT FOR THIS -- a
+--    walk on a light day would show a correct screen and settle nothing.
 --
 -- 3. GRANTS. EXPECT no PUBLIC entry in the acl, anon and authenticated true:
 --    SELECT has_function_privilege('anon','public.rpc_bloom_order_recipe_json(text,date,date,date,text,numeric,boolean,text)','EXECUTE');
