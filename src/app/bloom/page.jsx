@@ -564,9 +564,11 @@ function useBloomDesks() {
   }
 }
 
-function monthStartIso(d = new Date()) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
-}
+// monthStartIso() was retired by BLOOM-029 item 7. Its one caller resolved the
+// DIRECT_BEER ledger month from THIS BROWSER's clock; the month now comes from
+// the store's own local date inside rpc_bloom_budget_context (ENG-117 -- the
+// browser's clock is not the store's clock, and this database's TimeZone is UTC,
+// so neither the browser nor CURRENT_DATE was reliably right).
 
 function DeskRow({ line, qty, isEdited, onQty }) {
   const value = (qty ?? 0) * (Number(line.pack_cost) || 0)
@@ -655,10 +657,15 @@ function DeskMode() {
   useEffect(() => {
     if (!store) return
     let cancelled = false
-    supabase.from('order_budget_ledger').select('*')
-      .eq('store_code', store).eq('route_key', 'DIRECT_BEER').eq('year_month', monthStartIso())
-      .maybeSingle()
-      .then(({ data, error: err }) => { if (!cancelled) { setBudgetRow(err ? null : data); } })
+    // BLOOM-029 item 7 -- published interface, never the base table (R30 §1).
+    // The month is resolved from the STORE's own local date inside the RPC
+    // (ENG-117), not from this browser's clock as monthStartIso() did.
+    supabase.rpc('rpc_bloom_budget_context', {
+      p_store_code: store, p_desk: 'DIRECT_BEER', p_delivery_date: null,
+    })
+      .then(({ data, error: err }) => {
+        if (!cancelled) setBudgetRow(err ? null : (data?.direct_beer_row ?? null))
+      })
     supabase.rpc('rpc_bloom_direct_beer_flags', { p_store_code: store })
       .then(({ data, error: err }) => { if (!cancelled) setFlags(err ? [] : (data ?? [])) })
     setGenerated(false); setLines([]); setQty({}); setEdited({})
@@ -1180,10 +1187,18 @@ function RecipeMode({ stores }) {
   useEffect(() => {
     if (!storeCode) return
     let cancelled = false
-    supabase.from('order_budget_ledger').select('*')
-      .eq('store_code', storeCode).eq('route_key', 'DC')
-      .order('year_month', { ascending: false }).limit(1).maybeSingle()
-      .then(({ data, error: err }) => { if (!cancelled) setBudgetRow(err ? null : data) })
+    // BLOOM-029 item 7 -- published interface (R30 §1). p_delivery_date null
+    // reproduces this read's own "latest DC row" semantics exactly.
+    // RecipeMode has been UNREACHABLE since UX-003 (the nav offers `desks` and
+    // `desk` only, brief F2 corrected), so this repoint moves no rendered
+    // figure. It is done anyway: a base-table read left in the file is a
+    // breakage waiting for the next grant change, reachable or not.
+    supabase.rpc('rpc_bloom_budget_context', {
+      p_store_code: storeCode, p_desk: 'DC_AMBIENT', p_delivery_date: null,
+    })
+      .then(({ data, error: err }) => {
+        if (!cancelled) setBudgetRow(err ? null : (data?.desk_row ?? null))
+      })
     return () => { cancelled = true }
   }, [storeCode])
 
@@ -1477,6 +1492,15 @@ function DeskOrderRow({ line, qty, isEdited, onQty }) {
         {line.pack_content && (
           <span style={{ marginLeft: 5, color: 'var(--veld-mist)' }}>{line.pack_content}</span>
         )}
+        {/* BLOOM-029 item 8 -- provenance on sight. `line_kind` answers WHERE THE
+            ROW CAME FROM and nothing else (PROJECT-LEXICON §B). A manual line is
+            on the sheet because the BUYER put it there, so it says so: nobody
+            should later read it as an engine recommendation. */}
+        {line.line_kind === 'manual' && (
+          <span title="Added by hand from the pool search. The engine did not suggest this line and computed no quantity for it — the number in the box is yours."
+            style={{ marginLeft: 6, fontSize: 9, color: 'var(--data-warn)', border: '1px solid var(--data-warn)',
+              borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>MANUAL</span>
+        )}
         {line.count_first && (
           <span title={line.band_blocked_reason
             ? `Count first — ${line.band_blocked_reason}`
@@ -1636,6 +1660,19 @@ function OrderDesksMode() {
   // its placement deadline. Read from the engine, never derived here.
   const [incomeWindow, setIncomeWindow] = useState(null)
   const fileInputRef = useRef(null)
+  // ⭐ BLOOM-029 item 8 -- SEARCH THE POOL AND ADD A LINE BY HAND.
+  // Pieter, 01-09: he hunted four products on this screen and found none.
+  // Measured (brief F10): at 10116 DC_AMBIENT the pool is 12,869 lines and the
+  // sheet is 1,688, so 11,181 pool lines are unreachable from here. The engine
+  // is right to leave most of them off an order; it is not right that the buyer
+  // cannot look one up. The search runs over the POOL (l2_population_verdict via
+  // rpc_bloom_pool_search), never over `lines` -- searching the sheet would
+  // reproduce the very defect it exists to cure.
+  const [poolQuery, setPoolQuery] = useState('')
+  const [poolResult, setPoolResult] = useState(null)
+  const [poolSearching, setPoolSearching] = useState(false)
+  const [poolError, setPoolError] = useState(null)
+  const [poolOpen, setPoolOpen] = useState(false)
 
   const desks = storeDesks[storeCode] || []
 
@@ -1675,9 +1712,15 @@ function OrderDesksMode() {
     // l2_sales_budget's grain, not the ledger's). Published interface, SELECT
     // granted -- the surface reads the engine's own measurement, never derives it.
     setRailCoverage(null)
-    supabase.from('l2_sales_budget').select('products_in_pool, products_with_ly_history, budget_week_start')
-      .eq('store_code', storeCode).eq('route_key', desk).order('budget_week_start', { ascending: true }).limit(1).maybeSingle()
-      .then(({ data }) => { if (!cancelled) setRailCoverage(data ?? null) })
+    // BLOOM-029 item 7 -- the rail comes off the published interface now, not a
+    // direct l2_sales_budget read (R30 §1). Same grain (per DESK), same row
+    // (earliest budget week), same three fields.
+    supabase.rpc('rpc_bloom_budget_context', {
+      p_store_code: storeCode, p_desk: desk, p_delivery_date: null,
+    })
+      .then(({ data, error: err }) => {
+        if (!cancelled) setRailCoverage(err ? null : (data?.rail ?? null))
+      })
     setGenerated(false); setLines([]); setQty({}); setEdited({}); setSubmitted(false)
     return () => { cancelled = true }
   }, [storeCode, desk])
@@ -1701,22 +1744,30 @@ function OrderDesksMode() {
   useEffect(() => {
     if (!storeCode || !desk || !deliveryDate) { setBudgetRow(null); setAllBudgetRow(null); return }
     let cancelled = false
-    // SB-CC-BLOOM-009: DIRECT_<brand> desks share the generic 'DIRECT' weekly
-    // ledger row (mirrors rpc_bloom_order_recipe's own v_ledger_route CASE --
-    // must stay in lockstep with it, R21).
-    const ledgerRoute = desk === 'DIRECT_BEER' ? 'DIRECT_BEER' : desk.startsWith('DIRECT_') ? 'DIRECT' : 'DC'
-    supabase.from('order_budget_ledger').select('*')
-      .eq('store_code', storeCode).eq('route_key', ledgerRoute)
-      .lte('year_month', deliveryDate)
-      .order('year_month', { ascending: false }).limit(1).maybeSingle()
-      .then(({ data }) => { if (!cancelled) setBudgetRow(data ?? null) })
-    // Same defect, same fix (PM flagged it in the same breath) -- the group 'ALL'
-    // row was also taking the furthest-out period.
-    supabase.from('order_budget_ledger').select('*')
-      .eq('store_code', storeCode).eq('route_key', 'ALL')
-      .lte('year_month', deliveryDate)
-      .order('year_month', { ascending: false }).limit(1).maybeSingle()
-      .then(({ data }) => { if (!cancelled) setAllBudgetRow(data ?? null) })
+    // ⭐ BLOOM-029 item 7 -- ONE published call replaces TWO base-table reads AND
+    // retires the duplicated desk->ledger-route CASE that used to sit here:
+    //
+    //   const ledgerRoute = desk === 'DIRECT_BEER' ? 'DIRECT_BEER'
+    //                     : desk.startsWith('DIRECT_') ? 'DIRECT' : 'DC'
+    //
+    // Its own comment said it "must stay in lockstep with" rpc_bloom_order_recipe's
+    // v_ledger_route CASE. A rule documented as needing to stay in lockstep is a
+    // rule with two homes (R30 addendum 3). The expression now lives once, in
+    // rpc_bloom_budget_context, lifted verbatim from the recipe.
+    //
+    // ENG-055 is preserved exactly: passing the delivery date makes the RPC take
+    // the newest ledger row AT OR BEFORE it -- the delivery week's row -- never
+    // the furthest-out week. The RPC returns `desk_row_basis` so the surface can
+    // say which week it is showing rather than presenting a fallback as exact.
+    supabase.rpc('rpc_bloom_budget_context', {
+      p_store_code: storeCode, p_desk: desk, p_delivery_date: deliveryDate,
+    })
+      .then(({ data, error: err }) => {
+        if (cancelled) return
+        if (err) { setBudgetRow(null); setAllBudgetRow(null); return }
+        setBudgetRow(data?.desk_row ?? null)
+        setAllBudgetRow(data?.all_row ?? null)
+      })
     return () => { cancelled = true }
   }, [storeCode, desk, deliveryDate])
 
@@ -2061,6 +2112,76 @@ function OrderDesksMode() {
   function onQty(code, v) {
     setQty(q => ({ ...q, [code]: v }))
     setEdited(e => ({ ...e, [code]: true }))
+  }
+
+  // ⭐ BLOOM-029 item 8(a) -- search the desk's POOL.
+  async function runPoolSearch(e) {
+    if (e) e.preventDefault()
+    const q = poolQuery.trim()
+    setPoolError(null)
+    if (q.length < 2) { setPoolResult(null); setPoolError('Type at least two characters.'); return }
+    setPoolSearching(true); setPoolOpen(true)
+    const { data, error: err } = await supabase.rpc('rpc_bloom_pool_search', {
+      p_store_code: storeCode, p_route: desk, p_query: q, p_limit: 50,
+    })
+    setPoolSearching(false)
+    if (err) { setPoolError(err.message); setPoolResult(null); return }
+    setPoolResult(data ?? null)
+  }
+
+  // ⭐ BLOOM-029 item 8(b) -- ADD A POOL LINE TO THE SHEET BY HAND.
+  // `line_kind = 'manual'` is the third value beside 'ordered' and 'hidden'
+  // (PROJECT-LEXICON §B). It answers PROVENANCE and nothing else: this row is
+  // here because the BUYER put it here, not because the engine returned it.
+  //
+  // The line lands at quantity 0 and the buyer types the packs. Nothing is
+  // persisted server-side -- orders persistence is BLOOM-015 and is out of this
+  // sprint (§4) -- so it rides the EXISTING export path exactly as an edited
+  // hidden line does today (ENG-159: the export is the placement path).
+  //
+  // Fields are mapped to the shape the sheet and exportCsv already read, so no
+  // renderer and no exporter needed a branch for it. Anything the engine did not
+  // compute for this line (need_units, suggested_packs, projected demand) stays
+  // 0/absent rather than being invented -- a manual line carries the buyer's
+  // number, never a manufactured recommendation (R21 §5, R29).
+  function addManualLine(hit) {
+    const code = hit.product_code
+    if (lines.some(l => String(l.product_code) === String(code))) {
+      setPoolError(`${hit.description ?? code} is already on the sheet.`)
+      return
+    }
+    const packSize = hit.chosen_pack_size ?? null
+    const manual = {
+      product_code: code,
+      ean: hit.ean ?? null,
+      description: hit.description ?? '',
+      dept_name: hit.dept_name ?? null,
+      tier: hit.tier ?? null,
+      kvi_band: hit.kvi_band ?? null,
+      range_state: hit.range_state ?? null,
+      pack_size: packSize,
+      pack_cost: hit.chosen_pack_cost ?? 0,
+      soh: hit.soh ?? 0,
+      projected_soh: hit.soh ?? 0,
+      // the pool's own published 56-day rate, so the row sorts and exports on the
+      // same measure every other line uses -- not a second definition of demand
+      rhythm_adjusted_demand: hit.rate_published_56d ?? 0,
+      need_units: 0,
+      normal_packs: 0,
+      geared_packs: null,
+      suggested_packs: 0,
+      value: 0,
+      promo_active: false,
+      count_first: false,
+      line_kind: 'manual',
+      story: `Added by hand from the pool search. Population state: ${hit.population_state ?? 'unknown'}.`
+             + (hit.state_reason ? ` ${hit.state_reason}` : '')
+             + (hit.chosen_is_zero_cost ? ' WARNING: this line is priced off a zero-cost link, so it will export at R0.' : ''),
+    }
+    setLines(ls => [manual, ...ls])
+    setQty(q => ({ ...q, [code]: 0 }))
+    setEdited(e2 => ({ ...e2, [code]: true }))
+    setPoolError(null)
   }
 
   const total = useMemo(() => lines.reduce((s, l) => s + (qty[l.product_code] ?? 0) * (Number(l.pack_cost) || 0), 0), [lines, qty])
@@ -3116,6 +3237,118 @@ function OrderDesksMode() {
             <div style={{ flex: 1 }} />
             <SegmentedControl size="sm" value={filter} onChange={setFilter}
               options={[{ value: 'all', label: `All ${lines.length}` }, { value: 'promo', label: `Promo ${promoCount}` }]} />
+          </div>
+
+          {/* ⭐ BLOOM-029 item 8 -- SEARCH THE POOL, ADD BY HAND.
+              The sheet reaches ~13% of the desk's pool (brief F10). This searches
+              the POOL, so a product the engine did not suggest is findable and
+              orderable without leaving the screen. */}
+          <div style={{ padding: '10px 24px', borderBottom: '1px solid var(--hairline)' }}>
+            <form onSubmit={runPoolSearch} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Label style={{ color: 'var(--veld-mist)' }}>Not on the sheet?</Label>
+              <input
+                value={poolQuery}
+                onChange={ev => setPoolQuery(ev.target.value)}
+                placeholder="Product code, barcode or description"
+                style={{
+                  flex: '1 1 260px', minWidth: 200, padding: '6px 10px', fontSize: 12,
+                  fontFamily: 'var(--font-mono)', color: 'var(--daisy-white)',
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid var(--glass-border)',
+                  borderRadius: 'var(--radius-pill)', outline: 'none',
+                }} />
+              <button type="submit" disabled={poolSearching}
+                style={{
+                  padding: '6px 14px', fontSize: 11, fontFamily: 'var(--font-mono)',
+                  letterSpacing: '0.06em', textTransform: 'uppercase',
+                  color: 'var(--daisy-white)', background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-pill)',
+                  cursor: poolSearching ? 'default' : 'pointer', opacity: poolSearching ? 0.5 : 1,
+                }}>{poolSearching ? 'Searching…' : 'Search pool'}</button>
+              {poolOpen && (
+                <button type="button" onClick={() => { setPoolOpen(false); setPoolResult(null); setPoolError(null) }}
+                  style={{
+                    padding: '6px 10px', fontSize: 11, fontFamily: 'var(--font-mono)',
+                    color: 'var(--veld-mist)', background: 'transparent',
+                    border: '1px solid var(--hairline)', borderRadius: 'var(--radius-pill)', cursor: 'pointer',
+                  }}>Close</button>
+              )}
+            </form>
+
+            {poolError && (
+              <div style={{ marginTop: 8, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--data-neg)' }}>
+                {poolError}
+              </div>
+            )}
+
+            {poolOpen && poolResult && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--veld-mist)', marginBottom: 6 }}>
+                  {/* R22 tripwire on the surface: matched is the population, returned is what came back */}
+                  {poolResult.matched} match{poolResult.matched === 1 ? '' : 'es'} in the {desk} pool
+                  {poolResult.truncated && ` · showing the first ${poolResult.returned}, narrow the search to see the rest`}
+                  {poolResult.sheet?.generated_at && ` · sheet built ${new Date(poolResult.sheet.generated_at).toLocaleString()}`}
+                </div>
+
+                {poolResult.message && (
+                  <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--veld-mist)', marginBottom: 6 }}>
+                    {poolResult.message}
+                  </div>
+                )}
+
+                <div style={{ maxHeight: '30vh', overflow: 'auto' }}>
+                  {(poolResult.results ?? []).map(r => (
+                    <div key={r.product_code} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0',
+                      borderBottom: '1px solid var(--hairline)', fontSize: 12,
+                      fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                    }}>
+                      <span style={{ color: 'var(--veld-mist)', width: 72 }}>{r.product_code}</span>
+                      <span style={{ flex: 1, color: 'var(--daisy-white)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                        title={[r.state_reason, r.match_basis && `matched on ${r.match_basis}`].filter(Boolean).join('\n')}>
+                        {r.description}
+                        {!r.passes_life_gate && (
+                          <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--veld-mist)', border: '1px solid var(--hairline)',
+                            borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>NO LIFE GATE</span>
+                        )}
+                        {r.chosen_is_zero_cost && (
+                          <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--data-neg)', border: '1px solid var(--data-neg)',
+                            borderRadius: 'var(--radius-pill)', padding: '1px 6px' }}>R0 COST</span>
+                        )}
+                      </span>
+                      <span style={{ color: 'var(--veld-mist)', width: 62, textAlign: 'right' }} title="SOH">{r.soh ?? '—'}</span>
+                      <span style={{ color: 'var(--veld-mist)', width: 62, textAlign: 'right' }} title="published 56-day rate">
+                        {r.rate_published_56d == null ? '—' : Number(r.rate_published_56d).toFixed(2)}
+                      </span>
+                      <span style={{ color: 'var(--veld-mist)', width: 46, textAlign: 'right' }} title="pack size">{r.chosen_pack_size ?? '—'}</span>
+                      {r.on_sheet ? (
+                        <span style={{ width: 92, textAlign: 'right', fontSize: 10, color: 'var(--veld-mist)' }}>on the sheet</span>
+                      ) : r.cache_line_kind === 'covered' ? (
+                        <span style={{ width: 92, textAlign: 'right', fontSize: 10, color: 'var(--veld-mist)' }}
+                          title="The engine computed this line and deliberately did not order it — stock is already covered or coming.">covered</span>
+                      ) : (
+                        <button type="button" onClick={() => addManualLine(r)}
+                          style={{
+                            width: 92, padding: '4px 8px', fontSize: 10, fontFamily: 'var(--font-mono)',
+                            letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--daisy-white)',
+                            background: 'rgba(255,255,255,0.06)', border: '1px solid var(--glass-border)',
+                            borderRadius: 'var(--radius-pill)', cursor: 'pointer',
+                          }}>Add</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* R21 §5 -- an exclusion is earned and SURFACED. A hit that lives
+                    on another desk is named with the desk that carries it, never
+                    silently dropped into an empty result. */}
+                {(poolResult.out_of_scope ?? []).length > 0 && (
+                  <div style={{ marginTop: 8, fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--veld-mist)' }}>
+                    Also at this store, on another desk:{' '}
+                    {(poolResult.out_of_scope ?? []).map(o => `${o.description} (${o.on_route})`).join(' · ')}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div style={{ maxHeight: '52vh', overflow: 'auto' }}>
