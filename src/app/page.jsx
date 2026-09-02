@@ -2207,12 +2207,29 @@ export default function Home() {
   // (ean, store_code) rather than ean alone, because `mv_rate_of_sale` is
   // documented to carry a real bridged EAN colliding with another product's
   // synthetic key at the same store — the store half keeps the override honest.
+  // ⚠ BUG-LOG ENG-168 -- A SHARED EAN IS NOT AN IDENTITY, SO NEVER GUESS ON ONE.
+  // 48 EANs carry TWO products each at the same store (37 at 10116, 96 products
+  // group-wide). A product with no bridge row takes the R20-addendum synthetic
+  // key `store + padded product_code`, which can equal another product's real
+  // bridged EAN -- e.g. 1011600000246 is BOTH product 246 DISPOSABLE MOP CAPS
+  // BLACK (soh 88, synthetic) and product 52649 SEEDED BUNS/ROLL (bridged).
+  //
+  // This map is keyed on (ean, store_code) because rpc_top20 returns no
+  // product_code, so true identity is not reachable here. Where the key appears
+  // TWICE the two rows are different products and there is no way to tell which
+  // one the Top 20 row is: the entry is DROPPED and the line falls back to its
+  // scan figure. A missing override is honest; showing one product's cover
+  // against another product's row is not.
   const familyCoverMap = useMemo(() => {
     const m = new Map()
+    const ambiguous = new Set()
     for (const r of familyCoverData) {
       if (r.family_days_cover == null) continue
-      m.set(`${r.ean}__${r.store_code}`, r)
+      const k = `${r.ean}__${r.store_code}`
+      if (m.has(k)) ambiguous.add(k)
+      else m.set(k, r)
     }
+    for (const k of ambiguous) m.delete(k)
     return m
   }, [familyCoverData])
 
