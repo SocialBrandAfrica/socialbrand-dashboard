@@ -6,6 +6,33 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-02 (afternoon) -- SB-CC-BLOOM-029: five more items to the DB, and a regression in my own morning ship caught before it reached the order sheet.
+
+**Clock, read fresh in this write's own pass and settled three ways at +2:** local `2026-09-02 18:00:17`, UTC `16:00:17`, database `now()` SAST `18:00:19` / UTC `16:00:19`.
+
+**DATABASE-SIDE, NO FRONTEND DEPLOY. Frontend sits on `claude/session-start-eb1972`, head `0d36167`, UNMERGED by ruling.** Migrations applied: `bloom029_item4_issuing_guard` · `bloom029_item4_covered_tag_excludes_other_keep_reasons` · `bloom029_item5_grant_compliance_summary_anon` · `bloom029_item2_hidden_demand_json_reader` · `bloom029_item6_availability_by_tier` · `eng102_cached_reader_withholds_covered_until_ui` · `eng102_covered_tag_never_steals_a_withheld_line`.
+
+### What shipped, with its gate
+
+- **Item 4, the issuing guard.** Random mode was capped PER DEPARTMENT, so with nobody typing anything it issued **690 lines at 80175 against a budget of 200** and **441 at 80176 against 70**. Now a store total. Explicit `p_n=500` still honoured; daily controls unmoved at **200/200/70/70/70**. Clause (a): two daily calls, one run row, second returns the same `run_id` with `already_issued`. PM re-ran both clauses across five stores inside a rolled-back transaction, zero rows leaked.
+- **Item 5, the pack grant.** `rpc_forge_compliance_summary` granted to anon after proving it read-only. Verified as anon: trend 40 rows, compliance 70 rows, `forge_integrity_history` still 0 (RLS, silent empty) and `forge_count_run` still denies outright. Two lock shapes, both still locked.
+- **Item 2 v1.2, `rpc_bloom_hidden_demand_json`.** Re-scoped after measurement: RecipeMode is unreachable and its call raises, so the risk lives on the hidden-sellers card, closest live reader to the 1,000-row cap at 557 of 1,000. R22 in one statement: served = line_count = array = SETOF, 557 at 10116 and 342 at 80175.
+- **Item 6, `v_bloom_availability_by_tier`.** Three F9 figures reproduced as anon to the line. Stamped `GRADE: CALCULATED`, and its COMMENT carries that it is a FLOOR on availability, not a measurement of it.
+
+### 🔴 The regression, and the lesson is the durable half
+
+**A DB-ONLY CHANGE CAN BREACH A FRONTEND GATE.** This morning's ENG-102 made the recipe retain covered lines. `rpc_bloom_order_cached` then served them to a frontend with no branch for `line_kind='covered'` — 120 unmarked zero-quantity rows at 80175, ~212 at 10116 — and it would have arrived **through tonight's job 26 with no merge at all**, so F11's "no frontend change before the three DC orders" could not have caught it. The export was never at risk (it filters `qty > 0`).
+
+Fixed by withholding them at the reader, tripwire preserved on two independent paths, `covered_withheld` surfaced. **Then a second one found while proving the first:** the covered tag was claiming 18 hidden sellers that previously showed the DROPPED badge, hiding them outright. `withheld_correction` now wins. Verified as anon: **80175 serves 859, identical to pre-ENG-102**, covered leaked 0, all 342 warned lines visible, four unrebuilt desks unaffected.
+
+### Named, not hidden
+
+- **`sql/create_bloom_order_cache.sql` is rotted far beyond today (ENG-166)** — zero occurrences of `line_kind`, counts block still `SET line_count=v_n`. It predates the §5(b2) ship of 2026-08-25 and ENG-106. Both live bodies carry zero backslashes, so regeneration is safe whenever scheduled.
+- **The no-divergence gate on items 4 and 5 IS closed:** both canonical sources hash-match live on body and full definition. Closing it also found a `REVOKE ... FROM anon` that would have silently undone item 5 on the next rebuild — a divergence living in a grant, which no code diff would show.
+- **18 lines lose the DROPPED badge** until ENG-162. PM ruled that acceptable for the order morning.
+
+---
+
 ## 2026-09-02 -- ENG-102 SHIPPED. The covered lines stay on the sheet, and not one rand moved.
 
 **Clock, read fresh in this write's own pass and settled three ways at +2:** device local `2026-09-02 11:08:11`, device UTC `09:08:11`, database `now()` SAST `11:08:20` / UTC `09:08:20`. The work and this entry are the same morning, no midnight crossed.
