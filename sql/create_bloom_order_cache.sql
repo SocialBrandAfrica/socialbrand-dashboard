@@ -91,27 +91,23 @@ CREATE POLICY bloom_order_cache_line_read ON public.bloom_order_cache_line FOR S
 GRANT SELECT ON public.bloom_order_cache, public.bloom_order_cache_line TO anon, authenticated;
 
 -- ---------- the WRITER (off the request thread; arms its own long timer) ----------
-CREATE OR REPLACE FUNCTION public.refresh_bloom_order_cache(
-  p_store_code    text,
-  p_route         text,
-  p_delivery_date date    DEFAULT NULL,
-  p_next_delivery date    DEFAULT NULL,
-  p_preset        text    DEFAULT NULL,
-  p_fit_to_budget boolean DEFAULT false,
-  p_source        text    DEFAULT 'nightly')
-RETURNS jsonb
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+CREATE OR REPLACE FUNCTION public.refresh_bloom_order_cache(p_store_code text, p_route text, p_delivery_date date DEFAULT NULL::date, p_next_delivery date DEFAULT NULL::date, p_preset text DEFAULT NULL::text, p_fit_to_budget boolean DEFAULT false, p_source text DEFAULT 'nightly'::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
 DECLARE
   v_del date; v_next date; v_cache_id bigint;
   v_t0 timestamptz; v_ms int; v_n int; v_md5 text; v_gen timestamptz;
+  v_flagged int; v_appended int; v_max_line int;
+  v_bm_anchor date; v_bm_weekly numeric;
 BEGIN
   SET LOCAL statement_timeout = '300s';
 
-  -- The desk almost always opens the NEXT SCHEDULED delivery, which the calendar
-  -- already knows (ORDERING-CANON SSA4). Resolve it rather than making a caller guess.
   IF p_delivery_date IS NULL OR p_next_delivery IS NULL THEN
     SELECT nd.delivery_date, nd.following_date INTO v_del, v_next
-    FROM public.rpc_bloom_next_deliveries(p_store_code, p_route) nd LIMIT 1;
+    FROM public.rpc_bloom_next_deliveries(p_store_code, p_route, public.store_local_today(p_store_code)) nd LIMIT 1;  -- ENG-117: explicit store-local anchor, never inherited from the session
   END IF;
   v_del  := COALESCE(p_delivery_date, v_del);
   v_next := COALESCE(p_next_delivery, v_next);
@@ -137,6 +133,8 @@ BEGIN
           v_md5, p_source, v_gen)
   RETURNING cache_id INTO v_cache_id;
 
+  -- STEP 1, UNCHANGED. The recipe's own rows, positionally. Not one byte of the
+  -- recipe is touched and no quantity moves anywhere below this line.
   v_t0 := clock_timestamp();
   INSERT INTO public.bloom_order_cache_line
   SELECT v_cache_id,
@@ -146,14 +144,107 @@ BEGIN
          p_store_code, v_del, v_next, NULL, p_preset, NULL, p_fit_to_budget,
          NULL, NULL, NULL, NULL, p_route) r;
   GET DIAGNOSTICS v_n = ROW_COUNT;
+
+  -- STEP 2, SB-CC-BLOOM-026 5(b2). A hidden line ALREADY ON THE SHEET is flagged
+  -- IN PLACE, never appended a second time. Measured before building: 19 of the
+  -- 396 hidden lines at 80175 DC_AMBIENT are already cache rows, so a naive
+  -- append would show the buyer the same product twice.
+  UPDATE public.bloom_order_cache_line l
+     SET withheld_correction     = true,
+         hidden_reason           = v.state_reason,
+         hidden_rate_engine_read = v.rate_raw_56d,
+         hidden_rate_corrected   = v.rate_corrected_56d,
+         hidden_rate_guard       = v.rate_guard_56d,
+         hidden_window_days      = 56,
+         hidden_days_removed     = v.days_removed_56d,
+         hidden_observable_days  = v.observable_days,
+         hidden_observable_share = v.observable_share
+    FROM public.l2_population_verdict v
+   WHERE l.cache_id = v_cache_id
+     AND v.store_code = p_store_code AND v.route_key = p_route
+     AND v.flag_hidden_seller
+     AND v.product_code = l.product_code;
+  GET DIAGNOSTICS v_flagged = ROW_COUNT;
+
+  -- STEP 3. The rest become NEW rows at ZERO quantity, pinned above by line_kind.
+  -- rhythm_adjusted_demand carries the rate the ORDER READ so the sheet's own
+  -- sort stays apples-to-apples; what the corrector measured rides its own
+  -- column beside it, which is the whole point of the row (R28 SS5 on the surface).
+  SELECT COALESCE(MAX(line_no),0) INTO v_max_line
+    FROM public.bloom_order_cache_line WHERE cache_id = v_cache_id;
+
+  INSERT INTO public.bloom_order_cache_line
+    (cache_id, line_no, store_code, product_code, ean, description, dept_name, route,
+     kvi_band, tier, range_state, rhythm_adjusted_demand, soh, pack_size, pack_cost,
+     need_units, normal_packs, geared_packs, suggested_packs, value,
+     promo_active, promo_nr, promo_start, promo_end, promo_suffix, promo_naming_gap, count_first, story, generated_at,
+     line_kind, withheld_correction, hidden_reason, hidden_rate_engine_read, hidden_rate_corrected,
+     hidden_rate_guard, hidden_window_days, hidden_days_removed,
+     hidden_observable_days, hidden_observable_share)
+  SELECT v_cache_id,
+         v_max_line + row_number() OVER (ORDER BY v.rate_corrected_56d DESC NULLS LAST, v.product_code),
+         v.store_code, v.product_code, b.ean::text, v.description, v.dept_name, p_route,
+         v.kvi_band, v.tier, v.range_state, v.rate_raw_56d, v.soh,
+         v.chosen_pack_size, v.chosen_pack_cost,
+         0, 0, 0, 0, 0,
+         (pm.promo_nr IS NOT NULL), pm.promo_nr, pm.start_date, pm.end_date, pm.promo_suffix, (pm.promo_nr IS NOT NULL AND pm.promo_suffix IS NULL), false, v.state_reason, v_gen,
+         'hidden', true, v.state_reason, v.rate_raw_56d, v.rate_corrected_56d,
+         v.rate_guard_56d, 56, v.days_removed_56d,
+         v.observable_days, v.observable_share
+  FROM public.l2_population_verdict v
+  LEFT JOIN public.rpc_bloom_promo_for_delivery(p_store_code, p_route, v_del) pm ON pm.product_code = v.product_code LEFT JOIN public.v_ean_bridge b
+         ON b.store_code = v.store_code AND b.product_code = v.product_code
+  WHERE v.store_code = p_store_code AND v.route_key = p_route
+    AND v.flag_hidden_seller
+    AND NOT EXISTS (SELECT 1 FROM public.bloom_order_cache_line x
+                     WHERE x.cache_id = v_cache_id AND x.product_code = v.product_code);
+  GET DIAGNOSTICS v_appended = ROW_COUNT;
+
   v_ms := (extract(epoch from (clock_timestamp()-v_t0))*1000)::int;
 
-  UPDATE public.bloom_order_cache SET line_count=v_n, generation_ms=v_ms WHERE cache_id=v_cache_id;
+  -- ENG-106 leg (b) / SSD6.1 clause 2: freeze the benchmark AND its anchor onto
+  -- the artefact. The ONE HOME computes it; this never re-derives the basis.
+  SELECT b.anchor_date, b.weekly_cost_demand INTO v_bm_anchor, v_bm_weekly
+  FROM public.rpc_bloom_route_benchmark(p_store_code, p_route, NULL) b;
 
-  RETURN jsonb_build_object('status','ok','cache_id',v_cache_id,'lines',v_n,
+  UPDATE public.bloom_order_cache_line
+     SET line_kind = 'covered'
+   WHERE cache_id = v_cache_id
+     AND line_kind = 'ordered'
+     AND coalesce(suggested_packs, 0) = 0
+     AND range_state IN ('CORE', 'HERO')
+     AND soh <= min_band
+     -- A line kept for its OWN reason keeps that identity. Tagging a
+     -- count-first or minimum-presence line 'covered' would let the label say
+     -- "no action" about a line that needs one (ENG-123: a display value must
+     -- name its own population).
+     AND NOT (coalesce(count_first,false) OR coalesce(keep_or_delist,false)
+              OR coalesce(pack_forced_review,false) OR coalesce(min_presence_forced,false))
+     -- ENG-102 correction: a withheld-correction line is a HIDDEN SELLER and keeps
+     -- that identity. Before ENG-102 it was appended as line_kind='hidden' and the
+     -- buyer saw it flagged DROPPED. The covered tag must never claim it.
+     AND NOT coalesce(withheld_correction, false);
+
+  UPDATE public.bloom_order_cache
+     SET line_count         = v_n + v_appended,
+         ordered_line_count = v_n - (SELECT count(*)
+                                       FROM public.bloom_order_cache_line
+                                      WHERE cache_id = v_cache_id
+                                        AND line_kind = 'covered'),
+         hidden_line_count  = v_flagged + v_appended,
+         generation_ms      = v_ms,
+         benchmark_anchor_date   = v_bm_anchor,
+         benchmark_weekly_demand = v_bm_weekly
+   WHERE cache_id=v_cache_id;
+
+  RETURN jsonb_build_object('status','ok','cache_id',v_cache_id,
+                            'lines',v_n + v_appended,
+                            'ordered_lines',v_n,
+                            'hidden_flagged_in_place',v_flagged,
+                            'hidden_appended',v_appended,
                             'generation_ms',v_ms,'delivery',v_del,'next_delivery',v_next,
                             'engine_md5',v_md5);
-END $fn$;
+END $function$;
 
 REVOKE EXECUTE ON FUNCTION public.refresh_bloom_order_cache(text,text,date,date,text,boolean,text) FROM PUBLIC, anon;
 GRANT  EXECUTE ON FUNCTION public.refresh_bloom_order_cache(text,text,date,date,text,boolean,text) TO authenticated, service_role;
@@ -211,13 +302,21 @@ AS $function$
     'generated_at', (SELECT generated_at FROM hdr),
     'delivery_date',(SELECT delivery_date FROM hdr),
     'next_delivery',(SELECT next_delivery FROM hdr),
-    'line_count',   (SELECT line_count FROM hdr),
+    -- ENG-102: the covered rows are withheld from this payload until a surface
+    -- can render them, so the count names the population actually served.
+    'line_count',   (SELECT line_count FROM hdr)
+                    - (SELECT count(*) FROM public.bloom_order_cache_line l JOIN hdr ON hdr.cache_id=l.cache_id
+                        WHERE l.line_kind = 'covered'),
+    'covered_withheld', (SELECT count(*) FROM public.bloom_order_cache_line l JOIN hdr ON hdr.cache_id=l.cache_id
+                          WHERE l.line_kind = 'covered'),
     -- R22: the array length is reported beside the header's own count, so a
     -- mismatch between what was cached and what was served is visible, not silent.
-    'served',       (SELECT count(*) FROM public.bloom_order_cache_line l JOIN hdr ON hdr.cache_id=l.cache_id),
+    'served',       (SELECT count(*) FROM public.bloom_order_cache_line l JOIN hdr ON hdr.cache_id=l.cache_id
+                     WHERE l.line_kind IS DISTINCT FROM 'covered'),
     'lines',        COALESCE((SELECT jsonb_agg(to_jsonb(l) ORDER BY l.line_no)
                               FROM public.bloom_order_cache_line l
-                              JOIN hdr ON hdr.cache_id=l.cache_id), '[]'::jsonb),
+                              JOIN hdr ON hdr.cache_id=l.cache_id
+                             WHERE l.line_kind IS DISTINCT FROM 'covered'), '[]'::jsonb),
     -- ENG-097 miss payload
     'requested',    (SELECT jsonb_build_object(
                        'store_code', p_store_code, 'route', p_route,
@@ -242,12 +341,12 @@ REVOKE EXECUTE ON FUNCTION public.rpc_bloom_order_cached(text,text,date,date,tex
 GRANT  EXECUTE ON FUNCTION public.rpc_bloom_order_cached(text,text,date,date,text,boolean) TO anon, authenticated;
 
 -- ---------- freshness surface (never a silent stale read) ----------
-CREATE OR REPLACE FUNCTION public.rpc_bloom_order_cache_status(
-  p_store_code text DEFAULT NULL, p_route text DEFAULT NULL)
-RETURNS TABLE(store_code text, route_key text, delivery_date date, next_delivery date,
-              preset text, fit_to_budget boolean, generated_at timestamptz,
-              age_minutes numeric, line_count int, generation_ms int, engine_current boolean)
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
+CREATE OR REPLACE FUNCTION public.rpc_bloom_order_cache_status(p_store_code text DEFAULT NULL::text, p_route text DEFAULT NULL::text)
+ RETURNS TABLE(store_code text, route_key text, delivery_date date, next_delivery date, preset text, fit_to_budget boolean, generated_at timestamp with time zone, age_minutes numeric, line_count integer, generation_ms integer, engine_current boolean)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
   SELECT c.store_code, c.route_key, c.delivery_date, c.next_delivery, c.preset, c.fit_to_budget,
          c.generated_at,
          round(extract(epoch from (clock_timestamp()-c.generated_at))/60.0, 1),
@@ -259,7 +358,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
   WHERE (p_store_code IS NULL OR c.store_code=p_store_code)
     AND (p_route IS NULL OR c.route_key=p_route)
   ORDER BY c.generated_at DESC;
-$fn$;
+$function$;
 
 REVOKE EXECUTE ON FUNCTION public.rpc_bloom_order_cache_status(text,text) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.rpc_bloom_order_cache_status(text,text) TO anon, authenticated;
@@ -295,58 +394,67 @@ GRANT  EXECUTE ON FUNCTION public.rpc_bloom_order_cache_status(text,text) TO ano
 -- ambiguous ("function is not unique") -- it would have killed the whole nightly
 -- build. The 1-arg version is dropped; run the RULE-BOOK SS8 overload check
 -- BEFORE any signature change, not after.
-CREATE OR REPLACE FUNCTION public.refresh_bloom_order_cache_all(
-  p_routes  text[] DEFAULT NULL,
-  p_presets text[] DEFAULT ARRAY['standard'],
-  p_drops   int    DEFAULT 1
-)
-RETURNS jsonb
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+CREATE OR REPLACE FUNCTION public.refresh_bloom_order_cache_all(p_routes text[] DEFAULT NULL::text[], p_presets text[] DEFAULT ARRAY['standard'::text], p_drops integer DEFAULT 1)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
 DECLARE
-  rec record; r jsonb; v_ok int := 0; v_skip int := 0; v_err int := 0;
+  rec record;
+  r jsonb;
+  v_ok int := 0; v_skip int := 0; v_err int := 0;
   v_detail jsonb := '[]'::jsonb;
   v_started timestamptz := clock_timestamp();
   v_routes_seen int := 0;
 BEGIN
-  SET LOCAL statement_timeout = '0';
+  SET LOCAL statement_timeout = '0';   -- a background builder is not on a request thread
+
   FOR rec IN
+    -- The desk set comes from rpc_bloom_desks (supplier_calendar x active
+    -- stores), never a literal. p_routes is an optional NARROWING filter for a
+    -- manual run, never the source of the list.
     SELECT d.store_code, d.route_key, f.fit,
-           NULLIF(pr.preset, 'standard') AS preset_arg,   -- the recipe reads NULL as standard
+           NULLIF(pr.preset, 'standard') AS preset_arg,
            pr.preset                     AS preset_label,
            dr.n                          AS drop_n
-      FROM public.rpc_bloom_desks()                            d
-      CROSS JOIN (VALUES (false),(true))                       AS f(fit)
+      FROM public.rpc_bloom_desks()                       d
+      CROSS JOIN (VALUES (false),(true))                  AS f(fit)
       CROSS JOIN unnest(COALESCE(p_presets, ARRAY['standard'])) AS pr(preset)
-      CROSS JOIN generate_series(1, GREATEST(p_drops, 1))       AS dr(n)
+      CROSS JOIN generate_series(1, GREATEST(p_drops, 1))  AS dr(n)
      WHERE p_routes IS NULL OR d.route_key = ANY(p_routes)
      ORDER BY d.store_code, COALESCE(d.desk_sort, 32767), d.route_key,
               dr.n, pr.preset, f.fit
   LOOP
     v_routes_seen := v_routes_seen + 1;
     BEGIN
-      -- NULL dates let refresh_bloom_order_cache resolve the next scheduled
-      -- delivery from supplier_calendar via rpc_bloom_next_deliveries
-      -- (ORDERING-CANON SSA4), so drop 1 is byte-identical to prior behaviour.
+      -- drop_n = 1 keeps today's behaviour byte-for-byte: NULL dates let
+      -- refresh_bloom_order_cache resolve the next scheduled delivery from
+      -- supplier_calendar via rpc_bloom_next_deliveries (ORDERING-CANON §A4).
+      -- Later drops are leg 2 and are not requested while p_drops = 1.
       r := public.refresh_bloom_order_cache(
              rec.store_code, rec.route_key, NULL, NULL, rec.preset_arg, rec.fit, 'nightly');
+
       IF r->>'status' = 'ok' THEN v_ok := v_ok + 1; ELSE v_skip := v_skip + 1; END IF;
       v_detail := v_detail || jsonb_build_array(jsonb_build_object(
         'store',rec.store_code,'route',rec.route_key,'preset',rec.preset_label,
         'fit',rec.fit,'drop',rec.drop_n,
         'status',r->>'status','lines',r->>'lines','ms',r->>'generation_ms'));
     EXCEPTION WHEN OTHERS THEN
-      -- one bad desk never silently kills the rest, and the failure is reported (R22 SS3)
+      -- one bad desk never silently kills the rest, and the failure is reported (R22 §3)
       v_err := v_err + 1;
       v_detail := v_detail || jsonb_build_array(jsonb_build_object(
         'store',rec.store_code,'route',rec.route_key,'preset',rec.preset_label,
         'fit',rec.fit,'drop',rec.drop_n,'status','error','error',SQLERRM));
     END;
   END LOOP;
-  RETURN jsonb_build_object('ok',v_ok,'skipped',v_skip,'errors',v_err,
-                            'combinations_attempted',v_routes_seen,
-                            'elapsed_ms',round(extract(epoch from (clock_timestamp()-v_started))*1000)::int,
-                            'ran_at',clock_timestamp(),'detail',v_detail);
-END $fn$;
+
+  RETURN jsonb_build_object(
+    'ok',v_ok,'skipped',v_skip,'errors',v_err,
+    'combinations_attempted',v_routes_seen,
+    'elapsed_ms',round(extract(epoch from (clock_timestamp()-v_started))*1000)::int,
+    'ran_at',clock_timestamp(),'detail',v_detail);
+END $function$;
 
 -- The superseded 1-arg signature (see the OVERLOAD TRAP note above).
 DROP FUNCTION IF EXISTS public.refresh_bloom_order_cache_all(text[]);

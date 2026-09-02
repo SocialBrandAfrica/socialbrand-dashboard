@@ -271,24 +271,11 @@ GRANT  EXECUTE ON FUNCTION public.rpc_forge_log_count_run(text,text,jsonb,jsonb,
 -- fix: SET ROLE authenticated -> count(*) on the I-channel = 0. Every sibling
 -- engine read RPC is already SECURITY DEFINER; these two were the outliers.
 CREATE OR REPLACE FUNCTION public.rpc_forge_run_compliance(p_run_id uuid)
-RETURNS TABLE (
-  run_id                uuid,
-  store_code            text,
-  product_code          bigint,
-  stratum               text,
-  description           text,
-  soh_at_issue          numeric,
-  last_counted_at_issue date,
-  counted_on            date,
-  counted               boolean,
-  days_outstanding      integer,
-  story                 text
-)
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public
-AS $$
+ RETURNS TABLE(run_id uuid, store_code text, product_code bigint, stratum text, description text, soh_at_issue numeric, last_counted_at_issue date, counted_on date, counted boolean, days_outstanding integer, story text)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
   WITH hdr AS (
     SELECT r.run_id, r.issued_at, r.store_code FROM public.forge_count_run r WHERE r.run_id = p_run_id
   ),
@@ -297,11 +284,6 @@ AS $$
     FROM public.forge_count_run_line l
     JOIN hdr h ON h.run_id = l.run_id
   ),
-  -- The count that would discharge this line: an I-movement on or after the
-  -- issue date that is ALSO strictly later than the anchor frozen at issue.
-  -- Both conditions matter. The date test alone would let a count booked
-  -- earlier on the issue day masquerade as compliance -- a gate that cannot
-  -- fail is not proof (R28 section 5).
   hit AS (
     SELECT ln.run_id, ln.product_code, min(m.movement_date) AS counted_on
     FROM ln
@@ -326,7 +308,6 @@ AS $$
     CASE WHEN hit.counted_on IS NULL
          THEN (CURRENT_DATE - ln.issued_at::date)::integer
     END AS days_outstanding,
-    -- R29: the reason travels with the number, in a buyer's words.
     CASE
       WHEN hit.counted_on IS NOT NULL
         THEN 'Counted ' || hit.counted_on
@@ -340,7 +321,7 @@ AS $$
   FROM ln
   LEFT JOIN hit ON hit.run_id = ln.run_id AND hit.product_code = ln.product_code
   ORDER BY (hit.counted_on IS NOT NULL), ln.stratum, ln.product_code;
-$$;
+$function$;
 
 COMMENT ON FUNCTION public.rpc_forge_run_compliance IS
   'Per-line counted/uncounted for one run, diffed against the I-channel. Derived on demand, never stored (canon 12e 4b).';
@@ -352,26 +333,12 @@ GRANT  EXECUTE ON FUNCTION public.rpc_forge_run_compliance(uuid) TO authenticate
 -- ---------------------------------------------------------------------
 -- 6. COMPLIANCE % PER STORE PER DAY -- "a list nobody executed stays loud"
 -- ---------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.rpc_forge_compliance_summary(
-  p_stores text[]  DEFAULT NULL,
-  p_from   date    DEFAULT NULL,
-  p_to     date    DEFAULT NULL
-)
-RETURNS TABLE (
-  store_code       text,
-  issue_date       date,
-  runs             integer,
-  lines_issued     integer,
-  lines_counted    integer,
-  compliance_pct   numeric,
-  oldest_outstanding_days integer,
-  verdict          text
-)
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public
-AS $$
+CREATE OR REPLACE FUNCTION public.rpc_forge_compliance_summary(p_stores text[] DEFAULT NULL::text[], p_from date DEFAULT NULL::date, p_to date DEFAULT NULL::date)
+ RETURNS TABLE(store_code text, issue_date date, runs integer, lines_issued integer, lines_counted integer, compliance_pct numeric, oldest_outstanding_days integer, verdict text)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
   WITH runs AS (
     SELECT r.run_id, r.store_code, r.issued_at::date AS issue_date
     FROM public.forge_count_run r
@@ -390,7 +357,6 @@ AS $$
     count(DISTINCT l.run_id)::integer                              AS runs,
     count(*)::integer                                              AS lines_issued,
     count(*) FILTER (WHERE l.counted)::integer                     AS lines_counted,
-    -- NULL, never a fake 100%, when a run legitimately issued zero lines.
     CASE WHEN count(*) > 0
          THEN round(100.0 * count(*) FILTER (WHERE l.counted) / count(*), 1)
     END                                                            AS compliance_pct,
@@ -405,7 +371,7 @@ AS $$
   FROM lines l
   GROUP BY l.store_code, l.issue_date
   ORDER BY l.issue_date DESC, l.store_code;
-$$;
+$function$;
 
 COMMENT ON FUNCTION public.rpc_forge_compliance_summary IS
   'Compliance % per store per issue-date (canon 15). A list nobody executed reads NOT EXECUTED, never a silent blank.';
