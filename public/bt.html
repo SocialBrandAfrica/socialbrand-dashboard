@@ -799,7 +799,33 @@ const fmt1 = v => (+v).toFixed(1);
   });
 })();
 
+// ⭐ BUG-LOG ENG-169 — A PART-MONTH DELTA IS NOT A COMPARISON.
+// `l2_bt_baseline` holds a FULL-MONTH gross-profit figure (10116 R68,362.72,
+// 80175 R8,152.75 — identical whichever month you ask for). rpc_bt_store_overview
+// divides the selected month's ACTUAL GP by it. For a complete month that is a
+// fair read: Aug 2026 came back +8.1% / +16.9%, Jul −1.5% / +10.6%.
+//
+// For the CURRENT month it compares however many days have happened against a
+// whole month. Measured 2026-09-02, two days into September: −95.6% at 10116 and
+// −97.0% at 80175, rendered red. On the 1st of a month it would read −100%.
+//
+// The month selector already defaults to the last COMPLETE month, so the page is
+// right on open — but the part-month is still selectable and one click away, and
+// nothing on screen says the number is not comparable. That is the RULE-BOOK §5
+// selection-scope rule: a comparison computed at a wider scope than the headline
+// is a bug, not a baseline.
+//
+// Until the baseline can be pro-rated to elapsed trading days (an RPC change, so
+// a database change), the honest behaviour is to withhold the delta rather than
+// publish a false one — R22 §3, a missing value surfaces, it never misleads.
+function isPartMonth() {
+  const sel = document.getElementById('month-sel');
+  if (!sel || !sel.value) return false;
+  const n = new Date();
+  return sel.value === `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
+}
 function scorecardTone(dpct) {
+  if (isPartMonth()) return 'neutral';
   if (dpct === null || dpct === undefined) return 'neutral';
   const d = +dpct;
   if (d > 1.5) return 'pos';
@@ -808,6 +834,7 @@ function scorecardTone(dpct) {
   return 'neg';
 }
 function fmtDelta(dpct) {
+  if (isPartMonth()) return '—';
   if (dpct === null || dpct === undefined) return '—';
   const d = +dpct;
   return (d > 0 ? '+' : '') + d.toFixed(1) + '%';
@@ -856,7 +883,11 @@ async function loadScorecard() {
     const bd = total.baseline_gp ? ((total.gp - total.baseline_gp) / Math.abs(total.baseline_gp) * 100) : null;
     const tone = scorecardTone(bd);
     heroDelta.className = 'chip ' + tone;
-    heroDelta.textContent = (bd !== null ? fmtDelta(bd) : '—') + ' vs baseline';
+    // ENG-169: say WHY the comparison is absent rather than showing "— vs baseline",
+    // which reads as a missing number instead of an incomparable month.
+    heroDelta.textContent = isPartMonth()
+      ? 'month in progress — no baseline comparison'
+      : (bd !== null ? fmtDelta(bd) : '—') + ' vs baseline';
     document.getElementById('hero-sub').textContent =
       'ex-VAT · 12 sub-departments · baseline ' + (total.baseline_gp ? zar(total.baseline_gp) : 'R 76 515');
   }
