@@ -1,0 +1,86 @@
+-- =============================================================================
+-- fix_kpi_matview_runs_after_l2_pipeline.sql
+-- Move the KPI matview refresh BEHIND the L2 pipeline that feeds it.
+-- =============================================================================
+-- WHAT CANON RECORDS. DB-SCHEMA carries this as "OPEN, LOW -- the sparkline
+-- refresh lags its own headline by a day", i.e. a cosmetic inconsistency where
+-- the card shows the new day and the sparkline under it shows the previous one.
+--
+-- WHAT IS ACTUALLY WRONG, measured at source 2026-09-02. It is the other way
+-- round, and it is not cosmetic.
+--
+--   job 15  refresh-l2-pipeline    20:15 UTC = 22:15 SAST   rebuilds l2_stock_position
+--   job 11  nightly-kpi-refresh    18:30 UTC = 20:30 SAST   REFRESH mv_kpi_by_date
+--   job 10  refresh-sparkline-14d  23:00 UTC = 01:00 SAST   REFRESH mv_sparkline_14d
+--
+-- `mv_kpi_by_date` reads l2_soh_daily, l2_stock_position, sigma_sales and stores
+-- (catalog-verified, not read off a document). It is refreshed at 20:30 SAST,
+-- **1 hour 45 minutes BEFORE** the pipeline that rebuilds l2_stock_position.
+--
+-- So the KPI card's four point-in-time STOCK columns -- neg_soh_count,
+-- slow_mover_count, capital_tied, ghost_stock_value -- are built on the PREVIOUS
+-- night's L2 every single night. Proof from the run log at the moment of
+-- writing: job 11 last succeeded 2026-09-02 20:30 SAST, job 15 last succeeded
+-- 2026-09-01 22:34 SAST. Tonight's card is standing on last night's engine.
+--
+-- The SPARKLINE, running at 01:00 SAST, is AFTER the pipeline -- so it is the
+-- FRESHER of the two, which inverts what canon says. The sales columns are
+-- unaffected either way: they come straight from sigma_sales.
+--
+-- ALSO CORRECTED, because I checked instead of carrying it: DB-SCHEMA states
+-- mv_kpi_by_date "feeds mv_sparkline_14d" and that refresh_kpi_view() refreshes
+-- the sparkline. Both are FALSE at source. mv_sparkline_14d has ZERO catalog
+-- dependency and ZERO text reference to mv_kpi_by_date -- it reads l2_soh_daily,
+-- l2_stock_position, sigma_sales and stores directly -- and refresh_kpi_view()
+-- refreshes mv_kpi_by_date ALONE. The two matviews are siblings off the same
+-- upstream facts, not a chain. That is why moving job 11 is sufficient and no
+-- ordering between 10 and 11 has to be invented.
+--
+-- THE FIX. Schedule only. The command is untouched, so the ENG-096 armed ceiling
+-- ('600s', set at the caller because an in-body SET LOCAL is decorative) rides
+-- unchanged. New slot 22:45 UTC = 00:45 SAST:
+--   * job 15 starts 20:15 UTC and its 21-day max is 4,055s, so its worst
+--     observed finish is ~21:23 UTC. 22:45 clears that by 82 minutes.
+--   * job 11's own 21-day max is 51s, so it is finished long before the
+--     sparkline at 23:00 UTC. The two land 15 minutes apart on the same L2.
+-- Runtimes measured from cron.job_run_details over the trailing 21 days, the
+-- same basis ENG-096 derived its ceilings from -- never a seeded guess.
+--
+-- WHY NOT FOLD THE TWO JOBS INTO ONE, which is DB-SCHEMA's stated preference:
+-- because mv_sparkline_14d is refreshed CONCURRENTLY, and CONCURRENTLY cannot
+-- run inside a transaction block. Combining it with a plain REFRESH in one
+-- pg_cron command risks a failure mode that does not exist today. A schedule
+-- move fixes the defect and introduces nothing. The fold stays available if
+-- someone later wants it, on its own R22.
+--
+-- 🔴 NOT APPLIED. Written 2026-09-02 while the database is frozen until the
+-- three 03-09 DC orders are placed and exported. Apply in one pass afterwards.
+-- =============================================================================
+
+-- Schedule-only change. cron.alter_job leaves the command, and therefore the
+-- armed ceiling, exactly as it is.
+SELECT cron.alter_job(
+         job_id   => (SELECT jobid FROM cron.job WHERE jobname = 'nightly-kpi-refresh'),
+         schedule => '45 22 * * *'
+       );
+
+-- =============================================================================
+-- R22 -- run AFTER, and paste into DEPLOY-LOG.
+-- =============================================================================
+-- 1. The schedule moved and the command did not:
+--    SELECT jobid, jobname, schedule, command FROM cron.job WHERE jobid IN (10,11,15) ORDER BY jobid;
+--    expect job 11 = '45 22 * * *', command still prefixed SET statement_timeout = '600s'
+--
+-- 2. THE REAL TEST, the night after: the KPI matview must be built on the SAME
+--    L2 cycle as the pipeline, not the one before it.
+--    SELECT jobid, max(end_time AT TIME ZONE 'Africa/Johannesburg') AS last_ok
+--    FROM cron.job_run_details WHERE status='succeeded' AND jobid IN (11,15)
+--    GROUP BY jobid;
+--    expect job 11's last success to be LATER than job 15's, on the same date.
+--
+-- 3. And the figure it protects -- the stock columns should now move on the same
+--    night as the engine, so compare before/after on one store:
+--    SELECT store_code, snapshot_date, neg_soh_count, capital_tied
+--    FROM mv_kpi_by_date WHERE store_code='10116'
+--    ORDER BY snapshot_date DESC LIMIT 3;
+-- =============================================================================
