@@ -1197,8 +1197,22 @@ function RecipeMode({ stores }) {
     // BLOOM perf fix: rpc_bloom_order_recipe is a heavy set-returning function,
     // and PostgREST RE-EXECUTES the whole function for every .range() page. Paged
     // in 1000s a SPAR store ran the recipe ~13 times per order and timed the
-    // heavier store out (Delareyville). One call = one execution; no
-    // pgrst.db_max_rows cap is set, so every row returns in a single response.
+    // heavier store out (Delareyville). One call = one execution.
+    //
+    // 🔴 CORRECTED, ENG-093 (2026-09-02). The clause that stood here -- "no
+    // pgrst.db_max_rows cap is set, so every row returns in a single response" --
+    // is FALSE and was the ENG-093 defect in one sentence. A 1,000-row cap IS live
+    // on this project, proven behaviourally rather than by grepping for a setting:
+    // PostgREST answered a SETOF read with "206 Partial Content, Content-Range:
+    // 0-999/1065". The truncation-proof form is ONE jsonb row --
+    // rpc_bloom_order_recipe_json exists for exactly that and is live.
+    //
+    // ⚠ This screen (RecipeMode) is NOT reachable: the nav offers only 'desks' and
+    // 'desk', nothing sets appMode to 'recipe', and this call omits the REQUIRED
+    // p_route so it raises "p_route is required" if it ever ran. Kept per UX-003
+    // (hidden modes stay, retirement is Pieter's), so the comment is corrected
+    // rather than the dead call rewritten. The LIVE order path is
+    // rpc_bloom_order_cached, which is already jsonb and already tripwired.
     const { data, error: err } = await supabase.rpc('rpc_bloom_order_recipe', {
       p_store_code: storeCode, p_delivery_date: deliveryDate,
       p_next_delivery: nextDeliveryDate || null,
@@ -1845,13 +1859,26 @@ function OrderDesksMode() {
     if (!storeCode || !desk) { setHiddenDemand([]); return }
     let cancelled = false
     setHiddenDemandError(null)
-    supabase.rpc('rpc_bloom_hidden_demand', { p_store_code: storeCode, p_route: desk })
+    // SB-CC-BLOOM-029 item 2 (ENG-093 / ENG-095): read the JSON wrapper, not the
+    // SETOF original. PostgREST carries a live 1,000-row cap on this project --
+    // measured, not assumed (206 Partial Content, Content-Range 0-999/1065) -- and
+    // this desk's hidden list is the closest live reader to it: 557 of 1,000 at
+    // 10116 today, and it grows with the pool. One jsonb row cannot be truncated.
+    supabase.rpc('rpc_bloom_hidden_demand_json', { p_store_code: storeCode, p_route: desk })
       .then(({ data, error: err }) => {
         if (cancelled) return
         // Fail loudly. A silent empty here reads as "nothing hidden", which is
         // exactly the false all-clear this whole card exists to end (R22 §3).
         if (err) { setHiddenDemandError(err.message); setHiddenDemand([]); return }
-        setHiddenDemand(data ?? [])
+        // The tripwire, same shape rpc_bloom_order_cached uses: served is counted
+        // FROM the payload, line_count from the reader. A short read is REFUSED,
+        // never rendered -- a silently-short hidden list is the same false
+        // all-clear as an empty one, which is the defect this card exists to end.
+        if (data && data.served !== data.line_count) {
+          setHiddenDemandError(`Hidden-sellers list incomplete: served ${data.served} of ${data.line_count} lines. Not shown — reload.`)
+          setHiddenDemand([]); return
+        }
+        setHiddenDemand(data?.lines ?? [])
       })
     return () => { cancelled = true }
   }, [storeCode, desk])
