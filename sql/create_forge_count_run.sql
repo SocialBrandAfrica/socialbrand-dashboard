@@ -131,35 +131,52 @@ GRANT SELECT ON public.forge_count_run_line TO authenticated;
 -- "App-born workflow events land as platform tables in public, written ONLY
 -- through published SECURITY DEFINER rpc_* write-functions granted to
 -- authenticated." No surface INSERTs into these tables directly.
-CREATE OR REPLACE FUNCTION public.rpc_forge_log_count_run(
-  p_store_code   text,
-  p_mode         text,
-  p_lines        jsonb,                      -- [{product_code, stratum, description, soh, capital_value}, ...]
-  p_params       jsonb   DEFAULT '{}'::jsonb,
-  p_seed         text    DEFAULT NULL,
-  p_source       text    DEFAULT 'forge',
-  p_issued_by    text    DEFAULT NULL,
-  p_pool_size    integer DEFAULT NULL,
-  p_daily_budget integer DEFAULT NULL
-)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
+CREATE OR REPLACE FUNCTION public.rpc_forge_log_count_run(p_store_code text, p_mode text, p_lines jsonb, p_params jsonb DEFAULT '{}'::jsonb, p_seed text DEFAULT NULL::text, p_source text DEFAULT 'forge'::text, p_issued_by text DEFAULT NULL::text, p_pool_size integer DEFAULT NULL::integer, p_daily_budget integer DEFAULT NULL::integer)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
 DECLARE
   v_run_id uuid;
   v_rows   integer;
+  v_existing uuid;
+  v_today  date;
+  v_tz     text;
+  v_vol    int;
 BEGIN
   IF p_store_code IS NULL OR btrim(p_store_code) = '' THEN
     RAISE EXCEPTION 'rpc_forge_log_count_run: p_store_code is required';
   END IF;
 
-  -- No silent empties (canon 8.6 guard 4). A zero-line run is a real event and
-  -- is logged as one, but it is never logged as a SUCCESS with no shape.
   IF p_lines IS NULL OR jsonb_typeof(p_lines) <> 'array' THEN
     RAISE EXCEPTION 'rpc_forge_log_count_run: p_lines must be a jsonb array (got %)',
                     coalesce(jsonb_typeof(p_lines),'null');
+  END IF;
+
+  IF p_mode = 'daily' THEN
+    SELECT s.timezone INTO v_tz FROM public.stores s WHERE s.store_code = p_store_code;
+    v_today := public.store_local_today(p_store_code);
+    SELECT r.run_id INTO v_existing
+      FROM public.forge_count_run r
+     WHERE r.store_code = p_store_code
+       AND r.mode = 'daily'
+       AND (r.issued_at AT TIME ZONE v_tz)::date = v_today
+     ORDER BY r.issued_at
+     LIMIT 1;
+    IF v_existing IS NOT NULL THEN
+      RETURN jsonb_build_object(
+        'run_id',         v_existing,
+        'store_code',     p_store_code,
+        'mode',           p_mode,
+        'source',         p_source,
+        'lines_offered',  jsonb_array_length(p_lines),
+        'lines_logged',   0,
+        'seed',           p_seed,
+        'already_issued', true,
+        'reason',         'clause (a): a daily list was already issued for this store on '
+                          || v_today::text || ' (store-local). Nothing re-issued.');
+    END IF;
   END IF;
 
   INSERT INTO public.forge_count_run
@@ -169,11 +186,6 @@ BEGIN
      jsonb_array_length(p_lines), p_pool_size, p_daily_budget)
   RETURNING run_id INTO v_run_id;
 
-  -- Freeze the lines, and take the compliance anchor STRAIGHT FROM THE LEDGER.
-  -- movement_type = 'I' is the DIWAINV count channel, byte-for-byte the same
-  -- predicate refresh_l2_last_counted uses -- deliberately identical so the
-  -- run-log and the nightly fact cannot drift apart (the ENG-061 discipline:
-  -- share the expression, do not restate it).
   INSERT INTO public.forge_count_run_line
     (run_id, store_code, product_code, stratum, description,
      soh_at_issue, capital_at_issue, last_counted_at_issue)
@@ -195,11 +207,32 @@ BEGIN
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
 
-  -- R22: report what actually inserted, never what was handed in. Same reason
-  -- rpc_bloom_submit_order recomputes line_count from the rows that landed.
-  UPDATE public.forge_count_run SET line_count = v_rows WHERE run_id = v_run_id;
+  IF p_mode = 'random' THEN
+    SELECT f.value_num::int INTO v_vol
+      FROM public.forge_config f
+      JOIN public.stores s ON s.store_code = p_store_code
+     WHERE f.config_key = 'daily_count_volume' AND f.retired_on IS NULL
+       AND f.store_format IN (s.store_type, '*')
+     ORDER BY f.store_format DESC LIMIT 1;
+  END IF;
+
+  UPDATE public.forge_count_run
+     SET line_count = v_rows,
+         daily_budget = COALESCE(daily_budget, v_vol),
+         params = CASE
+           WHEN p_mode = 'random' AND v_vol IS NOT NULL AND v_rows > v_vol
+             THEN coalesce(params,'{}'::jsonb)
+                  || jsonb_build_object('over_budget_explicit', true,
+                                        'daily_budget', v_vol,
+                                        'reason', 'clause (b): an explicit p_n issued '
+                                                  || v_rows || ' lines against a store budget of ' || v_vol)
+           ELSE params END
+   WHERE run_id = v_run_id;
 
   RETURN jsonb_build_object(
+    'already_issued', false,
+    'over_budget_explicit', (p_mode = 'random' AND v_vol IS NOT NULL AND v_rows > v_vol),
+    'daily_budget',  v_vol,
     'run_id',        v_run_id,
     'store_code',    p_store_code,
     'mode',          p_mode,
@@ -209,7 +242,7 @@ BEGIN
     'seed',          p_seed
   );
 END;
-$$;
+$function$;
 
 COMMENT ON FUNCTION public.rpc_forge_log_count_run IS
   'Logs one issued count list (canon 15 compliance loop). The only write path into forge_count_run/_line (R30 addendum 2).';
@@ -378,7 +411,17 @@ COMMENT ON FUNCTION public.rpc_forge_compliance_summary IS
   'Compliance % per store per issue-date (canon 15). A list nobody executed reads NOT EXECUTED, never a silent blank.';
 
 REVOKE EXECUTE ON FUNCTION public.rpc_forge_compliance_summary(text[],date,date) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.rpc_forge_compliance_summary(text[],date,date) FROM anon;
-GRANT  EXECUTE ON FUNCTION public.rpc_forge_compliance_summary(text[],date,date) TO authenticated;
+-- SB-CC-BLOOM-029 item 5, applied live 2026-09-02. anon is GRANTED, not revoked.
+-- ⚠ The `REVOKE ... FROM anon` that stood here would have silently undone item 5 on
+-- the next rebuild from source -- a no-divergence defect in a grant, which is
+-- exactly the non-code pattern R30 addendum 4 exists to catch.
+-- WHY anon IS CORRECT HERE: this is a READ routine (LANGUAGE sql, STABLE, no DML),
+-- and R30's REVOKE-from-anon pattern is scoped to MUTATING functions only; read
+-- RPCs stay anon-executable by design. The ops pack reads it with the browser key,
+-- and the alternative -- granting SELECT on forge_integrity_history -- is the
+-- base-table read R30 §1 forbids. Proven behaviourally as anon: the RPC returns
+-- 70 rows while forge_integrity_history still returns 0 and forge_count_run still
+-- denies outright.
+GRANT  EXECUTE ON FUNCTION public.rpc_forge_compliance_summary(text[],date,date) TO anon, authenticated;
 
 NOTIFY pgrst, 'reload schema';

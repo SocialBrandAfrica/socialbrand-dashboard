@@ -134,9 +134,10 @@ BEGIN
     SELECT sc,pc,descr,dept,subdept,soh0,cap,last_inv_date,last_sale_date,tier0,bucket_reason,ek,es,
            on_order,is_kvi,range_state,engine_suspect, NULL::int AS order_tier, false AS is_zero_audit, 'Random sample'::text AS mode_label
     FROM (
-      SELECT p.*, ROW_NUMBER() OVER (PARTITION BY p.sc, p.dept ORDER BY p.rnd) AS rn
-      FROM pool p WHERE p.soh0 <> 0
-    ) x WHERE p_mode='random' AND x.rn <= COALESCE(p_n, 50)
+      SELECT p.*, c.vol AS store_vol,
+             ROW_NUMBER() OVER (PARTITION BY p.sc ORDER BY p.rnd) AS rn
+      FROM pool p JOIN cfg c ON c.sc = p.sc WHERE p.soh0 <> 0
+    ) x WHERE p_mode='random' AND x.rn <= COALESCE(p_n, x.store_vol)
   ),
   targeted AS (
     SELECT sc,pc,descr,dept,subdept,soh0,cap,last_inv_date,last_sale_date,tier0,bucket_reason,ek,es,
