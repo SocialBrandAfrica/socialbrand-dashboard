@@ -1,0 +1,51 @@
+-- SB-CC-BLOOM-029 item 5 (CC half) -- THE PACK READS PUBLISHED INTERFACES.
+--
+-- Applied live 2026-09-02 as migration `bloom029_item5_grant_compliance_summary_anon`.
+--
+-- THE DEFECT (brief F8). `forge_integrity_history` carries RLS with ZERO policies
+-- while `anon` holds SELECT, so anon gets a SILENT EMPTY -- the worst shape,
+-- because nothing errors and the scoreboard renders zero as if it were a fact.
+-- The pack's two GAP reads were pointed at that table.
+--
+-- THE FIX IS NOT A GRANT ON THE BASE TABLE (R30 §1: every surface reads published
+-- interfaces only; base tables stay locked). Both published readers already exist:
+--     rpc_forge_integrity_trend(p_stores)                    -- already anon-executable
+--     rpc_forge_compliance_summary(p_stores, p_from, p_to)   -- was NOT, granted here
+--
+-- PROVEN READ-ONLY BEFORE GRANTING (R30 addendum 4: a grant is a pattern, and the
+-- seat states what reads it). `rpc_forge_compliance_summary` is LANGUAGE sql,
+-- STABLE, SECURITY DEFINER, one overload, and its body is a single SELECT over
+-- `forge_count_run` with a LATERAL to `rpc_forge_run_compliance`. No DML.
+--
+-- ⚠ INSTRUMENT NOTE, because it nearly became a false finding. A keyword probe for
+-- DML in the body returns TRUE on every function in this database: the string it
+-- matches is the `CREATE OR REPLACE FUNCTION` header of `pg_get_functiondef`'s own
+-- output. The probe was measuring its own frame. The body was read instead.
+--
+-- SECURITY DEFINER is load-bearing here, not boilerplate: `sigma_movements` carries
+-- RLS with zero policies, so an invoker build reports a confident permanent 0%
+-- compliance as anon -- the ENG-068 shape.
+--
+-- R22, verified BEHAVIOURALLY as anon (never by reading the grant --
+-- [[feedback_verify_security_fixes_behaviorally]]):
+--     SET LOCAL ROLE anon;
+--       rpc_forge_integrity_trend(null)             -> 40 rows
+--       rpc_forge_compliance_summary(null,null,null)-> 70 rows
+--       forge_integrity_history                     ->  0 rows  (still locked, silent empty)
+--       forge_count_run                             -> permission denied (hard error, no grant)
+-- Two lock shapes, both correct: RLS-with-no-policy returns empty, no-grant errors.
+--
+-- SCOREBOARD STATE, measured now that it is measurable (the brief's own R22 asks
+-- for this to be written to BUG-LOG open or closed, with the date the trend shows):
+--   `forge_integrity_history` spans 2026-06-30 -> 2026-09-01 across 64 distinct
+--   as_of dates, so the pack's "history max 08-11" reading is STALE and that half
+--   is CLOSED. Job 24 `forge-integrity-snapshot` ran 2026-09-01 23:30 SAST clean.
+--   The trend's now_date is 2026-09-01 against a store-local today of 2026-09-02,
+--   which is CORRECT -- job 24 snapshots the day it closes. Whether the pack LABELS
+--   that value "today" is a rendering question in the strategy lane, PM's to check,
+--   and it is the only half of the defect that can still be live.
+
+GRANT EXECUTE ON FUNCTION public.rpc_forge_compliance_summary(text[], date, date) TO anon;
+
+-- No grant on `forge_integrity_history`, `forge_count_run` or `forge_count_run_line`.
+-- They stay locked, deliberately (R30 §1).
