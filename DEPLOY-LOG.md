@@ -6,6 +6,46 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-02 -- ENG-102 SHIPPED. The covered lines stay on the sheet, and not one rand moved.
+
+**Clock, read fresh in this write's own pass and settled three ways at +2:** device local `2026-09-02 11:08:11`, device UTC `09:08:11`, database `now()` SAST `11:08:20` / UTC `09:08:20`. The work and this entry are the same morning, no midnight crossed.
+
+**DATABASE-SIDE, NO FRONTEND DEPLOY:** migrations `eng102_surface_covered_lines` and `eng102_covered_tag_excludes_other_keep_reasons`, live on apply. Source file `sql/eng102_surface_covered_lines.sql`.
+
+**🔴 THE RECIPE PIN MOVED. `6204ae7bf6b12f1a17e8bcb3d72028ea` / 44,251 -> `49960b1265f3bad8839d763cd0088eef` / 44,371.** R28: the old pin is `retired_on` 2026-09-02, `superseded_by` the new one. Drift is **+120 chars and it is accounted at source**, exactly the two ENG-102 clauses at 60 each. One overload before and after.
+
+### What changed, and why it is three objects and not one
+
+`rpc_bloom_order_recipe` computes every pool line in full and then DELETEs the non-actionable ones. A CORE or HERO line at or below its own `min_band` therefore left the order sheet **with no row and no reason**, and the reason was usually a good one. `ORDERING-CANON` §B4 requires an unqualified line to stay surfaced with its per-line reason and §5(b2) rules that every pool line is a ROW. Both were unenforced on the recipe's own DELETE.
+
+1. **`rpc_bloom_order_recipe`** -- the keep condition gains `OR (range_state IN ('CORE','HERO') AND soh <= min_band)`, on BOTH gates. There are two, not one: the `DELETE ... WHERE NOT (...)` and the same condition again in positive form on the `RETURN QUERY`. Patched by asserted replace off `pg_get_functiondef`, never by re-typing 44KB.
+2. **`bloom_order_cache_line.line_kind`** -- CHECK extended to allow `covered`, a third value beside `ordered` and `hidden`. A covered line is one the engine got RIGHT; a hidden line is one it got wrong. They are not the same fact and are not collapsed.
+3. **`refresh_bloom_order_cache`** -- tags the retained rows `covered` and keeps `ordered_line_count` on the population it has always named. **Shipping (1) alone would have inflated that count by 469 zero-quantity rows, which is the ENG-123 defect by name.** The tag runs after both hidden passes and skips any line kept for its own reason (`count_first`, `keep_or_delist`, `pack_forced_review`, `min_presence_forced`), so a count-first line is never relabelled "no action".
+
+### R22 -- all 20 desks, and it is a zero-delta gate
+
+Measured before the change with a probe clone, then reproduced live after it:
+
+| | before | after |
+|---|---|---|
+| rows returned | 3,020 | **3,489** (+469) |
+| order value | R1,466,857.16 | **R1,466,857.16** |
+| packs | 5,889 | **5,889** |
+
+Added rows carrying quantity **0**. Rows lost **0**. Added value **R0.00**. Quantity-neutral by construction, because the new clause is OR'd onto the keep condition and any row it adds had `suggested_packs = 0` or it was already kept.
+
+**End to end on a real cache build (80175 DC_AMBIENT, delivery 2026-09-05, cache 635):** `ordered_line_count` **550**, unchanged; ordered value **R280,029.75**, identical to the cent; `line_kind='covered'` **120**, matching the desk-wide prediction exactly; covered value R0.00; covered rows carrying quantity 0; covered rows stealing another keep reason 0.
+
+**NO NEW CONSTANT.** The rule reads the line's own `min_band`, never a threshold, so store #6 inherits it unchanged (§0h, R25). Per-desk yield runs 0 to 212 and two desks return zero, so it discriminates rather than blankets.
+
+### Named, not hidden
+
+- **The frontend does not render `covered` yet.** The rows are in the cache and correctly tagged; `/bloom` has no branch for the new `line_kind`. Owner CC, next pass.
+- **`sql/create_rpc_bloom_order_recipe.sql` is STILL ROTTED** and the regeneration is not claimed. Same structural reason as 2026-08-30: the pass was applied by asserted replace, so this seat never held the full body, and re-transcribing it through the session channel is unsafe on the measured 13-backslash finding. Header re-stamped with the new pin so nobody reconciles to a stale one.
+- **`ORDERING-CANON`'s reconciliation pin now names a superseded md5.** PM owns that file, so this is flagged, not edited.
+
+---
+
 ## 2026-08-30 (night, later) -- THE A3 BUNDLED PASS SHIPPED ON PIETER'S WORD. The recipe pin moved for the first time since 2026-08-19, and every line is identical.
 
 **Clock, and the session crossed midnight between the work and this write -- the exact trap canon names.** The work below happened **2026-08-30** (pass applied 20:2x SAST, R22 measured 20:2x-20:3x). This entry is **written 2026-08-31 00:3x SAST**, re-read at the moment of writing rather than carried: device local `2026-08-31 00:31:47 +02:00`, device UTC `2026-08-30 22:31:47`, database `now()` SAST `2026-08-31 00:31:49` / UTC `2026-08-30 22:31:49` -- all three agreeing on the offset. A draft of this entry carried "written 2026-08-30 20:3x" and was corrected before it landed; that is the 2026-07-27 config-key defect exactly, caught this time. **Every date in the entry is the date the WORK happened, not the date of the write.**
