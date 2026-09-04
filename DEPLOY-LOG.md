@@ -1,5 +1,11 @@
 # SocialBrand Dashboard — Deploy Log
 
+**Ref:** SB-INDEX-011 · **Owner:** Pieter van der Westhuizen · **Updater:** Claude Code
+**Class:** CANONICAL · **Fill-type:** APPEND-LOG
+
+> **Class header added 2026-09-04 (CC).** This file carried no Class line, which FILE-GOVERNANCE's own naming discipline rule 4 requires on every file and which makes an unclassed file untrusted by the one rule. PM's registry sweep found it UNDECLARED. It is CC's file, so the fix is CC's.
+> **Fill-type APPEND-LOG means the §0g cure is a TIME-BOX, not a split:** closed and aged entries move to `DEPLOY-LOG-<YEAR>.md` and the live log carries OPEN plus the current period only. Owed, not yet run. The file is over the 60,000 ceiling.
+
 Reverse-chronological. Each entry = one production deploy.
 
 ⚠️ **THIS LOG IS BEHIND. Its previous top entry was 2026-08-19 while `main` had moved through several ships (`3d679a9`, `ac873ed`, `5bf2b9b`, `9c27f0f`, `bf23d41`) on 08-23/08-24.** Named by CC 2026-08-25 rather than quietly backfilled — a deploy log that skips deploys is the "what's actually live" source lying, and Rule 18 points at this file too. Backfilling 08-23/08-24 is owed and is not mine to invent from commit messages alone.
