@@ -87,6 +87,8 @@ SELECT
 FROM plu;
 
 COMMENT ON VIEW v_consignment_catalog IS
+  E'GRADE: CALCULATED. Consignment menu classification per group-610 article, mapped from the Sigma scale PLU.
+'
   'Consignment menu classifier (SB-CC-PMINI-WIRE-001). One row per group-610 '
   'article per store. item_type s/c from the Sigma-native scale PLU '
   '(sigma_scan_refs DBREFE 200000+ code minus 200000) vs the SUSHI_PLUS menu set. '

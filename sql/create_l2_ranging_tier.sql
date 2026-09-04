@@ -152,6 +152,8 @@ CREATE INDEX IF NOT EXISTS idx_l2_tier_value_rank
 
 
 COMMENT ON MATERIALIZED VIEW l2_ranging_tier IS
+    E'GRADE: CALCULATED. Velocity tier from the 91-day value and volume rankings.
+'
     'Per-article ranging tier from 91-day sales velocity + classifier class. '
     'CLASS_EXCLUDED = PRODUCTION / NON_STOCK / RECEIPTING_BREAK (D1 ruling, 2026-06-07). '
     'TOP_100 = in both top-100 by value AND volume (NORMAL only). '

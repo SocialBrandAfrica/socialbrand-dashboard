@@ -47,6 +47,8 @@ CREATE INDEX idx_sigma_promos_active
     WHERE status IS DISTINCT FROM 'I';
 
 COMMENT ON TABLE sigma_promotions IS
+    E'GRADE: RAW. Sigma DBAKTK promotion headers, mirrored untouched.
+'
     'Sigma promotion headers (DBAKTK). One row per promotion per store. '
     'Refreshed nightly by Invoke-ExtractFromSigmaSQL.ps1. SB-CC-L2-001.';
 
@@ -118,6 +120,8 @@ CREATE INDEX idx_sigma_promo_art_dates
     ON sigma_promotion_articles (store_code, start_date, end_date);
 
 COMMENT ON TABLE sigma_promotion_articles IS
+    E'GRADE: RAW. Sigma DBAKTP promotion lines, mirrored untouched.
+'
     'Sigma promotion lines (DBAKTP). One row per article per promotion per store. '
     'line_id = lAZaehler (Sigma auto-increment PK). '
     'Refreshed nightly by Invoke-ExtractFromSigmaSQL.ps1. SB-CC-L2-001.';

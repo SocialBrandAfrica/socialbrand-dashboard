@@ -417,6 +417,8 @@ CREATE INDEX IF NOT EXISTS idx_l2_class_highconf
 
 
 COMMENT ON MATERIALIZED VIEW l2_item_classification IS
+    E'GRADE: VERDICT. What a line IS. NORMAL, PRODUCTION, NON_STOCK or RECEIPTING_BREAK, with its confidence, signals and reason.
+'
     'Layer 2 keystone classification table. One row per article per store. '
     'Classes: NORMAL / PRODUCTION / NON_STOCK / RECEIPTING_BREAK. '
     'Signal stack: NON_STOCK_DEPT > DIM_EXCLUDED > PROD_INPUT_SUBDEPT > '

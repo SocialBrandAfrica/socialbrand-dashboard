@@ -272,6 +272,8 @@ CREATE INDEX IF NOT EXISTS idx_l2_kpi_daily_sales_date
 
 
 COMMENT ON MATERIALIZED VIEW l2_kpi_daily IS
+    E'GRADE: CALCULATED. Daily store-level rollup of the stock and sales facts.
+'
     'Daily store-level intelligence summary. Step 4 in L2 build order. '
     'One row per store. Stock/capital source: l2_stock_position. '
     'Sales source: sigma_sales (DBUMBA, SB-INDEX-005 Phase 1 + Option B 2026-06-08). '

@@ -51,6 +51,8 @@ CREATE INDEX l2_consignment_daily_store_date
   ON l2_consignment_daily (store_code, sale_date);
 
 COMMENT ON TABLE l2_consignment_daily IS
+  E'GRADE: CALCULATED. Daily consignment lines carrying the 10 percent commission and 90 percent owed split.
+'
   'Pre-classified HMR SUSHI consignment lines. L2 engine output. '
   'Anchor: sale_date >= 2026-06-01. Refreshed nightly by refresh_l2_consignment_daily().';
 

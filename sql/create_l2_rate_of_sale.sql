@@ -165,6 +165,8 @@ CREATE INDEX IF NOT EXISTS idx_l2_ros_neversold
 
 
 COMMENT ON MATERIALIZED VIEW l2_rate_of_sale IS
+    E'GRADE: CALCULATED. Per-article 91-day and 14-day sales arithmetic over sigma_sales.
+'
     'Per-item rate of sale for 91-day and 14-day windows, computed at nightly '
     'refresh. Base: sigma_articles (all ranged items). Products with no sale '
     'in a window get qty=0 / ros=0. Never-sold products have last_sale_date=NULL. '

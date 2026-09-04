@@ -519,3 +519,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.refresh_l2_classification(text, date) TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+-- ENG-172 / SB-CC-GROUND-001 leg 1: the grade travels with the object (ENGINE-CANON-LAYERS §L4).
+COMMENT ON TABLE public.l2_classification IS
+    'GRADE: VERDICT. What a line NEEDS today. The cleanup bucket and its artifact route, with bucket_reason on every row.';

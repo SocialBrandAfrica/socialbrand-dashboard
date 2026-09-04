@@ -62,6 +62,8 @@ CREATE TABLE public.l2_last_counted (
 GRANT SELECT ON public.l2_last_counted TO anon, authenticated;
 
 COMMENT ON TABLE public.l2_last_counted IS
+  E'GRADE: CALCULATED. The latest I DIWAINV ledger movement per line. Count recency read from the ledger, never from a summary column.
+'
   'BUG-LOG ENG-006. Ledger-true last-count fact: sigma_movements I-channel (DIWAINV), '
   'never the stale l2_stock_position.last_inv_date/last_inv_soh summary fields (max '
   '2023-06-22 at 10116 while the ledger runs current). Nightly per-store precompute of '

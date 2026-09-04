@@ -182,3 +182,7 @@ $function$;
 
 REVOKE ALL ON FUNCTION public.refresh_l2_range_state(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.refresh_l2_range_state(text) TO authenticated;
+
+-- ENG-172 / SB-CC-GROUND-001 leg 1: the grade travels with the object (ENGINE-CANON-LAYERS §L4).
+COMMENT ON TABLE public.l2_range_state IS
+    'GRADE: VERDICT. The per-line range state. HERO, CORE, SLOW, MARKDOWN, DERANGE, VERIFY or EXCLUDED, with state_reason.';

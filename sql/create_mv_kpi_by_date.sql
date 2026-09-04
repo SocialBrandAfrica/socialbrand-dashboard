@@ -101,3 +101,7 @@ GRANT SELECT ON public.mv_kpi_by_date TO anon, authenticated;
 -- alone clears PostgREST's cache -- the Dashboard "Reload schema" button may
 -- be required.
 SELECT pg_notify('pgrst', 'reload schema');
+
+-- ENG-172 / SB-CC-GROUND-001 leg 1: the grade travels with the object (ENGINE-CANON-LAYERS §L4).
+COMMENT ON MATERIALIZED VIEW public.mv_kpi_by_date IS
+    'GRADE: CALCULATED. Pre-aggregated KPIs per store per date.';

@@ -6,6 +6,40 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-04 -- ENG-172 / SB-CC-GROUND-001 LEG 1. THE GRADE STAMP. 46 of 64 published objects can now say what kind of fact they are. No quantity moved.
+
+**Clock, read in this write's own pass and settled three ways at +2:** device local `2026-09-04 09:27:51`, device UTC `07:27:51`, database `now()` SAST `09:27:46` / UTC `07:27:46`. The session opened 09:11 and did not cross midnight.
+
+**DATABASE-SIDE, NO FRONTEND DEPLOY:** migration `eng172_ground_001_leg1_grade_stamps`, live on apply.
+**REPO:** 11 `sql/create_*.sql` files carry the stamp so it survives a rebuild.
+
+**WHAT IT DOES.** `ENGINE-CANON-LAYERS` §L4 rules that every L2 object declares its grade in its own `COMMENT ON`, first line, as `GRADE: <RAW|CALCULATED|VERDICT|PREDICTED|RECOMMENDED>`. Nothing did. 46 objects now do: 17 RAW, 18 CALCULATED, 9 VERDICT, 2 RECOMMENDED.
+
+**R22, and the gate is a REGENERATION of the register, never a literal (brief §4).** `SB-REF-GROUNDING.md` before and after, both measured against the live catalog today: objects declaring a grade **0 of 64 to 46 of 64**, objects with neither a grade nor a freshness stamp **37 to 10**, edges resolving to a blind object **136 of 320 to 65 of 320**. Published readers, source objects and edges unmoved at 80 / 64 / 320.
+
+**NO QUANTITY MOVED, and it is structural rather than checked.** A `COMMENT ON` changes no plan, no result and no rand.
+
+**THE MIGRATION PREPENDS. IT DOES NOT REPLACE, AND THAT IS THE POINT.** The brief's leg 1 reads `COMMENT ON <object> IS 'GRADE: ...'`. Run as written it would have DELETED the existing comment on **34 of the 64 objects**, including `l2_population_verdict` at 3,008 characters which DB-SCHEMA names as authoritative, and several carrying R28 retirement lineage. R28 forbids deleting a retirement. §L4 says first LINE, which means prepend. Lineage proof after apply: `l2_population_verdict` 3,008 to 3,145, `v_ean_bridge` 547 to 656, `calendar_events` 565 to 665. Nothing shrank. Zero graded objects hold an empty comment.
+
+**THE STAMP IS A TWO-SITE PATTERN (R30 addendum 4, an object comment is a pattern).** A comment dies with `DROP MATERIALIZED VIEW ... CASCADE`. Sites counted rather than assumed: **12 of the 46 sit in a create file that drops them**, so those 12 also carry the stamp in `sql/`. The other 34 are not dropped by their own file and keep the live stamp.
+
+**RECONCILIATION FOUND TWO PRE-EXISTING DIVERGENCES, and neither was caused by this pass.** File against live on the 12: **10 reconcile exactly**. `l2_kpi_daily` file 593 against live 378, the file carrying 215 characters live does not. `l2_item_classification` file 431 against live 501, live carrying 70 the file does not. Both predate today. Named, not silently reconciled in either direction, because `sql/` is canonical by RECONCILE-001 while live outranks every document on state by Rule 18, and which is right is a question, not a default.
+
+**18 OBJECTS ARE DELIBERATELY UNSTAMPED AND NAMED, never guessed (§L2 rule 4, brief §3.2).** They fall into three classes and the third is a canon gap:
+- **6 MIXED,** carrying more than one grade in one relation: `l2_stock_position` (RAW soh, CALCULATED capital, VERDICT signals, and 27 readers, the most-read object in the estate), `l2_stock_band`, `l2_bloom_ros_pantry`, `l2_bloom_promo_pantry`, `l2_on_order`, `order_budget_ledger`.
+- **5 CONFIG,** a declared parameter that is neither observed nor calculated: `forge_config`, `bloom_dc_config`, `bloom_route_config`, `stores`, `supplier_calendar`.
+- **7 WORKFLOW or CAPTURED state,** an event our own app or the floor recorded: `orders`, `order_items`, `user_profiles`, `forge_count_run`, `forge_count_run_line`, `bt_actions`, `bt_out_events`.
+
+**🔴 THE FINDING THAT OUTLIVES THIS PASS: THE FIVE-RUNG LADDER DOES NOT COVER THE PUBLISHED ESTATE.** 12 of 64 objects, carrying 73 reader edges and including `stores` at 19 readers, are CONFIG or CAPTURED state and fit no rung of `ENGINE-CANON-LAYERS` §L2. Stamping them RAW would be a guess, and a wrong grade is worse than an absent one because it is a fact wearing a rung it did not earn. **PM owns `ENGINE-CANON-LAYERS`. The ladder owes either two more rungs or an explicit out-of-scope clause.**
+
+**🔴 THE INSTRUMENT WAS STAMPING A RENDER AS A MEASUREMENT, and it was caught on this file.** `Engine/register/grounding_map.py` stamped `datetime.now()` unconditionally, so re-running it over an old snapshot printed a fresh time. On the morning of 2026-09-04 the register read `Generated: 2026-09-04 09:10 SAST` off a snapshot captured **2026-09-03 14:51**, 19 hours stale, and nothing in the file could say so. That is R34.5 point 2 firing on the instrument built to find exactly this class of defect. **Fixed:** the catalog-read moment now comes from the snapshot's own mtime, the render carries its own separate stamp, and a gap of an hour or more prints a warning inside the file.
+
+**🔴 THREE LIVE OBJECTS HAVE NO COMMITTED CREATE SOURCE.** `v_bloom_dc_ambient_pool` and `forge_integrity_history` are mentioned in **zero** files under `sql/`. `l2_population_verdict` has its refresh function committed but not the table DDL. Under SB-PRIORITY v1.4 test 1 a live object whose code is not on `main` is an open incident. All three are CC's own. Named here, not fixed in this pass.
+
+**LEGS 2 AND 3 ARE NOT STARTED.** Leg 2 is freshness on the 37, and the brief requires the shape be proposed in the handover before it is built. Leg 3 is the `supplier_calendar` delivery-days provenance repair plus the `rpc_derive_supplier_cadence` blindness (1 row on 12 of 12 DIRECT routes, 0 rows on 5 of 5 DC routes).
+
+---
+
 ## 2026-08-30 (night, later) -- THE A3 BUNDLED PASS SHIPPED ON PIETER'S WORD. The recipe pin moved for the first time since 2026-08-19, and every line is identical.
 
 **Clock, and the session crossed midnight between the work and this write -- the exact trap canon names.** The work below happened **2026-08-30** (pass applied 20:2x SAST, R22 measured 20:2x-20:3x). This entry is **written 2026-08-31 00:3x SAST**, re-read at the moment of writing rather than carried: device local `2026-08-31 00:31:47 +02:00`, device UTC `2026-08-30 22:31:47`, database `now()` SAST `2026-08-31 00:31:49` / UTC `2026-08-30 22:31:49` -- all three agreeing on the offset. A draft of this entry carried "written 2026-08-30 20:3x" and was corrected before it landed; that is the 2026-07-27 config-key defect exactly, caught this time. **Every date in the entry is the date the WORK happened, not the date of the write.**
