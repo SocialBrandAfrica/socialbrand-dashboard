@@ -12,6 +12,43 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-04 12:1x -- BLOOM-029 ITEMS 7 AND 8 SHIPPED ON PIETER'S WORD. SEARCH IS LIVE. `main` MOVED FOR THE FIRST TIME SINCE 2026-08-30.
+
+**Clock, read in this write's own pass, +2 both ways:** local `2026-09-04 12:16:27`, UTC `10:16:28`.
+
+**PIETER, 2026-09-04: "merge start-carry-on and apply items 7 and 8."** His 2026-09-01 ruling had put SEARCH AND MANUAL CODE ADD above ENG-093, ENG-084 and ENG-102. It was built on 2026-09-02 and had sat unmerged and undeployed for two days, with neither half reachable from his screen.
+
+**ORDER OF OPERATIONS, AND IT WAS DELIBERATE: DATABASE FIRST, THEN THE MERGE.** The frontend auto-deploys from `main`, so merging first opens a window in which the page calls a function that does not exist. Applying the two additive functions first means there was no window at all. The handover's own instruction was "in the same pass"; this is the safe order within it.
+
+**PRE-FLIGHT, before a line was written (the standing rule, never after).** Every one of the 15 RPCs the branch's `bloom/page.jsx` calls was checked against live: **13 live with exactly ONE overload each, 2 absent.** The two absent were exactly items 7 and 8. No overload could collide, and no changed signature could leave an ambiguous no-arg call behind.
+
+**APPLIED, both additive, both read routines:**
+- `bloom029_item7_rpc_bloom_budget_context` -- from `sql/create_rpc_bloom_budget_context.sql`, source md5 `f0ff687c37adb7a2e3de4fd0d61f0bbf`.
+- `bloom029_item8_rpc_bloom_pool_search` -- from `sql/create_rpc_bloom_pool_search.sql`, source md5 `442523b13036b2d4135ce7633ea11e97`.
+
+Both `STABLE SECURITY DEFINER` with `SET search_path TO 'public'` pinned, both `RETURNS jsonb` and never `SETOF` so the live 1,000-row PostgREST cap cannot truncate them (ENG-093), both `REVOKE ... FROM PUBLIC` then `GRANT ... TO anon, authenticated` per R30 addendum, whose anon revoke scopes to MUTATING functions only. Neither file carries a bare `DROP`.
+
+**R22, RUN AS `anon` AND NOT READ OFF A GRANT.** SECURITY DEFINER is load-bearing on both (`l2_population_verdict` and the ledger are not reachable as the caller, the ENG-068 / ENG-074 shape), so the test was behavioural:
+
+| Query | Returned |
+|---|---|
+| `5152` at 10116 DC_AMBIENT | **`ROB RAJAH CUR/PWD M&SPCY`** -- the line Pieter hunted on 09-01 and could not find |
+| `3515` at 80175 DC_AMBIENT | found, `population_state = COVERED_TRUSTED_RATE`, `on_sheet=false` -- **off the order WITH its reason**, which is the ruling's own requirement |
+| `SUNLIGHT` at 10116 | `matched 51 / returned 50 / truncated true` -- the cap reports itself, so a short read cannot pass as a complete one |
+| a nonsense code | *"No line on this desk matches that code, barcode or description."* |
+| `rpc_bloom_budget_context('10116','DC_AMBIENT')` | route `DC`, basis `latest_row`, budget R400,925.18 |
+| `rpc_bloom_budget_context('80176','DIRECT_BEER')` | route `DIRECT_BEER`, the escaped `LIKE 'DIRECT\_%'` branch resolving correctly |
+
+**MERGED: `origin/main` `3f1d96f` -> `d6738e0`, a clean fast-forward, 11 commits, 0 behind.** It carries `eb1972`'s frontend work with it (`2a765c9` is an ancestor), so this one merge closed both. **`main` had not moved since 2026-08-30.**
+
+**WHAT IS NOT VERIFIED, named rather than left to be assumed.** The Vercel production build and the on-screen walk. The browser check was refused by the harness classifier and I did not work around it. **R31 stands open and it is Pieter's:** open `/bloom`, search a code, and add one by hand. Until he does, this is a shipped database and a merged branch, not a closed DoD.
+
+**NOT SWEPT IN, named so silence is not read as done.** The manual-code-add half is present in the frontend as the add-by-hand path off the pool search; `manualAdd` / `addByCode` as named symbols do not appear, so if he expects a separate manual-entry box that is a distinct question, not a delivered one. ENG-155 finding 2b and the pack-overshoot measurement remain out of scope and remain Pieter's to rule.
+
+**🔴 A DIVERGENCE THIS ENTRY CREATES AND DOES NOT CLOSE.** The ENG-172 grade stamps are LIVE in the database from this morning's migration, and the 11 `sql/` files carrying their source sit on `claude/start-proceed-dc0a16`, which is NOT merged. Under SB-PRIORITY v1.4 test 1 a live object whose code is not on `main` is an open incident from the moment it ships. It is named here the same session it was created.
+
+---
+
 ## 2026-09-04 -- ENG-172 / SB-CC-GROUND-001 LEG 1. THE GRADE STAMP. 46 of 64 published objects can now say what kind of fact they are. No quantity moved.
 
 **Clock, read in this write's own pass and settled three ways at +2:** device local `2026-09-04 09:27:51`, device UTC `07:27:51`, database `now()` SAST `09:27:46` / UTC `07:27:46`. The session opened 09:11 and did not cross midnight.
