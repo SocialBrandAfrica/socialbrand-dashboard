@@ -43,6 +43,23 @@ Both `STABLE SECURITY DEFINER` with `SET search_path TO 'public'` pinned, both `
 
 **WHAT IS NOT VERIFIED, named rather than left to be assumed.** The Vercel production build and the on-screen walk. The browser check was refused by the harness classifier and I did not work around it. **R31 stands open and it is Pieter's:** open `/bloom`, search a code, and add one by hand. Until he does, this is a shipped database and a merged branch, not a closed DoD.
 
+**✅ R31 IS CLOSED, 2026-09-04 20:3x SAST, WALKED BY CC IN PIETER'S OWN SIGNED-IN CHROME.** Clock settled three ways at +2: local `20:39:08`, UTC `18:39:08`, database `now()` SAST `20:39:09` / UTC `18:39:09`. **And the sentence above is WRONG about the cause: the harness classifier never refused the browser. The Chrome extension was NOT CONNECTED.** Two seats' worth of “blocked” reporting rested on a misdiagnosis I never tested; Pieter connected the extension and the walk ran first time. Left standing above as written, corrected here.
+
+**THE WALK, on `10116 · SPAR Delareyville / SPAR DC Ambient`, delivery 2026-09-10, read off the DOM and never OCR’d:**
+
+| Step | Result |
+|---|---|
+| Deployed bundle scanned | `rpc_bloom_pool_search`, `rpc_bloom_budget_context`, `"Added by hand"`, `"Type at least two"` all present in `page-01cad04c2482f152.js` — **Vercel HAS shipped `d6738e0`** |
+| Item 7 live | `rpc_bloom_budget_context` POST **200**, twice, on page load |
+| R30 §1 gate | **ZERO** reads of `order_budget_ledger` or `l2_sales_budget`. The five direct base-table reads are gone |
+| Item 8 UI | `NOT ON THE SHEET? SEARCH POOL`, placeholder *Product code, barcode or description* |
+| Search `5152` | **`1 match in the DC_AMBIENT pool`** → `ROB RAJAH CUR/PWD M&SPCY`, SOH 41, ROS 1.25 — **the line Pieter hunted on 09-01 and could not find** |
+| Manual add | sheet `All 1221` → `All 1222`, row carries a **`MANUAL`** badge |
+| R29 story, on the badge | *"Added by hand from the pool search. The engine did not suggest this line and computed no quantity for it — the number in the box is yours."* and, on the search hit, *"Population state: COVERED_TRUSTED_RATE. Accounted for on a trusted rate (1.25/day published, guard published)."* — **off the order WITH its reason** |
+| Chosen quantity | 1 pack of 40 → **R 750,25**. Running total **R 148 925 → R 149 675**, lines **364 → 365**, budget +R 750,25. Reconciles to the cent |
+
+**NOTHING WAS WRITTEN AND NOTHING WAS SUBMITTED.** `Submit order` and `Export CSV` were never touched. Proved rather than asserted: `bloom_order_cache` `max(cache_id)` **716 before and after**, newest row still the nightly job’s `01:31:57` — **`Generate order` computes in the browser and persists no cache**, so the write risk this seat flagged before clicking did not exist. His session was restored by reload and re-read: delivery `2026-09-10` / following `2026-09-12`, running total `R 0`, `0 lines` — identical to how it was found.
+
 **NOT SWEPT IN, named so silence is not read as done.** The manual-code-add half is present in the frontend as the add-by-hand path off the pool search; `manualAdd` / `addByCode` as named symbols do not appear, so if he expects a separate manual-entry box that is a distinct question, not a delivered one. ENG-155 finding 2b and the pack-overshoot measurement remain out of scope and remain Pieter's to rule.
 
 **🔴 A DIVERGENCE THIS ENTRY CREATES AND DOES NOT CLOSE.** The ENG-172 grade stamps are LIVE in the database from this morning's migration, and the 11 `sql/` files carrying their source sit on `claude/start-proceed-dc0a16`, which is NOT merged. Under SB-PRIORITY v1.4 test 1 a live object whose code is not on `main` is an open incident from the moment it ships. It is named here the same session it was created.
