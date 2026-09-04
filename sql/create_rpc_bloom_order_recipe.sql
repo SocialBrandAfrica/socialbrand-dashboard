@@ -1,7 +1,24 @@
 -- =============================================================================
 -- !!! THIS FILE'S BODY IS ROTTED AGAINST LIVE. DO NOT RECONCILE ANYTHING TO IT. !!!
--- RE-STAMPED by CC 2026-08-30 20:2x SAST, after the A3 bundled pass moved the
--- live body. Clock settled three ways at +2 in that session.
+--
+-- RE-STAMPED AGAIN by CC 2026-09-02 11:0x SAST. THE PIN MOVED A THIRD TIME.
+--     OLD  6204ae7bf6b12f1a17e8bcb3d72028ea  / 44,251 chars
+--     NEW  49960b1265f3bad8839d763cd0088eef  / 44,371 chars   (ENG-102)
+-- The move is +120 chars and it is exactly the two ENG-102 clauses, one on the
+-- DELETE gate and one on the RETURN gate, widening the keep condition so a
+-- CORE/HERO line at or below its own min_band is RETAINED at zero quantity
+-- instead of deleted. R22 across all 20 desks: rows 3,020 -> 3,489, value
+-- R1,466,857.16 -> R1,466,857.16 to the cent, packs 5,889 -> 5,889, added rows
+-- carrying quantity 0, rows lost 0. Migration sql/eng102_surface_covered_lines.sql.
+--
+-- 🔴 AND THE REGENERATION IS STILL NOT DONE, FOR THE REASON ALREADY MEASURED
+-- BELOW, NOT A NEW ONE. ENG-102 was applied by the same asserted-replace method
+-- the 2026-08-30 note describes, so this seat never held the full body either.
+-- Re-transcribing it through the session channel remains UNSAFE on the measured
+-- 13-backslash finding. The debt is unchanged in kind and is not claimed closed.
+--
+-- Prior stamp: RE-STAMPED by CC 2026-08-30 20:2x SAST, after the A3 bundled pass
+-- moved the live body. Clock settled three ways at +2 in that session.
 --
 -- ⚠ THE PIN MOVED TODAY. The A3 bundled pass (ENG-142 sites 9+10 + ENG-147
 -- residual) repointed two blocks to their one homes:

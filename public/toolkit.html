@@ -190,8 +190,13 @@
       </select>
     </div>
     <div id="nper-wrap" style="display:none">
-      <span class="lbl">Lines per department</span>
-      <input id="nper" type="number" value="50" style="width:110px">
+      <!-- SB-CC-BLOOM-029 item 4 clause (b). This was "lines per department" and
+           it MULTIPLIED by the department count: the untouched default of 50
+           issued 690 lines at 80175 and 441 at 80176, against store budgets of
+           200 and 70. It is now a STORE TOTAL, and blank means the store's own
+           daily budget (forge_config.daily_count_volume, SPAR 200 / TOPS 70). -->
+      <span class="lbl">Lines for this store (blank = daily budget)</span>
+      <input id="nper" type="number" placeholder="store budget" style="width:150px">
     </div>
     <div>
       <span class="lbl">&nbsp;</span>
@@ -509,7 +514,7 @@ $("compose").onclick = async ()=>{
     const t0=performance.now();
     composeRows = await rpc("rpc_forge_count_list", {
       p_stores:[...sel], p_mode:mode, p_dept_names:depts,
-      p_n: mode==="random" ? (parseInt($("nper").value,10)||50) : null, p_seed:seed
+      p_n: mode==="random" ? (parseInt($("nper").value,10)||null) : null, p_seed:seed
     });
     const ms=Math.round(performance.now()-t0);
     if(!composeRows.length){ banner("Checked and came back empty — nothing in this selection needs counting. That is an answer, not an error.", "ok"); }
@@ -548,7 +553,7 @@ async function logRun(store, rows){
       source: "forge",
       seed: String(parseFloat($("seed").value)||0.42),
       params: { depts: deptSel.size ? [...deptSel] : null,
-                n_per_dept: $("mode").value==="random" ? (parseInt($("nper").value,10)||50) : null },
+                n_requested: $("mode").value==="random" ? (parseInt($("nper").value,10)||null) : null },
       lines: rows.map(r=>({ product_code:r.product_code, stratum:r.stratum_label,
                             description:r.description, soh:r.soh, capital_value:r.capital_value }))
     })

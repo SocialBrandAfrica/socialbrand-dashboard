@@ -47,6 +47,8 @@ Both `STABLE SECURITY DEFINER` with `SET search_path TO 'public'` pinned, both `
 
 **🔴 A DIVERGENCE THIS ENTRY CREATES AND DOES NOT CLOSE.** The ENG-172 grade stamps are LIVE in the database from this morning's migration, and the 11 `sql/` files carrying their source sit on `claude/start-proceed-dc0a16`, which is NOT merged. Under SB-PRIORITY v1.4 test 1 a live object whose code is not on `main` is an open incident from the moment it ships. It is named here the same session it was created.
 
+**✅ CLOSED THE SAME DAY, 2026-09-04 13:3x, on Pieter’s word (“it goes the same way”).** Clock re-read fresh for this line and settled three ways at +2: local `13:35:11`, UTC `11:35:11`, database `now()` SAST `13:35:08` / UTC `11:35:08`. `claude/start-proceed-dc0a16` merged `origin/main` (11 commits, the only conflict this file, resolved by ORDER and proved line-exact against both parents) and went to `main`. The claim above stands as written because it was true when written; this is its closure, not its correction.
+
 ---
 
 ## 2026-09-04 -- ENG-172 / SB-CC-GROUND-001 LEG 1. THE GRADE STAMP. 46 of 64 published objects can now say what kind of fact they are. No quantity moved.
@@ -80,6 +82,73 @@ Both `STABLE SECURITY DEFINER` with `SET search_path TO 'public'` pinned, both `
 **🔴 THREE LIVE OBJECTS HAVE NO COMMITTED CREATE SOURCE.** `v_bloom_dc_ambient_pool` and `forge_integrity_history` are mentioned in **zero** files under `sql/`. `l2_population_verdict` has its refresh function committed but not the table DDL. Under SB-PRIORITY v1.4 test 1 a live object whose code is not on `main` is an open incident. All three are CC's own. Named here, not fixed in this pass.
 
 **LEGS 2 AND 3 ARE NOT STARTED.** Leg 2 is freshness on the 37, and the brief requires the shape be proposed in the handover before it is built. Leg 3 is the `supplier_calendar` delivery-days provenance repair plus the `rpc_derive_supplier_cadence` blindness (1 row on 12 of 12 DIRECT routes, 0 rows on 5 of 5 DC routes).
+
+---
+
+## 2026-09-02 (afternoon) -- SB-CC-BLOOM-029: five more items to the DB, and a regression in my own morning ship caught before it reached the order sheet.
+
+**Clock, read fresh in this write's own pass and settled three ways at +2:** local `2026-09-02 18:00:17`, UTC `16:00:17`, database `now()` SAST `18:00:19` / UTC `16:00:19`.
+
+**DATABASE-SIDE, NO FRONTEND DEPLOY. Frontend sits on `claude/session-start-eb1972`, head `0d36167`, UNMERGED by ruling.** Migrations applied: `bloom029_item4_issuing_guard` · `bloom029_item4_covered_tag_excludes_other_keep_reasons` · `bloom029_item5_grant_compliance_summary_anon` · `bloom029_item2_hidden_demand_json_reader` · `bloom029_item6_availability_by_tier` · `eng102_cached_reader_withholds_covered_until_ui` · `eng102_covered_tag_never_steals_a_withheld_line`.
+
+### What shipped, with its gate
+
+- **Item 4, the issuing guard.** Random mode was capped PER DEPARTMENT, so with nobody typing anything it issued **690 lines at 80175 against a budget of 200** and **441 at 80176 against 70**. Now a store total. Explicit `p_n=500` still honoured; daily controls unmoved at **200/200/70/70/70**. Clause (a): two daily calls, one run row, second returns the same `run_id` with `already_issued`. PM re-ran both clauses across five stores inside a rolled-back transaction, zero rows leaked.
+- **Item 5, the pack grant.** `rpc_forge_compliance_summary` granted to anon after proving it read-only. Verified as anon: trend 40 rows, compliance 70 rows, `forge_integrity_history` still 0 (RLS, silent empty) and `forge_count_run` still denies outright. Two lock shapes, both still locked.
+- **Item 2 v1.2, `rpc_bloom_hidden_demand_json`.** Re-scoped after measurement: RecipeMode is unreachable and its call raises, so the risk lives on the hidden-sellers card, closest live reader to the 1,000-row cap at 557 of 1,000. R22 in one statement: served = line_count = array = SETOF, 557 at 10116 and 342 at 80175.
+- **Item 6, `v_bloom_availability_by_tier`.** Three F9 figures reproduced as anon to the line. Stamped `GRADE: CALCULATED`, and its COMMENT carries that it is a FLOOR on availability, not a measurement of it.
+
+### 🔴 The regression, and the lesson is the durable half
+
+**A DB-ONLY CHANGE CAN BREACH A FRONTEND GATE.** This morning's ENG-102 made the recipe retain covered lines. `rpc_bloom_order_cached` then served them to a frontend with no branch for `line_kind='covered'` — 120 unmarked zero-quantity rows at 80175, ~212 at 10116 — and it would have arrived **through tonight's job 26 with no merge at all**, so F11's "no frontend change before the three DC orders" could not have caught it. The export was never at risk (it filters `qty > 0`).
+
+Fixed by withholding them at the reader, tripwire preserved on two independent paths, `covered_withheld` surfaced. **Then a second one found while proving the first:** the covered tag was claiming 18 hidden sellers that previously showed the DROPPED badge, hiding them outright. `withheld_correction` now wins. Verified as anon: **80175 serves 859, identical to pre-ENG-102**, covered leaked 0, all 342 warned lines visible, four unrebuilt desks unaffected.
+
+### Named, not hidden
+
+- **`sql/create_bloom_order_cache.sql` is rotted far beyond today (ENG-166)** — zero occurrences of `line_kind`, counts block still `SET line_count=v_n`. It predates the §5(b2) ship of 2026-08-25 and ENG-106. Both live bodies carry zero backslashes, so regeneration is safe whenever scheduled.
+- **The no-divergence gate on items 4 and 5 IS closed:** both canonical sources hash-match live on body and full definition. Closing it also found a `REVOKE ... FROM anon` that would have silently undone item 5 on the next rebuild — a divergence living in a grant, which no code diff would show.
+- **18 lines lose the DROPPED badge** until ENG-162. PM ruled that acceptable for the order morning.
+
+---
+
+## 2026-09-02 -- ENG-102 SHIPPED. The covered lines stay on the sheet, and not one rand moved.
+
+**Clock, read fresh in this write's own pass and settled three ways at +2:** device local `2026-09-02 11:08:11`, device UTC `09:08:11`, database `now()` SAST `11:08:20` / UTC `09:08:20`. The work and this entry are the same morning, no midnight crossed.
+
+**DATABASE-SIDE, NO FRONTEND DEPLOY:** migrations `eng102_surface_covered_lines` and `eng102_covered_tag_excludes_other_keep_reasons`, live on apply. Source file `sql/eng102_surface_covered_lines.sql`.
+
+**🔴 THE RECIPE PIN MOVED. `6204ae7bf6b12f1a17e8bcb3d72028ea` / 44,251 -> `49960b1265f3bad8839d763cd0088eef` / 44,371.** R28: the old pin is `retired_on` 2026-09-02, `superseded_by` the new one. Drift is **+120 chars and it is accounted at source**, exactly the two ENG-102 clauses at 60 each. One overload before and after.
+
+### What changed, and why it is three objects and not one
+
+`rpc_bloom_order_recipe` computes every pool line in full and then DELETEs the non-actionable ones. A CORE or HERO line at or below its own `min_band` therefore left the order sheet **with no row and no reason**, and the reason was usually a good one. `ORDERING-CANON` §B4 requires an unqualified line to stay surfaced with its per-line reason and §5(b2) rules that every pool line is a ROW. Both were unenforced on the recipe's own DELETE.
+
+1. **`rpc_bloom_order_recipe`** -- the keep condition gains `OR (range_state IN ('CORE','HERO') AND soh <= min_band)`, on BOTH gates. There are two, not one: the `DELETE ... WHERE NOT (...)` and the same condition again in positive form on the `RETURN QUERY`. Patched by asserted replace off `pg_get_functiondef`, never by re-typing 44KB.
+2. **`bloom_order_cache_line.line_kind`** -- CHECK extended to allow `covered`, a third value beside `ordered` and `hidden`. A covered line is one the engine got RIGHT; a hidden line is one it got wrong. They are not the same fact and are not collapsed.
+3. **`refresh_bloom_order_cache`** -- tags the retained rows `covered` and keeps `ordered_line_count` on the population it has always named. **Shipping (1) alone would have inflated that count by 469 zero-quantity rows, which is the ENG-123 defect by name.** The tag runs after both hidden passes and skips any line kept for its own reason (`count_first`, `keep_or_delist`, `pack_forced_review`, `min_presence_forced`), so a count-first line is never relabelled "no action".
+
+### R22 -- all 20 desks, and it is a zero-delta gate
+
+Measured before the change with a probe clone, then reproduced live after it:
+
+| | before | after |
+|---|---|---|
+| rows returned | 3,020 | **3,489** (+469) |
+| order value | R1,466,857.16 | **R1,466,857.16** |
+| packs | 5,889 | **5,889** |
+
+Added rows carrying quantity **0**. Rows lost **0**. Added value **R0.00**. Quantity-neutral by construction, because the new clause is OR'd onto the keep condition and any row it adds had `suggested_packs = 0` or it was already kept.
+
+**End to end on a real cache build (80175 DC_AMBIENT, delivery 2026-09-05, cache 635):** `ordered_line_count` **550**, unchanged; ordered value **R280,029.75**, identical to the cent; `line_kind='covered'` **120**, matching the desk-wide prediction exactly; covered value R0.00; covered rows carrying quantity 0; covered rows stealing another keep reason 0.
+
+**NO NEW CONSTANT.** The rule reads the line's own `min_band`, never a threshold, so store #6 inherits it unchanged (§0h, R25). Per-desk yield runs 0 to 212 and two desks return zero, so it discriminates rather than blankets.
+
+### Named, not hidden
+
+- **The frontend does not render `covered` yet.** The rows are in the cache and correctly tagged; `/bloom` has no branch for the new `line_kind`. Owner CC, next pass.
+- **`sql/create_rpc_bloom_order_recipe.sql` is STILL ROTTED** and the regeneration is not claimed. Same structural reason as 2026-08-30: the pass was applied by asserted replace, so this seat never held the full body, and re-transcribing it through the session channel is unsafe on the measured 13-backslash finding. Header re-stamped with the new pin so nobody reconciles to a stale one.
+- **`ORDERING-CANON`'s reconciliation pin now names a superseded md5.** PM owns that file, so this is flagged, not edited.
 
 ---
 
