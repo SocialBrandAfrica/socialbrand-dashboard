@@ -12,6 +12,34 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-05 15:59 SAST -- ENG-178 APPLIED. THE INTEGRITY HISTORY GETS A PUBLISHED READER AND THE BASE TABLE STAYS LOCKED.
+
+**Clock, read in this write's own pass, +2 both ways:** local `2026-09-05 15:59:57`, UTC `13:59:57`.
+
+**What shipped:** `public.rpc_forge_integrity_history(text[],date,date)`, applied as migration `eng178_rpc_forge_integrity_history`. Source `sql/eng178_rpc_forge_integrity_history.sql`. **Additive. No schema change, no config key, and `rpc_forge_integrity_trend` was not touched, so no live signature moved.**
+
+**WHY A READER AND NOT THE SELECT POLICY THAT WAS ASKED FOR.** R30 §1: surfaces read published interfaces, base tables stay locked. `sql/bloom029_item5_grant_compliance_summary_anon.sql` line 50 already carried the shipped decision in one line, *"No grant on `forge_integrity_history`, `forge_count_run` or `forge_count_run_line`."* A base-table policy would have reversed a three-day-old decision to serve a consumer that a function serves better.
+
+**THE CONSUMERS, READ FROM THE GENERATED READER MAP, NOT FROM MEMORY.** `SB-REF-READERS.md` regenerated this session before deciding off it (96 files, 56 readers, 4 test-only, 15 mention-only). `public/toolkit.html` and `src/app/api/forge/weekly-report/route.js` read `rpc_forge_integrity_trend`; `src/app/api/forge/run/route.js` reads `rpc_forge_compliance_summary`. **All three run as `anon`:** toolkit.html carries the publishable key inline at line 271, both API routes build their client with `NEXT_PUBLIC_SUPABASE_ANON_KEY`. There is no signed-in surface, so the grant is anon, matching the sibling.
+
+**AND THE PII PRECEDENT DOES NOT REACH THIS TABLE, WHICH WAS CHECKED RATHER THAN ASSUMED.** `forge_integrity_history` is `(store_code, as_of_date, instrument, value_num, pool_num, captured_at)`, read from the live catalog. The `issued_by` person-column that justified locking anon out of `forge_count_run` does not exist here. **That check is the whole difference between this being a one-line build and a judgement call.**
+
+**PRE-FLIGHT, BEFORE WRITING AND NOT AFTER.** No function of that name existed, zero overloads, so no ambiguous-call risk. The signature deliberately mirrors its sibling `rpc_forge_compliance_summary(p_stores text[], p_from date, p_to date)` exactly.
+
+**R22, RUN BEHAVIOURALLY AS `anon` ON THE PUBLISHABLE KEY, NEVER READ OFF A GRANT:**
+- **The reader:** `status OK`, `row_count` **2,532**, **served 2,532, zero truncation**, `date_from` 2026-06-30, `date_to` 2026-09-04, six columns, no PII.
+- **Cross-check to source:** the base table holds **2,532 rows, 5 stores, 8 instruments, 67 distinct dates**, same min and max date. **Matches to the row.**
+- **The base table as `anon`: `[]`.** Still locked. That is the point of the whole change.
+- **Control:** `rpc_forge_integrity_trend` on the same key still returns live rows, so the closure is targeted and nothing broke.
+
+**THE TRUNCATION RISK IS MEASURED, NOT THEORETICAL.** 2,532 rows against the live 1,000-row PostgREST cap. A `SETOF` reader would have served 1,000 rows and reported no error (`206 Partial Content`), which is ENG-093 exactly. Returning ONE jsonb row carrying the array is structural, not a bigger page size.
+
+**SECURITY, `get_advisors` RUN AFTER THE CHANGE (R30 addendum).** The one lint this object raises is `anon_security_definer_function_executable`, and **it is the estate's standing posture for a published anon read RPC: 73 functions carry it, including both siblings, `rpc_forge_compliance_summary` and `rpc_forge_integrity_trend`.** Base rate stated rather than waved past. `forge_integrity_history` keeps its pre-existing INFO `rls_enabled_no_policy`, which is now correct by design: no policy, and a published reader instead. **I searched the 370,699-character advisory payload for this object rather than reading all 406 advisories, and say so rather than implying a full review.**
+
+**STILL OPEN, and it is the sibling job.** `forge_count_run` and `forge_count_run_line` need the same treatment, with one difference now grounded: that pair DOES carry `issued_by`, so its reader withholds the column at anon grain.
+
+---
+
 ## 2026-09-05 10:37 SAST -- PR #1 MERGED. THE NO-DIVERGENCE GATE CLOSES ON ENG-154, ENG-160 AND ENG-093.
 
 **Clock, read in this write's own pass, +2 both ways:** local `2026-09-05 10:37:53`, UTC `08:37:53`. **This session opened 2026-09-04 and CROSSED MIDNIGHT, so every date here is re-stamped (canon §17).**
