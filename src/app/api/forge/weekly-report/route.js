@@ -10,7 +10,7 @@
 // breaches, sales vs LY, GP%), it is NAMED as a pending gap, never shown as a
 // zero (R22 / no-false-statement -- the same discipline as the count measure).
 //
-// Sources: v_forge_count_compliance (compliance) + rpc_forge_integrity_trend
+// Sources: rpc_forge_compliance_summary (compliance) + rpc_forge_integrity_trend
 // (progress, now vs a week ago, each with its own as-of date). Auth: same
 // same-origin session pattern as ../run; getUser() is belt behind middleware.
 
@@ -43,34 +43,45 @@ export async function GET() {
   const { data: { user } } = await sb.auth.getUser()
   if (!user) return NextResponse.json({ error: 'not authenticated' }, { status: 401 })
 
-  const { data: stores } = await sb.from('stores').select('store_code').eq('is_active', true).order('store_code')
+  const { data: stores, error: sErr } = await sb.from('stores').select('store_code').eq('is_active', true).order('store_code')
+  if (sErr) return NextResponse.json({ error: sErr.message }, { status: 500 })
   const codes = (stores || []).map(s => s.store_code)
 
   const today = new Date()
   const weekAgo = new Date(today); weekAgo.setDate(today.getDate() - 6)
 
-  const { data: comp } = await sb
-    .from('v_forge_count_compliance')
-    .select('store_code, issued_date, lines_issued, lines_posted')
-    .gte('issued_date', iso(weekAgo))
+  // ENG-179: was `.from('v_forge_count_compliance')`, which TIMED OUT for this
+  // key on every run (57014 after 30s, measured on the exact shape below) because
+  // its posted CTE joins 21,401 run lines to 3.0M movement rows for every run
+  // before the week filter can prune anything. The error was never read, so the
+  // timeout rendered as a compliance of zero -- the false zero this file's own
+  // header forbids. The RPC filters runs FIRST and is the published interface
+  // (R30 section 1). It is also the more correct basis on both columns: it counts
+  // real run lines rather than the stored `line_count` header aggregate (the
+  // stored-aggregate law, canon 12e point 4b), and its `counted` is the count-law
+  // anchor rather than the view's cruder issued+2-day window.
+  const { data: comp, error: cErr } = await sb
+    .rpc('rpc_forge_compliance_summary', { p_stores: codes, p_from: iso(weekAgo), p_to: iso(today) })
+  if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 })
   const { data: trend, error: tErr } = await sb.rpc('rpc_forge_integrity_trend', { p_stores: codes })
   if (tErr) return NextResponse.json({ error: tErr.message }, { status: 500 })
 
   // ---- Compliance half: per store over the last 7 days ----
   const cByStore = {}
   for (const r of (comp || [])) {
-    const s = (cByStore[r.store_code] = cByStore[r.store_code] || { days: {}, })
-    const d = (s.days[r.issued_date] = s.days[r.issued_date] || { issued: 0, posted: 0 })
-    d.issued += Number(r.lines_issued); d.posted += Number(r.lines_posted)
+    const s = (cByStore[r.store_code] = cByStore[r.store_code] || { days: {}, runs: 0 })
+    const d = (s.days[r.issue_date] = s.days[r.issue_date] || { issued: 0, posted: 0 })
+    d.issued += Number(r.lines_issued); d.posted += Number(r.lines_counted)
+    s.runs += Number(r.runs || 0)
   }
   const compRows = codes.map(code => {
-    const s = cByStore[code] || { days: {} }
+    const s = cByStore[code] || { days: {}, runs: 0 }
     const dates = Object.keys(s.days)
     const pcts = dates.map(d => s.days[d].issued ? 100 * s.days[d].posted / s.days[d].issued : 0)
     const avg = pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null
     return {
       store: `${STORE_NAMES[code] || code} ${code}`,
-      lists_issued_7d: dates.length,
+      lists_issued_7d: s.runs,   // ENG-179: real lists issued. Was dates.length, which counted DAYS and undercounted any day carrying two runs.
       days_with_a_count: pcts.filter(p => p > 0).length,
       avg_pct_counted: avg == null ? 'no lists issued' : Math.round(avg),
       best_day_pct: pcts.length ? Math.round(Math.max(...pcts)) : '',
