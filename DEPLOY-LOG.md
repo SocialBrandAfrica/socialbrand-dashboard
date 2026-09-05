@@ -12,6 +12,35 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-05 10:37 SAST -- PR #1 MERGED. THE NO-DIVERGENCE GATE CLOSES ON ENG-154, ENG-160 AND ENG-093.
+
+**Clock, read in this write's own pass, +2 both ways:** local `2026-09-05 10:37:53`, UTC `08:37:53`. **This session opened 2026-09-04 and CROSSED MIDNIGHT, so every date here is re-stamped (canon §17).**
+
+**What shipped:** `main` `50c9b32` -> `e748b37`, pushed `2026-09-05 08:37:56Z`. PR #1, branch `claude/session-start-fb5454`, 4 commits, 3 `sql/` files, +665/-0. **No runtime change and no database change.** The three files are the sources for objects that went live on 2026-09-01. This merge applied nothing.
+
+**Why it was open for three days.** SB-PRIORITY v1.4 test 1: a live database object whose code is not on `main` is an open incident from the moment it ships. Opened 2026-09-02 18:17Z, merged now. It was the only open PR on the repo.
+
+**R22, verified at source before the merge, against the live catalog and never the document:**
+
+| Object | live bytes | Proof |
+|---|---|---|
+| `rpc_derive_order_cutoff` | 8,297 | ENG-154(a): the dow branch carries `GREATEST(order_cutoff_floor_days, dow_lead)`, the old anchor is absent, and the function reads the config key |
+| `refresh_supplier_calendar` | 3,008 | ENG-154(b): body carries the ENG-154 marker |
+| `refresh_supplier_calendar_cutoff` | 2,659 | ENG-160: the `floor_attested` guard and the divergence-surfacing UPDATE are both present |
+| `rpc_bloom_order_recipe_json` | 1,346 | ENG-093: one signature, no overloads. Normalised body md5 `858c8a8ec67c8eb43c87496226135c53` / 715 chars, equal to the repo file body. `PUBLIC` revoked, `anon` and `authenticated` granted, correct for a read RPC |
+
+**Site count (R30 addendum 3):** 4 objects carry the pattern, 4 verified, 0 skipped.
+
+**NAMED DIFFERENCE, behaviour nil.** The live `rpc_bloom_order_recipe_json` body is missing three explanatory comment lines the repo file carries. The executable text is byte-identical, proven by dropping the comment lines from the file body and re-hashing to the live md5, not by reading the two side by side. Re-running the file would restore the comments and move no behaviour.
+
+**TWO INSTRUMENT ERRORS OF MY OWN, both caught before publishing, both named because a false negative is exactly what R34.5 point 2 describes.** The first containment test used a `LIKE` pattern with no trailing wildcard, so it could not have returned true on any function body. The second assumed every patch's replacement text carries its own ENG marker. ENG-154(a) does not, and testing for one reported a live patch as missing. Both were re-run correctly against the object bodies.
+
+**The 2026-09-02 claim that this branch fast-forwards is RETIRED** (`retired_on` 2026-09-05, `superseded_by` this line). `main` moved `3f1d96f` -> `50c9b32` while the PR sat, so it landed as a merge commit. No conflicts, three pure file additions.
+
+**Secret scan before pushing, because this repo is PUBLIC:** the three added files carry no JWT, no `sb_secret`, no `sb_publishable`, no key or password pattern.
+
+---
+
 ## 2026-09-04 12:1x -- BLOOM-029 ITEMS 7 AND 8 SHIPPED ON PIETER'S WORD. SEARCH IS LIVE. `main` MOVED FOR THE FIRST TIME SINCE 2026-08-30.
 
 **Clock, read in this write's own pass, +2 both ways:** local `2026-09-04 12:16:27`, UTC `10:16:28`.
