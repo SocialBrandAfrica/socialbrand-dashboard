@@ -1986,6 +1986,41 @@ export default function Home() {
     return () => { cancelled = true }
   }, [top20Data, storeCodes])
 
+  // ── ENG-073: the family-resolved cover, overlaid on the scan-keyed one ──────
+  // `mv_rate_of_sale` is keyed on the TILL SCAN CODE, so for a pack-and-single
+  // family the loose code that holds the stock shows only its OWN scans and the
+  // screen reports a cover the line does not have. Measured 2026-09-06: 706 lines
+  // group-wide where the display understates the true draw, average 39x, worst
+  // 2,649x -- TROPIKA EAZY PINEAPPLE at 10116 read 2,730 days against a true 6.3.
+  //
+  // OVERLAY, NOT REPLACE, and that is the whole design. `v_family_days_cover`
+  // holds family MEMBERS only (6,715 rows / ~3,040 families), so a standalone
+  // product has no row there. mv_rate_of_sale stays the base and supplies every
+  // line; the family figure corrects the ones it covers. Replacing the source
+  // outright would silently blank the cover on every non-family line.
+  //
+  // The recipe was family-resolved long ago (ENG-005) -- this is DISPLAY only,
+  // and no order quantity moves.
+  const [top20FamilyData, setTop20FamilyData] = useState([])
+  useEffect(() => {
+    const eans = [...new Set(top20Data.map(r => r.ean).filter(Boolean))]
+    if (!eans.length || !storeCodes.length) { setTop20FamilyData([]); return }
+    let cancelled = false
+    supabase
+      .from('v_family_days_cover')
+      .select('ean,store_code,family_days_cover,scan_days_cover,family_ratio,display_understates,story')
+      .in('store_code', storeCodes)
+      .in('ean', eans)
+      .then(({ data, error }) => {
+        // Read the error. A failed overlay must fall back to the scan figure,
+        // never render as "no cover" -- the ENG-179 false-zero class.
+        if (cancelled) return
+        if (error) { console.warn('ENG-073 family cover overlay unavailable:', error.message); setTop20FamilyData([]); return }
+        setTop20FamilyData(data ?? [])
+      })
+    return () => { cancelled = true }
+  }, [top20Data, storeCodes])
+
   // ── search index — one row per EAN; loaded per dept/store combo ───────────
   // When any dept is selected, OR when a subset of stores is selected,
   // we pre-load matching rows from product_search_index into state so
@@ -2173,14 +2208,41 @@ export default function Home() {
   // Sources: the Top-20-scoped fetch (available before any report is loaded)
   // plus the report rows' engine values once a report has been fetched.
   const eanDaysCoverMap = useMemo(() => {
+    // Two maps, then merge. The scan figure is the BASE and covers every line;
+    // the family figure is the CORRECTION and covers only family members.
+    // Kept separate so "family wins" is a single obvious statement rather than
+    // a condition buried in a loop.
+    const tightest = (map, key, val) => {
+      if (val == null) return
+      const e = map.get(key)
+      const v = Number(val)
+      if (e == null || v < e) map.set(key, v)
+    }
+    const scan = new Map()
+    for (const r of [...top20RosData, ...storeRosData]) tightest(scan, r.ean, r.days_cover)
+
+    // ENG-073: where a family figure exists it IS the truth for that line, so it
+    // REPLACES the scan figure rather than competing with it on min().
+    // It moves in BOTH directions and that is correct: measured group-wide,
+    // 406 lines fall (the screen was overstating cover) and 342 rise (a pack
+    // code whose family sells through the single). 472 do not move.
+    const fam = new Map()
+    for (const r of top20FamilyData) tightest(fam, r.ean, r.family_days_cover)
+
+    const m = new Map(scan)
+    for (const [ean, v] of fam) m.set(ean, v)
+    return m
+  }, [top20RosData, storeRosData, top20FamilyData])
+
+  // ENG-073: the reason travels with the number (R29). Keyed by ean, tightest first.
+  const eanFamilyStoryMap = useMemo(() => {
     const m = new Map()
-    for (const r of [...top20RosData, ...storeRosData]) {
-      if (r.days_cover == null) continue
-      const existing = m.get(r.ean)
-      if (existing == null || r.days_cover < existing) m.set(r.ean, Number(r.days_cover))
+    for (const r of top20FamilyData) {
+      if (r.family_days_cover == null || !r.display_understates) continue
+      if (!m.has(r.ean)) m.set(r.ean, r)
     }
     return m
-  }, [top20RosData, storeRosData])
+  }, [top20FamilyData])
 
   // Signal C — phantom stock: SOH > 0, active line, days_since_sale x daily_ros >= threshold
   const signalCCount = useMemo(() => {
@@ -3526,8 +3588,10 @@ export default function Home() {
                       )}
                       {top20.map((r, i) => {
                         const ros = selectedDates.length > 0 ? r.total_qty / selectedDates.length : 0
-                        // Days cover from mv_rate_of_sale (pre-computed 91-day rolling window)
-                        const dc = eanDaysCoverMap.get(r.ean) ?? null
+                        // Days cover: mv_rate_of_sale (91-day rolling) as the base,
+                        // corrected to the FAMILY-resolved figure where one exists (ENG-073).
+                        const dc  = eanDaysCoverMap.get(r.ean) ?? null
+                        const fam = eanFamilyStoryMap.get(r.ean) || null
                         const dcColour = dc == null  ? 'rgba(245,245,244,0.25)'
                                        : dc <= 2     ? '#ef4444'   // red — reorder now
                                        : dc <= 5     ? '#f97316'   // amber — reorder soon
@@ -3549,10 +3613,20 @@ export default function Home() {
                             <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: '#4ade80', fontWeight: 500, whiteSpace: 'nowrap' }}>
                               {moverMode === 'qty' ? num(r.total_qty, 0) : zarShort(r.total_sales)}
                             </span>
-                            {/* Days cover (91-day rolling ROS from mv_rate_of_sale) */}
-                            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10, color: dcColour, whiteSpace: 'nowrap', textAlign: 'right' }}>
+                            {/* Days cover. Family-resolved where the line is part of a
+                                pack-and-single family (ENG-073); the reason travels on
+                                hover rather than the number changing silently (R29). */}
+                            <span
+                              title={fam
+                                ? `Family-resolved cover. The scan code alone reads ${Number(fam.scan_days_cover).toFixed(1)}d, `
+                                  + `but this line is part of a pack-and-single family and its true draw gives ${Number(fam.family_days_cover).toFixed(1)}d`
+                                  + (fam.story ? `. ${fam.story}` : '.')
+                                : undefined}
+                              style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10, color: dcColour, whiteSpace: 'nowrap', textAlign: 'right', cursor: fam ? 'help' : undefined }}>
                               {dc != null
-                                ? <>{dc.toFixed(1)}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(245,245,244,0.25)' }}>d</span></>
+                                ? <>{dc.toFixed(1)}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(245,245,244,0.25)' }}>d</span>
+                                    {fam && <span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(74,222,128,0.55)' }}>ƒ</span>}
+                                  </>
                                 : <span style={{ color: 'rgba(245,245,244,0.15)' }}>—</span>
                               }
                             </span>
