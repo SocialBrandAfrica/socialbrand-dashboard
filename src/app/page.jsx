@@ -2234,12 +2234,20 @@ export default function Home() {
     return m
   }, [top20RosData, storeRosData, top20FamilyData])
 
-  // ENG-073: the reason travels with the number (R29). Keyed by ean, tightest first.
+  // ENG-073: the reason travels with the number (R29), and it must be the reason
+  // for THE NUMBER ACTUALLY SHOWN. Caught live on the first deploy: this map took
+  // the FIRST row per ean while eanDaysCoverMap takes the TIGHTEST across the
+  // selected stores, so the milk family displayed 0.7d and explained 2.0d -- a
+  // story from a different store than the figure beside it. Same selection rule
+  // as the map, or the explanation is for someone else's number.
+  // Also no longer filtered on display_understates: a line whose cover ROSE moved
+  // too, and a number that changed without a reason is the thing R29 forbids.
   const eanFamilyStoryMap = useMemo(() => {
     const m = new Map()
     for (const r of top20FamilyData) {
-      if (r.family_days_cover == null || !r.display_understates) continue
-      if (!m.has(r.ean)) m.set(r.ean, r)
+      if (r.family_days_cover == null) continue
+      const cur = m.get(r.ean)
+      if (cur == null || Number(r.family_days_cover) < Number(cur.family_days_cover)) m.set(r.ean, r)
     }
     return m
   }, [top20FamilyData])
