@@ -3598,8 +3598,17 @@ export default function Home() {
                         const ros = selectedDates.length > 0 ? r.total_qty / selectedDates.length : 0
                         // Days cover: mv_rate_of_sale (91-day rolling) as the base,
                         // corrected to the FAMILY-resolved figure where one exists (ENG-073).
-                        const dc  = eanDaysCoverMap.get(r.ean) ?? null
-                        const fam = eanFamilyStoryMap.get(r.ean) || null
+                        const dc     = eanDaysCoverMap.get(r.ean) ?? null
+                        const famRow = eanFamilyStoryMap.get(r.ean) || null
+                        // Only claim a correction where one actually happened. A line can
+                        // sit in a family and have the family figure land on the scan
+                        // figure; marking it 'ƒ' and saying "but its true draw gives X"
+                        // would assert a change that is not there. Seen live on a beer
+                        // line reading -1.7d both ways.
+                        const fam = (famRow
+                                     && famRow.scan_days_cover != null
+                                     && Math.abs(Number(famRow.family_days_cover) - Number(famRow.scan_days_cover)) >= 0.05)
+                                    ? famRow : null
                         const dcColour = dc == null  ? 'rgba(245,245,244,0.25)'
                                        : dc <= 2     ? '#ef4444'   // red — reorder now
                                        : dc <= 5     ? '#f97316'   // amber — reorder soon
