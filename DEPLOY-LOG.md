@@ -12,6 +12,32 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-06 21:45 SAST -- ENG-073 CLOSED ON THE FRONTEND. THE TOP 20 READS THE FAMILY-RESOLVED COVER. VERIFIED LIVE.
+
+**Clock, read in this write's own pass, +2 both ways:** local `2026-09-06 21:45:58`, UTC `19:45:58`. **Shipped `d4ceecc`, `f3aff8e`, `bda88a2` to `main`.**
+
+**THE DEFECT.** `mv_rate_of_sale` is keyed on the TILL SCAN CODE. For a pack-and-single family the loose code that holds the stock shows only its own scans, so the screen reported a cover the line did not have. `v_family_days_cover` had been built, nightly-fresh and granted since 2026-08-07 with **ZERO readers in `src/`** -- the fact was right and the display still lied, for 30 days.
+
+**MEASURED BEFORE BUILDING, group-wide:** **706 lines** where the display understates the true draw, **average 39x, worst 2,649x**. `TROPIKA EAZY PINEAPPLE` at 10116 read **2,730 days cover against a true 6.3** -- seven and a half years of stock on screen for a line with a week.
+
+**SCOPE ESTABLISHED FIRST, and canon's own label was checked rather than obeyed.** DB-SCHEMA calls this repoint CASCADE-class. **It is not.** That label belongs to REBUILDING `mv_rate_of_sale`, which drags eight downstream objects. Reading a different object needs nothing DB-side: the view is live, populated at 6,715 rows and already granted to `anon` and `authenticated`, all verified at source. **No migration, no schema change, no DB touch.**
+
+**OVERLAY, NOT REPLACE, and that is the design decision worth keeping.** `v_family_days_cover` holds family MEMBERS only, so a standalone product has no row in it. `mv_rate_of_sale` stays the BASE and supplies every line; the family figure REPLACES it where one exists. **Swapping the source outright would have blanked the cover on every non-family line** -- the failure mode is silent and looks like a clean fix.
+
+**THE NUMBERS MOVE IN BOTH DIRECTIONS, deliberately (SB-PRIORITY v1.4 test 2):** measured **406 lines fall** (the screen was overstating cover), **342 rise** (a pack code whose family sells through the single), **472 unchanged**.
+
+**R29 -- and it took two riders to get right, both caught on the live page rather than in review.**
+- **`f3aff8e`:** the map takes the TIGHTEST family figure across selected stores; the story map took the FIRST row. The milk family **displayed 0.7d and explained 2.0d** -- the reason was travelling with a different store's number. Story now uses the same selection rule as the figure it explains. The `display_understates` filter was dropped with it: 342 lines rise, and a number that moves with no reason attached is what R29 forbids in either direction.
+- **`bda88a2`:** a line can sit in a family and have the family figure land ON the scan figure. The marker and tooltip still fired, **asserting a correction that had not happened** -- seen live on a beer line reading -1.7d both ways. Marker and story now require a material difference.
+
+**VERIFIED LIVE at each step, not asserted.** Final state on the deployed page: **1 marker, `0.7dƒ`, scan read `0.0d`, family gives `0.7d`, consistent**; the false marker gone; KPI cards intact; **0 error banners**. The milk family is canon's own worked example (`SIGMA-CLEANUP-WORKFLOW` parent-child, product 1674/18919) and it is the line the fix lands on.
+
+**THE ORDER PATH IS UNTOUCHED.** The recipe has been family-resolved since ENG-005. This is display only and no quantity moves. The overlay reads its error and falls back to the scan figure rather than rendering no cover -- the ENG-179 false-zero class, not repeated.
+
+**STILL OPEN on this surface:** product detail and the report drawer still read the scan-keyed figure; only the Top 20 is repointed here. Named rather than left to be discovered.
+
+---
+
 ## 2026-09-06 16:50 SAST -- THE TWO LY STOCK CARDS STOP RENDERING NULL AS ZERO. VERIFIED LIVE.
 
 **Clock, read in this write's own pass, +2 both ways:** local `2026-09-06 16:50:45`, UTC `14:50:45`. **Shipped `e669e3e` to `main`.**
