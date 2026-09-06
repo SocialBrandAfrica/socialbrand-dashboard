@@ -12,6 +12,31 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-06 12:14 SAST -- ENG-179 SITE 2 AND THE J7 VALUATION TEST ON `main`. VERCEL BUILD NOT VERIFIED FROM THIS SEAT.
+
+**Clock, read in this write's own pass, +2 both ways:** local `2026-09-06 12:14:36`, UTC `10:14:36`.
+
+**What went to `main`:** `32aaae0..33f2aa4`, two commits.
+- **`70f7bbb` -- ENG-179 site 2 of 2.** `public/toolkit.html`'s Count compliance pane repointed off `v_forge_count_compliance` onto `rpc_forge_compliance_summary`. **Frontend only. No DB change.**
+- **`33f2aa4` -- `sql/create_rpc_channel_valuation_test.sql`. NOT APPLIED, and deliberately so:** §D7 part 2 reserves its placement in the pantry to PM. The file is the buildable form, nothing more. **Nothing was applied to the database in this deploy.**
+
+**⚠️ WHAT IS VERIFIED AND WHAT IS NOT, because this file is the "what's actually live" source and it has lied by omission before (see the 08-19 banner above).**
+- **VERIFIED at source:** both commits are on `origin/main`, `git rev-list --count origin/main..HEAD` = 0 in the worktree; the branch and `main` both read `33f2aa4`.
+- **NOT VERIFIED:** that Vercel built and promoted it. `gh` is **not installed on this machine** (checked in both Git Bash and PowerShell), so the deployment status on the commit could not be read, and there is no Vercel token in this seat. The live hosts return the login page for `/toolkit.html` **by design** -- `src/middleware.js:69` deliberately auth-gates `.html` so `StockFlow-DevCorner-Demo.html` cannot be read anonymously -- so the deployed file cannot be fetched to compare.
+- **THE FALSIFIER, and it is one look on Pieter's own device:** open `/toolkit`. **The Count compliance pane renders the board instead of "Could not load".** If it still reads "Could not load", the build did not promote and this entry is wrong.
+
+**WHY THE PANE WAS DARK, measured as anon through PostgREST both directions.** OLD, the exact shipped shape: **HTTP 500, `57014`, 30.6s.** NEW, the RPC over a 7-day window: **HTTP 200, 3.6s, 3,740 b.** The view exceeds **55s as `postgres`**, which carries `statement_timeout=0`, so it serves no caller at all; `anon` and `authenticated` both carry 30s, read from `pg_roles`.
+
+**This site failed LOUDLY, never falsely** -- `restGet` throws and the catch renders "Could not load". Unlike the weekly report there was no false zero here. The pane has been dark since the view got slow, and this log's own 2026-08-13 entry records it walking green on real percentages at ship (10116 54%, 80175 9%, 80579 97%). **A regression that arrived with data growth, with no instrument watching for it.**
+
+**R22, the client half tested rather than assumed.** The post-fix mapping was run over the real anon payload and reproduces the RPC exactly: group **runs 29**, reconciling to `count(*) forge_count_run` over the same window; **1,147 lines counted of 6,952 issued**. Per store: 10116 9 lists 410/3,035 · 21355 3 lists 2/210 · 80175 8 lists 591/3,087 · 80176 5 lists 138/344 · 80579 4 lists 6/276. **The pane moves from an error banner to those figures, deliberately.**
+
+**R30 addendum 3, site count: 2 live consumers of the object, 0 skipped.** The weekly report (`32aaae0`, 09-05) and this pane (`70f7bbb`). The 09-05 entry counted 3 reads *inside one handler*, which is not the same population as the sites of the pattern -- **counting the sites is part of the fix, not part of the review.**
+
+**R31 walk: OWED, Pieter's.** `/toolkit` is behind the middleware, so this seat proved the data path and the mapping and cannot sign the screen.
+
+---
+
 ## 2026-09-05 15:59 SAST -- ENG-178 APPLIED. THE INTEGRITY HISTORY GETS A PUBLISHED READER AND THE BASE TABLE STAYS LOCKED.
 
 **Clock, read in this write's own pass, +2 both ways:** local `2026-09-05 15:59:57`, UTC `13:59:57`.
