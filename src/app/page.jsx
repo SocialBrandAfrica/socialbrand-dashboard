@@ -2527,19 +2527,34 @@ export default function Home() {
   // Point-in-time: Neg SOH / Slow Move use lyDeptSohCounts (single latest LY date,
   // dept/subdept-scoped) when a filter is active; fall back to whole-store mv rows.
   // lyDeptSohCounts is pre-filtered by subdept at the RPC; dept filter applied here.
+  // 🔴 ENG-100 RIDER, PROPAGATED TO THE LY LEG (R30 addendum 3). The TY leg below
+  // has used sumOrNull since ENG-100; these three LY legs kept `?? 0` and were
+  // never swept, so a NULL contributor read as a measured ZERO. Live consequence
+  // on 2026-09-06: mv_kpi_by_date carried 25 LY rows for the selection with the
+  // stock facts NULL on ALL 25, and the cards rendered "LY 0" / "LY R 0" and drove
+  // a delta off it -- Capital Tied showed a confident +58.8% against a baseline
+  // that does not exist. Canon suppresses this comparison outright until the
+  // 364-day sigma history lands (PROJECT-LEXICON §D, KPI 5 and KPI 6: DBAUms
+  // covered 21% of lines), and NULL means "not computed", never zero.
+  // The pattern was present, correct and documented one screen below, and was
+  // read past -- the exact half of R30 addendum 3 that costs most.
+  const sumOrNull = (rows, field) => {
+    if (rows.some(r => r[field] === null || r[field] === undefined)) return null
+    return rows.reduce((s, r) => s + Number(r[field]), 0)
+  }
   const lyDeptSohRows = deptFilter !== 'all'
     ? lyDeptSohCounts.filter(r => normalizeDept(r.dept_name) === deptFilter)
     : lyDeptSohCounts
   const lyKpiNegSOH   = filterActive && lyDeptSohCounts.length > 0
-    ? lyDeptSohRows.reduce((s, r) => s + (r.neg_soh_count   ?? 0), 0)
-    : lyLatestKpiByStore.reduce((s, r) => s + (r.neg_soh_count   ?? 0), 0)
+    ? sumOrNull(lyDeptSohRows,      'neg_soh_count')
+    : sumOrNull(lyLatestKpiByStore, 'neg_soh_count')
   const lyKpiSlowMove = filterActive && lyDeptSohCounts.length > 0
-    ? lyDeptSohRows.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
-    : lyLatestKpiByStore.reduce((s, r) => s + (r.slow_mover_count ?? 0), 0)
+    ? sumOrNull(lyDeptSohRows,      'slow_mover_count')
+    : sumOrNull(lyLatestKpiByStore, 'slow_mover_count')
   const lyDeptCapPresent = lyKpiDeptSummary.some(r => r.capital_tied != null)
   const lyKpiCapTied  = (filterActive && lyDeptCapPresent)
-    ? sumField(lyDeptRows, 'capital_tied')
-    : lyLatestKpiByStore.reduce((s, r) => s + (r.capital_tied ?? 0), 0)
+    ? sumOrNull(lyDeptRows,         'capital_tied')
+    : sumOrNull(lyLatestKpiByStore, 'capital_tied')
   const hasLY         = filterActive ? lyDeptRows.length > 0 : lyKpiData.length > 0
 
   const wowDeptRows = byDept(wowKpiDeptSummary)
@@ -2556,10 +2571,8 @@ export default function Home() {
   // capital and the card would show the shortfall as though it were measured.
   // sumOrNull returns null the moment any contributor is null, so the card
   // renders an em-dash instead of a confident wrong number (R22 §3).
-  const sumOrNull = (rows, field) => {
-    if (rows.some(r => r[field] === null || r[field] === undefined)) return null
-    return rows.reduce((s, r) => s + Number(r[field]), 0)
-  }
+  // The helper is now DEFINED WITH THE LY LEG ABOVE, because that leg needs it
+  // first; one definition serves both. Moved, never duplicated.
   const deptCapPresent = deptSummary.some(r => r.capital_tied != null)
   const kpiCapTied  = (filterActive && deptCapPresent)
     ? sumField(byDept(deptSummary), 'capital_tied')
@@ -3291,8 +3304,11 @@ export default function Home() {
                       label:         'Negative SOH',
                       value:         (dualStockPairable && l2Agg != null) ? num(l2Agg.negSohAll) : num(kpiNegSOH),
                       sparkline:     sparklineArrays.negSoh,
-                      lyRef:         hasLY ? num(lyKpiNegSOH) : null,
-                      lyDelta:       hasLY ? deltaInfo(kpiNegSOH, lyKpiNegSOH) : null,
+                      // ENG-100 rider: hasLY only says LY ROWS exist, not that the
+                      // stock fact was computed. Measured 2026-09-06: 25 LY rows,
+                      // neg_soh_count NULL on all 25. Gate on the VALUE.
+                      lyRef:         (hasLY && lyKpiNegSOH != null) ? num(lyKpiNegSOH) : null,
+                      lyDelta:       (hasLY && lyKpiNegSOH != null) ? deltaInfo(kpiNegSOH, lyKpiNegSOH) : null,
                       lyDeltaInvert: true,
                       wowDelta:      null,
                       bench:         null,
@@ -3327,8 +3343,11 @@ export default function Home() {
                       label:         'Capital Tied',
                       value:         engineCapPairable ? zarShort(enginePurifiedCap) : zarShort(kpiCapTied),
                       sparkline:     sparklineArrays.capitalTied,
-                      lyRef:         hasLY ? zarShort(lyKpiCapTied) : null,
-                      lyDelta:       hasLY ? deltaInfo(engineCapPairable ? enginePurifiedCap : kpiCapTied, lyKpiCapTied) : null,
+                      // ENG-100 rider, same as Negative SOH above: gate on the VALUE,
+                      // not on hasLY. This card was showing "LY R 0" and a confident
+                      // +58.8% delta against a baseline that does not exist.
+                      lyRef:         (hasLY && lyKpiCapTied != null) ? zarShort(lyKpiCapTied) : null,
+                      lyDelta:       (hasLY && lyKpiCapTied != null) ? deltaInfo(engineCapPairable ? enginePurifiedCap : kpiCapTied, lyKpiCapTied) : null,
                       lyDeltaInvert: true,
                       wowDelta:      null,
                       // bench renders unconditionally (sub is suppressed when LY data is
