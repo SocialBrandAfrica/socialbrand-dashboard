@@ -12,6 +12,24 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-06 16:50 SAST -- THE TWO LY STOCK CARDS STOP RENDERING NULL AS ZERO. VERIFIED LIVE.
+
+**Clock, read in this write's own pass, +2 both ways:** local `2026-09-06 16:50:45`, UTC `14:50:45`. **Shipped `e669e3e` to `main`.**
+
+**THE DEFECT, measured at source before the fix.** `mv_kpi_by_date` carried **25 LY rows** for the live selection with **`neg_soh_count` and `capital_tied` NULL on all 25**. `page.jsx` summed them with `?? 0`, so the cards published **"LY 0"** and **"LY R 0"** as though measured. Canon suppresses both comparisons until the 364-day sigma history lands (`PROJECT-LEXICON` §D, KPI 5 and KPI 6 — DBAUms covered 21% of lines).
+
+**R30 addendum 3, and this is its sharper half.** `sumOrNull` **already existed one screen below**, carrying the ENG-100 rider that explains this exact failure in words, applied to the TY leg and never propagated to LY. **The pattern was present, correct and documented, and was read past.** Helper moved above the LY block (one definition, never duplicated), three LY legs converted, and both card sites now gate on the VALUE rather than on `hasLY`, which only says LY ROWS exist.
+
+**Site count: 5 `lyRef`/`lyDelta` pairs.** GP and Stock Turn already gated on the value. Negative SOH and Capital Tied fixed. **Total Sales SKIPPED DELIBERATELY, with its reason:** for sales, zero is a legitimate reading — a store can sell nothing — while for a stock fact NULL means *not computed*. Same shape, different semantics, and sales rows come from `sigma_sales`, which is complete. **0 skipped without a reason.**
+
+**VERIFIED LIVE on the deployed page**, not asserted: `NEGATIVE SOH` and `CAPITAL TIED` now carry **no LY token at all**, while `TOTAL SALES` still reads `LY R 2.55M` and `GROSS PROFIT` still reads `LY -2.0%` — **the cards with real LY data are untouched, so the fix suppressed the false comparison and nothing else.**
+
+**🔴 A CORRECTION TO MY OWN CLAIM OF AN HOUR EARLIER, recorded because it went to Pieter and into `e669e3e`'s message.** I reported that Capital Tied was *"computing a 58.8% delta against a baseline that does not exist"*. **That was wrong.** The `Δ 58.8%` on that card is the **engine-purified against raw** delta, not an LY delta: `(16.62M − 6.85M) / 16.62M = 58.8%`, and `Δ 0.0%` on Negative SOH is `847` against raw `847`. **Both are correct, meaningful and documented.** The real defect was ONLY the `LY 0` / `LY R 0` reference lines, and only those are fixed. **I read a delta on the card as the LY delta without checking which comparison it belonged to** — the same class of error as reading a date-shaped key as a document serial earlier today, which makes it twice in one session that a number was assigned to the wrong parent before it was tested.
+
+**GP% `LY -2.0%` is NOT a display defect and is deliberately untouched.** The database genuinely holds LY cost R2,597,712 against LY sales ex-VAT R2,546,209. The card reports it faithfully. **A group does not trade a week at −2% GP, so the September 2025 cost data is the question**, and the `+19.2pp` headline rests on it. Data thread, not a frontend one. Not filed as a defect here because it needs a population and a cause before it is one.
+
+---
+
 ## 2026-09-06 12:14 SAST -- ENG-179 SITE 2 AND THE J7 VALUATION TEST ON `main`. VERCEL BUILD NOT VERIFIED FROM THIS SEAT.
 
 **Clock, read in this write's own pass, +2 both ways:** local `2026-09-06 12:14:36`, UTC `10:14:36`.
