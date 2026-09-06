@@ -415,8 +415,17 @@ $("loadprogress").onclick = async ()=>{
 async function loadCompliance(){
   const wrap=$("compliance-wrap");
   try{
+    const days = lastNDates(7), today = days[days.length-1];
+    // ENG-179, SITE 2 OF 2. Was restGet("v_forge_count_compliance?...") with no date
+    // bound at all. That view exceeds 55s as `postgres`, which carries NO timeout, so
+    // it could never finish for `anon`, whose role sets statement_timeout=30s. restGet
+    // throws, so this pane has been rendering "Could not load" instead of the board
+    // since the view got slow: loudly wrong rather than falsely zero, but dark either
+    // way on a surface Pieter opens. The RPC is the published interface (R30 section 1),
+    // filters runs FIRST, and reads only the 7 days this pane renders. p_stores is
+    // omitted, meaning every store, so this read no longer leans on hardcoded STORES.
     const [rows, sched] = await Promise.all([
-      restGet("v_forge_count_compliance?select=store_code,issued_date,lines_issued,lines_posted,mode&order=issued_date.desc"),
+      rpc("rpc_forge_compliance_summary", { p_from: days[0], p_to: today }),
       rpc("rpc_forge_count_schedule", {})
     ]);
     const dcByStore={}; (sched||[]).forEach(s=>{ dcByStore[s.store_code]=s.dc_dows||[]; });
@@ -426,11 +435,13 @@ async function loadCompliance(){
       if(iso===7) return {count:false,why:"Sunday",tag:"rest"};
       if((dc||[]).includes(iso)) return {count:false,why:"DC delivery day",tag:"DC"};
       return {count:true}; };
-    const days = lastNDates(7), today = days[days.length-1];
     const idx={};
-    rows.forEach(r=>{ const s=(idx[r.store_code]=idx[r.store_code]||{});
-      const c=(s[r.issued_date]=s[r.issued_date]||{issued:0,posted:0,runs:0});
-      c.issued+=+r.lines_issued; c.posted+=+r.lines_posted; c.runs++; });
+    // The RPC is store-day grain and carries its own `runs`, where the view was
+    // run grain and the tally was `c.runs++`. Reading the count off the row is
+    // what keeps the "N lists same day -- duplicate" warning below true.
+    (rows||[]).forEach(r=>{ const s=(idx[r.store_code]=idx[r.store_code]||{});
+      const c=(s[r.issue_date]=s[r.issue_date]||{issued:0,posted:0,runs:0});
+      c.issued+=+r.lines_issued; c.posted+=+r.lines_counted; c.runs+=+r.runs; });
     let dueToday=0, issuedToday=0, offToday=0;
     STORES.forEach(([code])=>{ const ds=dayStatus(today,dcByStore[code]);
       if(ds.count){ dueToday++; if(idx[code]&&idx[code][today]) issuedToday++; } else offToday++; });
