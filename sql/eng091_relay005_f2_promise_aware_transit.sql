@@ -3,7 +3,25 @@
 --    13:xx, which was built on a WRONG root cause -- see "WHAT I GOT WRONG" below)
 --
 -- IN TRANSIT: RANK THE DELIVERY, NEVER THE DOCUMENT.
--- ⚠️ NOT YET APPLIED. The DB write is refused by the harness classifier.
+-- APPLIED AND VERIFIED LIVE 2026-09-09, all five stores refreshed.
+--   Migrations: eng091_in_transit_rank_delivery_not_document, then
+--   eng091_depth_two_for_dc_ambient_one_elsewhere.
+--
+-- DEPTH IS NOT UNIFORM -- Pieter's floor rule, ledger-confirmed on 180 days of
+-- consecutive order dates. The previous order is still unreceived when the next
+-- is placed on 59.6% of DC pairs (n=302), 9.6% of DIRECT/dropship (n=386) and
+-- 0.1% of other (n=1,267). So DC AMBIENT carries TWO open deliveries; fresh,
+-- direct and dropship carry exactly ONE. My first apply used two everywhere and
+-- over-stated the non-DC routes; corrected within the hour.
+--
+-- LIVE AFTER: 10116 1,735 products / 37,218 u (DC 18,181, non-DC 19,037) ·
+-- 80175 862 / 22,186 (DC 13,273) · 80176 102 / 2,303 · 80579 16 / 405 ·
+-- 21355 0, and that zero is HONEST: its newest open document is 16 days old
+-- with a promise already passed, which is cancelled under the floor's own rule.
+-- Product 491 @ 80175: 3,600 units, landing 2026-09-09, promise flagged.
+--
+-- The assertions earned their keep twice: the first attempt failed on the
+-- cascade patch (contradictory regex flags) and refused to half-apply.
 --
 -- ============================================================================
 -- THE ACTUAL ROOT CAUSE, and it is neither the brief's nor my first one
