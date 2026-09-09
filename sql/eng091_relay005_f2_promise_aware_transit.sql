@@ -1,99 +1,96 @@
--- eng091_relay005_f2_promise_aware_transit.sql
+-- eng091_relay005_f2_delivery_not_document.sql
+--   (supersedes my own eng091_relay005_f2_promise_aware_transit.sql of 2026-09-09
+--    13:xx, which was built on a WRONG root cause -- see "WHAT I GOT WRONG" below)
 --
--- RELAY-005 DEFECT 2 -- GOODS IN TRANSIT. F2a + F2b, and they are ONE cascade change.
--- ⚠️ NOT YET APPLIED. The DB write was refused by the harness classifier on
---    2026-09-09; this file is the reviewed, measured form, ready to apply.
---
--- ============================================================================
--- WHAT THE BRIEF GOT RIGHT, AND THE ONE PLACE IT IS WRONG
--- ============================================================================
--- RIGHT: l2_on_order reports 0 for product 491 @ 80175 while units are genuinely
--- coming. Verified at source: on_order_qty = 0.0000, open_order_count = 0.
--- The seven orders in the brief's table reproduce EXACTLY.
---
--- WRONG, and it changes what to build: the brief says the supersede rule is the
--- cause and lists F2a first. Rule 1 ALREADY carries an escape hatch --
---     NOT (expected_grv_date >= watermark AND age_days <= lead_days * mult)
--- -- so a forward-dated order is meant to survive it. Measured at source, the
--- hatch is closed by the SECOND half, not the first:
---     lead_days = 2 (route median, n=401, well founded) x in_transit_lead_multiple 2
---     = a 4-DAY BOUND.
--- The six programme orders were placed 2026-09-01, so age_days = 8. 8 > 4.
---
--- PROVEN by evaluating the live cascade per order: fixing the supersede rule
--- ALONE moves ranks 2-7 from 'cancelled_superseded' to 'stale_beyond_lead'.
--- THEY STAY EXCLUDED. F2a on its own delivers ZERO units on this line.
--- The binding constraint is age-vs-lead, which the brief ranked third (F2c).
---
--- THE STRUCTURAL POINT: `age_days > lead * mult` conflates "this document is
--- stale" with "this delivery is scheduled far ahead". A DC programme books six
--- deliveries out to seven weeks on one day. Age says stale; the promise says
--- 16-09, 23-09, 30-09, 14-10, 21-10, 28-10. The promise is the better witness
--- and it is already in the row.
+-- IN TRANSIT: RANK THE DELIVERY, NEVER THE DOCUMENT.
+-- ⚠️ NOT YET APPLIED. The DB write is refused by the harness classifier.
 --
 -- ============================================================================
--- THE RULE, three parts
+-- THE ACTUAL ROOT CAUSE, and it is neither the brief's nor my first one
 -- ============================================================================
--- 1. A promise that is ABSENT, sentinel (1990-01-01), or dated BEFORE its own
---    order is PATHOLOGICAL. It discredits the DATE, never the stock (F2b).
---    Fall back to age-vs-lead, which is what the date was standing in for.
---    `promise_basis` still records 'promise_before_own_order_date', so the date
---    is flagged rather than trusted -- the flag was always the right output,
---    dropping the quantity never was.
--- 2. A CREDIBLE FORWARD promise (> ledger watermark) says when it lands. It is
---    neither stale nor superseded.
--- 3. Supersession SURVIVES and is not deleted -- the brief is right that the
---    double-count risk is real. It now partitions on the PROMISED DELIVERY as
---    well, so a genuine re-send of the SAME delivery is still dropped while a
---    programme of six different deliveries is not. Pathological and absent
---    dates share one bucket, so they still supersede each other by order_nr.
+-- Sigma splits ONE order into MANY documents. On 2026-09-07 at 80175, supplier
+-- 1339, the DC order arrived as **11 separate order_nr** -- 90103, 90108, 90109,
+-- 90110, 90112, 90113, 90116, 90117 and more -- carrying 95, 105, 1, 26, 60, 5,
+-- 5 and 16 lines. One Monday order. Eleven documents.
 --
--- ============================================================================
--- R22 -- MEASURED WHOLE-POPULATION BEFORE WRITING, which is the gate PM set
--- ============================================================================
--- "Say how much of the rise is genuine programme stock and how much is old
---  documents the supersede rule was right to drop. Do not trade a gate that
---  never fires for one that always does."
+-- `refresh_l2_on_order` ranks DOCUMENTS: ROW_NUMBER() ... ORDER BY order_nr DESC,
+-- and keeps rn = 1. **So one document out of eleven survives and the other ten
+-- are called `cancelled_superseded` -- documents from the same order, placed the
+-- same day, competing with each other as though each replaced the last.**
 --
---  store | on_order now | proposed |  rise | of which forward-promise | discredited-date
---  10116 |       24,699 |   52,039 | +27,340 |            18,058       |     9,282
---  80175 |       12,901 |   50,557 | +37,656 |            29,868       |     7,788
---  80176 |        2,303 |    2,303 |       0 |                 0       |         0
---  21355 |            0 |        0 |       0 |                 0       |         0
---  80579 |            0 |      405 |    +405 |                 0       |       405
+-- Pieter's 3,600 units of milk sit on 90108. The survivor is 90117, which carries
+-- 16 lines and not one of them is milk. That is the whole defect.
 --
--- AND WHAT STAYS OUT, which is the half that proves the gate still discriminates:
---  2,343,104 units group-wide remain excluded as 'promise_passed_ledger_observed'
---  (the promised date came and the ledger never saw the truck) plus
---  2,025,-odd thousand as 'stale_age' where there is no usable promise at all.
---  10116 keeps 1,540,307 + 619,616 out. 80175 keeps 755,631 + 305,364 out.
+-- It also explains "it worked before a recent rollout" WITHOUT a rollout: whether
+-- your line lands in the highest-numbered document of the day is arbitrary. It has
+-- always been a lottery; he has been losing it more visibly as document counts grew.
 --
--- ⚠️ THE BRIEF'S "151,303 units invisible / 78.6%" AT 80175 IS NOT THE
---    RECOVERABLE FIGURE. It counts everything excluded, including years of dead
---    paperwork. The honest recoverable number is 37,656 units -- about a QUARTER
---    of what the brief implies. Stated here so nobody sizes a decision on 151,303.
---
--- ON THE NAMED LINE, product 491 @ 80175:
---    3,600 (rank 1, date discredited) + 486 (six forward-promise deliveries)
---    = 4,086 units counted; 11,760 stale + 5,346 past-promise correctly stay out.
---
--- ⚠️ THE BRIEF'S DoD SAYS 3,986. THE MEASURED FIGURE IS 4,086 -- 100 UNITS MORE.
---    Judge the screen against 4,086.
+-- ⚠️ **`eng148_on_order_population_partition_e21` (2026-08-27) IS NOT THE CAUSE.**
+-- Tested: re-ranking under the pre-E2.1 `status_2` partition gives BYTE-IDENTICAL
+-- verdicts on all seven candidate orders -- every one carries status_2 = 'E'.
 --
 -- ============================================================================
--- R30 DEPENDENTS, warned
+-- WHAT I GOT WRONG, recorded because it was nearly shipped
 -- ============================================================================
--- `rpc_bloom_order_recipe` reads l2_on_order for projected_soh, so ORDERING
--- QUANTITIES MOVE ON EVERY DESK when this lands (ENG-155). They move DOWN --
--- more visible in-transit means less need. `bloom_order_cache` / `_line` must be
--- rebuilt after. ENG-061's landed + in-transit money book reads it.
--- `SB-AP-BUDGET-002` is unaffected: it reads GRV receipts, not on-order.
+-- My first patch admitted any order with a CREDIBLE FORWARD PROMISE. Pieter's floor
+-- rule ("a DC delivery that misses the next delivery and the one after is cancelled")
+-- sent me to the receipt ledger, and it kills my rule outright. Received rate at
+-- 80175/1339 by how far ahead the order was booked, 12 months:
+--     promise BEFORE its own order   550 orders   56.9% received
+--     0-7 days ahead                 705 orders   91.1% received
+--     8-14 days                        8 orders   62.5%
+--     15-28 days                      16 orders   25.0%
+--     29+ days ahead                 107 orders  **2.8%**
+-- **A far-forward booking almost never lands.** My rule would have admitted 486
+-- units on 491 from deliveries 5-7 weeks out -- a 1-in-36 shot -- and called it
+-- stock in transit. The brief wanted them in too. Both wrong; the floor was right.
 --
--- AFTER APPLYING, in order:
---   SELECT refresh_l2_on_order('80175');   -- and each other store
---   SELECT on_order_qty, open_order_count FROM l2_on_order
---    WHERE store_code='80175' AND product_code=491;   -- expect 4086 / 7
---   SELECT refresh_bloom_order_cache_all();           -- rebuild the desks
+-- ============================================================================
+-- THE RULE, and every part of it is measured
+-- ============================================================================
+-- 1. **A DELIVERY IS AN ORDER DATE, NOT A DOCUMENT.** All documents placed on one
+--    date for one supplier are one order and stand or fall together.
+-- 2. **KEEP THE LAST TWO DELIVERIES.** Pieter said "almost always the last, and in
+--    some cases the one before that". **The ledger says the second case is the
+--    MAJORITY: when the next order date is placed, the previous one is still
+--    unreceived 78.8% of the time at 10116 and 55.8% at 80175** (180 days,
+--    consecutive order dates on both DC accounts). Keeping only the last delivery
+--    would drop genuinely open stock most of the time.
+-- 3. **A PATHOLOGICAL PROMISE DISCREDITS THE DATE, NOT THE STOCK** (F2b stands).
+--    Sigma writes an expected GRV before the order date on 20-27% of DC orders
+--    EVERY month since March -- it is not new and not rare. Those orders are still
+--    received 56.9% of the time, so the date is unusable and the stock is real.
+-- 4. **A CREDIBLE PROMISE THAT HAS PASSED, unreceived, still excludes** -- the truck
+--    was due, the ledger never saw it.
+--
+-- ============================================================================
+-- 🔴 THIS CORRECTS CANON, and the correction is scoped and measured
+-- ============================================================================
+-- ORDERING-CANON §E2 v15 rule 4 says *"Recency is `order_nr`, never `order_date`;
+-- order_date is a disposition date, sentinel on 76% of headers."* **That is true of
+-- the WHOLE table and FALSE for the population this function reads.** Measured:
+--     order_type 0 / 1 / 2  (the open pool)  3,956 headers   **0.0% sentinel**
+--     order_type W (received)               32,223 headers    75.3% sentinel
+--     order_type S (credits)                22,255 headers    90.3% sentinel
+-- **The 76% lives entirely in the classes `l2_on_order` never touches.** On the open
+-- pool `order_date` is 100% populated and is the only key that can group a delivery.
+-- PM owes the R28 lineage on v15 rule 4, scoped to the open population.
+--
+-- ============================================================================
+-- WHAT IT DOES TO THE LIVE SITE, all five stores
+-- ============================================================================
+--  store | products now | units now | products after | units after (last 2)
+--  10116 |        1,445 |    24,699 |          3,390 |             124,552
+--  80175 |          665 |    12,901 |          1,679 |              93,893
+--  21355 |            0 |         0 |            241 |              14,917
+--  80579 |            0 |         0 |            226 |              13,031
+--  80176 |          102 |     2,303 |            185 |               5,575
+-- **TOPS Delareyville and TOPS Dice currently show NOTHING AT ALL.**
+-- On product 491 @ 80175: **3,600 units**, from the 07-09 delivery, 11 documents,
+-- 483 products, 12,763 units in total. Not the brief's 3,986, and not my 4,086.
+--
+-- R30: `rpc_bloom_order_recipe` reads this for projected_soh, so ORDER QUANTITIES
+-- FALL on every desk. Rebuild `bloom_order_cache` after. Walk one desk before trusting.
 -- ============================================================================
 
 DO $patch$
@@ -104,26 +101,31 @@ BEGIN
    WHERE ns.nspname='public' AND p.proname='refresh_l2_on_order';
   IF src IS NULL THEN RAISE EXCEPTION 'refresh_l2_on_order not found'; END IF;
 
-  -- PATCH 1 -- supersession partitions on the promised delivery as well.
+  -- PATCH 1: rank the DELIVERY (order_date), not the DOCUMENT (order_nr).
   out := replace(src,
-    $q$PARTITION BY r.store_code, r.supplier_nr, op.delivery_population$q$,
-    $q$PARTITION BY r.store_code, r.supplier_nr, op.delivery_population, CASE WHEN r.expected_grv_date IS NULL OR r.expected_grv_date = DATE '1990-01-01' OR r.expected_grv_date < r.order_date THEN NULL ELSE r.expected_grv_date END$q$);
-  IF out = src THEN RAISE EXCEPTION 'patch 1 (partition) did not apply'; END IF;
+    $q$ROW_NUMBER() OVER (PARTITION BY r.store_code, r.supplier_nr, op.delivery_population
+                                   ORDER BY r.order_nr DESC) AS rn$q$,
+    $q$DENSE_RANK() OVER (PARTITION BY r.store_code, r.supplier_nr, op.delivery_population
+                                   ORDER BY r.order_date DESC) AS rn$q$);
+  IF out = src THEN RAISE EXCEPTION 'patch 1 (rank the delivery) did not apply'; END IF;
   src := out;
 
-  -- PATCH 2 -- the exclusion cascade. A bad date discredits the DATE, not the stock.
+  -- PATCH 2: keep the last TWO deliveries, not the single latest document.
+  out := replace(src, $q$(k.rn=1) AS is_latest_of_kind$q$, $q$(k.rn<=2) AS is_latest_of_kind$q$);
+  IF out = src THEN RAISE EXCEPTION 'patch 2 (keep last two) did not apply'; END IF;
+  src := out;
+
+  -- PATCH 3: a pathological promise discredits the DATE, never the stock.
   out := regexp_replace(src,
     $q$WHEN NOT p\.is_latest_of_kind.*?ELSE NULL END AS exclusion_reason$q$,
-    $q$WHEN p.expected_grv_date IS NULL OR p.expected_grv_date = DATE '1990-01-01' OR p.expected_grv_date < p.order_date
-          THEN CASE WHEN NOT p.is_latest_of_kind THEN 'cancelled_superseded'
-                    WHEN p.age_days > p.lead_days * v_mult THEN 'stale_beyond_lead'
-                    ELSE NULL END
-        WHEN p.expected_grv_date > v_watermark
-          THEN CASE WHEN NOT p.is_latest_of_kind THEN 'cancelled_superseded' ELSE NULL END
-        ELSE 'promise_passed_ledger_observed' END AS exclusion_reason$q$,
+    $q$WHEN NOT p.is_latest_of_kind THEN 'superseded_older_delivery'
+        WHEN p.expected_grv_date IS NULL OR p.expected_grv_date = DATE '1990-01-01'
+             OR p.expected_grv_date < p.order_date THEN NULL
+        WHEN p.expected_grv_date <= v_watermark THEN 'promise_passed_ledger_observed'
+        ELSE NULL END AS exclusion_reason$q$,
     'sn');
-  IF out = src THEN RAISE EXCEPTION 'patch 2 (cascade) did not apply'; END IF;
+  IF out = src THEN RAISE EXCEPTION 'patch 3 (cascade) did not apply'; END IF;
 
   EXECUTE out;
-  RAISE NOTICE 'refresh_l2_on_order patched: promise-aware transit (RELAY-005 F2a+F2b)';
+  RAISE NOTICE 'refresh_l2_on_order: ranks the DELIVERY, keeps the last two (RELAY-005 F2, corrected)';
 END $patch$;
