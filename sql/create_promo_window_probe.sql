@@ -1,0 +1,64 @@
+-- create_promo_window_probe.sql
+--
+-- ENG-082 -- THE PROMO ORDER WINDOW PROBE. Pieter's spot check, made into evidence.
+-- APPLIED 2026-09-09. Migrations: eng082_promo_window_probe,
+--   eng082_promo_probe_first_capture_and_schedule,
+--   eng082_promo_probe_record_floor_observation.
+--
+-- ============================================================================
+-- WHY IT EXISTS
+-- ============================================================================
+-- We cannot see "open for ordering" anywhere in the mirror. Measured whole-population:
+-- 0 of 4,843 FUTURE promo lines carry a cost, and on a future row only `new_price` and
+-- `start_date` vary at all. So the opening signal is absent. The CLOSING signal is
+-- absent too, and we now have a hard bracket on it: RH4 ended 2026-09-08 and is still
+-- orderable at +1 day; PH1 ended 2026-08-17 and is shut at +23. Somewhere in between,
+-- the DC closes the window -- and the engine currently closes it ON the end date, which
+-- is why the last-bite discount is lost.
+--
+-- PIETER'S DESIGN, and it is the right one: watch a promo daily until it shuts, then
+-- look back at our own feed for that day and ask whether ANYTHING moved.
+--
+-- ⭐ THE INSTRUMENT IS `row_fingerprint`, and it is what makes the test conclusive.
+-- It is an md5 over the ENTIRE line set -- product, status, list_cost, new_price,
+-- old_price, discount_pct, start_date, end_date -- ordered. **We therefore do not have
+-- to guess which field might carry the signal.** If the promo shuts and the fingerprint
+-- has not moved, then NO field moved, and Pieter's hypothesis is proven: the SPAR DC
+-- closes the window manually on their side and no signal exists in the feed to find.
+-- **That negative result is a real finding, not a failed search** -- it converts an
+-- open-ended hunt into a closed question and sends the fix to F1a (extract Sigma's own
+-- order-deadline field) instead of to another seed.
+--
+-- ============================================================================
+-- A CANDIDATE ALREADY TESTED AND REJECTED -- do not re-run it
+-- ============================================================================
+-- "A promo still holding status-0 lines is still open" looked strong: PH1 (shut) is all
+-- status 2, RH4 (open) is mixed. Tested across every 2026 promo at both SPARs it is a
+-- GRADIENT, NOT A SWITCH: still selling 89.3% mixed · ended 1-7d 62.5% · 8-21d 44.4% ·
+-- 22-60d 43.3% · 60+d 2.6%. The two buckets either side of the boundary that matters are
+-- 44.4 and 43.3, and PH1 sits where 43% are still mixed. Day-zero capture shows the same
+-- noise directly: PH6 holds 24 status-0 lines at +10 days while QH1 is fully closed at +9.
+--
+-- ============================================================================
+-- HOW TO RUN THE CHECK
+-- ============================================================================
+--   1. The snapshot takes itself daily -- pg_cron `promo-window-probe-daily`,
+--      18:45 UTC = 20:45 SAST, after the extractor refreshes the promo tables.
+--   2. Pieter opens the Sigma promo order screen and sees whether RH4 still takes an
+--      order. One look, no system.
+--   3. Record it:  SELECT rpc_promo_probe_observe('RH4', true);      -- or false
+--      Optionally per store:  rpc_promo_probe_observe('RH4', false, '10116')
+--   4. When it flips to false, diff the fingerprints either side of that date:
+--        SELECT probe_date, suffix, store_code, days_past_end, observed_orderable,
+--               row_fingerprint, lines_status0, lines_status2, lines_with_cost
+--          FROM promo_window_probe WHERE upper(suffix)='RH4' ORDER BY probe_date;
+--      A moving fingerprint on the closing date names the field. A still one closes
+--      the question the other way.
+--
+-- Scope is deliberately narrow: promos ending between CURRENT_DATE-60 and +90, which is
+-- the only region where the boundary can be observed. Grants: writers revoked from
+-- PUBLIC and anon, granted to authenticated and service_role; the table reads to anon.
+--
+-- The detailed hunt for the true opening and closing signal is a DEDICATED SESSION
+-- (Pieter, 2026-09-09: "it's clearly not the obvious ones"). This probe is what gives
+-- that session evidence to start from instead of a blank page.
