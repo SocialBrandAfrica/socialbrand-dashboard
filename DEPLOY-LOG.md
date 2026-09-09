@@ -12,6 +12,32 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-09 17:31 SAST -- IN TRANSIT: THE ENGINE NOW RANKS THE DELIVERY, NOT THE DOCUMENT. APPLIED, REFRESHED, WALKED.
+
+**Clock, read in this write's own pass, +2 both ways:** local `2026-09-09 17:31:33`, UTC `15:31:33`. **DATABASE DEPLOY. No repo code changed.**
+
+**Migrations, in order:** `eng091_in_transit_rank_delivery_not_document` · `eng091_depth_two_for_dc_ambient_one_elsewhere` · `eng091_restore_age_bound_on_discredited_date`, each followed by `refresh_l2_on_order` across all five active stores, then `refresh_bloom_order_cache` on 80175 and 10116 DC_AMBIENT. Source: `sql/eng091_relay005_f2_promise_aware_transit.sql`.
+
+**THE ROOT CAUSE, and it was neither the brief's nor CC's own first one.** **Sigma splits ONE order into MANY documents.** Monday 2026-09-07 at 80175 supplier 1339 arrived as **11 separate `order_nr`** carrying 95, 105, 1, 26, 60, 5, 5 and 16 lines. `refresh_l2_on_order` ranked DOCUMENTS (`ROW_NUMBER() ... ORDER BY order_nr DESC`) and kept `rn = 1`, so **ten documents of the same order were marked `cancelled_superseded`.** The 3,600 units of milk sat on 90108; the survivor 90117 carried 16 lines and no milk.
+
+**It explains "it worked before a recent rollout" WITHOUT a rollout** -- which document a line falls into is arbitrary. **`eng148_on_order_population_partition_e21` (2026-08-27) was tested and is NOT the cause:** re-ranking under the pre-E2.1 `status_2` partition returns byte-identical verdicts, every candidate order carrying `status_2 = 'E'`.
+
+**DEPTH IS PER ROUTE -- Pieter's floor rule, confirmed in the receipt ledger before it was built.** DC AMBIENT keeps TWO open deliveries; FRESH, DIRECT and DROPSHIP keep ONE. Over 180 days of consecutive order dates the previous order is still unreceived when the next is placed on **59.6% of DC pairs (n=302), 9.6% of DIRECT/dropship (n=386), 0.1% of other (n=1,267)**. **CC's first apply used two everywhere, over-stated every non-DC route, and was corrected within the hour.**
+
+**AND THE FLOOR RULE KILLED CC's OWN DESIGN, which is the durable half.** CC had written "a credible forward promise counts". The ledger: a booking made **29+ days ahead is received 2.8% of the time** against **91.1% at 0-7 days** (n=1,386). That rule would have booked 486 units on a 1-in-36 shot and called it stock. **The brief wanted them in too. Both seats wrong; the floor right.**
+
+**A DEFECT CC INTRODUCED AND CAUGHT ON THE LIVE READ.** Discrediting a pathological promise left the row with no bound at all, so the latest order for a dormant supplier counted forever -- 10116 showed four products in transit **since October 2023**. Age bound restored; every landing now sits inside 2026-09-07..09-16.
+
+**LIVE AFTER, all five stores:** 10116 **1,551 products / 32,533 u** · 80175 **848 / 20,689** · 80176 102 / 2,303 · 80579 16 / 405 · **21355 0, and that zero is HONEST** -- its newest open document is 16 days old with a promise already passed, cancelled under the floor's own rule. **Product 491 @ 80175 = 3,600 units.**
+
+**THE WALK, and the numbers move DOWN deliberately (SB-PRIORITY v1.4 test 2).** 80175 DC_AMBIENT, delivery 2026-09-12, fitted: **R306,258 -> R196,334, a fall of R109,924.** Packs 1,249 -> 602. Lines showing transit 161 -> 265. **Milk 491: 477 packs -> 0, with 3,600 units already coming.** Every reduced line carries its reason on the row (R29).
+
+**R30 dependents:** `rpc_bloom_order_recipe` reads `l2_on_order` for `projected_soh` -- quantities fall on every desk. `bloom_order_cache` rebuilt on the two SPAR ambient desks only; **the other 18 desks refresh on tonight's 01:30 chain.** `SB-AP-BUDGET-002` unaffected (reads GRV receipts).
+
+**🔴 CANON CORRECTION OWED, PM's.** `ORDERING-CANON` §E2 v15 rule 4 says recency is `order_nr` never `order_date` because `order_date` is sentinel on 76% of headers. **Measured: the open pool (types 0/1/2) is 3,956 headers at 0.0% sentinel.** The 76% is entirely in W (75.3%) and S (90.3%), classes this function never reads. R28 lineage owed, scoped to the open population.
+
+---
+
 ## 2026-09-06 21:45 SAST -- ENG-073 CLOSED ON THE FRONTEND. THE TOP 20 READS THE FAMILY-RESOLVED COVER. VERIFIED LIVE.
 
 **Clock, read in this write's own pass, +2 both ways:** local `2026-09-06 21:45:58`, UTC `19:45:58`. **Shipped `d4ceecc`, `f3aff8e`, `bda88a2` to `main`.**
