@@ -24,6 +24,20 @@
 -- cascade patch (contradictory regex flags) and refused to half-apply.
 --
 -- ============================================================================
+-- A DEFECT I INTRODUCED AND CAUGHT ON THE LIVE READ, recorded because the
+-- catching is the reusable half (migration eng091_restore_age_bound_on_discredited_date)
+-- ============================================================================
+-- Discrediting a pathological promise left the row with NO bound at all, so an
+-- order that is merely the latest for a DORMANT supplier counted forever.
+-- 10116 showed four products in transit since 2026... since OCTOBER 2023, plus
+-- ~4,400 units from April. Pieter's own floor rule covers it: a delivery that
+-- misses the next delivery and the one after is cancelled. So when the DATE is
+-- unusable, the row falls back to AGE vs lead x multiple.
+-- FINAL LIVE STATE, every landing now inside 2026-09-07..2026-09-16:
+--   10116 1,551 products / 32,533 u · 80175 848 / 20,689 · 80176 102 / 2,303
+--   80579 16 / 405 · 21355 0 (honest) · product 491 @ 80175 = 3,600 units.
+--
+-- ============================================================================
 -- THE ACTUAL ROOT CAUSE, and it is neither the brief's nor my first one
 -- ============================================================================
 -- Sigma splits ONE order into MANY documents. On 2026-09-07 at 80175, supplier
