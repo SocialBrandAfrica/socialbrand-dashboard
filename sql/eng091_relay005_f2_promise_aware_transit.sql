@@ -68,12 +68,12 @@
 -- ============================================================================
 -- 1. **A DELIVERY IS AN ORDER DATE, NOT A DOCUMENT.** All documents placed on one
 --    date for one supplier are one order and stand or fall together.
--- 2. **KEEP THE LAST TWO DELIVERIES.** Pieter said "almost always the last, and in
---    some cases the one before that". **The ledger says the second case is the
---    MAJORITY: when the next order date is placed, the previous one is still
---    unreceived 78.8% of the time at 10116 and 55.8% at 80175** (180 days,
---    consecutive order dates on both DC accounts). Keeping only the last delivery
---    would drop genuinely open stock most of the time.
+-- 2. **DEPTH DEPENDS ON THE ROUTE, and this is Pieter's floor rule, ledger-confirmed.**
+--    DC AMBIENT keeps TWO open deliveries; FRESH, DIRECT and DROPSHIP keep ONE --
+--    "the last delivery not yet received". Measured over 180 days of consecutive
+--    order dates, the previous order is still unreceived when the next is placed on
+--    59.6% of DC pairs (n=302), 9.6% of DIRECT/dropship (n=386), 0.1% of other
+--    (n=1,267). A flat depth of two over-states every non-DC route.
 -- 3. **A PATHOLOGICAL PROMISE DISCREDITS THE DATE, NOT THE STOCK** (F2b stands).
 --    Sigma writes an expected GRV before the order date on 20-27% of DC orders
 --    EVERY month since March -- it is not new and not rare. Those orders are still
@@ -95,17 +95,16 @@
 -- PM owes the R28 lineage on v15 rule 4, scoped to the open population.
 --
 -- ============================================================================
--- WHAT IT DOES TO THE LIVE SITE, all five stores
+-- WHAT IT DID TO THE LIVE SITE -- MEASURED AFTER, not predicted
 -- ============================================================================
---  store | products now | units now | products after | units after (last 2)
---  10116 |        1,445 |    24,699 |          3,390 |             124,552
---  80175 |          665 |    12,901 |          1,679 |              93,893
---  21355 |            0 |         0 |            241 |              14,917
---  80579 |            0 |         0 |            226 |              13,031
---  80176 |          102 |     2,303 |            185 |               5,575
--- **TOPS Delareyville and TOPS Dice currently show NOTHING AT ALL.**
--- On product 491 @ 80175: **3,600 units**, from the 07-09 delivery, 11 documents,
--- 483 products, 12,763 units in total. Not the brief's 3,986, and not my 4,086.
+--  store | products before | units before | products after | units after
+--  10116 |           1,445 |       24,699 |          1,735 |      37,218
+--  80175 |             665 |       12,901 |            862 |      22,186
+--  80176 |             102 |        2,303 |            102 |       2,303
+--  80579 |               0 |            0 |             16 |         405
+--  21355 |               0 |            0 |              0 |           0
+-- 21355's zero is HONEST -- newest open document 16 days old, promise passed.
+-- Product 491 @ 80175: 3,600 units. Not the brief's 3,986, not my earlier 4,086.
 --
 -- R30: `rpc_bloom_order_recipe` reads this for projected_soh, so ORDER QUANTITIES
 -- FALL on every desk. Rebuild `bloom_order_cache` after. Walk one desk before trusting.
