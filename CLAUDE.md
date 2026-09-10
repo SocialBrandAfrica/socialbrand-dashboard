@@ -25,6 +25,8 @@ Read("C:\Users\User\Desktop\Daisy\SQL-CONVENTIONS.md")                        # 
 Read("C:\Users\User\Desktop\Daisy\PROJECT-LEXICON.md")                      # SB-INDEX-023, the ONE home for definitions
 Read("C:\Users\User\Desktop\Daisy\CLEANUP-ENGINE-CANON.md")                 # the 21KB spine + its §0 SECTION INDEX
 Read("C:\Users\User\Desktop\Daisy\ORDERING-CANON.md")                       # SB-INDEX-018, the ordering law (-LEDGER on demand)
+Read("C:\Users\User\Desktop\Daisy\ORDERING-CANON-BUDGETS.md")               # SB-INDEX-031, ORDERING-CANON §D, the money law (carved 2026-08-30)
+Read("C:\Users\User\Desktop\Daisy\ORDERING-CANON-REGISTERS.md")             # SB-INDEX-032, ORDERING-CANON §G + §H, config keys and enactment ledger
 Read("C:\Users\User\Desktop\Daisy\STOCK-TRIAGE-TOOL.md")
 Read("C:\Users\User\Desktop\Daisy\SIGMA-CLEANUP-WORKFLOW.md")
 Read("C:\Users\User\Desktop\Daisy\DB-SCHEMA.md")
