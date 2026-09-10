@@ -12,6 +12,22 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-10 09:30 SAST -- PROMO WINDOW PROBE: THE NIGHTLY CAPTURE WIPED ITS OWN FLOOR EVIDENCE. FIXED AS AN UPSERT, ALL FOURTEEN RESTORED.
+
+**Clock, read in this write's own pass, +2 both ways:** local `2026-09-10 09:30:22`, UTC `07:30:22`; DB `now()` agreed at 09:23. **DATABASE DEPLOY, plus the committed source it was missing.**
+
+**Migrations:** `eng082_probe_upsert_never_wipes_observations` (07:13:25 UTC) · `eng082_restore_20260909_floor_observations` (07:13:33 UTC). Source: `sql/create_promo_window_probe.sql`, now the live DDL read back from the catalog; `capture_promo_window_probe()` md5 `9ad02d964c79e0268236429ce260e72b`.
+
+**THE DEFECT, CC's own.** The first capture (2026-09-09) did DELETE-for-today then INSERT and never carried `observed_*`, so the 20:45 SAST run erased every floor observation made earlier that day -- all fourteen of Pieter's 2026-09-09 round. **Fix:** the capture is an upsert on the primary key that refreshes the measured columns only; there is no DELETE. **Restore:** the fourteen are back from BUG-LOG ENG-082 addendum 3, `observed_by` naming the true observation time and that they were restored, not re-observed. **Verified after:** 2026-09-09 holds 219 rows, 14 observed -- PH1, PH6, QH1, QH2, 6H5, 6H6 closed and RH4 open, at both 10116 and 80175.
+
+**THE SOURCE GAP, also CC's.** `sql/create_promo_window_probe.sql` was committed 09-09 as a header with no DDL, leaving three live objects with no source in git -- the ENG-175 gap. It now carries the table, both functions, grants, RLS and the cron line, matching live.
+
+**OPERATING NOTE.** Today's probe rows do not exist until 20:45 SAST, so a daytime observation needs `SELECT capture_promo_window_probe();` first; otherwise `rpc_promo_probe_observe` returns `recorded 0` with a warning and writes nothing.
+
+**Overnight chain 09-09 into 09-10: 12 of 12 jobs succeeded** (`refresh-l2-pipeline` 1,198 s, `bloom-order-cache-refresh` 128 s, the probe 5 s).
+
+---
+
 ## 2026-09-09 17:31 SAST -- IN TRANSIT: THE ENGINE NOW RANKS THE DELIVERY, NOT THE DOCUMENT. APPLIED, REFRESHED, WALKED.
 
 **Clock, read in this write's own pass, +2 both ways:** local `2026-09-09 17:31:33`, UTC `15:31:33`. **DATABASE DEPLOY. No repo code changed.**
