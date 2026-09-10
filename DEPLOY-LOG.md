@@ -12,6 +12,28 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-10 10:50 SAST -- ENG-082: A DC PROMO STAYS ORDERABLE UNTIL THE THURSDAY OF THE WEEK IT ENDS. LIVE, 80175 REBUILT AND PROVEN, FOUR DESKS WAIT ON A PERMISSION.
+
+**Clock, read in this write's own pass, +2 both ways:** local `2026-09-10 10:50:56`, UTC `08:50:56`. DB `now()` agreed at +2 earlier this session. **DATABASE DEPLOY.**
+
+**Ruling (Pieter, 2026-09-10, from the floor):** *"it's still open till thursdays for all promos ending during that week. that's the real solution and judgement call."* RH4 (ended Tue 09-08) was the worked case, and he refused a one-off patch for it: the platform gets the rule.
+
+**Migration** `eng082_promo_close_thursday_of_end_week`, record `sql/eng082_promo_close_thursday_of_end_week.sql`. Two legs in one transaction, every replace asserted against the prior pins:
+- `rpc_bloom_promo_for_delivery` `5267db98…` → `e09d55868beaddf74e2d10243b66913e` (source `sql/create_rpc_bloom_promo_for_delivery.sql`, hash-gated to live). On a DC route a delivery also matches a promo when its placement date, the delivery less the route's derived `order_cutoff_days`, is on or before the Thursday of the promo's end week. New `forge_config` keys `promo_order_close_dow` = 4 and `promo_order_week_start_dow` = 1, DEMO_CALIBRATION, evidence RULING.
+- `rpc_bloom_order_recipe` `49960b12…` / 44,371 → `70d99c33906f4e69fc243d1de9fbfeb0` / 44,828. `promo_geared` is split from `promo_active`, so a line matched after its shelf end rides the promo sheet at its NORMAL quantity. Without it the window alone gears every post-end line up (milk 1674 @ 10116: 830 → 1,348 packs).
+
+**R22, a method not a literal.** A baseline of every upcoming cache was taken first, and two control rebuilds on the OLD code matched it on every line (10116 DC_AMBIENT 2,401 lines, 80176 DC_TOPS 218), so the inputs were stable. **80175 DC_AMBIENT 12-09, both caches:** 855 / 842 lines identical, `suggested_packs` identical on every line, value R218,788.68 / R206,193.35 to the cent, **162 lines moved onto promo (RH4, RH5, RH6), 96 of them ordering, R79,383.63 on the unfitted order**, 0 moved off. The window for 80175's NEXT delivery (16-09) carries no RH4, so the rule stops at the Thursday.
+
+**🔴 OPEN: four desks still hold the pre-change sheet.** The rebuilds of 10116 DC_AMBIENT 12-09 and the TOPS batch (80176 12-09, 21355 and 80579 14-09) were refused by the session's permission classifier. The desk does not check `engine_md5`, so those four serve the old sheet, RH4 on the normal TLX, with nothing on screen saying so. Waiting on Pieter's permission. Tonight's 01:30 rebuild covers them otherwise, which is too late for today's placement. The 10116 unfitted cache holds the OLD-code control rebuild, identical to its 01:30 build.
+
+**🔴 OPEN: the rule does not reach the TOPS Monday sheets, found after the apply.** The test takes the placement day as the delivery less `order_cutoff_days`, the latest day an order can go in. For a Saturday delivery that is Thursday, the day the order is placed. For the Monday 14-09 delivery at 21355 and 80579 it is Saturday 12-09, two days after the close. So RW4 and RW5 (ended Tue 09-08) match no line on those two Monday sheets, while the same promos match 223 products for 80176's Saturday sheet. If the Monday orders go in today, those lines ride the normal TLX, the RH4 failure again. ORDERING-CANON §A5 already holds the direction: the placement day is a derived route fact read from the order ledger (PM ruling 2026-08-30), and ENGINE-CANON-CALENDAR §16.7 says weekend placement is not modelled. No placement rule is changed until Pieter rules.
+
+**Named, not changed:** the fresh promos 6H5 and 6H6 were observed SHUT at +1, so the rule is not asserted for fresh. The one home does match them for the SPARs' 12-09 delivery. None of their 38 and 39 products at 10116 and 80175 sits in the DC ambient pool, so none reaches a sheet. Only RH4, RH5 and RH6 moved at 80175. Direct and dropship routes are untouched. A promo ending Friday to Sunday gains nothing. The rule has one home and two readers at source, `rpc_bloom_order_recipe` and `refresh_bloom_order_cache`, with no live restatement. ORDERING-CANON §C4 still states the end-date bound, which is PM's canon edit.
+
+**Revert:** both prior definitions are saved verbatim in `public._cc_r22_promoclose_fndefs`.
+
+---
+
 ## 2026-09-10 09:30 SAST -- PROMO WINDOW PROBE: THE NIGHTLY CAPTURE WIPED ITS OWN FLOOR EVIDENCE. FIXED AS AN UPSERT, ALL FOURTEEN RESTORED.
 
 **Clock, read in this write's own pass, +2 both ways:** local `2026-09-10 09:30:22`, UTC `07:30:22`; DB `now()` agreed at 09:23. **DATABASE DEPLOY, plus the committed source it was missing.**

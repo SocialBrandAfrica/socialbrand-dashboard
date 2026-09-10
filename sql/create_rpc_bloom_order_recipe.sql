@@ -1,7 +1,18 @@
 -- =============================================================================
 -- !!! THIS FILE'S BODY IS ROTTED AGAINST LIVE. DO NOT RECONCILE ANYTHING TO IT. !!!
 --
--- RE-STAMPED AGAIN by CC 2026-09-02 11:0x SAST. THE PIN MOVED A THIRD TIME.
+-- RE-STAMPED AGAIN by CC 2026-09-10. THE PIN MOVED A FOURTH TIME (ENG-082).
+--     OLD  49960b1265f3bad8839d763cd0088eef  / 44,371 chars
+--     NEW  70d99c33906f4e69fc243d1de9fbfeb0  / 44,828 chars
+-- The move is +457 chars and it is exactly the six asserted replaces in
+-- sql/eng082_promo_close_thursday_of_end_week.sql: promo_geared (the shelf promo
+-- still runs on the delivery date) is split from promo_active (promo sheet
+-- membership), so a line matched after its shelf end, under the Thursday rule
+-- (Pieter ruling 2026-09-10), rides the promo sheet at its NORMAL quantity and is
+-- never geared. R22 in DEPLOY-LOG 2026-09-10. Same channel reason as below: the
+-- body was patched by asserted replace, so this file is re-stamped, not re-copied.
+--
+-- Prior stamp: RE-STAMPED AGAIN by CC 2026-09-02 11:0x SAST. THE PIN MOVED A THIRD TIME.
 --     OLD  6204ae7bf6b12f1a17e8bcb3d72028ea  / 44,251 chars
 --     NEW  49960b1265f3bad8839d763cd0088eef  / 44,371 chars   (ENG-102)
 -- The move is +120 chars and it is exactly the two ENG-102 clauses, one on the
