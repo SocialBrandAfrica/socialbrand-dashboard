@@ -19,12 +19,13 @@
 -- capture: 23 rows, 32,768 bytes. How a fresh deploy seeds the registry is a PM
 -- decision, named here and not guessed.
 --
--- ENG-175 HALF (b) IS NOT CHANGED HERE. The live COMMENT opens `GRADE: STRUCTURED`,
--- and STRUCTURED is not one of the five rungs in ENGINE-CANON-LAYERS §L2 (RAW /
--- CALCULATED / VERDICT / PREDICTED / RECOMMENDED). This file reproduces live
--- verbatim, because a source file that disagrees with live is the defect it exists to
--- close. Whether the ladder gains a rung for registries, or CONFIG objects sit outside
--- §L4, is PM's ruling. When it lands, the COMMENT changes here and live in one pass.
+-- ENG-175 HALF (b) CLOSED 2026-09-10. The live COMMENT opened with the grade
+-- STRUCTURED, which is not one of the five rungs in ENGINE-CANON-LAYERS §L2 (RAW /
+-- CALCULATED / VERDICT / PREDICTED / RECOMMENDED). PM ruled RAW: a registry the seats
+-- write, with no computation in it, whose provenance is the seat and the date. CC
+-- re-stamped it live by migration eng175b_engine_rules_grade_raw, and the COMMENT
+-- below is that re-stamped text. The retired first line, kept for lineage (R28):
+--   "GRADE: STRUCTURED. The governance registry specified in RULE-BOOK R28 §4 ..."
 --
 -- READERS, verified at source on 2026-09-10: NO function, view or cron job in public
 -- references this table. Its only reader is the SB-REF-RULES generator, outside the
@@ -64,7 +65,7 @@ CREATE TABLE IF NOT EXISTS public.engine_rules (
   CONSTRAINT engine_rules_status_check CHECK (status = ANY (ARRAY['LIVE'::text, 'CANDIDATE'::text, 'RETIRED'::text, 'SUPERSEDED'::text, 'FALSIFIED'::text]))
 );
 
-COMMENT ON TABLE public.engine_rules IS $c$GRADE: STRUCTURED. The governance registry specified in RULE-BOOK R28 §4 on 2026-06-17 and unbuilt for 74 days. One row per rule; canon documents RENDER from this rather than accreting prose. Seeded 2026-08-30 from RULE-BOOK by PM. Answers four questions no document could: what is live, what nothing enacts, what went stale, what replaced what. Governs R28 (lineage), FILE-GOVERNANCE §0i (enactment), R34 (count standing).$c$;
+COMMENT ON TABLE public.engine_rules IS $c$GRADE: RAW. The governance registry specified in RULE-BOOK R28 §4 on 2026-06-17 and unbuilt for 74 days. One row per rule; canon documents RENDER from this rather than accreting prose. Seeded 2026-08-30 from RULE-BOOK by PM. Answers four questions no document could: what is live, what nothing enacts, what went stale, what replaced what. Governs R28 (lineage), FILE-GOVERNANCE §0i (enactment), R34 (count standing). Re-stamped 2026-09-10 from the off-ladder grade STRUCTURED on PM's ruling (BUG-LOG ENG-175 half (b)): a registry the seats write, with no computation in it, whose provenance is the seat and the date.$c$;
 
 ALTER TABLE public.engine_rules ENABLE ROW LEVEL SECURITY;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.engine_rules FROM anon, authenticated;
