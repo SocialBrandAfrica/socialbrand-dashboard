@@ -12,6 +12,36 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-10 12:22 SAST -- ENG-082 ADDENDUM 8: THE PROMO TEST READS THE DAY THE ORDER IS PLACED. THE TOPS MONDAY SHEETS CARRY RW4 AND RW5. ALL TEN DC CACHES REBUILT AND PROVEN.
+
+**Clock, read in this write's own pass:** local `2026-09-10 12:22:46`, UTC `10:22:46`. **DATABASE DEPLOY.** This entry closes both 🔴 OPEN items of the 10:50 entry below: the four desks are rebuilt and the Monday sheets are reached.
+
+**Why.** The 10:50 deploy took the placement day as the delivery less `order_cutoff_days` in calendar days. For a Monday delivery that is Saturday, a day no TOPS DC order goes in, so RW4 and RW5 missed the Monday sheets at 21355 and 80579. Pieter, from the floor, 2026-09-10: TOPS orders go in any day, but the Thursday order serves the Saturday or the Monday delivery. He added that the DC TOPS load sometimes skips a delivery day and comes on the next truck, often the fresh truck on a Thursday, depending on space. So the test keys on the day the order is placed, never on the day it lands.
+
+**Migration** `eng082_promo_placement_day`, record `sql/eng082_promo_placement_day.sql`. `rpc_bloom_promo_for_delivery` `e09d5586…` → **`8feb43c04c694b4fa6118c87cfa0c7cd` / 3,687**, one overload, source hash-gated MATCH. The placement day is now the last day on or before the delivery less `order_cutoff_days` whose weekday carried at least `in_transit_min_received_orders` (5) DC orders in the `dow_regime_lookback_days` (84) window before the delivery. Both keys already existed. The COMMENT now states the current rule. `rpc_bloom_order_recipe` does not move.
+
+**Evidence, CONTROLLED, the 84 days to today:** 134 DC placements at the three TOPS stores, none on a Friday or a Saturday, Thursday the modal day at all three. `expected_grv_date` cannot pair an order with its delivery (leads run down to −7,312 days), so the placement weekdays are read directly.
+
+**Simulated before applying, every DC desk × every delivery to 2026-10-02, 29 desk-dates:** only the TOPS Monday deliveries move. Every Saturday, Wednesday and Thursday delivery at all five stores kept its placement day and its match count. Live after the apply: the Saturday matches are unchanged (854, 870, 223) and the next Wednesday and Thursday deliveries carry no post-end match.
+
+**R22, all ten DC caches on the new code, against the morning baseline.** Lines are unfitted / fitted. Ordering values are the unfitted caches, at normal cost.
+
+| Desk | Delivery | Lines | Packs | Value | Moved onto promo | Of which ordering | Ordering value | Off promo |
+|---|---|---|---|---|---|---|---|---|
+| 80175 DC_AMBIENT | Sat 12-09 | 855 / 842 | identical | identical | 162 | 96 | R79,383.63 | 0 |
+| 10116 DC_AMBIENT | Sat 12-09 | 2,401 / 2,378 | identical | −R188.17 on one line, below | 250 | 65 | R177,798.17 | 0 |
+| 80176 DC_TOPS | Sat 12-09 | 218 / 218 | identical | identical | 36 | 31 | R32,733.23 | 0 |
+| 21355 DC_TOPS | Mon 14-09 | 368 / 368 | identical | identical | 72 | 54 | R43,251.71 | 0 |
+| 80579 DC_TOPS | Mon 14-09 | 254 / 254 | identical | identical | 42 | 31 | R22,170.92 | 0 |
+
+The fitted 10116 cache moves 65 ordering lines too, R173,379.85. The promos moved: RH4, RH5, RH6 and QH3 at the SPARs, RW4 and RW5 at the TOPS stores.
+
+**The −R188.17 at 10116 is not the patch, accounted at source.** One line, product 2707, 1 pack in both builds. It has two live DC links at supplier 1982 that tie on every key the recipe's link CTE sorts by (supplier, then `cost_date` 2026-02-13): pack 40 at R79.50 and pack 160 at R267.67. With nothing left to break the tie, the recipe takes either row from build to build. Group-wide 46 products carry a tied top DC link, all 46 with a different pack size and 27 with a different cost. One orders on a live sheet today, this one. Filed in BUG-LOG, named in ENG-082 addendum 8. Not changed here: the fix moves quantity and lands as its own change.
+
+**Named, not changed.** The desk still offers Monday 14-09 until its calendar-day deadline on Saturday, because `rpc_bloom_next_deliveries` counts the cutoff in calendar days (ENGINE-CANON-CALENDAR §16.7, weekend placement not modelled). Pieter's floor fact says that order goes in on Thursday. That is PM's canon and a separate change. The scratch tables `_cc_r22_promoclose_before` and `_cc_r22_promoclose_fndefs` stay until tonight's nightly build lands on the new pins. The second holds the only exact copy of the pre-ENG-082 recipe body.
+
+---
+
 ## 2026-09-10 10:50 SAST -- ENG-082: A DC PROMO STAYS ORDERABLE UNTIL THE THURSDAY OF THE WEEK IT ENDS. LIVE, 80175 REBUILT AND PROVEN, FOUR DESKS WAIT ON A PERMISSION.
 
 **Clock, read in this write's own pass, +2 both ways:** local `2026-09-10 10:50:56`, UTC `08:50:56`. DB `now()` agreed at +2 earlier this session. **DATABASE DEPLOY.**
