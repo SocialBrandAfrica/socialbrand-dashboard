@@ -12,6 +12,22 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-11 12:31 SAST -- ENG-082 H13 AND H14, STAGE 1: THE PLACEMENT WEEKDAY HAS ONE HOME, AND THE TOPS DESKS STOP OFFERING MONDAY ON A FRIDAY. DATABASE, NO DEPLOY.
+
+**Clock:** written 2026-09-11 12:31 SAST (`12:31:20`), read in the same call as this write (device +02:00).
+
+**Why:** `Engine/SB-CC-QUEUE-001` v1.4 order item 3, §H13 with §H14. On 11-09 and 12-09 the two TOPS desks still offered Monday 14-09, whose Thursday order had already gone in (the floor fact of ENG-082 add.8). A buyer could place it twice.
+
+**DATABASE-SIDE, NO DEPLOY:** migration `eng082_h13_h14_placement_one_home` (20260911102229), record `sql/eng082_h13_h14_placement_one_home.sql`. Key `placement_dow_min_orders` 5 (SEED, UNDERIVED) · new `rpc_derive_placement_day` `2a52347ec54f56a6e188694e9ad4035e` / 4,367, STABLE, SECURITY DEFINER with `search_path` pinned, EXECUTE to `anon`, `authenticated` and `service_role`, COMMENT `GRADE: VERDICT` · `rpc_bloom_promo_for_delivery` `8feb43c0…` to `3291e2b932b7684a78759d47dc6d3ea4` / 2,488 · `rpc_bloom_next_deliveries` `a5cd4735…` to `0c8cdf2632201d9238aecf6737bb153f` / 6,445. Then `refresh_bloom_order_cache_all(ARRAY['DC_TOPS'])`: 6 caches, 0 errors, 15.7 s.
+
+**R22, carried in BUG-LOG ENG-082 add.11:** promo membership identical on all 40 DC desk-dates to 2026-10-09 (39,645 lines, fingerprint `3beb7f71…` both sides) · offered dates on 462 desk-anchor rows: direct and dropship 0 changed, DC 14 changed, every one a TOPS Monday dropped on a Friday or a Saturday at 21355 and 80579 · the anon and authenticated call paths verified in rolled-back transactions · 21355 and 80579 DC_TOPS now build for Thursday 17-09 (R140,710.74 and R93,477.93) and 80176 rebuilt identical to the cent · 0 products order on two sheets at any store.
+
+**SOURCES, hash-gated to live on disk:** `sql/create_rpc_derive_placement_day.sql` (new), `sql/create_rpc_bloom_next_deliveries.sql` and `sql/create_rpc_bloom_promo_for_delivery.sql` (re-spliced).
+
+**HELD, named:** `_cc_r22_h13_offered_before` and `_cc_r22_h13_promo_before`, the R22 baseline, for PM's audit, no grant to `anon` or `authenticated`. **NOT IN THIS STAGE:** the cutoff fallback in `rpc_derive_order_cutoff`, the five direct floor moves and the two Coca-Cola calendar rows (stage 2, BUG-LOG ENG-082 add.11 item 4).
+
+---
+
 ## 2026-09-11 11:59 SAST -- ENG-183 AND ENG-185 APPLIED. A PRODUCT ON TWO DESKS NOW RIDES THE ONE ITS SUPPLIER DELIVERED, AND DICE GETS ITS SAB DESK. DATABASE, NO DEPLOY.
 
 **Clock:** written 2026-09-11 11:59 SAST (`11:59:22`), read in the same call as this write (device +02:00). Database `now()` read 11:51:45 SAST in the rebuild poll.

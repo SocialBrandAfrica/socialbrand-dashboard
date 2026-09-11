@@ -66,6 +66,12 @@
 -- before commit. The same write replaced the COMMENT, which now states the current rule.
 -- The 2026-08-27 comment it supersedes is kept at the foot of this file as lineage.
 
+-- RE-SPLICED FROM LIVE 2026-09-11 by CC (ENG-082 H14, migration eng082_h13_h14_placement_one_home): the body is
+-- live 3291e2b932b7684a78759d47dc6d3ea4 / 2,488 chars, hash-gated on disk. The inline placement derivation is
+-- replaced by a read of the one home, rpc_derive_placement_day. Membership identical on all 40 DC desk-dates to
+-- 2026-10-09 (39,645 lines, fingerprint 3beb7f71b0110208cb408833b957b28c). Prior body 8feb43c04c694b4fa6118c87cfa0c7cd,
+-- retired 2026-09-11 (R28).
+
 CREATE OR REPLACE FUNCTION public.rpc_bloom_promo_for_delivery(p_store_code text, p_route text, p_delivery_date date)
  RETURNS TABLE(product_code bigint, promo_nr bigint, start_date date, end_date date, status text, promo_unit_cost numeric, promo_description text, promo_suffix text)
  LANGUAGE sql
@@ -91,21 +97,7 @@ AS $function$
   CROSS JOIN LATERAL (
     SELECT sc.delivery_dows, sc.promo_buyin_lead_days, sc.order_cutoff_days,
            NOT EXISTS (SELECT 1 FROM public.bloom_route_config rc WHERE rc.store_code = sc.store_code AND rc.route_key = sc.route_key) AS is_dc,
-           COALESCE((
-             SELECT max(g.d)::date
-             FROM generate_series(p_delivery_date - sc.order_cutoff_days::int - 6, p_delivery_date - sc.order_cutoff_days::int, interval '1 day') g(d)
-             WHERE EXTRACT(ISODOW FROM g.d)::int IN (
-               SELECT EXTRACT(ISODOW FROM o.order_date)::int
-               FROM public.sigma_orders o
-               JOIN public.v_supplier_class vc ON vc.store_code = o.store_code AND vc.supplier_nr = o.supplier_nr AND vc.supplier_class = 'DC'
-               WHERE o.store_code = p_store_code
-                 AND o.order_date <> DATE '1990-01-01'
-                 AND o.order_date >= p_delivery_date - (SELECT fc.value_num::int FROM public.forge_config fc WHERE fc.config_key = 'dow_regime_lookback_days' AND fc.store_format = '*' AND fc.retired_on IS NULL)
-                 AND o.order_date < p_delivery_date
-                 AND NOT EXISTS (SELECT 1 FROM public.bloom_route_config rd WHERE rd.store_code = o.store_code AND o.supplier_nr = ANY(rd.direct_supplier_nrs))
-               GROUP BY 1
-               HAVING count(*) >= (SELECT fc.value_num::int FROM public.forge_config fc WHERE fc.config_key = 'in_transit_min_received_orders' AND fc.store_format = '*' AND fc.retired_on IS NULL))
-           ), p_delivery_date - sc.order_cutoff_days::int) AS placement_date
+           (SELECT pd.placement_date FROM public.rpc_derive_placement_day(p_store_code, p_route, p_delivery_date) pd) AS placement_date
     FROM public.supplier_calendar sc
     WHERE sc.store_code = p_store_code
       AND sc.route_key  = p_route
