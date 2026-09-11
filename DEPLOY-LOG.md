@@ -12,6 +12,24 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-11 09:14 SAST -- THE DEFECT REGISTER'S DATABASE COPY GETS A LOADER. 154 ROWS, FIELD FOR FIELD WITH THE BOOK. DATABASE, NO DEPLOY.
+
+**Clock:** written 2026-09-11 09:14 SAST, read in the same call as this write (device +02:00). Database `now()` agreed on the offset at 08:47 SAST.
+
+**Why, Pieter 2026-09-11:** *"The database copy of the defect list is missing the 14 defects the defect book now shows."* Measured at source, the gap was wider. `public.engine_defects` still held the 118 rows PM hand-loaded on 2026-08-31, and the book held 154. Fourteen of the 36 missing rows were the section-born defects (ENG-172 on, filed as `### ENG-nnn` sections that the old book could not see). The table's own COMMENT named what was owed: a loader, or drop the table.
+
+**DATABASE-SIDE, NO DEPLOY:** migration `engine_defects_loader` (20260911070054). `engine_defects_status_check` gains `UNSTAMPED`, a `source_md5` column is added, and the COMMENT is restated (the 2026-08-31 text retired, R28). Then the load, one transaction with a count assertion.
+
+**R22:** 154 rows. A fingerprint over id, occurrence, found, fixed, severity, status, head and section reads `a17a475bc632b0d399371588719ab8c1` in the database and in the book, computed independently on each side. OPEN 111 · PARTIAL 6 · CLOSED 36 · UNSTAMPED 1 (ENG-172, a PM row with no status token). 19 `contested` flags carried by key. One `source_md5`, equal to the md5 of BUG-LOG.md at the load (`37de2b5d0203adade3a3d206619a873a`).
+
+**NEW FILES:** `sql/create_engine_defects.sql` in this repo (no source had existed since 2026-08-31, now gated to live) · `Engine/register/engine_defects_load.py` and its generated `engine_defects_load.sql` in the Daisy tree.
+
+**NOT BUILT, named:** the refresh is a seat step, not a schedule. The database cannot read a file on this machine, so the table is as current as its last load. The staleness test sits in the table COMMENT and in DB-SCHEMA.
+
+**ALSO IN THIS PASS:** PM's 2026-08-25 grant-revoke entry is carried verbatim into its date slot below, from a stale copy of this log at the Daisy root. The note on that entry says why.
+
+---
+
 ## 2026-09-10 12:22 SAST -- ENG-082 ADDENDUM 8: THE PROMO TEST READS THE DAY THE ORDER IS PLACED. THE TOPS MONDAY SHEETS CARRY RW4 AND RW5. ALL TEN DC CACHES REBUILT AND PROVEN.
 
 **Clock, read in this write's own pass:** local `2026-09-10 12:22:46`, UTC `10:22:46`. **DATABASE DEPLOY.** This entry closes both 🔴 OPEN items of the 10:50 entry below: the four desks are rebuilt and the Monday sheets are reached.
@@ -767,6 +785,41 @@ ENG-123 needs a **page refresh** on a desk with hidden lines (10116 or 80175 amb
 **The two counters are still not collapsed, which is the whole lesson of the 08-25 R22 failure.** At that desk **27 lines carry `withheld_correction` while sitting in `line_kind='ordered'`**. `line_kind` answers where the row came from, `withheld_correction` answers what is true of the line, and the first cut collapsed them and moved R18,761.51 out of the ordered bucket.
 
 **NOT WALKED.** R31 stays open. The build is live and the payload is proven at the database. I have not seen the screen render.
+
+---
+
+> **Carried verbatim 2026-09-11 (CC) from `Daisy/DEPLOY-LOG.md`, a stale 2026-06 copy of this log at the governance root.** PM wrote the entry below there on 2026-08-25, because the governance seat cannot write this repo, and it never reached the registered log. It was the only content in that copy this file did not already hold: 1 of 40 headings and 15 of 769 non-blank lines, measured line by line against `origin/main`. The copy is archived to `archive/evidence/DEPLOY-LOG_daisy-root-copy_2026-09-11.md` in the Daisy tree. Nothing inside the entry was changed.
+>
+> **Its one owed item closed the same day:** `rpc_atlas_sql` carries `transaction_read_only` (pin `613f72b9…`, DB-SCHEMA), and BUG-LOG ENG-144 closed 2026-08-31.
+
+## 2026-08-25 — TWO PRODUCTION GRANT REVOKES (security). Run by Pieter in the Supabase SQL Editor, verified at source by PM.
+
+**Why this entry exists at all, and it is a governance note before it is a deploy note.** These two changes went live hours before they were logged here. They were run by Pieter directly rather than through the CC deploy path, so the pipeline's normal deploy step never fired and nothing wrote to this file. **A production change made outside the pipeline is still a production change.** Caught at handover, on the question "is the handover actually done", and logged in the same pass. It is the same class as R30 addendum 4: the artefact was a GRANT, and no gate reads grants.
+
+### Change 1 — ENG-144, `rpc_atlas_sql` and `rpc_atlas_schema` closed to the public roles
+
+```sql
+REVOKE EXECUTE ON FUNCTION public.rpc_atlas_sql(text, integer) FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.rpc_atlas_schema(text) FROM anon, authenticated;
+```
+
+**Why.** Both were SECURITY DEFINER executing as `postgres`, with `EXECUTE` granted to `anon`. Proved at source with the publishable key from `socialbrand-dashboard/.env.local`: `select current_user` returned **postgres**, `count(*) from auth.users` returned 1, `count(*) from l2_kpi_daily` returned 5 on a table with no grant to any public role, and `vault.secrets` was reachable. **The whole database was readable by anyone holding the key that ships in the browser bundle.**
+
+**Verified after.** All four probes return **HTTP 401 / SQLSTATE 42501 permission denied for function**. `information_schema.role_routine_grants` shows only `postgres` (owner) and `service_role`. **Control in the same pass:** `rpc_push_status` on that same key still returns live rows for all five stores.
+
+**Still owed (CC):** `SET LOCAL transaction_read_only = on` inside the `rpc_atlas_sql` body. Revoked is not safe while anything holding `service_role` runs arbitrary SQL as `postgres`.
+
+### Change 2 — ENG-145, ten write functions closed to `anon`
+
+`REVOKE EXECUTE ... FROM anon` on `refresh_l2_gmroi_profile` · `refresh_l2_kvi_cross_store` · `refresh_l2_kvi_profile` · `refresh_l2_last_counted` · `refresh_l2_range_state` · `refresh_l2_rhythm_profile` · `refresh_l2_sales_budget` · `refresh_l2_seasonality_profile` · **`refresh_order_budget_ledger`** · `refresh_supplier_calendar`.
+
+**Why.** Found by the independent auditor (SB-AUD-PLATFORM-001 Deliverable A §6), verified live by PM before filing. Two harms: **integrity** (`refresh_order_budget_ledger` writes the budget ledger and `refresh_supplier_calendar` writes delivery cadence, both feeding the order the buyer places real money against) and **availability** (heavy rebuilds on a 500 MB shared instance, callable in a loop). **The convention was already correct and already followed at 28 sibling refresh functions; these ten were the deviation.**
+
+**Verified after.** All three spot-checked routines return HTTP 401 / 42501. `rpc_push_status`, `rpc_layer_freshness` and `rpc_bloom_desks` still return live rows on the same key. **Population check: zero anon-executable write routines remain schema-wide.**
+
+**Net effect of both changes, tracked end to end:** our routines callable by the publishable browser key went **93 → 91 → 81**.
+
+**Deliberately NOT changed, and it is a live question rather than an oversight:** `authenticated` still holds `EXECUTE` on every refresh function including `refresh_l2_pipeline`. Whether that is a real barrier depends on whether signup is open on this project. **CC measures it and reports. Nobody acts on it until we know.**
 
 ---
 
