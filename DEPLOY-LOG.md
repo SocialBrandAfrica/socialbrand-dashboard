@@ -22,7 +22,7 @@ Reverse-chronological. Each entry = one production deploy.
 
 **R22, carried in BUG-LOG ENG-082 add.11:** promo membership identical on all 40 DC desk-dates to 2026-10-09 (39,645 lines, fingerprint `3beb7f71…` both sides) · offered dates on 462 desk-anchor rows: direct and dropship 0 changed, DC 14 changed, every one a TOPS Monday dropped on a Friday or a Saturday at 21355 and 80579 · the anon and authenticated call paths verified in rolled-back transactions · 21355 and 80579 DC_TOPS now build for Thursday 17-09 (R140,710.74 and R93,477.93) and 80176 rebuilt identical to the cent · 0 products order on two sheets at any store.
 
-**SOURCES, hash-gated to live on disk:** `sql/create_rpc_derive_placement_day.sql` (new), `sql/create_rpc_bloom_next_deliveries.sql` and `sql/create_rpc_bloom_promo_for_delivery.sql` (re-spliced).
+**SOURCES, hash-gated to live on disk:** `sql/create_rpc_derive_placement_day.sql` (new), `sql/create_rpc_bloom_next_deliveries.sql` and `sql/create_rpc_bloom_promo_for_delivery.sql` (re-spliced). `sql/create_rpc_bloom_next_deliveries.sql` did not hash to the prior live body before this pass (`c85dc60a` against live `a5cd4735`). It had gone stale at an earlier change, and it now gates to live.
 
 **HELD, named:** `_cc_r22_h13_offered_before` and `_cc_r22_h13_promo_before`, the R22 baseline, for PM's audit, no grant to `anon` or `authenticated`. **NOT IN THIS STAGE:** the cutoff fallback in `rpc_derive_order_cutoff`, the five direct floor moves and the two Coca-Cola calendar rows (stage 2, BUG-LOG ENG-082 add.11 item 4).
 
