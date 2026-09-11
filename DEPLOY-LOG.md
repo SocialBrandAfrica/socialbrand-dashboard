@@ -12,6 +12,27 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-11 11:59 SAST -- ENG-183 AND ENG-185 APPLIED. A PRODUCT ON TWO DESKS NOW RIDES THE ONE ITS SUPPLIER DELIVERED, AND DICE GETS ITS SAB DESK. DATABASE, NO DEPLOY.
+
+**Clock:** written 2026-09-11 11:59 SAST (`11:59:22`), read in the same call as this write (device +02:00). Database `now()` read 11:51:45 SAST in the rebuild poll.
+
+**Why:** `Engine/SB-CC-QUEUE-001` v1.4 order item 2. **Pieter's go in CC's chat, 2026-09-11 ~11:0x:** apply the build as it stands today rather than hold for PM's canon. `ORDERING-CANON` §A2 case (3) and the item's DoD still read add.3's re-cut. Pieter's add.4 words govern: the anomaly stays on DC, labelled. Friday is no store's DC order day.
+
+**DATABASE-SIDE, NO DEPLOY, in the order BUG-LOG ENG-183 add.4 item 5 sets:**
+1. `eng185_dice_sab_desk` (20260911094017). The 80579 `DIRECT_BEER` calendar row: Friday delivery, derived (22 of 28 SAB receipt days), cutoff `order_cutoff_floor_days` with VERIFY (the ENG-110 add.2 re-cut, proven by a rolled-back run first).
+2. `eng183a_desk_split_verdict` (20260911094328). `refresh_l2_population_verdict` `14cf23ea…` to `54b02e1d35a922af3b56e33019089dc7` / 20,062 · `rpc_bloom_stock_state` `d0921900…` to `c270c8d50eb56682248a942f8b0b8b18` / 6,007, warning text only · key `desk_receipt_window_days` 182 (SEED, UNDERIVED) · columns `l2_population_verdict.desk_basis` and `receipting_desks`.
+3. `refresh_l2_population_verdict` for all five stores.
+4. `eng183b_desk_split_recipe` (20260911094746). `rpc_bloom_order_recipe` `70d99c33…` to `c085128d9b767e471bf4d4d05924db22` / 45,221.
+5. `refresh_bloom_order_cache_all()`: 42 caches on `c085128d`, the last at 11:50:50. The MCP client timed out and the server committed. Polled, never re-issued.
+
+**R22, carried by line in BUG-LOG ENG-183 add.5:** 75 verdict moves, add.4's count exactly, 30 of them the receipt moves the queue names. After the rebuild, 0 products order on two sheets at any store, against 7 before. The desks that moved, standard and fitted alike: 21355 DC_TOPS -R12,968.18 · 80579 DC_TOPS -R5,301.58 · 80175 DIRECT_CLOVER -R488.16 · 10116 DIRECT_DANONE R0.00 (a zero-cost link) · 80579 DIRECT_BEER new, R64,665.89 for Friday 18-09. Every other desk is identical to the cent, and 0 lines changed that the patch did not move. The Sigma correction list holds 37 lines.
+
+**SOURCES, hash-gated to live on disk:** `sql/create_refresh_l2_population_verdict.sql`, `sql/create_rpc_bloom_stock_state.sql`, and `sql/create_rpc_bloom_order_recipe.sql`, which is RECONCILED. The MCP result file carried the body as base64 with its 13 backslashes, so the ROTTED stamp retires and stays in the header as history. The build files `sql/eng183a_desk_split_verdict.sql`, `sql/eng183b_desk_split_recipe.sql` and `sql/eng185_dice_sab_desk.sql` reach `main` in this commit, cherry-picked from `claude/new-session-2a6724`, with `eng185` re-cut.
+
+**HELD, named:** `_cc_r22_eng183_verdict_before` and `_cc_r22_eng183_cache_before`, the R22 baseline, kept for PM's acceptance audit with no grant to `anon` or `authenticated`. CC drops them on PM's verdict.
+
+---
+
 ## 2026-09-11 10:53 SAST -- ENG-082'S FIRST NIGHTLY IS PROVEN ON ALL TEN DC CACHES. THE TWO R22 SCRATCH TABLES ARE DROPPED, AND THE ONE BODY GIT DID NOT HOLD IS KEPT. DATABASE, NO DEPLOY.
 
 **Clock:** written 2026-09-11 10:53 SAST (`10:53:47`), read in the same call as this write (device +02:00). Database `now()` read 10:51:30 SAST against the device's 10:51:44, the same offset.

@@ -5,7 +5,13 @@
 -- regenerated wholesale via pg_get_functiondef, never hand-reconciled against
 -- the previous version). Hash-gated against the database in the same pass.
 --
+-- RE-SPLICED FROM LIVE 2026-09-11 by CC (ENG-183 (A), migration eng183a_desk_split_verdict): the body
+-- is live c270c8d50eb56682248a942f8b0b8b18 / 6,007 chars, md5-proven through the MCP result file and
+-- hash-gated on disk. Only the RAISE WARNING text moved: the DC-preferred rule now reads 'received from',
+-- not 'has a DC link' (ORDERING-CANON SSA2). Prior body d0921900fb2598240f01ea1295c57a12, retired 2026-09-11 (R28).
+--
 -- Migration that shaped the current body:
+--   eng183a_desk_split_verdict (2026-09-11), the warning text only, on top of
 --   eng112_repoint_stock_state_to_one_home_watermark (2026-08-30)
 --
 -- WHAT THIS RETURNS. Per-group (KVI / CORE / TAIL) line counts, stock at cost,
@@ -93,7 +99,7 @@ BEGIN
       FROM l2_population_verdict v
      WHERE v.store_code = p_store_code AND v.route_overlap;
     IF v_overlap > 0 THEN
-      RAISE WARNING 'rpc_bloom_stock_state: % at % -- % line(s) shared with a DC desk are counted on DC, not here. That is the RULE, not a shortfall: DC is the preferred supplier always (Pieter ruling 2026-08-23), so a line DC supplies is ordered on DC and belongs on the DC desk.',
+      RAISE WARNING 'rpc_bloom_stock_state: % at % -- % line(s) linked on more than one desk are each counted on ONE desk: the one whose supplier the line was received from, DC where it was received from more than one because DC is the preferred supplier always where there are multiple suppliers (Pieter ruling 2026-08-23 and 2026-09-10), and an anomaly where DC and a true direct supplier both delivered (ORDERING-CANON SSA2, ENG-183).',
         p_route, p_store_code, v_overlap;
     END IF;
   END IF;

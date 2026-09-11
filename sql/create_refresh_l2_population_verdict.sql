@@ -4,7 +4,14 @@
 -- generated from live can never be hash-gated, only replaced). Hash-gated against
 -- the database in the same pass.
 --
+-- RE-SPLICED FROM LIVE 2026-09-11 by CC (ENG-183 (A), migration eng183a_desk_split_verdict): the body
+-- is live 54b02e1d35a922af3b56e33019089dc7 / 20,062 chars, exported through the MCP result file as
+-- base64, md5-proven, and hash-gated on disk. It adds desk_basis and receipting_desks: a product
+-- linked on more than one desk rides the ONE desk whose supplier it was received from (ORDERING-CANON
+-- SSA2, BUG-LOG ENG-183 add.4). Prior body 14cf23ea7807709c7580a09c64d72051, retired 2026-09-11 (R28).
+--
 -- Migration that shaped the current body:
+--   eng183a_desk_split_verdict (2026-09-11), the ENG-183 desk split, on top of
 --   eng106_leg_a_per_line_cost_demand_columns (2026-08-27)
 --
 -- WHAT IT IS. The CROSS-APP POPULATION FACT (SB-CC-BLOOM-026 §12 / R33 clause 3):
@@ -60,12 +67,14 @@ AS $function$
 DECLARE
   v_soh_dt date;
   v_client constant text := 'socialbrand';
-  v_engine constant text := 'BLOOM-026 population-verdict v2.1 (ENG-099 new-range fix)';
+  v_engine constant text := 'BLOOM-026 population-verdict v2.2 (ENG-183 desk split, received-from, history, supplier column)';
   v_desk   record;
   v_dept   smallint[];
   v_direct bigint[];
   v_rows   int;
   v_out    jsonb;
+  v_rcpt_days int;
+  v_rcpt_from date;
 BEGIN
   IF p_store_code IS NULL THEN
     RAISE EXCEPTION 'p_store_code is required';
@@ -76,6 +85,13 @@ BEGIN
   IF v_soh_dt IS NULL THEN
     RAISE EXCEPTION 'no l2_soh_daily rows for store % -- refusing to write a verdict with no stock position', p_store_code;
   END IF;
+
+  -- ENG-183 (ORDERING-CANON SSA2): the window (the current regime) a desk must have receipted a product in to own it.
+  SELECT fc.value_num::int INTO v_rcpt_days FROM forge_config fc WHERE fc.config_key = 'desk_receipt_window_days' AND fc.store_format = '*' AND fc.retired_on IS NULL;
+  IF v_rcpt_days IS NULL THEN
+    RAISE EXCEPTION 'forge_config desk_receipt_window_days is missing -- ENG-183 cannot choose a desk without it';
+  END IF;
+  v_rcpt_from := public.store_local_today(p_store_code) - v_rcpt_days;
 
   DROP TABLE IF EXISTS _pv_recv;
   DROP TABLE IF EXISTS _pv_first;
@@ -93,6 +109,36 @@ BEGIN
        AND sm2.supplier_type = 'Z'
      GROUP BY 1,2;
   CREATE INDEX ON _pv_recv (pc, sup);
+
+  -- ENG-183: who RECEIPTED each product here over our whole history (SSA5 7d), any supplier class. in_win marks
+  -- the current regime, last_dt the last delivery. The supplier column decides only a line never received here.
+  DROP TABLE IF EXISTS _pv_rcpt;
+  CREATE TEMP TABLE _pv_rcpt AS
+    SELECT m.product_code AS pc, m.supplier_nr AS sup, COALESCE(sm3.supplier_type = 'Z', false) AS is_z,
+           COALESCE(sm3.supplier_type = 'F', false) AS is_f, bool_or(m.movement_date > v_rcpt_from) AS in_win,
+           max(m.movement_date) AS last_dt
+      FROM sigma_movements m
+      LEFT JOIN sigma_supplier_master sm3 ON sm3.store_code = m.store_code AND sm3.supplier_nr = m.supplier_nr
+     WHERE m.store_code = p_store_code
+       AND m.movement_type IN ('R','W') AND m.module = 'DIWAREPR' AND m.qty > 0
+     GROUP BY 1, 2, 3, 4;
+  CREATE INDEX ON _pv_rcpt (pc);
+  ANALYZE _pv_rcpt;
+
+  -- ENG-183 / ENG-184: Sigma's own supplier column (Supp. Cd.), one supplier per product. INTERIM source: the
+  -- DIWAAIS export copy in product_catalog (pulled 2026-05-24) until ENG-184 extracts the field nightly.
+  DROP TABLE IF EXISTS _pv_supp;
+  CREATE TEMP TABLE _pv_supp AS
+    SELECT DISTINCT ON (x.pc) x.pc, x.sup, COALESCE(sm4.supplier_type = 'Z', false) AS is_z
+      FROM (SELECT CASE WHEN pcat.sigma_product_code ~ '^[0-9]+$' THEN pcat.sigma_product_code::bigint END AS pc,
+                   CASE WHEN pcat.supplier_code ~ '^[0-9]+$' THEN pcat.supplier_code::bigint END AS sup,
+                   pcat.loaded_at
+              FROM product_catalog pcat WHERE pcat.store_code = p_store_code) x
+      LEFT JOIN sigma_supplier_master sm4 ON sm4.store_code = p_store_code AND sm4.supplier_nr = x.sup
+     WHERE x.pc IS NOT NULL AND x.sup IS NOT NULL
+     ORDER BY x.pc, x.loaded_at DESC;
+  CREATE INDEX ON _pv_supp (pc);
+  ANALYZE _pv_supp;
 
   CREATE TEMP TABLE _pv_first AS
     SELECT m.product_code AS pc, MIN(m.movement_date) AS first_dt
@@ -117,12 +163,13 @@ BEGIN
     ros_56d_guard text, removed smallint,
     last_sale_date date, never_sold boolean, first_dt date, created_dt date,
     sup bigint, ps smallint, lc numeric, uc numeric, valid_to date,
-    links int, packs int, recv_sups int, zero_links int, uc_min numeric, uc_max numeric
+    links int, packs int, recv_sups int, zero_links int, uc_min numeric, uc_max numeric,
+    desk_sort smallint, desk_rcpt boolean, desk_rcpt_f boolean, desk_last date, supp_match boolean
   );
 
   ANALYZE _pv_recv;  ANALYZE _pv_first;  ANALYZE _pv_soh;
 
-  FOR v_desk IN SELECT d.route_key, d.is_dc FROM rpc_bloom_desks(p_store_code) d LOOP
+  FOR v_desk IN SELECT d.route_key, d.is_dc, d.desk_sort FROM rpc_bloom_desks(p_store_code) d LOOP
 
     v_dept := NULL; v_direct := NULL;
     IF v_desk.is_dc THEN
@@ -172,7 +219,12 @@ BEGIN
            rop.ros_56d_guard, rop.correction_days_removed_56d,
            ros.last_sale_date, ros.never_sold, fr.first_dt, sa.created_date,
            ch.sup, ch.ps, ch.lc, ch.uc, ch.valid_to,
-           g.links, g.packs, g.recv_sups, g.zero_links, g.uc_min, g.uc_max
+           g.links, g.packs, g.recv_sups, g.zero_links, g.uc_min, g.uc_max,
+           v_desk.desk_sort,
+           EXISTS (SELECT 1 FROM _pv_rcpt rr WHERE rr.pc = ch.pc AND rr.in_win AND ((v_desk.is_dc AND rr.is_z) OR ((NOT v_desk.is_dc) AND rr.sup = ANY(v_direct)))),
+           EXISTS (SELECT 1 FROM _pv_rcpt rr WHERE rr.pc = ch.pc AND rr.in_win AND (NOT v_desk.is_dc) AND rr.is_f AND rr.sup = ANY(v_direct)),
+           (SELECT max(rr.last_dt) FROM _pv_rcpt rr WHERE rr.pc = ch.pc AND ((v_desk.is_dc AND rr.is_z) OR ((NOT v_desk.is_dc) AND rr.sup = ANY(v_direct)))),
+           EXISTS (SELECT 1 FROM _pv_supp ss WHERE ss.pc = ch.pc AND ((v_desk.is_dc AND ss.is_z) OR ((NOT v_desk.is_dc) AND ss.sup = ANY(v_direct))))
       FROM chosen ch
       JOIN agg g ON g.pc = ch.pc
       JOIN l2_stock_band b ON b.store_code = p_store_code AND b.product_code = ch.pc
@@ -206,13 +258,27 @@ BEGIN
     chosen_supplier_nr, chosen_pack_size, chosen_pack_cost, chosen_unit_cost,
     chosen_is_zero_cost, candidate_links, distinct_packs, receipting_suppliers,
     zero_cost_links, unit_cost_spread_pct, cost_basis,
-    first_receipt_date, last_sale_date, never_sold, link_valid_to, engine_version
+    first_receipt_date, last_sale_date, never_sold, link_valid_to, engine_version,
+    desk_basis, receipting_desks
   )
-  WITH ranked AS (
-    SELECT p.*,
-           row_number() OVER (PARTITION BY p.product_code ORDER BY p.is_dc DESC, p.route_key) AS rk,
+  WITH rcpt AS (
+    -- ENG-183 (ORDERING-CANON SSA2, Pieter 2026-09-10). The supplier is who the line was RECEIVED from (GRV-led).
+    -- In the current regime: one receiving desk owns it, more than one goes to DC, because DC is the preferred
+    -- supplier always where there are multiple suppliers. Not received in the regime: the desk whose supplier
+    -- delivered it LAST in our history (DC on a same-day tie). Never received: Sigma's supplier column. Else DC, VERIFY.
+    SELECT q.product_code, array_agg(q.route_key ORDER BY q.route_key) FILTER (WHERE q.desk_rcpt) AS rcpt_desks,
+           COALESCE(bool_or(q.desk_rcpt AND q.is_dc), false) AS dc_rcpt,
+           COALESCE(bool_or(q.desk_rcpt_f), false) AS f_rcpt,
+           COALESCE(bool_or(q.desk_last IS NOT NULL), false) AS hist_any,
+           COALESCE(bool_or(q.supp_match), false) AS supp_any
+      FROM _pv_pool q GROUP BY q.product_code
+  ),
+  ranked AS (
+    SELECT p.*, rc.rcpt_desks, rc.dc_rcpt, rc.f_rcpt, rc.hist_any, rc.supp_any,
+           row_number() OVER (PARTITION BY p.product_code ORDER BY p.desk_rcpt DESC, (rc.rcpt_desks IS NOT NULL AND p.is_dc) DESC, p.desk_last DESC NULLS LAST, (rc.hist_any AND p.is_dc) DESC, p.supp_match DESC, p.is_dc DESC, p.desk_sort NULLS LAST, p.route_key) AS rk,
            (count(*)   OVER (PARTITION BY p.product_code) > 1)                                AS overlap
       FROM _pv_pool p
+      LEFT JOIN rcpt rc ON rc.product_code = p.product_code
   ),
   f AS (
     SELECT r.*,
@@ -274,7 +340,17 @@ BEGIN
          f.links, f.packs, f.recv_sups, f.zero_links,
          ROUND(((f.uc_max-f.uc_min)/NULLIF(f.uc_min,0)*100),1),
          CASE WHEN COALESCE(f.lc,0)=0 THEN 'COST_UNPRICED' ELSE 'LINK' END,
-         f.first_dt, f.last_sale_date, f.never_sold, f.valid_to, v_engine
+         f.first_dt, f.last_sale_date, f.never_sold, f.valid_to, v_engine,
+         CASE WHEN NOT f.overlap AND NOT f.desk_rcpt AND EXISTS (SELECT 1 FROM _pv_rcpt rr WHERE rr.pc = f.product_code AND rr.in_win) THEN 'SOLE_DESK_OFF_DESK_RECEIPT'
+              WHEN NOT f.overlap THEN 'SOLE_DESK'
+              WHEN f.rcpt_desks IS NULL AND f.hist_any THEN 'HISTORY_RECEIPT'
+              WHEN f.rcpt_desks IS NULL AND f.supp_any THEN 'SUPP_CD'
+              WHEN f.rcpt_desks IS NULL THEN 'NO_RECEIPT'
+              WHEN cardinality(f.rcpt_desks) = 1 THEN 'RECEIPTS'
+              WHEN f.dc_rcpt AND f.f_rcpt THEN 'ANOMALY_DC_AND_DIRECT'
+              WHEN f.dc_rcpt THEN 'DC_PREFERRED'
+              ELSE 'MULTI_RECEIPT' END,
+         f.rcpt_desks
     FROM f;
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
@@ -315,6 +391,8 @@ BEGIN
   DROP TABLE IF EXISTS _pv_first;
   DROP TABLE IF EXISTS _pv_soh;
   DROP TABLE IF EXISTS _pv_pool;
+  DROP TABLE IF EXISTS _pv_rcpt;
+  DROP TABLE IF EXISTS _pv_supp;
 
   SELECT jsonb_build_object(
     'store_code', p_store_code, 'soh_date', v_soh_dt, 'rows', v_rows, 'engine', v_engine,
@@ -322,7 +400,8 @@ BEGIN
                             FROM (SELECT population_state, count(*) c FROM l2_population_verdict
                                    WHERE store_code = p_store_code GROUP BY 1) t), '{}'::jsonb),
     'route_overlap_lines', (SELECT count(*) FROM l2_population_verdict
-                             WHERE store_code = p_store_code AND route_overlap)
+                             WHERE store_code = p_store_code AND route_overlap),
+    'by_desk_basis', COALESCE((SELECT jsonb_object_agg(desk_basis, c) FROM (SELECT desk_basis, count(*) c FROM l2_population_verdict WHERE store_code = p_store_code GROUP BY 1) t), '{}'::jsonb)
   ) INTO v_out;
 
   RETURN v_out;
