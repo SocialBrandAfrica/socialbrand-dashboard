@@ -12,6 +12,31 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-11 10:53 SAST -- ENG-082'S FIRST NIGHTLY IS PROVEN ON ALL TEN DC CACHES. THE TWO R22 SCRATCH TABLES ARE DROPPED, AND THE ONE BODY GIT DID NOT HOLD IS KEPT. DATABASE, NO DEPLOY.
+
+**Clock:** written 2026-09-11 10:53 SAST (`10:53:47`), read in the same call as this write (device +02:00). Database `now()` read 10:51:30 SAST against the device's 10:51:44, the same offset.
+
+**Why:** `Engine/SB-CC-QUEUE-001` v1.4 order item 1, first in the queue because the order comes first (Pieter, 2026-09-11). Its done-test: the ten DC caches carry recipe `70d99c33…` and promo `8feb43c0…`, the TOPS 14-09 sheets carry RW4 and RW5, no sheet carries a promo past its Thursday close, then `_cc_r22_promoclose_before` and `_cc_r22_promoclose_fndefs` are dropped.
+
+**R22, read-only, at source 2026-09-11 10:3x to 10:4x SAST. All four legs pass.**
+1. **Pins.** The 09-11 nightly (cron 26, `succeeded`, 01:30:00 to 01:32:03) built ten DC caches: both fit variants of 10116 DC_AMBIENT 17-09, 80175 DC_AMBIENT 16-09, 80176 DC_TOPS 16-09, 21355 DC_TOPS 14-09 and 80579 DC_TOPS 14-09. All ten carry `engine_md5` `70d99c33…`. Live bodies: `rpc_bloom_order_recipe` `70d99c33906f4e69fc243d1de9fbfeb0` / 44,828 chars, one overload · `rpc_bloom_promo_for_delivery` `8feb43c04c694b4fa6118c87cfa0c7cd` / 3,687. `eng082_promo_placement_day` applied 2026-09-10 12:16 SAST, so all ten were built on both pins. The six caches rebuilt on 09-10 for Saturday 12-09 (10116, 80175, 80176) carry `70d99c33…` too.
+2. **Placement day.** The live function's derivation, restated as a read, places both TOPS Monday 14-09 sheets on Thursday 10-09, as addendum 8 intended. Every Saturday 12-09 sheet places on Thursday 10-09. 10116's 17-09 sheet places on Tuesday 15-09. 80175's and 80176's 16-09 sheets place on Monday 14-09.
+3. **TOPS 14-09 carries RW4 and RW5.** Per cache, both fit variants alike: 21355 RW4 8 lines and RW5 64 lines · 80579 RW4 3 lines and RW5 38 lines.
+4. **No promo past its Thursday close.** The 16 caches on `70d99c33…` carry 3,635 promo lines. 1,122 of them deliver after the shelf end and ride the Thursday leg alone. 0 of those place after the closing Thursday. 0 of them are geared, so every one orders at normal quantity. Membership against the live `rpc_bloom_promo_for_delivery`, desk-date by desk-date: 0 lines carried and not matched, 0 matched and not carried, 0 with a different promo number.
+
+**An instrument error, named so its number never travels.** The first cut of leg 4 took the placement day as the delivery less `supplier_calendar.order_cutoff_days`, and flagged 226 RW4 and RW5 lines on the TOPS 14-09 sheets as past the close. That is the calendar-day bound addendum 8 replaced, not the engine's rule. Restated with the ledger derivation read from the live body, the count is 0.
+
+**DROPPED, migration `cc_drop_eng082_r22_scratch` (20260911085030).** One transaction. A DO block refused the drop unless both tables still held what was exported and fingerprinted.
+- `_cc_r22_promoclose_fndefs`, 2 rows. `rpc_bloom_order_recipe` `49960b1265f3bad8839d763cd0088eef` / 44,371 chars is the pin the nightly caches carried from 09-03 01:30 to 09-10 01:31. Git held no full copy (`sql/create_rpc_bloom_order_recipe.sql` is stamped ROTTED). It is now `sql/_archive/rpc_bloom_order_recipe_49960b12_pre-ENG-082.sql`, exported as base64 through the MCP result file and md5-proven on disk with the hash-gate extraction. `rpc_bloom_promo_for_delivery` `5267db982bfb3e03ee758b9085d60c93` / 1,517 needs no file: `sql/create_rpc_bloom_promo_for_delivery.sql` at `32781fb^` holds it byte-exact.
+- `_cc_r22_promoclose_before`, the 2026-09-10 morning baseline: 16,056 lines on `49960b12…`, R5,214,001.52, 29,690 suggested packs. Row fingerprint `cdbca9287ee69916c8704480c227b536`: md5 over store, route, fit, engine_md5, delivery, line_no, product, suggested, normal, geared, promo_active, promo_nr, line_kind and value, `|`-joined, ordered by store, route, delivery, fit and line_no. Its R22 is published in BUG-LOG ENG-082 addenda 7 and 8. The line-level rows are not kept.
+- No function or view read either table. RLS was off on both, and neither was granted to `anon` or `authenticated`.
+
+**ALSO SINCE THE 09:14 ENTRY:** `engine_defects` reloaded twice. At 09:24, after ENG-186 was filed: 155 rows, fingerprint `b5aac155…`, BUG-LOG `0b726b59…`. At 10:42, after PM stamped ENG-172 `[PARTIAL]`: 155 rows, `6b501f118b04687761ef00e22fdf47db` in the database and in the book, BUG-LOG `20ab8d30464a28b115050761747ea0ee`. OPEN 111 · PARTIAL 7 · CLOSED 37 · UNSTAMPED 0, and the 19 `contested` flags kept.
+
+**LEFT, named:** `_cc_soh_import_10116` is the one CC scratch table still in `public`. Not in this item, not examined.
+
+---
+
 ## 2026-09-11 09:14 SAST -- THE DEFECT REGISTER'S DATABASE COPY GETS A LOADER. 154 ROWS, FIELD FOR FIELD WITH THE BOOK. DATABASE, NO DEPLOY.
 
 **Clock:** written 2026-09-11 09:14 SAST, read in the same call as this write (device +02:00). Database `now()` agreed on the offset at 08:47 SAST.

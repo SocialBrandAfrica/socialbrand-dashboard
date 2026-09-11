@@ -19,6 +19,9 @@ A file landed here only if it is one of:
 - the **orphan** engine `create_l2_stock_count_plan.sql` +
   `refresh_l2_stock_count_plan.sql` (dropped — see
   `../drop_l2_stock_count_plan_orphan.sql`).
+- a **retired live body kept as its revert path** (R28 lineage), when git holds no
+  full copy of it: `rpc_bloom_order_recipe_49960b12_pre-ENG-082.sql` (2026-09-11,
+  the recipe before ENG-082, with its md5, successor and hash test in its header).
 
 **Nothing here is run on deploy.** The live schema is reproduced from the active
 `sql/create_*.sql` set plus the dedicated canonical files that remained in `sql/`.
