@@ -12,6 +12,47 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-14 19:07 SAST -- ENG-208 ON CANON v1.26: THE PROMO BOUND IS THE PLACEMENT DAY AGAINST THE PROMO END DATE, AND THE 11 LINES THE 18:14 ENTRY MOVED ARE BACK ON THE PROMO SHEET. DATABASE, NO DEPLOY.
+
+**Clock:** written 2026-09-14 19:07 SAST (`19:07:58`), read in the same call as this write (device +02:00).
+
+**Why:** PM took ORDERING-CANON to v1.26 at 18:14 SAST (`1b1a9d5`, stamped 16:14 +0000), 24 minutes after the 18:14 entry's build went live. Pieter's floor test: an order placed after the promo end date is not honoured, whatever the window still shows. PM's brief `SB-CC-ENG208C-001`.
+
+**DATABASE-SIDE, NO DEPLOY:** migration `eng208_v126_promo_bound_placement_vs_end_date`: `rpc_bloom_promo_for_delivery` `330c15a9…` / 2,348 to `79743e655868687448967e1d067187fc` / 1,886 (leg B tests the derived placement day against `pa.end_date`, and the closing-Thursday arithmetic leaves). COMMENT `8b1cc998…`. Then eight caches were rebuilt, 1215 to 1222, source `eng208_v126_after`, 0 errors.
+
+**R22, carried in BUG-LOG ENG-208 addendum 1:**
+- The five Sat 19-09 and Mon 21-09 sheets rebuild identical to their pre-ENG-208 builds, 3,426 lines.
+- On Thu 24-09, 54 lines leave the promo sheet at normal quantity: 10116 46, 21355 4, 80579 4.
+- Every desk total holds to the cent.
+- PM's falsifier reads true.
+
+**SOURCE, hash-gated to live on disk:** `sql/create_rpc_bloom_promo_for_delivery.sql`, rebuilt from `fe5e585`. **Correction to the 18:14 entry:** the copy it committed (`0dce938`) had the right body but a COMMENT spliced at a stale offset, so its COMMENT and the start of its lineage block were corrupted. Record `sql/eng208_v126_promo_bound_placement_vs_end_date.sql`.
+
+**NOT BUILT, for PM:** `SB-CLOCK-001` CC-1 also asks for the buy-in start bound on the placement day and for both delivery legs to go on every route. Measured: the SPAR DC promo start moves (80175 Wed 16-09 loses 1,502 membership rows), and every direct desk moves. §C4 says direct routes are untouched.
+
+---
+
+## 2026-09-14 18:3x SAST (written 19:07) -- ENG-082 H14 STAGE 2: THE CUTOFF FALLBACK READS THE ONE PLACEMENT HOME, A DIRECT ROUTE TAKES THE FLOOR, AND THE TWO COCA-COLA ROWS TAKE THE LEDGER. DATABASE, NO DEPLOY.
+
+**Why:** `SB-CLOCK-001` CC-9 and the order list's item 3 stage 2 (BUG-LOG ENG-082 add.11 item 4, ENG-110 add.1 items 1 and 2), off an order morning.
+
+**DATABASE-SIDE, NO DEPLOY:**
+- Migration `eng082_h14_stage2_cutoff_reads_one_home`: `rpc_derive_order_cutoff` `846f9a31…` / 8,297 to `ec5d1e41d94243a88949619240072657` / 6,978.
+- Migration `eng110_cocacola_calendar_rows_from_ledger`: 10116 `DIRECT_COCACOLA` `delivery_dows` {4}, and 21355 `DIRECT_COCACOLA` `cycle_weeks` 1.
+- `refresh_supplier_calendar_cutoff` for all five stores: 18 rows written, 3 `floor_attested` skipped.
+- `refresh_bloom_order_cache_all` for Coca-Cola, Simba and Clover: 14 caches, 0 errors, 38.8 s.
+
+**R22, carried in BUG-LOG ENG-082 addendum 12:**
+- Five direct cutoffs move to the 2-day floor, and every DC cutoff holds.
+- 462 offered-date rows each side. 16 of 21 desks move on 0 anchors; 10116 Coca-Cola moves a day earlier, and 21355 Coca-Cola goes weekly.
+- Both controls and both Simba desks rebuild line-identical.
+
+**SOURCES, hash-gated to live on disk:** `sql/create_rpc_derive_order_cutoff.sql`, both functions (it had been stale since ENG-125). Records: `sql/eng082_h14_stage2_cutoff_reads_one_home.sql` and `sql/eng110_cocacola_calendar_rows_from_ledger.sql`.
+
+**HELD, named:** `_cc_r22_s2_calendar_before`, `_cc_r22_s2_offered_before`, `_cc_r22_s2_offered_after`, `_cc_r22_s2_cache_before` and `_cc_r22_v126_before`, the R22 baselines, for PM's acceptance. None of them grants anything to `anon` or `authenticated`.
+
+---
+
 ## 2026-09-14 18:14 SAST -- ENG-208: THE PROMO CLOSING THURSDAY BINDS THE DELIVERY DATE, SO A SATURDAY OR TOPS MONDAY DELIVERY AFTER ITS PROMO HAS ENDED ORDERS ON THE NORMAL TLX. DATABASE, NO DEPLOY.
 
 **Clock:** written 2026-09-14 18:14 SAST (`18:14:55`), read in the same call as this write (device +02:00).
