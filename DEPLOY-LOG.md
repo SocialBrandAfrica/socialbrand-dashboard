@@ -12,6 +12,22 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-14 18:14 SAST -- ENG-208: THE PROMO CLOSING THURSDAY BINDS THE DELIVERY DATE, SO A SATURDAY OR TOPS MONDAY DELIVERY AFTER ITS PROMO HAS ENDED ORDERS ON THE NORMAL TLX. DATABASE, NO DEPLOY.
+
+**Clock:** written 2026-09-14 18:14 SAST (`18:14:55`), read in the same call as this write (device +02:00).
+
+**Why:** Pieter's ruling from the floor, 2026-09-14 (ORDERING-CANON v1.25 §C4): a promo line ordered for a delivery after its closing Thursday does not come in, and belongs on the normal TLX. PM allocated ENG-208. The 19-09 Saturday order places Thursday 17-09.
+
+**DATABASE-SIDE, NO DEPLOY:** migration `eng208_promo_close_binds_delivery_date`: `rpc_bloom_promo_for_delivery` `3291e2b9…` / 2,488 to `330c15a9ec12843fdd167ac3cce0d4c6` / 2,348 by asserted replace (leg B tests `p_delivery_date`, and the call to `rpc_derive_placement_day` leaves). Migration `eng208_promo_comment_named_limit_corrected`: COMMENT only (`e1cd5a2f…`). Then the five affected caches rebuilt: 1193 to 1197, source `eng208_r22_after`, 0 errors.
+
+**R22, carried in BUG-LOG ENG-208:** 11 sheet lines, 47 packs and R12,198.39 leave the promo sheet for the normal TLX at normal quantity (10116 R4,250.59 · 80175 R0 · 80176 R5,449.92 · 21355 R2,497.88 · 80579 R0). Every desk total is unchanged to the cent, and 0 other lines move.
+
+**SOURCE, hash-gated to live on disk:** `sql/create_rpc_bloom_promo_for_delivery.sql`.
+
+**ALSO, found in passing:** client roles revoked on three CC scratch tables that had taken the project's default `anon=rm` grant (`cc_revoke_client_roles_eng208_scratch`, `cc_revoke_client_roles_soh_import_scratch`). **HELD, named:** `_cc_r22_eng208_before_a` and `_b`, the R22 baseline, for PM's acceptance, now with no grant to `anon` or `authenticated`.
+
+---
+
 ## 2026-09-11 12:31 SAST -- ENG-082 H13 AND H14, STAGE 1: THE PLACEMENT WEEKDAY HAS ONE HOME, AND THE TOPS DESKS STOP OFFERING MONDAY ON A FRIDAY. DATABASE, NO DEPLOY.
 
 **Clock:** written 2026-09-11 12:31 SAST (`12:31:20`), read in the same call as this write (device +02:00).
