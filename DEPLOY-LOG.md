@@ -12,6 +12,39 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-14 22:16 SAST -- SB-CC-RLSGUARD-001: THE STANDING GUARD. A TABLE A CLIENT ROLE READS EMPTY WITH NO ERROR NOW STOPS THE BUILD. DATABASE AND BUILD STEP.
+
+**Clock:** written 2026-09-14 22:16 SAST (`22:16:13`), read in the same call as this write (device +02:00).
+
+**Why:** `Forge/SB-CC-ORDER-001` item 3 (Tier 1) and `Forge/SB-CC-RLSGUARD-001` G1 to G4. ENG-163 found the silent-empty class at one site on 09-02. By 09-14 it stood at 31 tables and about 46.8 million rows on the publishable key, and nothing stopped it from returning.
+
+**DATABASE:** migration `rlsguard_g1_g4_standing_guard` adds three objects.
+- **Table `forge_rls_guard_site`**, the register. RLS on, no client grant, seeded with the 82 sites known at build.
+- **`rpc_forge_rls_guard()`** (G1 and G2), granted to `anon`, `authenticated` and `service_role`. It opens no base table.
+  - Class A (no policy) and class B (no policy naming the role) are SILENT; class C (no grant) is LOUD.
+  - Each site reads KNOWN, NEW, CHANGED or CLEARED against the register.
+- **`rpc_forge_rls_guard_summary()`** (G4): the guard in one row and one line.
+
+Live at build: 72 silent sites (anon A 31; authenticated A 32, B 9), 10 loud, 0 new, gate PASS.
+
+**BUILD STEP:** `package.json` gains `"prebuild": "node scripts/rls-guard-gate.mjs"`. Vercel runs `npm run build`, so every production build calls the guard on the public key and stops on a NEW or CHANGED silent site. If the guard cannot be read, the build stops too. Preview builds already stop on the missing Supabase env vars (ON PIETER P-4); they now stop at the gate, with that message.
+
+**PROVEN (G3):**
+1. **Rolled-back self-test.** Three throwaway tables read A silent NEW, B silent NEW and C loud NEW, and the gate read FAIL.
+2. **End to end.** A real empty class-A table, `_cc_rlsguard_probe_e2e`: the gate stopped the build and named it for both roles (exit 1). With the table dropped, the gate passed (exit 0).
+3. **Missing env.** Exit 1, with the message.
+
+The first run exited 127 on Windows: `process.exit()` under an open fetch socket trips a libuv assertion. Fixed by exiting through `process.exitCode`.
+
+**SOURCE:** `sql/create_rpc_forge_rls_guard.sql` (the migration as applied, plus the G3 self-test block to re-run) and `scripts/rls-guard-gate.mjs`.
+
+**NOT IN THIS STEP, named:**
+- G5, the register rule, which is PM's to place.
+- The weekly diary line: PM's diary reads `rpc_forge_rls_guard_summary().line`.
+- ENG-120's 56 anon-readable RLS-off tables, a different class the guard does not cover.
+
+---
+
 ## 2026-09-14 19:07 SAST -- ENG-208 ON CANON v1.26: THE PROMO BOUND IS THE PLACEMENT DAY AGAINST THE PROMO END DATE, AND THE 11 LINES THE 18:14 ENTRY MOVED ARE BACK ON THE PROMO SHEET. DATABASE, NO DEPLOY.
 
 **Clock:** written 2026-09-14 19:07 SAST (`19:07:58`), read in the same call as this write (device +02:00).
