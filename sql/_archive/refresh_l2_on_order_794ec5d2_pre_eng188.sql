@@ -1,60 +1,12 @@
--- create_refresh_l2_on_order.sql
+-- refresh_l2_on_order_794ec5d2_pre_eng188.sql
 --
--- The outstanding-order fact: what is genuinely on its way, and what is a stale
--- document. ORDERING-CANON E2 (v15 rules 1-6a), E2.1 (v1.12) and, since
--- 2026-09-15, ENG-188.
+-- ROLLBACK SOURCE. Lives in sql/_archive/, so nothing runs it on deploy. The live body of
+-- public.refresh_l2_on_order immediately before ENG-188 applied on 2026-09-15, read with
+-- pg_get_functiondef at 12:3x SAST the same day and md5-proven: 794ec5d27655445cd492abf9535ec2b8
+-- / 9,177. To roll ENG-188 back: run this file, then refresh_l2_on_order for each store, then
+-- rebuild the DC order caches. sql/create_refresh_l2_on_order.sql at d2d7307 is NOT this body:
+-- it had drifted from live (body md5 f18ed7c194db06fea175da266d9651be).
 --
--- GENERATED FROM LIVE 2026-09-15 15:2x SAST, never hand-written. The body below is the $body$
--- text of sql/eng188_on_order_landing_estimate_expires.sql, applied by migration
--- eng188_on_order_landing_estimate_expires, and HASH-GATED in the same pass:
--- md5(pg_get_functiondef) d6655346f5d8c6cf889161fbbc031b7c / 10,042, live and file.
---
--- ENG-188 (Pieter, from the floor, 2026-09-15): an on-order line expires the moment
--- its own expected landing date (order_date plus the route's demonstrated lead)
--- is behind the ledger watermark with nothing received. It stops counting in
--- transit and stops reducing the new order, surfaced as landing_estimate_elapsed
--- (R29). R22 at apply: 10116 on order R433,122.32 -> R312,869.60 (94 products:
--- 62 DC R96,455.74, 32 dropship R23,796.98), 80175 R633.00 on 5 direct lines,
--- 21355, 80176 and 80579 unchanged, 0 counted rows past their estimate at any
--- store. BUG-LOG ENG-188.
---
--- PRIOR HEADER (generated 2026-08-30, ENG-148 / E2.1), kept as lineage (R28):
---
--- create_refresh_l2_on_order.sql
---
--- The outstanding-order fact: what is genuinely on its way, and what is a stale
--- document. Built to ORDERING-CANON §E2 (v15 rules 1-6a) and §E2.1 (v1.12).
--- Migration: eng148_on_order_population_partition_e21 (2026-08-27).
---
--- GENERATED FROM LIVE via pg_get_functiondef on 2026-08-30, never hand-written.
--- HASH-GATED against the database in the same pass (ENG-115 class rule: a sql/
--- file that was not generated from live can never be hash-gated, only replaced).
---
--- ENG-148 / §E2.1, the change that made this file necessary:
---   1. The partition is (store_code, supplier_nr, DELIVERY POPULATION), with the
---      population assigned PER LINE from the line's own department against
---      bloom_dc_config's cycle dept set. status_2 is RETIRED from the key --
---      measured CONTROLLED n=203, pure-ambient orders ride D/E/M (18/121/29),
---      one stream across three letters, so the letter cannot separate streams.
---      A mixed document (15/203) contributes each line to its own population.
---   2. The cancellation presumption gained its boundary: an open order whose
---      promised GRV date is not behind the ledger watermark, and still within
---      v14 rule 3's lead multiple, is NEVER presumed cancelled by a later
---      placement. The 1990-01-01 sentinel ghosts get no shelter, so the
---      R64,978,904 -> R231,452 naive-booking bound is unchanged.
---
--- R22 at ship (2026-08-27): 10116 DC_AMBIENT 1,447 -> 1,266 lines and
--- R572,567.73 -> R509,504.44 (-R63,063.29, -11.01%); every other desk exactly
--- R0.00 and zero lines. Order 167588 counted on all 299 products. 135 lines
--- carry a visible in-transit qty, all with a landing date.
---
--- NOTE ON §E2.1 CLAUSE 4's ACCEPTANCE FIGURE: it states R103,104.65, which is
--- sigma_orders.order_cost_total -- the STORED HEADER AGGREGATE. §12e point 4b
--- (ENG-050) forbids presenting that as the same measure as a line-derived
--- figure. This function is on the LINE basis (ordered_qty*cost/pack_size), which
--- computes R102,090.22, a R1,014.43 documented header-vs-line disagreement.
--- PM owns the canon correction (restate as METHOD); the engine is correct.
-
 CREATE OR REPLACE FUNCTION public.refresh_l2_on_order(p_store text)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -135,8 +87,7 @@ BEGIN
            WHEN p.expected_grv_date <  v_watermark   THEN 'promise_passed_ledger_observed'
            WHEN p.expected_grv_date =  v_watermark   THEN 'promise_due_on_watermark_not_received'
            ELSE 'promise_ahead_of_ledger' END AS promise_basis,
-      -- rule 5a: the ESTIMATE, labelled on every row. Since ENG-188 (Pieter, 2026-09-15) an elapsed estimate
-      -- also expires the line: see the last branch of exclusion_reason.
+      -- rule 5a: the ESTIMATE is a label, never a gate. Surfaced on counted rows.
       CASE WHEN (p.order_date + p.lead_days) <  v_watermark THEN 'estimate_elapsed'
            WHEN (p.order_date + p.lead_days) =  v_watermark THEN 'estimate_due_now'
            ELSE 'estimate_ahead' END AS landing_estimate_state,
@@ -144,16 +95,8 @@ BEGIN
         WHEN NOT p.is_latest_of_kind THEN 'superseded_older_delivery'
         WHEN p.expected_grv_date IS NULL OR p.expected_grv_date = DATE '1990-01-01'
              OR p.expected_grv_date < p.order_date
-          THEN CASE WHEN p.age_days > p.lead_days * v_mult THEN 'stale_beyond_lead'
-                    WHEN (p.order_date + p.lead_days) < v_watermark THEN 'landing_estimate_elapsed'
-                    ELSE NULL END
+          THEN CASE WHEN p.age_days > p.lead_days * v_mult THEN 'stale_beyond_lead' ELSE NULL END
         WHEN p.expected_grv_date <= v_watermark THEN 'promise_passed_ledger_observed'
-        -- ENG-188 (Pieter, from the floor, 2026-09-15, relayed by PM 10:1x): an on-order line expires the
-        -- moment its own expected landing date passes with nothing placed after it. It stops counting in
-        -- transit and stops reducing the new order. The landing date is order_date plus the route's
-        -- demonstrated lead, the date the desk shows, judged against the ledger watermark (rule 5a).
-        -- Every earlier label is unchanged: this lands only on a line that was counted before.
-        WHEN (p.order_date + p.lead_days) < v_watermark THEN 'landing_estimate_elapsed'
         ELSE NULL END AS exclusion_reason
     FROM open_pool p
   ),
@@ -187,7 +130,7 @@ BEGIN
          MAX(age_days)      FILTER (WHERE exclusion_reason IS NOT NULL),
          ARRAY(SELECT DISTINCT unnest(array_agg(route_key)        FILTER (WHERE exclusion_reason IS NOT NULL))),
          ARRAY(SELECT DISTINCT unnest(array_agg(exclusion_reason) FILTER (WHERE exclusion_reason IS NOT NULL))),
-         'l2_on_order v17 E2.1 + ENG-188 landing estimate expires'
+         'l2_on_order v16 E2.1 population-partition'
 ,
          ARRAY(SELECT DISTINCT unnest(array_agg(delivery_population) FILTER (WHERE exclusion_reason IS NULL)))
   FROM lines GROUP BY product_code;
@@ -203,16 +146,8 @@ BEGIN
     'store_code', p_store, 'rows', v_rows, 'ledger_watermark', v_watermark,
     'received_orders_inside_open_filter', v_recv_in_open,
     'on_order_qty', round(v_qty,2), 'on_order_cost', round(v_cost,2),
-    'counted_rows_past_landing_estimate', v_est_past,   -- surfaced diagnostic: counted rows due on the watermark
+    'counted_rows_past_landing_estimate', v_est_past,   -- surfaced diagnostic, NOT an exclusion
     'excluded_order_lines', v_exc_n, 'excluded_cost_refused', round(v_exc_cost,2),
-    'engine_version', 'l2_on_order v17 E2.1 + ENG-188 landing estimate expires', 'computed_at', now());
+    'engine_version', 'l2_on_order v16 E2.1 population-partition', 'computed_at', now());
 END;
 $function$;
-
--- Grants stated explicitly (R30 addendum extension: PUBLIC and anon BOTH
--- revoked on a mutating function, because a role-specific grant survives a
--- REVOKE FROM PUBLIC).
-REVOKE EXECUTE ON FUNCTION public.refresh_l2_on_order(text) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.refresh_l2_on_order(text) FROM anon;
-GRANT  EXECUTE ON FUNCTION public.refresh_l2_on_order(text) TO authenticated;
-GRANT  EXECUTE ON FUNCTION public.refresh_l2_on_order(text) TO service_role;
