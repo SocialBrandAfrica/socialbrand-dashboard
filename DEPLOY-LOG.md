@@ -12,6 +12,33 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-15 17:5x SAST -- ENG-189 STAMP LIVE: EVERY ROW THE EXTRACTOR SENDS TO THE 11 FULL-READ L1 TABLES CARRIES last_seen_at. NO NUMBER MOVES.
+
+**Clock:** written 2026-09-15 17:5x SAST (`17:58:16`, read in this pass, local and DB agree at +2).
+
+**Why:** ENG-189. The L1 mirror re-reads 11 Sigma tables in full, upserts and never deletes, so nothing says which rows Sigma still holds. Pieter gave the word at 17:5x ("eng-189 go ahead").
+
+**DATABASE, APPLIED 17:53 SAST.** Migration `eng189_l1_source_presence_stamp` (version `20260915155314`), `sql/eng189_l1_source_presence_stamp.sql` at `2fb1cfe` verbatim.
+- New: `sigma_stamp_last_seen()` `c3cc9abe62ac798d0bd4506dfdc07138` / 200, SECURITY INVOKER, EXECUTE `service_role` only. `last_seen_at timestamptz` and a BEFORE INSERT OR UPDATE trigger `<table>_last_seen` on sigma_articles, sigma_lifecycle, sigma_orders, sigma_order_lines, sigma_supplier_master, sigma_supplier_link, sigma_trade_terms, sigma_departments, sigma_subdepts, sigma_promotions and sigma_promotion_articles.
+- Pre-flight: no column, trigger or function existed. 0 database functions and 0 cron jobs write the 11 tables, and none reads them by `SELECT *`, `%ROWTYPE` or `SETOF`. Nothing was running. The extractor upserts through PostgREST with `on_conflict` and `merge-duplicates`.
+- `sql/create_sigma_stamp_last_seen.sql` generated from live and hash-gated. Rollback: drop the 11 triggers, the 11 columns and the function.
+
+**R22.**
+
+| Test | Result |
+|---|---|
+| Columns and triggers | 11 and 11, all enabled |
+| ACL | `service_role` only. anon and authenticated false |
+| Probe as `service_role`, rolled back | one `sigma_departments` UPDATE stamped `last_seen_at` and left `ingested_at` unchanged. Nothing written |
+| Numbers | none move. No reader reads the column yet |
+| The run check | owed 16-09 morning: the 65-cell query at the foot of the sql file, `seen_last_run = rows_pushed` in every cell |
+
+**Gate:** `apply_migration` passed at the first attempt.
+
+**Frontend:** none.
+
+---
+
 ## 2026-09-15 17:1x SAST -- ENG-190 LEGS (2) AND (3) LIVE: ON A DC ROUTE A PROMO LINE NEEDS A DC NUMBER AND A LINE SIGMA STILL HOLDS. R22 GREEN.
 
 **Clock:** written 2026-09-15 17:1x SAST (`17:15:42`, read in this pass, local and DB agree at +2).
