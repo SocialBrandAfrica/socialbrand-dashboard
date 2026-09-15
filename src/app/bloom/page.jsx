@@ -59,9 +59,16 @@ function todayIso(offsetDays = 0) {
 // chose a basis; otherwise take the engine's own resolved answer, which
 // already IS geared_packs on a promo line and normal_packs elsewhere.
 // Shape-driven, never a desk or store list (R21/R25).
+//
+// 2026-09-15 (Pieter, placing the DC order: "the total on top does not calculate
+// right"). The basis is a choice about PROMO lines only. The old body read
+// normal_packs on EVERY line under the Normal basis, and normal_packs is the
+// PRE-FIT figure, so with Fit to budget on the sheet silently ignored the fit on
+// every non-promo line and the Running total disagreed with the engine. A line
+// that is not on promotion now always takes the engine's resolved answer.
 function lineQty(line, basis) {
-  if (basis === 'geared' && line.promo_active && line.geared_packs != null) return line.geared_packs
-  if (basis === 'normal' && line.normal_packs != null) return line.normal_packs
+  if (line.promo_active && basis === 'geared' && line.geared_packs != null) return line.geared_packs
+  if (line.promo_active && basis === 'normal' && line.normal_packs != null) return line.normal_packs
   return line.suggested_packs ?? line.normal_packs ?? 0
 }
 
@@ -2185,6 +2192,24 @@ function OrderDesksMode() {
   }
 
   const total = useMemo(() => lines.reduce((s, l) => s + (qty[l.product_code] ?? 0) * (Number(l.pack_cost) || 0), 0), [lines, qty])
+  // 2026-09-15: the engine's OWN fitted order, so the Fit strip compares like
+  // with like (engine before fit -> engine after fit). It compared the engine's
+  // geared pre-fit total with the buyer's Normal-basis sheet, and so reported
+  // the basis difference as a budget trim.
+  const fittedTotal = useMemo(() => lines.reduce((s, l) => s + (Number(l.suggested_packs) || 0) * (Number(l.pack_cost) || 0), 0), [lines])
+  // 2026-09-15: flipping the basis after Generate re-seeds every line the buyer
+  // has not typed over, so the Running total always matches the basis on screen.
+  // The basis seeded only at Generate, so the toggle moved nothing and the total
+  // read wrong. An edited or hand-added line keeps the buyer's number.
+  useEffect(() => {
+    if (!generated) return
+    setQty(q => {
+      const next = { ...q }
+      for (const l of lines) if (!edited[l.product_code]) next[l.product_code] = lineQty(l, basis)
+      return next
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [basis])
   const budgetTotal = Number(budgetRow?.budget_amount) || 0
   const committed = Number(budgetRow?.committed_amount) || 0
   const cash80Group = Number(allBudgetRow?.budget_80pct_cash) || 0
@@ -2496,7 +2521,7 @@ function OrderDesksMode() {
             </Button>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 24, flexWrap: 'wrap' }}>
-            <KpiCard label="Running total" value={zar(total)} sub={`${lines.filter(l => (qty[l.product_code] ?? 0) > 0).length} lines`} style={{ padding: 0 }} />
+            <KpiCard label="Running total" value={zar(total)} sub={`${lines.filter(l => (qty[l.product_code] ?? 0) > 0).length} lines · promo lines at ${basis === 'geared' ? 'geared' : 'normal'} qty`} style={{ padding: 0 }} />
             <BudgetGauge total={committed + total} budget={budgetTotal} />
           </div>
         </div>
@@ -2549,7 +2574,7 @@ function OrderDesksMode() {
           )}
           {!budgetManualOverride && cash80Group > 0 && <span>Group 80%-cash reference: {zar(cash80Group)}</span>}
           {generated && fitToBudget && (
-            <span>Fit: {zar(beforeFitTotal)} → {zar(total)} · {protectedCount} at floor · {trimmedCount} held below cutoff</span>
+            <span>Engine fit: {zar(beforeFitTotal)} → {zar(fittedTotal)} · {protectedCount} at floor · {trimmedCount} held below cutoff</span>
           )}
         </div>
         {/* ENG-034: floors are never trimmed, so an order can legitimately sit above
