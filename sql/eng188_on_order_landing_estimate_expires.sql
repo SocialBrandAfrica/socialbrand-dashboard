@@ -1,28 +1,37 @@
--- eng188_on_order_sibling_placement_received.sql
+-- eng188_on_order_landing_estimate_expires.sql
 --
--- ENG-188. An open DC document whose sibling documents from the same placement were received
--- stops counting as in transit. Pieter, from the floor, 2026-09-15, placing the 10116 DC ambient
--- order: 1674 "is neither on promotion nor in transit". The 1,800 units the Thursday 17-09 sheet
--- counted came from 168222 and 168223, open E documents of Thursday 10-09's placement whose five
--- sibling documents were received on 12-09.
+-- ENG-188. An on-order line expires the moment its own expected landing date passes with nothing
+-- placed after it. It stops counting in transit and stops reducing the new order. Pieter ruled it
+-- from the floor on 2026-09-15, mid-order on the 10116 DC ambient desk (relayed by PM at 10:1x SAST
+-- in HANDOVER-CURRENT). To CC he said 1674 "is neither on promotion nor in transit": the 1,800 units
+-- the Thursday 17-09 sheet counted came from 168222 and 168223, open documents of Thursday 10-09's
+-- placement.
 --
--- THE RULE. On a DC route, an open document (order_type 0/1/2) is excluded from on_order, with
--- the reason sibling_placement_received, when a document of the same supplier, order_date and
--- delivery population carries a GRV dated before the store's ledger watermark. The one-day wait
--- behind the watermark keeps a split receipt from reading as a missing document. Direct routes
--- are untouched: a direct supplier can take two same-day orders for two different trucks.
+-- THE RULE AS BUILT. The expected landing date is order_date plus the route's demonstrated lead, the
+-- landing date the desk shows, judged against the store's ledger watermark (ORDERING-CANON E2, rule
+-- 5a). When it is behind the watermark the line is excluded as landing_estimate_elapsed and surfaced
+-- (R29). It is the last branch of the exclusion CASE, so every earlier label is unchanged and the new
+-- label lands only on a line that was counted before. All routes, as ruled.
 --
--- DRY RUN, 2026-09-15 10:4x SAST, rollback-proven (one DO block ending in RAISE EXCEPTION). The live
--- function ran first in the same transaction as the control, so the difference is the patch alone:
---   10116  on order R433,122.32 -> R336,666.58 (-R96,455.74), 62 products move, 1674 1,800 -> 0
---   80175  R236,761.46 unchanged (today's rebuild already ages Thursday's documents out)
---   21355, 80176, 80579 unchanged
---   10116 committed for the week of 12-09 carries R96,455.74 in transit: exactly this set.
+-- This SUPERSEDES sql/eng188_on_order_sibling_placement_received.sql (dashboard c3eee32), CC's own
+-- sibling-received proposal, built before the ruling reached CC and never applied.
 --
--- ASSERTED REPLACE. Live md5(pg_get_functiondef) 794ec5d27655445cd492abf9535ec2b8 / 9,177
--- becomes bb083158f1bfd46c512141deb4039349 / 10,239. It raises and changes nothing if the live
--- body moved. NOT APPLIED: the session's permission gate refused apply_migration on 2026-09-15.
--- After it applies, run sql/eng188_eng190_post_apply_refresh.sql.
+-- DRY RUN, 2026-09-15 11:0x SAST, rollback-proven (one DO block ending in RAISE EXCEPTION), with the live
+-- function run first in the same transaction as the control:
+--   10116  on order R433,122.32 -> R312,869.60, 94 products to zero: 62 DC lines R96,455.74 and
+--          32 dropship lines R23,796.98. 1674 1,800 -> 0.
+--   80175  R236,761.46 -> R236,128.46, 5 direct lines R633.00.
+--   21355, 80176 and 80579 do not move.
+--   10116 budget week of 12-09: consumed R516,769.07 -> R420,313.33, in transit R96,455.74 -> R0.00.
+-- With ENG-190 in the same block, the rebuilt 10116 Thu 17-09 sheet (fit off, built in 14.1 s):
+--   0 in-transit lines (23 before), 177 promo lines (378 before), 0 on promos that have not started
+--   (196 before), 1674 at 375 packs and not on promotion. Normal-basis total R177,232.50 (R120,591.79
+--   before). The engine's total R191,948.83 (R221,317.54 before).
+--
+-- ASSERTED REPLACE. 794ec5d27655445cd492abf9535ec2b8 / 9,177 becomes
+-- d6655346f5d8c6cf889161fbbc031b7c / 10,042. It raises and changes nothing if the live body moved.
+-- NOT APPLIED: the session's permission gate refuses apply_migration. After it applies, run
+-- sql/eng188_eng190_post_apply_refresh.sql.
 --
 SET lock_timeout = '5s';
 DO $mig$
@@ -84,16 +93,6 @@ BEGIN
     WHERE l.store_code=p_store AND l.ordered_qty > 0
   ),
   order_pop AS (SELECT DISTINCT order_nr, delivery_population FROM line_pop),
-  -- ENG-188 (Pieter, from the floor, 2026-09-15: 1674 at 10116 "is not in transit"). A placement's
-  -- documents land together. Once a document of the same placement (supplier, order_date) and the same
-  -- delivery population is received, and the ledger has moved past that receipt, a sibling still open
-  -- is not coming. It is excluded from on_order and surfaced as sibling_placement_received (R29).
-  sib_recv AS (
-    SELECT DISTINCT r.supplier_nr, r.order_date, op.delivery_population
-    FROM route_of r JOIN order_pop op ON op.order_nr = r.order_nr
-    WHERE r.grv_nr <> 0 AND r.grv_date IS NOT NULL AND r.grv_date <> DATE '1990-01-01' AND r.grv_date < v_watermark
-      AND r.order_date IS NOT NULL AND r.order_date <> DATE '1990-01-01'
-  ),
   ranked AS (   -- rule 2 partition, rule 4 recency, ranked over ALL types so rule 1 holds in both branches
     SELECT r.*, DENSE_RANK() OVER (PARTITION BY r.store_code, r.supplier_nr, op.delivery_population
                                    ORDER BY r.order_date DESC) AS rn, op.delivery_population FROM route_of r JOIN order_pop op ON op.order_nr = r.order_nr
@@ -109,8 +108,6 @@ BEGIN
   lead_store AS (SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY med_lead)::int AS fb FROM lead_route WHERE n >= v_min_n),
   open_pool AS (   -- rule 3: order_type 0/1/2, never a date test
     SELECT k.*, (k.rn <= CASE WHEN k.route_key = 'DC' AND k.delivery_population = 'DC_AMBIENT' THEN 2 ELSE 1 END) AS is_latest_of_kind, (CURRENT_DATE - k.order_date) AS age_days,
-           (k.route_key = 'DC' AND EXISTS (SELECT 1 FROM sib_recv s WHERE s.supplier_nr = k.supplier_nr
-                     AND s.order_date = k.order_date AND s.delivery_population = k.delivery_population)) AS sibling_received,
            COALESCE(CASE WHEN lr.n >= v_min_n THEN lr.med_lead END, ls.fb, v_fallback) AS lead_days,
            CASE WHEN lr.n >= v_min_n THEN 'route_demonstrated'
                 WHEN ls.fb IS NOT NULL THEN 'store_median_fallback' ELSE 'config_default' END AS lead_basis
@@ -124,17 +121,25 @@ BEGIN
            WHEN p.expected_grv_date <  v_watermark   THEN 'promise_passed_ledger_observed'
            WHEN p.expected_grv_date =  v_watermark   THEN 'promise_due_on_watermark_not_received'
            ELSE 'promise_ahead_of_ledger' END AS promise_basis,
-      -- rule 5a: the ESTIMATE is a label, never a gate. Surfaced on counted rows.
+      -- rule 5a: the ESTIMATE, labelled on every row. Since ENG-188 (Pieter, 2026-09-15) an elapsed estimate
+      -- also expires the line: see the last branch of exclusion_reason.
       CASE WHEN (p.order_date + p.lead_days) <  v_watermark THEN 'estimate_elapsed'
            WHEN (p.order_date + p.lead_days) =  v_watermark THEN 'estimate_due_now'
            ELSE 'estimate_ahead' END AS landing_estimate_state,
       CASE
         WHEN NOT p.is_latest_of_kind THEN 'superseded_older_delivery'
-        WHEN p.sibling_received THEN 'sibling_placement_received'
         WHEN p.expected_grv_date IS NULL OR p.expected_grv_date = DATE '1990-01-01'
              OR p.expected_grv_date < p.order_date
-          THEN CASE WHEN p.age_days > p.lead_days * v_mult THEN 'stale_beyond_lead' ELSE NULL END
+          THEN CASE WHEN p.age_days > p.lead_days * v_mult THEN 'stale_beyond_lead'
+                    WHEN (p.order_date + p.lead_days) < v_watermark THEN 'landing_estimate_elapsed'
+                    ELSE NULL END
         WHEN p.expected_grv_date <= v_watermark THEN 'promise_passed_ledger_observed'
+        -- ENG-188 (Pieter, from the floor, 2026-09-15, relayed by PM 10:1x): an on-order line expires the
+        -- moment its own expected landing date passes with nothing placed after it. It stops counting in
+        -- transit and stops reducing the new order. The landing date is order_date plus the route's
+        -- demonstrated lead, the date the desk shows, judged against the ledger watermark (rule 5a).
+        -- Every earlier label is unchanged: this lands only on a line that was counted before.
+        WHEN (p.order_date + p.lead_days) < v_watermark THEN 'landing_estimate_elapsed'
         ELSE NULL END AS exclusion_reason
     FROM open_pool p
   ),
@@ -168,7 +173,7 @@ BEGIN
          MAX(age_days)      FILTER (WHERE exclusion_reason IS NOT NULL),
          ARRAY(SELECT DISTINCT unnest(array_agg(route_key)        FILTER (WHERE exclusion_reason IS NOT NULL))),
          ARRAY(SELECT DISTINCT unnest(array_agg(exclusion_reason) FILTER (WHERE exclusion_reason IS NOT NULL))),
-         'l2_on_order v17 E2.1 + ENG-188 sibling received'
+         'l2_on_order v17 E2.1 + ENG-188 landing estimate expires'
 ,
          ARRAY(SELECT DISTINCT unnest(array_agg(delivery_population) FILTER (WHERE exclusion_reason IS NULL)))
   FROM lines GROUP BY product_code;
@@ -184,15 +189,15 @@ BEGIN
     'store_code', p_store, 'rows', v_rows, 'ledger_watermark', v_watermark,
     'received_orders_inside_open_filter', v_recv_in_open,
     'on_order_qty', round(v_qty,2), 'on_order_cost', round(v_cost,2),
-    'counted_rows_past_landing_estimate', v_est_past,   -- surfaced diagnostic, NOT an exclusion
+    'counted_rows_past_landing_estimate', v_est_past,   -- surfaced diagnostic: counted rows due on the watermark
     'excluded_order_lines', v_exc_n, 'excluded_cost_refused', round(v_exc_cost,2),
-    'engine_version', 'l2_on_order v17 E2.1 + ENG-188 sibling received', 'computed_at', now());
+    'engine_version', 'l2_on_order v17 E2.1 + ENG-188 landing estimate expires', 'computed_at', now());
 END;
 $function$
 $body$;
   SELECT md5(pg_get_functiondef('public.refresh_l2_on_order(text)'::regprocedure)) INTO v_new;
-  IF v_new <> 'bb083158f1bfd46c512141deb4039349' THEN
-    RAISE EXCEPTION 'ENG-188: refresh_l2_on_order post-apply md5 %, expected bb083158f1bfd46c512141deb4039349', v_new;
+  IF v_new <> 'd6655346f5d8c6cf889161fbbc031b7c' THEN
+    RAISE EXCEPTION 'ENG-188: refresh_l2_on_order post-apply md5 %, expected d6655346f5d8c6cf889161fbbc031b7c', v_new;
   END IF;
 END
 $mig$;

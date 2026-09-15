@@ -1,6 +1,6 @@
 -- eng188_eng190_post_apply_refresh.sql
 --
--- Run AFTER sql/eng188_on_order_sibling_placement_received.sql and
+-- Run AFTER sql/eng188_on_order_landing_estimate_expires.sql and
 -- sql/eng190_dc_promo_current_only.sql have applied. Nothing here changes a function.
 -- It rebuilds the facts the two functions write and the DC order sheets that read them.
 --
@@ -11,7 +11,7 @@
 SELECT p.proname, md5(pg_get_functiondef(p.oid)) AS md5, length(pg_get_functiondef(p.oid)) AS len
 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = 'public' AND p.proname IN ('refresh_l2_on_order', 'rpc_bloom_promo_for_delivery');
--- expected: refresh_l2_on_order          bb083158f1bfd46c512141deb4039349 / 10239
+-- expected: refresh_l2_on_order          d6655346f5d8c6cf889161fbbc031b7c / 10042
 --           rpc_bloom_promo_for_delivery eb8e9e6d47451c9902532775689104cd / 3227
 
 -- STEP 1, in transit and the budget week, all five stores (seconds).
