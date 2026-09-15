@@ -1,0 +1,198 @@
+-- eng188_on_order_sibling_placement_received.sql
+--
+-- ENG-188. An open DC document whose sibling documents from the same placement were received
+-- stops counting as in transit. Pieter, from the floor, 2026-09-15, placing the 10116 DC ambient
+-- order: 1674 "is neither on promotion nor in transit". The 1,800 units the Thursday 17-09 sheet
+-- counted came from 168222 and 168223, open E documents of Thursday 10-09's placement whose five
+-- sibling documents were received on 12-09.
+--
+-- THE RULE. On a DC route, an open document (order_type 0/1/2) is excluded from on_order, with
+-- the reason sibling_placement_received, when a document of the same supplier, order_date and
+-- delivery population carries a GRV dated before the store's ledger watermark. The one-day wait
+-- behind the watermark keeps a split receipt from reading as a missing document. Direct routes
+-- are untouched: a direct supplier can take two same-day orders for two different trucks.
+--
+-- DRY RUN, 2026-09-15 10:4x SAST, rollback-proven (one DO block ending in RAISE EXCEPTION). The live
+-- function ran first in the same transaction as the control, so the difference is the patch alone:
+--   10116  on order R433,122.32 -> R336,666.58 (-R96,455.74), 62 products move, 1674 1,800 -> 0
+--   80175  R236,761.46 unchanged (today's rebuild already ages Thursday's documents out)
+--   21355, 80176, 80579 unchanged
+--   10116 committed for the week of 12-09 carries R96,455.74 in transit: exactly this set.
+--
+-- ASSERTED REPLACE. Live md5(pg_get_functiondef) 794ec5d27655445cd492abf9535ec2b8 / 9,177
+-- becomes bb083158f1bfd46c512141deb4039349 / 10,239. It raises and changes nothing if the live
+-- body moved. NOT APPLIED: the session's permission gate refused apply_migration on 2026-09-15.
+-- After it applies, run sql/eng188_eng190_post_apply_refresh.sql.
+--
+SET lock_timeout = '5s';
+DO $mig$
+DECLARE v_old text; v_new text;
+BEGIN
+  SELECT md5(pg_get_functiondef('public.refresh_l2_on_order(text)'::regprocedure)) INTO v_old;
+  IF v_old <> '794ec5d27655445cd492abf9535ec2b8' THEN
+    RAISE EXCEPTION 'ENG-188: refresh_l2_on_order moved under us, live md5 %, expected 794ec5d27655445cd492abf9535ec2b8', v_old;
+  END IF;
+  EXECUTE $body$CREATE OR REPLACE FUNCTION public.refresh_l2_on_order(p_store text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_mult numeric; v_window integer; v_min_n integer; v_fallback integer;
+  v_rows integer; v_recv_in_open integer; v_qty numeric; v_cost numeric;
+  v_exc_n integer; v_exc_cost numeric; v_watermark date; v_est_past integer;
+BEGIN
+  SELECT value_num INTO v_mult     FROM forge_config WHERE config_key='in_transit_lead_multiple'       AND store_format='*' AND retired_on IS NULL;
+  SELECT value_num INTO v_window   FROM forge_config WHERE config_key='in_transit_lead_window_days'    AND store_format='*' AND retired_on IS NULL;
+  SELECT value_num INTO v_min_n    FROM forge_config WHERE config_key='in_transit_min_received_orders' AND store_format='*' AND retired_on IS NULL;
+  SELECT value_num INTO v_fallback FROM forge_config WHERE config_key='in_transit_lead_fallback_days'  AND store_format='*' AND retired_on IS NULL;
+  IF v_mult IS NULL OR v_window IS NULL OR v_min_n IS NULL OR v_fallback IS NULL THEN
+    RAISE EXCEPTION 'refresh_l2_on_order: config missing'; END IF;
+
+  -- RULE 5a: the ledger says whether the truck came (s6, 7f). No calendar anywhere in the passed test.
+  SELECT max(movement_date) INTO v_watermark FROM sigma_movements WHERE store_code = p_store;
+  IF v_watermark IS NULL THEN
+    RAISE EXCEPTION 'refresh_l2_on_order(%): no ledger watermark, refusing to judge a promise on a calendar', p_store;
+  END IF;
+
+  SELECT count(*) INTO v_recv_in_open
+  FROM sigma_orders WHERE store_code=p_store AND order_type IN ('0','1','2') AND grv_nr <> 0;
+  IF v_recv_in_open > 0 THEN
+    RAISE WARNING 'refresh_l2_on_order(%): % received order(s) inside the 0/1/2 filter, rule 3 assumption moved', p_store, v_recv_in_open;
+  END IF;
+
+  DELETE FROM l2_on_order WHERE store_code = p_store;
+
+  WITH route_of AS (
+    SELECT o.*, COALESCE(
+             (SELECT rc.route_key FROM bloom_route_config rc
+               WHERE rc.store_code=o.store_code AND o.supplier_nr = ANY(rc.direct_supplier_nrs) LIMIT 1),
+             CASE WHEN sc.supplier_class='DC' THEN 'DC' ELSE 'OTHER_'||COALESCE(sc.supplier_class,'UNKNOWN') END) AS route_key
+    FROM sigma_orders o
+    LEFT JOIN v_supplier_class sc ON sc.store_code=o.store_code AND sc.supplier_nr=o.supplier_nr
+    WHERE o.store_code = p_store
+  ),
+  line_pop AS (
+    SELECT l.order_nr, l.product_code, l.ordered_qty, l.cost, l.pack_size,
+           CASE WHEN a.department_nr IS NULL THEN 'UNKNOWN'
+                WHEN a.department_nr = ANY(cfg.dc_cycle_dept_nrs) THEN 'DC_AMBIENT'
+                ELSE 'DC_OTHER' END AS delivery_population
+    FROM sigma_order_lines l
+    LEFT JOIN sigma_articles a  ON a.store_code=l.store_code AND a.product_code=l.product_code
+    LEFT JOIN bloom_dc_config cfg ON cfg.store_code=l.store_code
+    WHERE l.store_code=p_store AND l.ordered_qty > 0
+  ),
+  order_pop AS (SELECT DISTINCT order_nr, delivery_population FROM line_pop),
+  -- ENG-188 (Pieter, from the floor, 2026-09-15: 1674 at 10116 "is not in transit"). A placement's
+  -- documents land together. Once a document of the same placement (supplier, order_date) and the same
+  -- delivery population is received, and the ledger has moved past that receipt, a sibling still open
+  -- is not coming. It is excluded from on_order and surfaced as sibling_placement_received (R29).
+  sib_recv AS (
+    SELECT DISTINCT r.supplier_nr, r.order_date, op.delivery_population
+    FROM route_of r JOIN order_pop op ON op.order_nr = r.order_nr
+    WHERE r.grv_nr <> 0 AND r.grv_date IS NOT NULL AND r.grv_date <> DATE '1990-01-01' AND r.grv_date < v_watermark
+      AND r.order_date IS NOT NULL AND r.order_date <> DATE '1990-01-01'
+  ),
+  ranked AS (   -- rule 2 partition, rule 4 recency, ranked over ALL types so rule 1 holds in both branches
+    SELECT r.*, DENSE_RANK() OVER (PARTITION BY r.store_code, r.supplier_nr, op.delivery_population
+                                   ORDER BY r.order_date DESC) AS rn, op.delivery_population FROM route_of r JOIN order_pop op ON op.order_nr = r.order_nr
+  ),
+  lead_route AS (
+    SELECT route_key, percentile_disc(0.5) WITHIN GROUP (ORDER BY (grv_date-order_date))::int AS med_lead, count(*) AS n
+    FROM route_of
+    WHERE order_date IS NOT NULL AND order_date <> DATE '1990-01-01'
+      AND grv_nr <> 0 AND grv_date IS NOT NULL AND grv_date <> DATE '1990-01-01'
+      AND grv_date >= order_date AND order_date >= CURRENT_DATE - v_window
+    GROUP BY 1
+  ),
+  lead_store AS (SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY med_lead)::int AS fb FROM lead_route WHERE n >= v_min_n),
+  open_pool AS (   -- rule 3: order_type 0/1/2, never a date test
+    SELECT k.*, (k.rn <= CASE WHEN k.route_key = 'DC' AND k.delivery_population = 'DC_AMBIENT' THEN 2 ELSE 1 END) AS is_latest_of_kind, (CURRENT_DATE - k.order_date) AS age_days,
+           (k.route_key = 'DC' AND EXISTS (SELECT 1 FROM sib_recv s WHERE s.supplier_nr = k.supplier_nr
+                     AND s.order_date = k.order_date AND s.delivery_population = k.delivery_population)) AS sibling_received,
+           COALESCE(CASE WHEN lr.n >= v_min_n THEN lr.med_lead END, ls.fb, v_fallback) AS lead_days,
+           CASE WHEN lr.n >= v_min_n THEN 'route_demonstrated'
+                WHEN ls.fb IS NOT NULL THEN 'store_median_fallback' ELSE 'config_default' END AS lead_basis
+    FROM ranked k LEFT JOIN lead_route lr ON lr.route_key=k.route_key CROSS JOIN lead_store ls
+    WHERE k.order_type IN ('0','1','2')
+  ),
+  judged AS (
+    SELECT p.*,
+      -- rule 5a: promise judged against the ledger watermark. Informative, never constant.
+      CASE WHEN p.expected_grv_date <  p.order_date  THEN 'promise_before_own_order_date'
+           WHEN p.expected_grv_date <  v_watermark   THEN 'promise_passed_ledger_observed'
+           WHEN p.expected_grv_date =  v_watermark   THEN 'promise_due_on_watermark_not_received'
+           ELSE 'promise_ahead_of_ledger' END AS promise_basis,
+      -- rule 5a: the ESTIMATE is a label, never a gate. Surfaced on counted rows.
+      CASE WHEN (p.order_date + p.lead_days) <  v_watermark THEN 'estimate_elapsed'
+           WHEN (p.order_date + p.lead_days) =  v_watermark THEN 'estimate_due_now'
+           ELSE 'estimate_ahead' END AS landing_estimate_state,
+      CASE
+        WHEN NOT p.is_latest_of_kind THEN 'superseded_older_delivery'
+        WHEN p.sibling_received THEN 'sibling_placement_received'
+        WHEN p.expected_grv_date IS NULL OR p.expected_grv_date = DATE '1990-01-01'
+             OR p.expected_grv_date < p.order_date
+          THEN CASE WHEN p.age_days > p.lead_days * v_mult THEN 'stale_beyond_lead' ELSE NULL END
+        WHEN p.expected_grv_date <= v_watermark THEN 'promise_passed_ledger_observed'
+        ELSE NULL END AS exclusion_reason
+    FROM open_pool p
+  ),
+  lines AS (
+    SELECT j.route_key, j.delivery_population, j.order_date, j.age_days, j.lead_days, j.lead_basis, j.promise_basis,
+           j.landing_estimate_state, j.exclusion_reason, l.product_code,
+           SUM(l.ordered_qty) AS qty,
+           SUM(l.ordered_qty * l.cost / NULLIF(l.pack_size,0)) AS cost
+    FROM judged j JOIN line_pop l ON l.order_nr=j.order_nr AND l.delivery_population=j.delivery_population
+    WHERE l.ordered_qty > 0 GROUP BY 1,2,3,4,5,6,7,8,9,10
+  )
+  INSERT INTO l2_on_order (
+    client_id, store_code, product_code, on_order_qty, on_order_cost, open_order_count,
+    earliest_order_date, expected_landing_date, route_keys, lead_days_used, lead_basis, promise_basis,
+    landing_estimate_state, stale_qty, stale_cost, stale_order_count, stale_oldest_age_days,
+    stale_route_keys, excluded_reasons, engine_version, delivery_populations)
+  SELECT 'socialbrand', p_store, product_code,
+         COALESCE(SUM(qty)  FILTER (WHERE exclusion_reason IS NULL),0),
+         COALESCE(SUM(cost) FILTER (WHERE exclusion_reason IS NULL),0),
+         COALESCE(count(*)  FILTER (WHERE exclusion_reason IS NULL),0),
+         MIN(order_date)             FILTER (WHERE exclusion_reason IS NULL),
+         MIN(order_date + lead_days) FILTER (WHERE exclusion_reason IS NULL),
+         ARRAY(SELECT DISTINCT unnest(array_agg(route_key) FILTER (WHERE exclusion_reason IS NULL))),
+         MAX(lead_days)  FILTER (WHERE exclusion_reason IS NULL),
+         MAX(lead_basis) FILTER (WHERE exclusion_reason IS NULL),
+         (array_agg(DISTINCT promise_basis)           FILTER (WHERE exclusion_reason IS NULL))[1],
+         (array_agg(DISTINCT landing_estimate_state)  FILTER (WHERE exclusion_reason IS NULL))[1],
+         COALESCE(SUM(qty)  FILTER (WHERE exclusion_reason IS NOT NULL),0),
+         COALESCE(SUM(cost) FILTER (WHERE exclusion_reason IS NOT NULL),0),
+         COALESCE(count(*)  FILTER (WHERE exclusion_reason IS NOT NULL),0),
+         MAX(age_days)      FILTER (WHERE exclusion_reason IS NOT NULL),
+         ARRAY(SELECT DISTINCT unnest(array_agg(route_key)        FILTER (WHERE exclusion_reason IS NOT NULL))),
+         ARRAY(SELECT DISTINCT unnest(array_agg(exclusion_reason) FILTER (WHERE exclusion_reason IS NOT NULL))),
+         'l2_on_order v17 E2.1 + ENG-188 sibling received'
+,
+         ARRAY(SELECT DISTINCT unnest(array_agg(delivery_population) FILTER (WHERE exclusion_reason IS NULL)))
+  FROM lines GROUP BY product_code;
+
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  SELECT COALESCE(SUM(on_order_qty),0), COALESCE(SUM(on_order_cost),0),
+         COALESCE(SUM(stale_order_count),0), COALESCE(SUM(stale_cost),0)
+    INTO v_qty, v_cost, v_exc_n, v_exc_cost FROM l2_on_order WHERE store_code=p_store;
+  SELECT count(*) INTO v_est_past FROM l2_on_order
+   WHERE store_code=p_store AND on_order_qty>0 AND landing_estimate_state <> 'estimate_ahead';
+
+  RETURN jsonb_build_object(
+    'store_code', p_store, 'rows', v_rows, 'ledger_watermark', v_watermark,
+    'received_orders_inside_open_filter', v_recv_in_open,
+    'on_order_qty', round(v_qty,2), 'on_order_cost', round(v_cost,2),
+    'counted_rows_past_landing_estimate', v_est_past,   -- surfaced diagnostic, NOT an exclusion
+    'excluded_order_lines', v_exc_n, 'excluded_cost_refused', round(v_exc_cost,2),
+    'engine_version', 'l2_on_order v17 E2.1 + ENG-188 sibling received', 'computed_at', now());
+END;
+$function$
+$body$;
+  SELECT md5(pg_get_functiondef('public.refresh_l2_on_order(text)'::regprocedure)) INTO v_new;
+  IF v_new <> 'bb083158f1bfd46c512141deb4039349' THEN
+    RAISE EXCEPTION 'ENG-188: refresh_l2_on_order post-apply md5 %, expected bb083158f1bfd46c512141deb4039349', v_new;
+  END IF;
+END
+$mig$;
