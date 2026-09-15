@@ -12,6 +12,27 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-15 11:0x SAST -- PRIORITY 0 FROM THE FLOOR: THE DC DESK RUNNING TOTAL FOLLOWS THE BASIS AND THE FIT (DEPLOYED). ENG-188 AND ENG-190 BUILT AND DRY-RUN PROVEN, NOT APPLIED.
+
+**Clock:** written 2026-09-15 11:0x SAST (`11:03:08`), read in the same call as this write.
+
+**Why:** Pieter, placing the 10116 DC ambient order on 15-09: "the current promo's MUST be available to order and the old ones must not be active ... 1674 ... neither on promotion nor in transit ... also the total on top does not calculate right. fix this first".
+
+**DEPLOYED, `f76c574` (`src/app/bloom/page.jsx`).** Vercel production reads success on `f76c574` and `b44b32c` (GitHub status API).
+- `lineQty`: the Normal/Geared basis applies to promo lines only. Every other line takes the engine's resolved answer, so with Fit on the sheet no longer seeds the pre-fit `normal_packs`.
+- Flipping the basis after Generate re-seeds every line the buyer has not typed over. It seeded only at Generate, so the toggle moved nothing.
+- The Running total names its basis. The Fit strip compares the engine before the fit with the engine after it.
+
+**DATABASE, NOT APPLIED.** The session's permission gate refused `apply_migration`.
+- `sql/eng188_on_order_landing_estimate_expires.sql` (`b44b32c`), Pieter's ruling: an on-order line expires when its expected landing date passes. Pins `794ec5d2...` / 9,177 to `d6655346...` / 10,042. It replaces `c3eee32`'s sibling file, never applied.
+- `sql/eng190_dc_promo_current_only.sql` (`c3eee32`): on a DC route only a current promo is orderable. Pins `79743e65...` / 1,886 to `eb8e9e6d...` / 3,227.
+- Then `sql/eng188_eng190_post_apply_refresh.sql`, one step at a time.
+- Dry run, rolled back. The 10116 Thu 17-09 sheet goes to 0 in-transit lines (23 before), 177 promo lines (378), 0 on promos that have not started (196), and 1674 at 375 packs. The Normal total R120,591.79 becomes R177,232.50. Detail: BUG-LOG ENG-188 add.2 and ENG-190.
+
+**Also on `main`:** `2fb1cfe`, the ENG-189 stamp file, not applied.
+
+---
+
 ## 2026-09-14 22:16 SAST -- SB-CC-RLSGUARD-001: THE STANDING GUARD. A TABLE A CLIENT ROLE READS EMPTY WITH NO ERROR NOW STOPS THE BUILD. DATABASE AND BUILD STEP.
 
 **Clock:** written 2026-09-14 22:16 SAST (`22:16:13`), read in the same call as this write (device +02:00).
