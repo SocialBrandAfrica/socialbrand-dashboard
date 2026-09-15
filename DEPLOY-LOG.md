@@ -12,6 +12,45 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-15 17:1x SAST -- ENG-190 LEGS (2) AND (3) LIVE: ON A DC ROUTE A PROMO LINE NEEDS A DC NUMBER AND A LINE SIGMA STILL HOLDS. R22 GREEN.
+
+**Clock:** written 2026-09-15 17:1x SAST (`17:15:42`, read in this pass, local and DB agree at +2).
+
+**Why:** PM ruled at 16:3x (BUG-LOG ENG-190 addendum 3): ship legs (2) and (3) without leg (1), as their own migration. Leg (1) stays withdrawn on the RI4 buy-in question.
+
+**DATABASE, APPLIED 17:04 SAST.** Migration `eng190_legs23_dc_number_and_deleted_line` (version `20260915150424`), the committed `sql/eng190_legs23_dc_number_and_deleted_line.sql` verbatim. The DO block asserted both live md5s before the replace and both pins after.
+- `rpc_bloom_promo_for_delivery` `79743e655868687448967e1d067187fc` / 1,886 -> `0c41c4657e506b34668d5eec9ddfc894` / 3,124. COMMENT `8b1cc998...` -> `9f14b0c668bb0468281d19b551e1355f` / 2,563. One overload. ACL unchanged: authenticated and service_role.
+- Built on the live ENG-208 body. Two corrections to the held `c3eee32` build: leg (1) is gone, and leg (3) excludes status '0' only. The held form would also have dropped 248 status '2' payload rows (10116 3, 80579 245).
+- Rollback: `sql/_archive/rpc_bloom_promo_for_delivery_79743e65_pre_eng190.sql`, the pre-apply body and COMMENT, md5-proven. `sql/create_rpc_bloom_promo_for_delivery.sql` regenerated from the applied text and hash-gated to both pins.
+
+**REFRESH, 17:05 to 17:08 SAST.** 16 DC sheets rebuilt on the same dates and fit settings as the sheets they replace (source `eng190_legs23_after`, caches 1272 to 1288). Not rebuilt: the 80175 and 80176 Wed 16-09 sheets, placed on 14-09. Direct desks not rebuilt: the dry run showed 0 differences on every one.
+
+**R22.**
+
+| Test | Result |
+|---|---|
+| Pins | `0c41c465...` / 3,124 and COMMENT `9f14b0c6...` live, read at source |
+| Dry run, every desk-date cached in 40 h | DC promo rows fall by leg (2) 0 to 18 and leg (3) 0 to 28 per desk, 0 other, 0 added. Direct desks: 0 differences |
+| 10116 DC_AMBIENT Thu 17-09, fit off (1266 -> 1272) | promo lines 379 -> 373. The 6 RI1 cat food lines Sigma deleted (14321, 122621, 127648 to 127651), 1 pack each, R1,444.00, move to the normal TLX. Engine total R223,748.23 unchanged to the cent |
+| Same, fit on (1267 -> 1273) | promo 345 -> 339, R1,444.00 moves. Total R213,997.67 unchanged |
+| 10116 Sat 19-09, fit off (1270 -> 1274) | 7 lines leave. 122621 geared 3 -> 1 pack. Total R750,040.45 -> R749,704.45 (R336.00) |
+| Same, fit on (1271 -> 1275) | 7 lines leave. Total R654,865.79 unchanged |
+| 80175 Sat 19-09 (1268 -> 1277, 1269 -> 1278) | 2 lines at 0 packs leave (823217 RI1, 836227 RI2). Totals unchanged |
+| 80579 Thu 17-09 (1261 -> 1285, 1262 -> 1286) | PROTEA SHIRAZ 88047 leaves, promo 120 with no DC number, 0 packs. Totals unchanged |
+| 21355 Thu 17-09, 80176 Sat 19-09 | identical |
+| Falsifier, 17 rebuilt DC sheets | 0 promo lines without a DC number. 0 on a status '0' line in a promo holding live lines |
+| 1674 at 10116 | unchanged by design: RI4, 401 geared packs (375 normal), R38,391.74. Leg (1)'s case |
+
+Not clean pairs, named: 10116 Thu 24-09 (1220 -> 1276), 21355 and 80579 21-09 and 24-09 (1281, 1282, 1287, 1288). The sheets they replace date from 14-09 18:45, before ENG-188 and a day's data, so their totals do not isolate ENG-190.
+
+**Gate:** `apply_migration` passed at the first attempt.
+
+**Frontend:** no change and no deploy. The sheets read the cache.
+
+**Register:** `engine_defects` reloaded to BUG-LOG `2e2618e0...`, 165 rows, ENG-190 PARTIAL.
+
+---
+
 ## 2026-09-15 15:2x SAST -- ENG-188 LIVE: AN ON-ORDER LINE EXPIRES WHEN ITS LANDING ESTIMATE PASSES. ENG-190 HELD, NOT APPLIED. R22 GREEN ON EVERY TEST.
 
 **Clock:** written 2026-09-15 15:2x SAST (`15:23:03`, read in this pass, local and DB agree at +2).

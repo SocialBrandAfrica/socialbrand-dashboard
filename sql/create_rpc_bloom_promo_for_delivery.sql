@@ -98,6 +98,17 @@
 -- day for the Saturday 26-09 deliveries.
 -- Prior body 330c15a9ec12843fdd167ac3cce0d4c6, retired 2026-09-14 18:44 (R28).
 
+-- ENG-190 LEGS (2) AND (3), 2026-09-15 17:04 SAST -- ON A DC ROUTE ONLY A PROMO WITH A DC NUMBER, AND NEVER A LINE
+-- SIGMA DELETED (PM ruling, BUG-LOG ENG-190 addendum 3). Two tests join the DC route: the promo carries a DC promotion
+-- number, the promo_suffix derivation, and the line is not a status '0' line inside a promo holding a live status '1'
+-- line. A promo with no live line yet keeps its status '0' lines, and a status '2' payload row is never excluded. The
+-- DISTINCT ON gains a line_id tiebreak. Leg (1) of the held build (c3eee32), the promo runs on the placement day, is
+-- withdrawn: Sigma's Promotion Order screen suggests RI4 quantities before RI4's shelf start. Direct routes unchanged.
+-- Migration eng190_legs23_dc_number_and_deleted_line, asserted on live 79743e65. Live md5 after: 0c41c4657e506b34668d5eec9ddfc894
+-- / 3,124, hash-gated on disk against the body below, and COMMENT 9f14b0c6 likewise.
+-- R22: BUG-LOG ENG-190 addendum 4. Rollback: sql/_archive/rpc_bloom_promo_for_delivery_79743e65_pre_eng190.sql.
+-- Prior body 79743e655868687448967e1d067187fc, retired 2026-09-15 17:04 (R28).
+
 CREATE OR REPLACE FUNCTION public.rpc_bloom_promo_for_delivery(p_store_code text, p_route text, p_delivery_date date)
  RETURNS TABLE(product_code bigint, promo_nr bigint, start_date date, end_date date, status text, promo_unit_cost numeric, promo_description text, promo_suffix text)
  LANGUAGE sql
@@ -120,6 +131,10 @@ AS $function$
   LEFT JOIN public.sigma_promotions sp2
          ON sp2.store_code = pa.store_code
         AND sp2.promo_nr   = pa.promo_nr
+  -- ENG-190 leg (3): the promos holding at least one live (status '1') line at this store, read once.
+  LEFT JOIN (SELECT DISTINCT a2.promo_nr FROM public.sigma_promotion_articles a2
+              WHERE a2.store_code = p_store_code AND a2.status = '1') live
+         ON live.promo_nr = pa.promo_nr
   CROSS JOIN LATERAL (
     SELECT sc.delivery_dows, sc.promo_buyin_lead_days, sc.order_cutoff_days,
            NOT EXISTS (SELECT 1 FROM public.bloom_route_config rc WHERE rc.store_code = sc.store_code AND rc.route_key = sc.route_key) AS is_dc,
@@ -138,12 +153,41 @@ AS $function$
     )
   OR (cal.is_dc
         AND cal.placement_date <= pa.end_date))
-  ORDER BY pa.product_code, (pa.status = '1') DESC, pa.end_date DESC
+    -- ENG-190 legs (2) and (3), DC routes only (PM ruling 2026-09-15, BUG-LOG ENG-190 addendum 3).
+    -- Direct routes are unchanged. Leg (1), the promo runs on the placement day, stays withdrawn.
+    -- (2) The promo carries a DC promotion number, the same derivation as promo_suffix above, so a
+    --     store markdown or loyalty construct never rides the DC promo sheet.
+    -- (3) A status '0' line inside a promo that holds a live line is a line Sigma deleted and the
+    --     mirror kept (ENG-189). A promo with no live line yet keeps its status '0' lines, and a
+    --     status '2' line, the populated payload row, is never excluded here.
+    AND (NOT cal.is_dc
+      OR (COALESCE(substring(sp2.description from '\(([A-Za-z0-9]+)\)\s*$'),
+                   substring(sp2.description from 'DC Promotion Number\s+(\S+)')) IS NOT NULL
+          AND (pa.status IS DISTINCT FROM '0' OR live.promo_nr IS NULL)))
+  ORDER BY pa.product_code, (pa.status = '1') DESC, pa.end_date DESC, pa.line_id DESC
 $function$;
 
-COMMENT ON FUNCTION public.rpc_bloom_promo_for_delivery(text,text,date) IS $c$GRADE: VERDICT. ENG-147 + ENG-082 + ENG-208. The one home for promo membership on a delivery date, read by rpc_bloom_order_recipe and refresh_bloom_order_cache. RULE: a promo prices delivery D when D is on or after its start less promo_buyin_lead_days and either (a) D is on or before the route's last delivery day on or before the promo end date, or (b) on a DC route, the order for D is PLACED on or before the promo end date, the placement day being the one rpc_derive_placement_day derives for D. A line failing both is not promo_active and orders on the normal TLX at normal quantity. The order window stays open to the promo_order_close_dow of the promo-end week and Sigma accepts the order there, but the DC honours only what was placed by the end date, and this function binds on the honoured bound (ORDERING-CANON v1.26 section C4). EVIDENCE: RULING, Pieter 2026-09-14, floor-attested on a test he placed himself: a promo ending Tuesday, ordered Monday for Wednesday and Tuesday for Thursday, both honoured; ordered Wednesday for Saturday, not honoured. CONFIDENCE: n=3 orders on one promo with both outcomes observed; no base rate across promos. FALSIFIER: a DC delivery whose order was placed after the promo end date and was honoured at promo cost. NAMED LIMIT: the placement day is the DERIVED one, not the day the buyer actually placed. Where the buyer places earlier than the derived weekday (a non-trading day such as Thursday 2026-09-24, Heritage Day, the derived placement day for the Saturday 2026-09-26 deliveries), a promo ending between the two days is understated here. Supersedes the two earlier 2026-09-14 comments, which bound the DELIVERY date to the closing Thursday (ORDERING-CANON v1.25, retired the same day, LEDGER section 6.22).$c$;
+COMMENT ON FUNCTION public.rpc_bloom_promo_for_delivery(text,text,date) IS $c$GRADE: VERDICT. ENG-147 + ENG-082 + ENG-208 + ENG-190. The one home for promo membership on a delivery date, read by rpc_bloom_order_recipe and refresh_bloom_order_cache. RULE: a promo prices delivery D when D is on or after its start less promo_buyin_lead_days and either (a) D is on or before the route's last delivery day on or before the promo end date, or (b) on a DC route, the order for D is PLACED on or before the promo end date, the placement day being the one rpc_derive_placement_day derives for D. On a DC route the line must also pass two tests (ENG-190, PM ruling 2026-09-15): the promo carries a DC promotion number, the promo_suffix derivation, so a store markdown never rides the DC promo sheet, and the line is not a status '0' line inside a promo holding a live status '1' line, which is a line Sigma deleted and the mirror kept (ENG-189). A line failing (a) and (b), or either DC test, is not promo_active and orders on the normal TLX at normal quantity. The order window stays open to the promo_order_close_dow of the promo-end week and Sigma accepts the order there, but the DC honours only what was placed by the end date, and this function binds on the honoured bound (ORDERING-CANON v1.26 section C4). EVIDENCE: RULING, Pieter 2026-09-14, floor-attested on a test he placed himself: a promo ending Tuesday, ordered Monday for Wednesday and Tuesday for Thursday, both honoured; ordered Wednesday for Saturday, not honoured. CONFIDENCE: n=3 orders on one promo with both outcomes observed; no base rate across promos. ENG-190 tests: CONTROLLED, whole population 2026-09-15, promos ending on or after 2026-09-08: 29 of 29 without a DC number are promo_type 0 and 88 of 88 with one are promo_type 1, and status '0' lines inside promos holding a live line number 10116 1,949, 80175 1,966, 21355 220, 80176 45, 80579 502. FALSIFIER: a DC delivery whose order was placed after the promo end date and was honoured at promo cost, or a DC sheet line promo_active on a promo with no DC number or on a status '0' line in a promo holding live lines. NAMED LIMIT: the placement day is the DERIVED one, not the day the buyer actually placed. Where the buyer places earlier than the derived weekday (a non-trading day such as Thursday 2026-09-24, Heritage Day, the derived placement day for the Saturday 2026-09-26 deliveries), a promo ending between the two days is understated here. Supersedes the two earlier 2026-09-14 comments, which bound the DELIVERY date to the closing Thursday (ORDERING-CANON v1.25, retired the same day, LEDGER section 6.22).$c$;
 
 -- LINEAGE (R28), newest first. Kept as written, never deleted.
+-- The v1.26 comment (migration eng208_v126_promo_bound_placement_vs_end_date), superseded 2026-09-15 17:04
+-- by ENG-190 legs (2) and (3), because it stated no DC-route test:
+-- 'GRADE: VERDICT. ENG-147 + ENG-082 + ENG-208. The one home for promo membership on a delivery date, read by
+-- rpc_bloom_order_recipe and refresh_bloom_order_cache. RULE: a promo prices delivery D when D is on or after its
+-- start less promo_buyin_lead_days and either (a) D is on or before the route's last delivery day on or before the
+-- promo end date, or (b) on a DC route, the order for D is PLACED on or before the promo end date, the placement day
+-- being the one rpc_derive_placement_day derives for D. A line failing both is not promo_active and orders on the
+-- normal TLX at normal quantity. The order window stays open to the promo_order_close_dow of the promo-end week and
+-- Sigma accepts the order there, but the DC honours only what was placed by the end date, and this function binds on
+-- the honoured bound (ORDERING-CANON v1.26 section C4). EVIDENCE: RULING, Pieter 2026-09-14, floor-attested on a
+-- test he placed himself: a promo ending Tuesday, ordered Monday for Wednesday and Tuesday for Thursday, both
+-- honoured; ordered Wednesday for Saturday, not honoured. CONFIDENCE: n=3 orders on one promo with both outcomes
+-- observed; no base rate across promos. FALSIFIER: a DC delivery whose order was placed after the promo end date and
+-- was honoured at promo cost. NAMED LIMIT: the placement day is the DERIVED one, not the day the buyer actually
+-- placed. Where the buyer places earlier than the derived weekday (a non-trading day such as Thursday 2026-09-24,
+-- Heritage Day, the derived placement day for the Saturday 2026-09-26 deliveries), a promo ending between the two
+-- days is understated here. Supersedes the two earlier 2026-09-14 comments, which bound the DELIVERY date to the
+-- closing Thursday (ORDERING-CANON v1.25, retired the same day, LEDGER section 6.22).'
 -- The second 2026-09-14 comment (migration eng208_promo_comment_named_limit_corrected), superseded at 18:44 by the
 -- v1.26 rebuild, because the canon it stated was retired (ORDERING-CANON-LEDGER section 6.22):
 -- 'GRADE: VERDICT. ENG-147 + ENG-082 + ENG-208. The one home for promo membership on a delivery date, read by
