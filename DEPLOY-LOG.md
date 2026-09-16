@@ -681,6 +681,22 @@ Added rows carrying quantity **0**. Rows lost **0**. Added value **R0.00**. Quan
 
 ---
 
+## 2026-09-16 (morning) -- ENG-150 add.2: the pension panel reads the state strings the engine emits. One file, eight comparisons, no number moves.
+
+**Clock:** written 2026-09-16 08:5x SAST, read in this pass (local `2026-09-16 08:43:57 +02:00`, UTC `06:43:57`, database `now()` SAST `08:44:38`, all three agreeing on the offset). **The session crossed midnight between the start read and this work**, so every date here is the date the work happened.
+
+**SHIPPED:** `c702211` on `origin/main`, Vercel production **success**. Frontend only, `src/app/bloom/page.jsx`. **No migration, no SQL, no engine object, no quantity moves.**
+
+**The defect (PM ruling 2026-09-16, Tier 1 under R30 §2; BUG-LOG ENG-150 addendum 2).** ENG-117b renamed `income_calendar_state` live on 2026-08-31 to `INCOME BUILD CLOSED` / `INCOME BUILD PLACE TODAY` / `INCOME BUILD OPEN`. The page kept comparing `'DEADLINE PASSED'` and `'PLACE TODAY'`, so all four branches were dead for 16 days: the pension panel rendered neutral in every state and the PLACE TODAY warning never fired on the day the pre-payday drop had to be placed. A changed object silently broke its dependent, which is R30 §2 by the book.
+
+**Site count (R30 addendum 3):** one file, 8 comparisons. No other code file in the repo or the Daisy tree reads either string set (`.git`, `node_modules`, `archive`, `_ARCHIVE` and `Clients` not searched; the Replit Bloom app and StockFlow sit outside and are named, not counted).
+
+**R22, and it is future-dated by construction, because no desk changes colour today.** All 21 desks read `INCOME BUILD OPEN` on 2026-09-16, so the panel is byte-identical this morning. Across 2026-09-16 to 2026-10-02, 357 desk-days: **206 OPEN, 130 CLOSED, 21 PLACE TODAY**, and every one of the 21 desks reaches PLACE TODAY exactly once. Before this fix all 357 rendered neutral. **The first restored warning falls on 2026-09-20 at 10116 `DIRECT_NATBRANDS`**, then 2026-09-21 at both Mondelez desks. **That is the falsifier: no yellow on that desk on 20-09 means this fix did not work.**
+
+**Not fixed here, deliberately.** The ENG-150 restructure (`Forge/SB-CC-ORDER-001` item 5, Tier 2) still owes the headline change: this panel is the PENSION drop, never the orderable delivery's own cutoff. Pieter's R31 walk is owed on it.
+
+---
+
 ## 2026-08-30 (night, later) -- THE A3 BUNDLED PASS SHIPPED ON PIETER'S WORD. The recipe pin moved for the first time since 2026-08-19, and every line is identical.
 
 **Clock, and the session crossed midnight between the work and this write -- the exact trap canon names.** The work below happened **2026-08-30** (pass applied 20:2x SAST, R22 measured 20:2x-20:3x). This entry is **written 2026-08-31 00:3x SAST**, re-read at the moment of writing rather than carried: device local `2026-08-31 00:31:47 +02:00`, device UTC `2026-08-30 22:31:47`, database `now()` SAST `2026-08-31 00:31:49` / UTC `2026-08-30 22:31:49` -- all three agreeing on the offset. A draft of this entry carried "written 2026-08-30 20:3x" and was corrected before it landed; that is the 2026-07-27 config-key defect exactly, caught this time. **Every date in the entry is the date the WORK happened, not the date of the write.**
