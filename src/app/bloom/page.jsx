@@ -2531,24 +2531,34 @@ function OrderDesksMode() {
             delivery_dows and derived cutoff -- there is no day-of-month anywhere in
             it, which is the whole point: the fixed day-25 rule was wrong in 12 of 12
             months by 2 to 8 days and twice named a day nothing can happen on.
-            No demand multiplier rides this (§14 v15 6a -- the date model stops at useful). */}
+            No demand multiplier rides this (§14 v15 6a -- the date model stops at useful).
+
+            ⭐ ENG-150 addendum 2 (PM ruling 2026-09-16; Tier 1 under R30 §2). The four
+            comparisons below read the state strings ENG-117b renamed live on 2026-08-31:
+            INCOME BUILD CLOSED / INCOME BUILD PLACE TODAY / INCOME BUILD OPEN. They tested
+            the retired words ('DEADLINE PASSED' / 'PLACE TODAY') for 16 days, so this panel
+            rendered neutral in every state and the PLACE TODAY warning never fired on the day
+            the pre-payday drop had to be placed. A changed object silently broke its dependent,
+            which is R30 §2 by the book. The ENG-150 restructure (order item 5, Tier 2) still
+            owes the headline: this panel is the PENSION drop, never the orderable delivery's
+            own cutoff. */}
         {incomeWindow?.income_window_start && (
           <div style={{
             marginTop: 12, padding: '10px 14px', borderRadius: 'var(--radius-chip)',
             fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.6,
-            border: `1px solid ${incomeWindow.income_calendar_state === 'DEADLINE PASSED' ? 'var(--data-neg)'
-                      : incomeWindow.income_calendar_state === 'PLACE TODAY' ? 'var(--core-yellow)' : 'var(--hairline)'}`,
-            background: incomeWindow.income_calendar_state === 'DEADLINE PASSED' ? 'rgba(239,83,80,0.10)'
-                      : incomeWindow.income_calendar_state === 'PLACE TODAY' ? 'rgba(255,209,0,0.10)' : 'rgba(255,255,255,0.02)',
+            border: `1px solid ${incomeWindow.income_calendar_state === 'INCOME BUILD CLOSED' ? 'var(--data-neg)'
+                      : incomeWindow.income_calendar_state === 'INCOME BUILD PLACE TODAY' ? 'var(--core-yellow)' : 'var(--hairline)'}`,
+            background: incomeWindow.income_calendar_state === 'INCOME BUILD CLOSED' ? 'rgba(239,83,80,0.10)'
+                      : incomeWindow.income_calendar_state === 'INCOME BUILD PLACE TODAY' ? 'rgba(255,209,0,0.10)' : 'rgba(255,255,255,0.02)',
           }}>
             <span style={{ color: 'var(--daisy-white)' }}>
               <strong>Last delivery before pension: {incomeWindow.last_delivery_before_income ?? '—'}</strong>
               {incomeWindow.placement_deadline && <> · <strong style={{
-                color: incomeWindow.income_calendar_state === 'DEADLINE PASSED' ? 'var(--data-neg)'
-                     : incomeWindow.income_calendar_state === 'PLACE TODAY' ? 'var(--core-yellow)' : 'var(--daisy-white)' }}>
+                color: incomeWindow.income_calendar_state === 'INCOME BUILD CLOSED' ? 'var(--data-neg)'
+                     : incomeWindow.income_calendar_state === 'INCOME BUILD PLACE TODAY' ? 'var(--core-yellow)' : 'var(--daisy-white)' }}>
                 place by {incomeWindow.placement_deadline}</strong></>}
-              {incomeWindow.income_calendar_state === 'PLACE TODAY' && <strong style={{ color: 'var(--core-yellow)' }}> — that is TODAY</strong>}
-              {incomeWindow.income_calendar_state === 'DEADLINE PASSED' && <strong style={{ color: 'var(--data-neg)' }}> — THAT DATE HAS PASSED</strong>}
+              {incomeWindow.income_calendar_state === 'INCOME BUILD PLACE TODAY' && <strong style={{ color: 'var(--core-yellow)' }}> — that is TODAY</strong>}
+              {incomeWindow.income_calendar_state === 'INCOME BUILD CLOSED' && <strong style={{ color: 'var(--data-neg)' }}> — THAT DATE HAS PASSED</strong>}
             </span>
             <span style={{ display: 'block', color: 'var(--veld-mist)', fontSize: 10 }}>
               Income window opens {incomeWindow.income_window_start}
