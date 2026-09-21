@@ -2231,12 +2231,29 @@ function OrderDesksMode() {
   // compute for this line (need_units, suggested_packs, projected demand) stays
   // 0/absent rather than being invented -- a manual line carries the buyer's
   // number, never a manufactured recommendation (R21 §5, R29).
-  function addManualLine(hit) {
+  //
+  // SB-CC-BLOOM-031 (Pieter, 21-09, on 491 SPAR MILK L/L F/CREAM): a hand-added
+  // line read promo "—" although 491 is on RI4, so on a DC desk it would have
+  // exported on the NORMAL TLX with no suffix instead of the promo sheet. The
+  // manual line now reads its promo membership from the ONE home the recipe
+  // uses (rpc_bloom_promo_for_delivery, ENG-147), for this store, desk and
+  // delivery. A failed read BLOCKS the add: a promo line must never be guessed
+  // into the normal order (R22).
+  async function addManualLine(hit) {
     const code = hit.product_code
     if (lines.some(l => String(l.product_code) === String(code))) {
       setPoolError(`${hit.description ?? code} is already on the sheet.`)
       return
     }
+    const { data: pm, error: pmErr } = await supabase
+      .rpc('rpc_bloom_promo_for_delivery', { p_store_code: storeCode, p_route: desk, p_delivery_date: deliveryDate })
+      .eq('product_code', Number(code))
+      .limit(1)
+    if (pmErr) {
+      setPoolError(`Not added: could not read whether ${hit.description ?? code} is on promo for ${deliveryDate} (${pmErr.message}). Try again before ordering it.`)
+      return
+    }
+    const promo = pm?.[0] ?? null
     const packSize = hit.chosen_pack_size ?? null
     const manual = {
       product_code: code,
@@ -2258,7 +2275,12 @@ function OrderDesksMode() {
       geared_packs: null,
       suggested_packs: 0,
       value: 0,
-      promo_active: false,
+      promo_active: !!promo,
+      promo_nr: promo?.promo_nr ?? null,
+      promo_start: promo?.start_date ?? null,
+      promo_end: promo?.end_date ?? null,
+      promo_suffix: promo?.promo_suffix ?? null,
+      promo_naming_gap: !!promo && !promo.promo_suffix,
       count_first: false,
       line_kind: 'manual',
       story: `Added by hand from the pool search. Population state: ${hit.population_state ?? 'unknown'}.`
