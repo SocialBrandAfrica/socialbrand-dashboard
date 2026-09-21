@@ -12,6 +12,20 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-21 19:4x SAST -- BLOOM-031 T-R R1: A PRE-ORDER NEVER COUNTS IN TRANSIT, T2 REVERSED BYTE-EXACT
+
+**Clock:** written 2026-09-21 19:4x SAST (`19:45:14` read in this pass).
+
+**Why:** Pieter, 21-09 ~18:3x, relayed by PM at 19:1x as SB-CC-BLOOM-031 §T-R R1: pre-orders help the DC plan and are always cancelled, and a missed drop is not coming. T2, as built, cut the Delareyville 24-09 sheet on 22 RI4 lines (R21,968.09) ahead of the 22-09 order.
+
+**DATABASE, 19:4x.** Migration `bloom031_tr_r1_reverse_t2_preorders_never_in_transit`: `refresh_l2_on_order` `9c6e6ad8` -> `d6655346f5d8c6cf889161fbbc031b7c`, the exact inverse of T2's first migration, asserted byte-exact before apply (`sql/bloom031_tr_r1_reverse_t2.sql`). `rpc_bloom_order_recipe` `f6a4c5fc` (the ENG-191 gear netting) stands. l2_on_order 80175 and 10116 refreshed, caches 1546, 1547 (10116 24-09) and 1548, 1549 (80175 23-09) rebuilt.
+
+**FRONTEND, `6530947`.** The promo cell reads "Pre-order", not "Sigma", the red "nothing received" line is gone, and the hover says a pre-order is not a delivery.
+
+**R22.** PM's T12: 0 rows on all four caches, 0 lines in transit. 10116 24-09 RI4: 119 lines with a quantity, 749 packs, R106,240.07.
+
+---
+
 ## 2026-09-21 13:5x SAST -- SB-CC-BLOOM-031 T1 AND T2: THE PROMO CELL SHOWS THE SIGMA PRE-ORDER BY DROP, AND THE DROPS COUNT IN TRANSIT
 
 **Clock:** written 2026-09-21 13:5x SAST (`13:50:57` read in this pass, DB `now()` agreed at +2).
