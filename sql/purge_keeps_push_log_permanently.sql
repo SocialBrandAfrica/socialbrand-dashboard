@@ -1,0 +1,29 @@
+-- purge_keeps_push_log_permanently.sql
+--
+-- Pieter ruling 2026-09-21 21:1x SAST ("go"), SB-KB-PM-009 item 4: push_log and push_errors are KEPT
+-- PERMANENTLY. They are the only record of which push ran, when, how many rows and what failed, and a
+-- deleted night cannot be rebuilt (THE MIRROR RULE, NORTH_STAR v1.9). The 16-month purge was also shorter
+-- than the 6-quarter lifecycle Pieter set the same evening.
+--
+-- Migration purge_keeps_push_log_permanently, applied 21-09-2026 21:1x by asserted replace on the live body:
+--   purge_old_snapshots() af38ee4ca134a8d75ed85b31607df9b8 / 4,800 b -> 4a14fc66aeb469eed5a238ae6ddc30fb / 5,048 b.
+-- Only STEP 2 changed. The aggregate step, the daily_snapshots delete (0 rows, the retired PRSSALE table)
+-- and the MV refreshes are unchanged. cron sb-monthly-purge (0 1 1 * *) unchanged.
+-- Measured before: push_log 27,665 rows / 12 MB from 18-05-2026, push_errors 11,014 rows / 9 MB.
+-- The first deletion would have run on 01-10-2027 (the push nights of 18 to 31 May 2026).
+--
+-- RETIRED TEXT (R28 lineage), exactly as it stood in STEP 2:
+--     DELETE FROM push_errors
+--     WHERE push_id IN (
+--         SELECT push_id FROM push_log
+--         WHERE completed_at < v_cutoff
+--     );
+--     GET DIAGNOSTICS v_del_push_errors = ROW_COUNT;
+--
+--     DELETE FROM push_log
+--     WHERE completed_at < v_cutoff;
+--     GET DIAGNOSTICS v_del_push_log = ROW_COUNT;
+--
+-- REPLACED BY:
+--     v_del_push_errors := 0;
+--     v_del_push_log := 0;
