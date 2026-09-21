@@ -1433,13 +1433,33 @@ const UPLIFT_CONFIDENCE_COLOR = {
   SEED:     'var(--data-neg)',
 }
 
+// SB-CC-BLOOM-031 §T1 helpers. ISO date -> dd-mm, the way the floor reads a drop.
+function ddmm(iso) {
+  if (!iso) return '?'
+  const [, m, d] = String(iso).slice(0, 10).split('-')
+  return `${d}-${m}`
+}
+
+function promoCellTitle(line, preorder, watermark) {
+  const head = `${line.promo_suffix ?? `#${line.promo_nr}`} promo ${line.promo_nr ?? ''}, sells ${line.promo_start ?? '?'} to ${line.promo_end ?? '?'}.`
+  if (preorder === undefined) return [head, 'Sigma promotion order: loading.'].join('\n')
+  if (preorder === null) return [head, 'This product is not on an open Sigma promotion order for this promotion.'].join('\n')
+  const drops = (preorder.drops ?? []).map(d =>
+    `  ${d.drop_date}: ${num(d.packs)} packs (${num(d.units)} units), document #${d.order_nr}, placed ${d.placed}`)
+  const rcv = Number(preorder.received_units_since_first_drop ?? 0) > 0
+    ? `Received since the first drop: ${num(preorder.received_units_since_first_drop)} units, last ${preorder.last_receipt}.`
+    : `Received since the first drop: nothing in the ledger (watermark ${watermark ?? '?'}).`
+  return [head, `Already ordered on the Sigma promotion order: ${num(preorder.ordered_packs)} packs.`, ...drops, rcv,
+    "The drop-to-promotion link is read from the documents' lines until the header link is extracted (SB-CC-BLOOM-031 A1)."].join('\n')
+}
+
 // The preserved DC row, adapted to the recipe's own fields. Same grid, same
 // ten columns, same ringed-input pattern as OrderRow above -- the only
 // additions are the count_first (# / pink wash) and BT-hero markers, which
 // carry the SAME visual language the DC screen already uses for a selling-
 // negative line (BloomPage/README.md's documented "count-first" pattern),
 // now extended to any band_blocked claim per ENG-014.
-function DeskOrderRow({ line, qty, isEdited, onQty }) {
+function DeskOrderRow({ line, qty, isEdited, onQty, preorder, watermark }) {
   const code = line.product_code
   const isPromo = !!line.promo_active
   const value = (qty ?? 0) * (line.pack_cost ?? 0)
@@ -1476,7 +1496,7 @@ function DeskOrderRow({ line, qty, isEdited, onQty }) {
 
   return (
     <div style={{
-      display: 'grid', gridTemplateColumns: '76px 44px minmax(180px,1.7fr) 110px 56px 90px 90px 60px 130px 100px',
+      display: 'grid', gridTemplateColumns: '76px 44px minmax(180px,1.7fr) 110px 56px 90px 90px 170px 130px 100px',
       alignItems: 'center', gap: 0, padding: '9px 18px', background: wash,
       borderBottom: '1px solid var(--hairline)', fontSize: 12, fontFamily: 'var(--font-mono)',
       fontVariantNumeric: 'tabular-nums',
@@ -1580,8 +1600,42 @@ function DeskOrderRow({ line, qty, isEdited, onQty }) {
         )}
       </span>
       <span style={{ textAlign: 'left', paddingLeft: 6, color: 'var(--veld-mist)' }}>{TIER_LABEL[line.tier] ?? line.tier ?? '—'}</span>
-      <span style={{ textAlign: 'left', color: isPromo ? 'var(--data-warn)' : 'var(--veld-mist)' }}>
-        {isPromo ? 'Promo' : '—'}
+      {/* SB-CC-BLOOM-031 §T1: the promo, its dates, and what Sigma already holds on
+          the promotion order, split by drop. Pieter's "Already Ordered" is the
+          Sigma figure (packs); each drop reads date and packs, and a drop whose
+          date has passed says whether the product has been received since the
+          first drop. The engine does not judge whether a late drop is coming
+          (§T4 is Pieter's), so the cell shows the facts and decides nothing. */}
+      <span style={{ textAlign: 'left', color: isPromo ? 'var(--data-warn)' : 'var(--veld-mist)', lineHeight: 1.25, paddingRight: 6 }}
+        title={isPromo ? promoCellTitle(line, preorder, watermark) : undefined}>
+        {isPromo ? (line.promo_suffix ?? (line.promo_nr ? `#${line.promo_nr}` : 'Promo')) : '—'}
+        {isPromo && line.promo_start && (
+          <span style={{ marginLeft: 5, fontSize: 10, color: 'var(--veld-mist)' }}>
+            {ddmm(line.promo_start)}→{ddmm(line.promo_end)}
+          </span>
+        )}
+        {isPromo && preorder && (
+          <span style={{ display: 'block', fontSize: 10, color: 'var(--daisy-white)' }}>
+            Sigma {num(preorder.ordered_packs)}:{' '}
+            <span style={{ color: 'var(--veld-mist)' }}>
+              {(preorder.drops ?? []).map(d => `${ddmm(d.drop_date)} ${num(d.packs)}`).join(' · ')}
+            </span>
+          </span>
+        )}
+        {isPromo && preorder && Number(preorder.received_units_since_first_drop ?? 0) > 0 && (
+          <span style={{ display: 'block', fontSize: 10, color: 'var(--growth-green)' }}>
+            rcv {num(preorder.received_units_since_first_drop)}u since {ddmm(preorder.first_drop)}
+          </span>
+        )}
+        {isPromo && preorder && Number(preorder.received_units_since_first_drop ?? 0) === 0
+          && watermark && (preorder.drops ?? []).some(d => d.drop_date <= watermark) && (
+          <span style={{ display: 'block', fontSize: 10, color: 'var(--data-neg)' }}>
+            nothing received since {ddmm(preorder.first_drop)}
+          </span>
+        )}
+        {isPromo && preorder === null && (
+          <span style={{ display: 'block', fontSize: 10, color: 'var(--veld-mist)' }}>not on the Sigma pre-order</span>
+        )}
       </span>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
         <input type="number" min="0" value={qty ?? 0}
@@ -1666,6 +1720,15 @@ function OrderDesksMode() {
   // ENG-056 (canon §16 wired): the last delivery before the next income window and
   // its placement deadline. Read from the engine, never derived here.
   const [incomeWindow, setIncomeWindow] = useState(null)
+  // SB-CC-BLOOM-031 §T1 -- WHAT SIGMA ALREADY HOLDS ON THE PROMOTION ORDER.
+  // Pieter, 21-09: "we have already ordered on that promo from the last order".
+  // The promo cell said the bare word "Promo" and nothing of the pre-order, so
+  // every pre-ordered line read as a fresh suggestion. Keyed product|promo_nr:
+  // one product can sit on two promotions' pre-orders (827380: RI4 16-09, RJ4
+  // 14-10) and only the line's own promotion is its "Already Ordered".
+  // Display only, no quantity moves. Read from the engine, never derived here.
+  const [preorders, setPreorders] = useState(null)
+  const [preordersError, setPreordersError] = useState(null)
   const fileInputRef = useRef(null)
   // ⭐ BLOOM-029 item 8 -- SEARCH THE POOL AND ADD A LINE BY HAND.
   // Pieter, 01-09: he hunted four products on this screen and found none.
@@ -1697,6 +1760,23 @@ function OrderDesksMode() {
     if (first) setDesk(first)
     setGenerated(false); setLines([]); setQty({}); setEdited({}); setSubmitted(false)
   }, [storeCode, storeDesks])
+
+  // §T1: the promotion-order read, once per generated DC sheet. The promotion
+  // order is a DC construct (order_type 2 on the DC supplier), so direct desks
+  // never ask. A failed read says so on the sheet, it never blanks the lines.
+  useEffect(() => {
+    setPreorders(null); setPreordersError(null)
+    if (!generated || !storeCode || !(desk === 'DC_AMBIENT' || desk === 'DC_TOPS')) return
+    let cancelled = false
+    supabase.rpc('rpc_bloom_promo_preorders', { p_store_code: storeCode }).then(({ data, error: err }) => {
+      if (cancelled) return
+      if (err) { setPreordersError(err.message); return }
+      const m = new Map()
+      for (const r of (data?.lines ?? [])) m.set(`${r.product_code}|${r.promo_nr}`, r)
+      setPreorders({ byKey: m, watermark: data?.ledger_watermark ?? null, linkBasis: data?.link_basis ?? null })
+    })
+    return () => { cancelled = true }
+  }, [generated, storeCode, desk])
 
   // Desk change -> prepopulate dates from the calendar (item 1, cutoff-
   // respecting per ENG-011), fetch this route's budget row plus the
@@ -2229,7 +2309,7 @@ function OrderDesksMode() {
   const promoCount = lines.filter(l => l.promo_active).length
   const shown = filter === 'all' ? lines : lines.filter(l => l.promo_active)
   const cols = ['Code', 'Pack', 'Description', 'Dept', 'SOH', 'ROS/day', 'Tier', 'Promo', 'Qty · packs', 'Value']
-  const gridCols = '76px 44px minmax(180px,1.7fr) 110px 56px 90px 90px 60px 130px 100px'
+  const gridCols = '76px 44px minmax(180px,1.7fr) 110px 56px 90px 90px 170px 130px 100px'
   const beforeFitTotal = useMemo(() => lines.reduce((s, l) => s + (Number(l.packs_before_fit) || 0) * (Number(l.pack_cost) || 0), 0), [lines])
   // ENG-034: the fit reasons the engine ACTUALLY emits. The previous filters
   // ('trimmed_partial' / 'trimmed_to_zero' / 'protected_kvi') matched no engine
@@ -3386,8 +3466,13 @@ function OrderDesksMode() {
             )}
           </div>
 
+          {preordersError && (
+            <p style={{ margin: '0 0 8px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--data-neg)' }}>
+              Could not read the Sigma promotion order ({preordersError}). The promo cells cannot show what is already ordered: check Sigma before ordering promo lines.
+            </p>
+          )}
           <div style={{ maxHeight: '52vh', overflow: 'auto' }}>
-            <div style={{ minWidth: 900 }}>
+            <div style={{ minWidth: 1010 }}>
               <div style={{
                 display: 'grid', gridTemplateColumns: gridCols, position: 'sticky', top: 0, zIndex: 2,
                 padding: '9px 18px', background: 'rgba(14,18,14,0.96)', borderBottom: '1px solid var(--glass-border)',
@@ -3400,7 +3485,9 @@ function OrderDesksMode() {
               </div>
               {shown.map(l => (
                 <DeskOrderRow key={l.product_code} line={l} qty={qty[l.product_code]}
-                  isEdited={!!edited[l.product_code]} onQty={onQty} />
+                  isEdited={!!edited[l.product_code]} onQty={onQty}
+                  preorder={l.promo_active && preorders ? (preorders.byKey.get(`${l.product_code}|${l.promo_nr}`) ?? null) : undefined}
+                  watermark={preorders?.watermark ?? null} />
               ))}
               {shown.length === 0 && (
                 <p style={{ padding: 24, textAlign: 'center', fontFamily: 'var(--font-display)', fontStyle: 'italic', color: 'var(--veld-mist)' }}>
