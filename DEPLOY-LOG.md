@@ -12,6 +12,23 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-21 13:5x SAST -- SB-CC-BLOOM-031 T1 AND T2: THE PROMO CELL SHOWS THE SIGMA PRE-ORDER BY DROP, AND THE DROPS COUNT IN TRANSIT
+
+**Clock:** written 2026-09-21 13:5x SAST (`13:50:57` read in this pass, DB `now()` agreed at +2).
+
+**Why:** Pieter, 21-09 ~12:45 to 13:4x, Roosville 23-09 placed today: the pre-ordered RI4 and RI5 lines were suggested again and the page said the bare word "Promo".
+
+**FRONTEND, `a85f874`, Vercel green.** `src/app/bloom/page.jsx`: the DC desk promo cell shows suffix, start and end, Sigma's pre-order packs by drop and the units received since the first drop. Display only.
+
+**DATABASE, applied 13:2x to 13:4x SAST.**
+- `rpc_bloom_promo_preorders(text)` NEW, `12e53180a5079c7f4dccd1fef2f81c9c` / 3,819 b (migrations `bloom031_t1_*`, `sql/create_rpc_bloom_promo_preorders.sql`).
+- `refresh_l2_on_order` `d6655346` -> `9c6e6ad85e6370c4d4fd6471a8043368` / 12,542 b, and `rpc_bloom_order_recipe` `c085128d` -> `f6a4c5fc8e9e2cc291e41b35b343e112` / 45,316 b (migrations `bloom031_t2_*`, `sql/bloom031_t2_preorder_drops_in_transit.sql` at `c7f07dc`). Both dry-run control vs patched on all five stores before the apply.
+- Caches rebuilt: 80175 DC_AMBIENT 23-09 (1542, 1543), 10116 DC_AMBIENT 24-09 (1544, 1545).
+
+**R22.** 80175 23-09 387 -> 330 packs (R100,495 -> R81,761), 10116 24-09 1,308 -> 1,186 (R263,858 -> R238,755), 0 lines up, 0 normal_packs moved. Live page read 13:4x: 258 promo rows, 104 carrying a pre-order. Exports unchanged (T3).
+
+---
+
 ## 2026-09-15 17:5x SAST -- ENG-189 STAMP LIVE: EVERY ROW THE EXTRACTOR SENDS TO THE 11 FULL-READ L1 TABLES CARRIES last_seen_at. NO NUMBER MOVES.
 
 **Clock:** written 2026-09-15 17:5x SAST (`17:58:16`, read in this pass, local and DB agree at +2).
