@@ -1,5 +1,8 @@
 -- bloom031_t2_preorder_drops_in_transit.sql
 --
+-- MIGRATION (1) RETIRED 2026-09-21 19:4x, reversed byte-exact by sql/bloom031_tr_r1_reverse_t2.sql
+-- (BLOOM-031 §T-R R1: a pre-order never counts in transit). Migration (2) stands.
+--
 -- SB-CC-BLOOM-031 §T2, applied 2026-09-21 ~13:40 SAST (Pieter: "the fix is the live state").
 -- Two migrations, both asserted replace() on the live body with pinned md5, dry-run first as
 -- pg_temp copies (control vs patched) on all five stores, zero live writes in the dry run.

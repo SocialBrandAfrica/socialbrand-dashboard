@@ -1449,7 +1449,8 @@ function promoCellTitle(line, preorder, watermark) {
   const rcv = Number(preorder.received_units_since_first_drop ?? 0) > 0
     ? `Received since the first drop: ${num(preorder.received_units_since_first_drop)} units, last ${preorder.last_receipt}.`
     : `Received since the first drop: nothing in the ledger (watermark ${watermark ?? '?'}).`
-  return [head, `Already ordered on the Sigma promotion order: ${num(preorder.ordered_packs)} packs.`, ...drops, rcv,
+  return [head, `On the Sigma promotion pre-order: ${num(preorder.ordered_packs)} packs.`, ...drops, rcv,
+    'A pre-order helps the DC plan and is cancelled. It never counts in transit and is not a delivery (Pieter 21-09, BLOOM-031 T-R R1).',
     "The drop-to-promotion link is read from the documents' lines until the header link is extracted (SB-CC-BLOOM-031 A1)."].join('\n')
 }
 
@@ -1600,12 +1601,11 @@ function DeskOrderRow({ line, qty, isEdited, onQty, preorder, watermark }) {
         )}
       </span>
       <span style={{ textAlign: 'left', paddingLeft: 6, color: 'var(--veld-mist)' }}>{TIER_LABEL[line.tier] ?? line.tier ?? '—'}</span>
-      {/* SB-CC-BLOOM-031 §T1: the promo, its dates, and what Sigma already holds on
-          the promotion order, split by drop. Pieter's "Already Ordered" is the
-          Sigma figure (packs); each drop reads date and packs, and a drop whose
-          date has passed says whether the product has been received since the
-          first drop. The engine does not judge whether a late drop is coming
-          (§T4 is Pieter's), so the cell shows the facts and decides nothing. */}
+      {/* SB-CC-BLOOM-031 §T1: the promo, its dates, and what Sigma holds on the
+          promotion PRE-ORDER, split by drop (Pieter's "Already Ordered"). §T-R R1
+          (Pieter 21-09 ~18:3x): a pre-order helps the DC plan and is always
+          cancelled, it never counts in transit and a missed drop is not coming,
+          so the cell says "Pre-order" and decides nothing. */}
       <span style={{ textAlign: 'left', color: isPromo ? 'var(--data-warn)' : 'var(--veld-mist)', lineHeight: 1.25, paddingRight: 6 }}
         title={isPromo ? promoCellTitle(line, preorder, watermark) : undefined}>
         {isPromo ? (line.promo_suffix ?? (line.promo_nr ? `#${line.promo_nr}` : 'Promo')) : '—'}
@@ -1616,7 +1616,7 @@ function DeskOrderRow({ line, qty, isEdited, onQty, preorder, watermark }) {
         )}
         {isPromo && preorder && (
           <span style={{ display: 'block', fontSize: 10, color: 'var(--daisy-white)' }}>
-            Sigma {num(preorder.ordered_packs)}:{' '}
+            Pre-order {num(preorder.ordered_packs)}:{' '}
             <span style={{ color: 'var(--veld-mist)' }}>
               {(preorder.drops ?? []).map(d => `${ddmm(d.drop_date)} ${num(d.packs)}`).join(' · ')}
             </span>
@@ -1625,12 +1625,6 @@ function DeskOrderRow({ line, qty, isEdited, onQty, preorder, watermark }) {
         {isPromo && preorder && Number(preorder.received_units_since_first_drop ?? 0) > 0 && (
           <span style={{ display: 'block', fontSize: 10, color: 'var(--growth-green)' }}>
             rcv {num(preorder.received_units_since_first_drop)}u since {ddmm(preorder.first_drop)}
-          </span>
-        )}
-        {isPromo && preorder && Number(preorder.received_units_since_first_drop ?? 0) === 0
-          && watermark && (preorder.drops ?? []).some(d => d.drop_date <= watermark) && (
-          <span style={{ display: 'block', fontSize: 10, color: 'var(--data-neg)' }}>
-            nothing received since {ddmm(preorder.first_drop)}
           </span>
         )}
         {isPromo && preorder === null && (

@@ -1,0 +1,19 @@
+-- bloom031_tr_r1_reverse_t2.sql
+--
+-- SB-CC-BLOOM-031 §T-R R1, applied 2026-09-21 19:4x SAST. PM 19:1x, from Pieter ~18:3x:
+-- "they get used to help the dc plan and they're cancelled or deleted-always. delivery occurs
+-- generally only on the next available slot and that implies a missed delivery is likely not
+-- coming in." A pre-order never counts in transit.
+--
+-- Migration bloom031_tr_r1_reverse_t2_preorders_never_in_transit: the exact inverse of migration (1)
+-- in sql/bloom031_t2_preorder_drops_in_transit.sql, every site asserted at count, applied only after
+-- md5 of the reversed text equalled the pre-T2 pin.
+--   refresh_l2_on_order 9c6e6ad85e6370c4d4fd6471a8043368 -> d6655346f5d8c6cf889161fbbc031b7c,
+--   byte-exact with the body live before 13:3x 21-09 (l2_on_order v17 E2.1 + ENG-188).
+-- Migration (2) of that file, the gear path netting counted in-transit (ENG-191), STANDS:
+--   rpc_bloom_order_recipe f6a4c5fc8e9e2cc291e41b35b343e112 is unchanged by this reversal.
+--
+-- Rebuilt 19:4x: l2_on_order 80175 and 10116 (v17; 21355, 80176, 80579 never carried v18 rows),
+-- caches 10116 DC_AMBIENT 24-09 (1546, 1547) and 80175 DC_AMBIENT 23-09 (1548, 1549).
+-- Acceptance, PM's T12 (Bloom/SB-AUD-PROMO-001/promo_rules_tests.sql): 0 rows on all four caches,
+-- 0 lines in transit. 10116 24-09 RI4: 119 lines with a quantity, 749 packs, R106,240.07.
