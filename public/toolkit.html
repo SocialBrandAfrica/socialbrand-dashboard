@@ -120,6 +120,7 @@
   .ccell.good{color:var(--pos);border-color:rgba(102,187,106,0.4);background:rgba(102,187,106,0.10)}
   .ccell.mid{color:var(--warn);border-color:rgba(255,179,0,0.4);background:rgba(255,179,0,0.10)}
   .ccell.bad{color:var(--neg);border-color:rgba(239,83,80,0.4);background:rgba(239,83,80,0.10)}
+  .ccell.win{color:var(--mist);border-color:rgba(158,158,158,0.45);background:rgba(158,158,158,0.10)}
   .ccell.nolist{color:var(--mist);border-style:dashed;background:transparent}
   .ccell.rest{color:var(--mist);border-style:dotted;background:rgba(158,158,158,0.06)}
   @media print{
@@ -444,8 +445,13 @@ async function loadCompliance(){
     // is still owed is ONE obligation carrying its age, not a fresh one, so this ratio no
     // longer counts a single posting against several issues.
     (rows||[]).forEach(r=>{ const s=(idx[r.store_code]=idx[r.store_code]||{});
-      const c=(s[r.issue_date]=s[r.issue_date]||{issued:0,posted:0,runs:0});
-      c.issued+=+r.lines_issued; c.posted+=+r.lines_counted; c.runs+=+r.runs; });
+      const c=(s[r.issue_date]=s[r.issue_date]||{issued:0,posted:0,runs:0,inwin:false});
+      c.issued+=+r.lines_issued; c.posted+=+r.lines_counted; c.runs+=+r.runs;
+      // ENG-187 D4, the surface half: adherence is measured at the window's CLOSE, so a list
+      // whose obligations are all still inside count_window_days is not a miss and must not be
+      // painted as one. The RPC already says so; the pane was throwing the verdict away and
+      // colouring on the percentage alone, which showed a list issued TODAY as a red 0%.
+      if(/^(IN WINDOW|PARTIAL, IN WINDOW)/.test(r.verdict||"")) c.inwin=true; });
     let dueToday=0, issuedToday=0, offToday=0;
     STORES.forEach(([code])=>{ const ds=dayStatus(today,dcByStore[code]);
       if(ds.count){ dueToday++; if(idx[code]&&idx[code][today]) issuedToday++; } else offToday++; });
@@ -456,6 +462,7 @@ async function loadCompliance(){
       if(!latest){ latestHtml=`<span style="color:var(--mist)">No count list issued yet</span>`; }
       else { const c=byDate[latest], pct=c.issued?Math.round(100*c.posted/c.issued):0;
         latestHtml=`Latest <b>${pct}% counted</b> · ${c.posted}/${c.issued} counts owed · issued ${latest}`
+          +(c.inwin?` <span style="color:var(--mist)">(still inside the count window)</span>`:"")
           +(c.runs>1?` <span style="color:var(--warn)">(${c.runs} lists same day — duplicate)</span>`:""); }
       const ts=dayStatus(today,dc), t=byDate[today];
       let todayHtml;
@@ -465,8 +472,9 @@ async function loadCompliance(){
       const strip=days.map(d=>{
         const c=byDate[d], ds=dayStatus(d,dc);
         if(c){ const pct=c.issued?Math.round(100*c.posted/c.issued):0;
-          const cls=pct>=80?"good":pct>=40?"mid":"bad";
-          return `<span class="ccell ${cls}" title="${d}: ${c.posted} of ${c.issued} counts owed were counted in time${c.runs>1?` (${c.runs} lists)`:""}">${d.slice(5)}<br>${pct}%</span>`; }
+          const cls=pct>=80?"good":pct>=40?"mid":(c.inwin?"win":"bad");
+          const why=c.inwin?" — still inside the count window, not a miss":"";
+          return `<span class="ccell ${cls}" title="${d}: ${c.posted} of ${c.issued} counts owed were counted in time${why}${c.runs>1?` (${c.runs} lists)`:""}">${d.slice(5)}<br>${pct}%</span>`; }
         if(!ds.count) return `<span class="ccell rest" title="${d}: ${ds.why}, no count forced">${d.slice(5)}<br>${ds.tag}</span>`;
         return `<span class="ccell nolist" title="${d}: no count list was issued">${d.slice(5)}<br>—</span>`;
       }).join("");
