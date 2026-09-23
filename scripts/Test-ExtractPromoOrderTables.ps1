@@ -114,8 +114,11 @@ function Send-Batch {
 function Send-PushLog {
     param([string]$Table, [datetime]$Started, [long]$Pushed, [long]$Failed, [long]$Expected, [string]$Status, [string]$Err)
     try {
+        # ENG-214 (2026-09-23): push_log.client_id is UUID (the legacy Phase-1 type), not text.
+        # Posting 'socialbrand' into it fails 22P02 and the catch below swallowed it, so the real
+        # 21-09 run at 80175 wrote ZERO raw_mirror_test rows while the data landed correctly. The
+        # nightly extractor's Send-TableLog omits the column for the same reason. Do not re-add it.
         $body = [ordered]@{
-            client_id        = $ClientId
             store_code       = $StoreCode
             push_type        = 'raw_mirror_test'
             table_name       = $Table

@@ -1,4 +1,16 @@
 -- =============================================================================
+-- RECONCILED TO LIVE 2026-09-23 09:2x SAST by CC. THE BODY BELOW IS THE LIVE BODY,
+-- BYTE FOR BYTE.
+--     LIVE  f6a4c5fc8e9e2cc291e41b35b343e112  / 45,316 chars
+--     (SB-CC-BLOOM-031 T-R R1 + the 491 manual-add promo fix, 2026-09-21; and the
+--      ENG-191 gear netting, which is IN this body: geared_calc adds oo_counted_qty
+--      to proj_geared and needu_geared, so the promo quantity nets in-transit.)
+-- Same channel as the 09-11 reconcile: pg_get_functiondef through the MCP result file
+-- as base64, decoded and spliced by script, md5-gated on disk after the write, all 13
+-- backslashes intact. Test: the text from the line starting CREATE OR REPLACE FUNCTION
+-- to the end of the file hashes to the md5 above.
+--
+-- Prior stamp, retired 2026-09-23 (R28), superseded by the block above:
 -- RECONCILED TO LIVE 2026-09-11 by CC. THE BODY BELOW IS THE LIVE BODY, BYTE FOR BYTE.
 --     LIVE  c085128d9b767e471bf4d4d05924db22  / 45,221 chars
 --     (ENG-183 (B), migration eng183b_desk_split_recipe, 2026-09-11 11:47 SAST)
@@ -655,6 +667,7 @@ BEGIN
         t.band_blocked AS count_first,
         (CASE WHEN t.band_blocked AND t.soh_raw < 0 THEN 0 ELSE t.soh_raw END) AS soh_used,
         GREATEST((CASE WHEN t.band_blocked AND t.soh_raw < 0 THEN 0 ELSE t.soh_raw END),0) - t.ros_final * %9$s + COALESCE(oo.on_order_qty,0) AS proj,
+        COALESCE(oo.on_order_qty,0) AS oo_counted_qty,
         (CASE WHEN t.range_state NOT IN ('HERO','CORE') THEN 0
          ELSE GREATEST(t.target_level - (GREATEST((CASE WHEN t.band_blocked AND t.soh_raw < 0 THEN 0 ELSE t.soh_raw END),0) - t.ros_final * %9$s + COALESCE(oo.on_order_qty,0)), 0)
          END) AS needu
@@ -722,9 +735,9 @@ BEGIN
     ),
     geared_calc AS (
       SELECT wg.*,
-        GREATEST(wg.soh_used,0) - (wg.ros_final*wg.gear) * %9$s AS proj_geared,
+        GREATEST(wg.soh_used,0) - (wg.ros_final*wg.gear) * %9$s + wg.oo_counted_qty AS proj_geared,
         (CASE WHEN wg.range_state NOT IN ('HERO','CORE') THEN 0
-         ELSE GREATEST(wg.target_level - (GREATEST(wg.soh_used,0) - (wg.ros_final*wg.gear) * %9$s), 0)
+         ELSE GREATEST(wg.target_level - (GREATEST(wg.soh_used,0) - (wg.ros_final*wg.gear) * %9$s + wg.oo_counted_qty), 0)
          END) AS needu_geared
       FROM with_gear wg
     ),
@@ -1011,9 +1024,4 @@ BEGIN
     ORDER BY rhythm_adjusted_demand DESC, product_code';
   EXECUTE 'DROP TABLE IF EXISTS _bloom_recipe_out';
 END;
-$function$;
-
-REVOKE ALL ON FUNCTION public.rpc_bloom_order_recipe(text,date,date,date,text,numeric,boolean,integer,integer,integer,numeric,text,jsonb,integer,numeric) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.rpc_bloom_order_recipe(text,date,date,date,text,numeric,boolean,integer,integer,integer,numeric,text,jsonb,integer,numeric) TO anon, authenticated;
-
-SELECT pg_notify('pgrst', 'reload schema');
+$function$
