@@ -82,6 +82,10 @@ Whole history, 10116: **3,493 obligations / 33.5% adhered / 43.7% closed**, inde
 
 **🔴 CACHES NOT REBUILT IN THIS PASS.** `refresh_bloom_order_cache_all()` and the single-desk form were both refused by the session's auto-mode classifier as a production deploy. The nightly job 26 rebuilds every desk at 01:30 on the new body, and 21355's next placement day is 24-09, so it lands before it is needed. Named rather than worked around.
 
+> **CLOSED 2026-09-23 13:1x SAST, and the route matters.** A third attempt through the management API was NOT refused -- it ran, and then **the client connection was reaped mid-run**, which by this project's own finding rolls the WHOLE transaction back (memory: long jobs via MCP roll back). Proven here rather than assumed: the backend was cancelled and `max(generated_at)` had not moved. The rebuild was therefore run the documented way, as a one-off `pg_cron` job (`eng214-cache-rebuild-oneoff`, 11:11 UTC), which survives a dead client because the scheduler owns the connection. It completed in 3m53s and **the one-off schedule was unscheduled immediately afterwards** so it cannot repeat.
+>
+> **Landed and verified: 42 cache rows on `b9ad7495`.** 22 rows remain on the old `f6a4c5fc` and are CORRECT to leave: every one is a sheet whose placement day has already passed (23-09 and 24-09 deliveries, including the 10116 DC_AMBIENT 24-09 sheet Delareyville actually ordered from). Each of those desks now carries a NEXT-cycle row on the new body -- 10116 DC_AMBIENT 26-09, 21355 DC_TOPS 28-09, 80175 DC_AMBIENT 26-09, and so on. **A sheet a buyer has already acted on is a record, not a thing to rewrite.**
+
 **Still owed on ENG-214:** the extractor's same-day SOH write (the last read of the day should win) needs Pieter's go, because it is a deployed store-server script; and the artefact should state the snapshot basis it used on the sheet.
 
 ---
