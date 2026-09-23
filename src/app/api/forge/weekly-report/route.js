@@ -75,20 +75,27 @@ export async function GET() {
   const cByStore = {}
   for (const r of (comp || [])) {
     const s = (cByStore[r.store_code] = cByStore[r.store_code] || { days: {}, runs: 0 })
-    const d = (s.days[r.issue_date] = s.days[r.issue_date] || { issued: 0, posted: 0 })
+    const d = (s.days[r.issue_date] = s.days[r.issue_date] || { issued: 0, posted: 0, inWindow: false })
     d.issued += Number(r.lines_issued); d.posted += Number(r.lines_counted)
+    // ENG-187 D4: a day whose obligations are all still inside count_window_days is UNDECIDED,
+    // not a zero. Averaging it in scores the store for work that is not yet late -- the same
+    // defect the toolkit pane had. Such days are excluded from the average and counted instead.
+    if (/^(IN WINDOW|PARTIAL, IN WINDOW)/.test(r.verdict || '')) d.inWindow = true
     s.runs += Number(r.runs || 0)
   }
   const compRows = codes.map(code => {
     const s = cByStore[code] || { days: {}, runs: 0 }
     const dates = Object.keys(s.days)
-    const pcts = dates.map(d => s.days[d].issued ? 100 * s.days[d].posted / s.days[d].issued : 0)
+    const decided = dates.filter(d => !s.days[d].inWindow)
+    const undecided = dates.length - decided.length
+    const pcts = decided.map(d => s.days[d].issued ? 100 * s.days[d].posted / s.days[d].issued : 0)
     const avg = pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null
     return {
       store: `${STORE_NAMES[code] || code} ${code}`,
       lists_issued_7d: s.runs,   // ENG-179: real lists issued. Was dates.length, which counted DAYS and undercounted any day carrying two runs.
       days_with_a_count: pcts.filter(p => p > 0).length,
-      avg_pct_counted: avg == null ? 'no lists issued' : Math.round(avg),
+      days_still_in_window: undecided,   // ENG-187 D4: issued, not yet late, not scored either way
+      avg_pct_counted: avg == null ? (undecided ? 'no day is decided yet' : 'no lists issued') : Math.round(avg),
       best_day_pct: pcts.length ? Math.round(Math.max(...pcts)) : '',
       worst_day_pct: pcts.length ? Math.round(Math.min(...pcts)) : '',
     }
