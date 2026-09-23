@@ -12,6 +12,38 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-23 10:1x SAST -- ENG-214: THE ORDER STOPS TRUSTING A SNAPSHOT THE LEDGER HAS ALREADY OVERTAKEN
+
+**Clock:** written 2026-09-23 10:1x SAST (`09:12:30` read at the open of this pass, re-read before this write).
+
+**Why.** `l2_soh_daily` is written ON CONFLICT DO NOTHING and the 19:30 extractor task can fire BEFORE Sigma's end of day. Where it does, that date's snapshot is the position before the day's till depletion, the later run that carries the postings is discarded silently, and the order sheet is built on stock that has already been sold. Measured at 10116 on 21-09: snapshot read 19:35, till posted 20:53, snapshot higher than the day's closing balance on 1,594 of the 1,855 products that sold, and the 24-09 sheet Delareyville ordered from was short **R22,500 / 108 packs / 58 lines**. Base rate, whole population n=223 store-days: 8 store-days, 10116 four of 45. BUG-LOG ENG-214.
+
+**THE FIX IS THE PLATFORM ONE, NOT THE EXTRACTOR TIMING.** Canon already says the ledger is the truth and SOH is the claim under audit. The engine now reads a fact that lets the ledger overtake the snapshot, so it is right whatever time the store's end of day runs, at any store, including store #6.
+
+**DATABASE, 09:4x to 10:0x.**
+- **NEW `v_l2_soh_effective`**, `md5(pg_get_viewdef)` `79ddcf03bf04f039bc12436ba5c190e3`, `GRADE: CALCULATED`, source `sql/create_v_l2_soh_effective.sql` (migration `eng214_v_l2_soh_effective`, then a LATERAL rewrite, then `REVOKE SELECT FROM anon`). Grants: `authenticated` and `service_role` only. One row per (store, product, date) carrying `soh_snapshot` beside `soh_effective`, the basis and the R29 story.
+- **`rpc_bloom_order_recipe` `f6a4c5fc8e9e2cc291e41b35b343e112` -> `b9ad7495f1429a4a06325bdc8951cb83` / 45,339 chars**, one asserted replace, +23 chars: the `soh` CTE reads `v_l2_soh_effective.soh_effective` instead of `l2_soh_daily.soh`. `sql/create_rpc_bloom_order_recipe.sql` reconciled and md5-gated to the new pin in the same pass.
+
+**THE SCOPE IS MEASURED, NOT ASSUMED.** On 9 store-days where the snapshot was read LAST, the ledger's own running balance reproduces it **99.6% on the till channel (n=8,105)** against 89.2% on stocktake (n=1,030), 96.1% on GRV (n=388) and 79-96% on the S channels. So only the till channel corrects a snapshot, which is exactly what a pre-EOD snapshot is missing; a non-till movement ingested after the snapshot is flagged on the row and never silently applied.
+
+**R22, all five DC desks, same data, the pre-change body held as a shadow `_shadow_recipe_pre_eng214` and dropped after the run.**
+
+| Desk | Old | New | Lines differ |
+|---|---|---|---|
+| 10116 DC_AMBIENT 26-09 | R428,372.98 | R428,372.98 | 0 |
+| 80175 DC_AMBIENT | R120,875.61 | R120,875.61 | 0 |
+| 80176 DC_TOPS | R114,928.28 | R114,928.28 | 0 |
+| 80579 DC_TOPS | R44,373.25 | R44,373.25 | 0 |
+| **21355 DC_TOPS 28-09** | **R65,270.66** | **R72,421.52** | **8 lines added, 4 lifted, 0 cut** |
+
+21355 is the one that moves because it missed its 21-09 nightly run entirely and its 22-09 snapshot is an 08:17 morning read: 30 lines' SOH corrected by 259 units. **The change is inert where the snapshot is sound and corrects only where the ledger is newer.**
+
+**🔴 CACHES NOT REBUILT IN THIS PASS.** `refresh_bloom_order_cache_all()` and the single-desk form were both refused by the session's auto-mode classifier as a production deploy. The nightly job 26 rebuilds every desk at 01:30 on the new body, and 21355's next placement day is 24-09, so it lands before it is needed. Named rather than worked around.
+
+**Still owed on ENG-214:** the extractor's same-day SOH write (the last read of the day should win) needs Pieter's go, because it is a deployed store-server script; and the artefact should state the snapshot basis it used on the sheet.
+
+---
+
 ## 2026-09-21 19:4x SAST -- BLOOM-031 T-R R1: A PRE-ORDER NEVER COUNTS IN TRANSIT, T2 REVERSED BYTE-EXACT
 
 **Clock:** written 2026-09-21 19:4x SAST (`19:45:14` read in this pass).

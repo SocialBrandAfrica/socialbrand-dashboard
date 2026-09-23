@@ -1,6 +1,16 @@
 -- =============================================================================
--- RECONCILED TO LIVE 2026-09-23 09:2x SAST by CC. THE BODY BELOW IS THE LIVE BODY,
+-- RECONCILED TO LIVE 2026-09-23 10:0x SAST by CC. THE BODY BELOW IS THE LIVE BODY,
 -- BYTE FOR BYTE.
+--     LIVE  b9ad7495f1429a4a06325bdc8951cb83  / 45,339 chars
+--     (ENG-214: the soh CTE reads v_l2_soh_effective instead of l2_soh_daily, so the
+--      order can no longer be built on a snapshot the ledger has already overtaken.
+--      One asserted replace, +23 chars, migration eng214_recipe_reads_soh_effective.
+--      R22 on all five DC desks, same data, old body held as a shadow and dropped after:
+--      10116 / 80175 / 80176 / 80579 identical to the cent, 0 lines differ; 21355
+--      R65,270.66 -> R72,421.52, 8 lines added, 4 lifted, 0 cut, 30 lines' SOH corrected
+--      by 259 units, because its 22-09 snapshot was a 08:17 morning read.)
+--
+-- Prior stamp, retired 2026-09-23 10:0x (R28):
 --     LIVE  f6a4c5fc8e9e2cc291e41b35b343e112  / 45,316 chars
 --     (SB-CC-BLOOM-031 T-R R1 + the 491 manual-add promo fix, 2026-09-21; and the
 --      ENG-191 gear netting, which is IN this body: geared_calc adds oo_counted_qty
@@ -459,7 +469,7 @@ BEGIN
         )
       ORDER BY sl.product_code, (sl.supplier_nr=1339) DESC, sl.cost_date DESC NULLS LAST
     ),
-    soh AS (SELECT sd.product_code, sd.soh FROM l2_soh_daily sd WHERE sd.store_code=%1$L AND sd.snapshot_date=%2$L::date),
+    soh AS (SELECT se.product_code, se.soh_effective AS soh FROM v_l2_soh_effective se WHERE se.store_code=%1$L AND se.snapshot_date=%2$L::date),
     soh_override AS (
       SELECT (kv.key)::bigint AS product_code, (kv.value)::numeric AS soh
       FROM jsonb_each_text(COALESCE(%26$L::jsonb, '{}'::jsonb)) kv
