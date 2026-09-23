@@ -60,6 +60,11 @@ export async function GET() {
   // real run lines rather than the stored `line_count` header aggregate (the
   // stored-aggregate law, canon 12e point 4b), and its `counted` is the count-law
   // anchor rather than the view's cruder issued+2-day window.
+  // ENG-187: both columns below are now the OBLIGATION unit -- a product re-issued while it
+  // is still owed stays ONE obligation carrying its age, so the week's percentage can no
+  // longer credit a single count posting against every list the product appeared on. The
+  // ratio is safe because lines_issued and lines_counted share that grain; the raw line
+  // count is issued_lines_raw if it is ever wanted here.
   const { data: comp, error: cErr } = await sb
     .rpc('rpc_forge_compliance_summary', { p_stores: codes, p_from: iso(weekAgo), p_to: iso(today) })
   if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 })

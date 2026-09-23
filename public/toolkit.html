@@ -439,6 +439,10 @@ async function loadCompliance(){
     // The RPC is store-day grain and carries its own `runs`, where the view was
     // run grain and the tally was `c.runs++`. Reading the count off the row is
     // what keeps the "N lists same day -- duplicate" warning below true.
+    // ENG-187: lines_issued and lines_counted are BOTH the OBLIGATION unit now (the RPC
+    // also returns issued_lines_raw for the raw line count). A product re-issued while it
+    // is still owed is ONE obligation carrying its age, not a fresh one, so this ratio no
+    // longer counts a single posting against several issues.
     (rows||[]).forEach(r=>{ const s=(idx[r.store_code]=idx[r.store_code]||{});
       const c=(s[r.issue_date]=s[r.issue_date]||{issued:0,posted:0,runs:0});
       c.issued+=+r.lines_issued; c.posted+=+r.lines_counted; c.runs+=+r.runs; });
@@ -451,7 +455,7 @@ async function loadCompliance(){
       let latestHtml;
       if(!latest){ latestHtml=`<span style="color:var(--mist)">No count list issued yet</span>`; }
       else { const c=byDate[latest], pct=c.issued?Math.round(100*c.posted/c.issued):0;
-        latestHtml=`Latest <b>${pct}% counted</b> · ${c.posted}/${c.issued} lines · issued ${latest}`
+        latestHtml=`Latest <b>${pct}% counted</b> · ${c.posted}/${c.issued} counts owed · issued ${latest}`
           +(c.runs>1?` <span style="color:var(--warn)">(${c.runs} lists same day — duplicate)</span>`:""); }
       const ts=dayStatus(today,dc), t=byDate[today];
       let todayHtml;
@@ -462,7 +466,7 @@ async function loadCompliance(){
         const c=byDate[d], ds=dayStatus(d,dc);
         if(c){ const pct=c.issued?Math.round(100*c.posted/c.issued):0;
           const cls=pct>=80?"good":pct>=40?"mid":"bad";
-          return `<span class="ccell ${cls}" title="${d}: ${c.posted} of ${c.issued} counted${c.runs>1?` (${c.runs} lists)`:""}">${d.slice(5)}<br>${pct}%</span>`; }
+          return `<span class="ccell ${cls}" title="${d}: ${c.posted} of ${c.issued} counts owed were counted in time${c.runs>1?` (${c.runs} lists)`:""}">${d.slice(5)}<br>${pct}%</span>`; }
         if(!ds.count) return `<span class="ccell rest" title="${d}: ${ds.why}, no count forced">${d.slice(5)}<br>${ds.tag}</span>`;
         return `<span class="ccell nolist" title="${d}: no count list was issued">${d.slice(5)}<br>—</span>`;
       }).join("");
@@ -479,7 +483,7 @@ async function loadCompliance(){
       +(offToday?` · <span style="color:var(--mist)">${offToday} on a DC / rest day</span>`:"")
       +` · last 7 days, newest on the right</div>`
       +`<div class="ccards">${cards}</div>`
-      +`<div class="note">Counted = a Sigma count posting stands against the line (matched or variance), from the store's own ledger — a manual confirmation is not evidence. No count is forced on a Saturday, Sunday or a store's DC ambient delivery day (shown DC / rest). On a counting day, a missing list is a gap, not a zero.</div>`;
+      +`<div class="note">The unit is the <b>obligation</b>, not the printed line: a product re-issued while it is still owed stays one obligation carrying its age, so one posting can never be credited against several lists. Counted = a Sigma count posting stands against it (matched or variance), from the store's own ledger — a manual confirmation is not evidence. A list still inside the 2-day count window reads IN WINDOW, not a miss. No count is forced on a Saturday, Sunday or a store's DC ambient delivery day (shown DC / rest). On a counting day, a missing list is a gap, not a zero.</div>`;
     provenance("compliance",{rows:rows.length, dueToday, issuedToday, offToday, today});
   }catch(e){
     wrap.innerHTML = `<div class="ctitle">Count compliance</div><div class="banner err" style="display:block;margin:0">Could not load: ${e.message}</div>`;
