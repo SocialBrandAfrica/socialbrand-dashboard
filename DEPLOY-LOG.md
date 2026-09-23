@@ -12,6 +12,48 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-09-23 12:5x SAST -- ENG-187: THE COUNT OBLIGATION IS LIVE, AND FIVE DEFECTS FOUND BY MEASURING IT
+
+**Clock:** written 2026-09-23 12:5x SAST, taken fresh and cross-checked three ways after a disagreement: plain `date` 12:58 +0200, `date -u` 10:58, DB `now() at time zone 'Africa/Johannesburg'` 12:58. The disagreement was `TZ=Africa/Johannesburg date` under Git-Bash, which has no tzdata for the zone name, silently falls back to UTC, and STILL prints the label `SAST` with offset `+0000`. Stamping off that reading would have back-dated this entry two hours with nothing erroring.
+
+**Ship.** `5de15cc` to `main`. Objects: `v_forge_count_line_evidence` (replaced), `v_forge_count_compliance` (dropped + recreated -- `CREATE OR REPLACE VIEW` cannot reorder columns), `rpc_forge_run_compliance` and `rpc_forge_compliance_summary` (dropped + recreated -- an OUT-parameter row type cannot be changed in place; grants restored in the same transaction, so no caller ever saw a missing function). Source of record `sql/eng187_count_obligation_unit.sql`, pin `dda95634c9e552ce8b31aaf5b1143dcf`. One overload each, checked.
+
+**Why.** Count law 15.1's unit is the OBLIGATION, not the printed line. A product re-issued while it is still owed is the SAME obligation rolled forward carrying its age, and its single DIWAINV posting closes it once. The platform had three different definitions of "counted" at three sites. Applied on Pieter's one-word go; the three earlier classifier refusals are recorded in BUG-LOG ENG-187 and the fourth attempt passed.
+
+**FIVE DEFECTS WERE FOUND IN THE APPLIED BUILD, BY MEASURING IT RATHER THAN BY TRUSTING THE READ-ONLY PROOF.** This is the entry's real content, because the read-only proof had already "passed":
+
+| | defect | how it was caught | size |
+|---|---|---|---|
+| D1 | the closing-day rule was never stated; two postings on the closing date TIED under `ORDER BY qty <> 0 DESC LIMIT 1` | row-for-row diff of the rewrite against the applied body | 10 obligations, 78 lines at 10116; 2 flipped MATCHED vs variance on the tie |
+| D2 | `credited` fired on MORE THAN ONE ROW per obligation -- the over-count this row exists to abolish, one layer up | whole-history `credited` count vs `count(distinct obligation_id)` | 4,741 vs 3,493 at 10116; **2,359 excess rows group-wide** |
+| D3 | mixed grain on one ratio, ON THE SCREEN: `lines_issued` line grain, `lines_counted` obligation grain, and both consumers divide one by the other | reading the consumers instead of assuming them | every compliance figure would have read ~a quarter of the truth |
+| D4 | the verdict accused stores still inside the window -- a list issued TODAY read "PARTIAL, 200 owed" | walking the RPC output as a reader | every store, every day, on a surface Pieter opens |
+| D5 | whole-population read did not return in two minutes; for `anon` (30s) that is the ENG-179 "Could not load" | `EXPLAIN` on the applied view | the pane would have gone dark again |
+
+D1 is the ENG-182 class -- a rebuild flipping a column nobody touched. The cases are real double-counts: 21-09 at 10116, Nkele counts at 15:38 and Pieter re-counts the same products at 17:49 (product 582: -13 to 103, then +1 to 104). **THE RULE: the count is the whole day's counting** -- the last posting of the closing date sets the balance, the day's postings sum to the delta, so MATCHED means the day's counting moved nothing. `closing_postings` publishes the double-count rather than netting it silently.
+
+D2's rule: exactly ONE issued line carries `credited` -- the obligation's last issue, and where that date carries several runs, the latest by `issued_at` then `run_id`. Enforced with `row_number()`, not a date test, so no later reader can double-count by filtering differently.
+
+**R22, POST-APPLY, MEASURED ON THE LIVE OBJECTS.** Obligations whose last issue falls in the trailing 30 days. The live platform reproduces the read-only proof **exactly**, to the digit, at every store, and the figure moves in BOTH directions:
+
+| store | published RPC before | line-grain view | OBLIGATION adherence | closure | obligations |
+|---|---|---|---|---|---|
+| 10116 | 45.7% | 19.1% | **19.4%** | 29.6% | 2,060 |
+| 21355 | 42.6% | 23.6% | **35.2%** | 40.3% | 290 |
+| 80175 | 21.9% | 13.1% | **26.7%** | 42.9% | 2,100 |
+| 80176 | 38.7% | 32.0% | **60.7%** | 61.2% | 405 |
+| 80579 | 5.6% | 0.7% | **2.9%** | 7.5% | 174 |
+
+Whole history, 10116: **3,493 obligations / 33.5% adhered / 43.7% closed**, independently reproducing PM's own 2026-09-20 measurement (3,433 / 33.8%) -- two seats, two instruments, same answer. After D2's fix, `credited` rows equal distinct obligations at every store, exactly (excess 0).
+
+**What the unit reveals that the line grain hid:** 10116 issued 200 lines on 22-09 but only **18 were new obligations** -- 182 were re-issues of counts already owed. An obligation carries 3.78 to 7.87 issues on average and up to 40. That spread IS the over-counting.
+
+**The reconcile gate caught a real difference and is worth repeating.** Re-applying the source file moved the pin off the migrations' own `6e966a9e...`: a function body is stored BYTE-EXACT in `prosrc`, so this file's aligned spacing (`p_from   IS NULL`) is a different definition from the migration's (`p_from IS NULL`). Semantics were then re-proved BEHAVIOURALLY -- obligations, excess and both percentages reproduce to the digit -- rather than waved through as cosmetic.
+
+**Still owed on this row.** The derivation of `count_window_days` off the posting-lag distribution (the key is live at 2, stamped SEED UNDERIVED, and canon named the derivation as owed work).
+
+---
+
 ## 2026-09-23 10:1x SAST -- ENG-214: THE ORDER STOPS TRUSTING A SNAPSHOT THE LEDGER HAS ALREADY OVERTAKEN
 
 **Clock:** written 2026-09-23 10:1x SAST (`09:12:30` read at the open of this pass, re-read before this write).
