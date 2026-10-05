@@ -1,3 +1,16 @@
+-- =============================================================================
+-- RECONCILED TO LIVE 2026-10-05 by CC. THE BODY BELOW IS THE LIVE BODY, BYTE FOR BYTE.
+--     LIVE  b6412a80963c7a8d350580ef25cbc3ab  / 11,490 chars
+--     ENG-228 (PM note four, 24-09): a line expires only after the ledger has seen the FIRST DELIVERY DAY on or after its
+--       promise (supplier_calendar), not when the watermark reaches the promised date. The promise_basis label and the
+--       exclusion read one expression: 'promise_passed_ledger_observed' (first delivery day seen, still unreceived) and
+--       'promise_awaiting_first_delivery_day' (promised, truck not due yet). 'promise_due_on_watermark_not_received' is retired.
+--     Applied by migration eng228_eng229_eng230_ordering_three_fixes (sql/2026-10-05_eng228_eng229_eng230_ordering_three_fixes.sql).
+--
+-- Prior stamp, retired 2026-10-05 (R28):
+--     LIVE  d6655346f5d8c6cf889161fbbc031b7c  / 10,042 chars  (ENG-188, 2026-09-15)
+-- =============================================================================
+
 -- create_refresh_l2_on_order.sql
 --
 -- The outstanding-order fact: what is genuinely on its way, and what is a stale
@@ -128,12 +141,33 @@ BEGIN
     FROM ranked k LEFT JOIN lead_route lr ON lr.route_key=k.route_key CROSS JOIN lead_store ls
     WHERE k.order_type IN ('0','1','2')
   ),
+  open_cal AS (   -- ENG-228 (PM note four, 24-09-2026): the first delivery day on or after the promise, read from supplier_calendar
+    SELECT p.*,
+      (CASE
+         WHEN p.expected_grv_date IS NULL OR p.expected_grv_date = DATE '1990-01-01' OR p.expected_grv_date < p.order_date THEN NULL
+         ELSE COALESCE(
+                (SELECT min(g::date)
+                   FROM supplier_calendar sc
+                   CROSS JOIN LATERAL generate_series(p.expected_grv_date::timestamp, (p.expected_grv_date + 6)::timestamp, interval '1 day') g
+                  WHERE sc.store_code = p.store_code
+                    AND sc.route_key = (CASE WHEN p.route_key = 'DC'
+                                             THEN (CASE WHEN p.delivery_population = 'DC_AMBIENT'
+                                                         THEN (SELECT CASE WHEN dc.format_group = 'TOPS' THEN 'DC_TOPS' ELSE 'DC_AMBIENT' END
+                                                                 FROM bloom_dc_config dc WHERE dc.store_code = p.store_code AND dc.status = 'RULED' LIMIT 1)
+                                                    END)
+                                             ELSE p.route_key END)
+                    AND COALESCE(sc.cycle_weeks, 1) = 1
+                    AND EXTRACT(ISODOW FROM g)::smallint = ANY(sc.delivery_dows)),
+                p.expected_grv_date)
+       END) AS first_delivery_day
+    FROM open_pool p
+  ),
   judged AS (
     SELECT p.*,
       -- rule 5a: promise judged against the ledger watermark. Informative, never constant.
       CASE WHEN p.expected_grv_date <  p.order_date  THEN 'promise_before_own_order_date'
-           WHEN p.expected_grv_date <  v_watermark   THEN 'promise_passed_ledger_observed'
-           WHEN p.expected_grv_date =  v_watermark   THEN 'promise_due_on_watermark_not_received'
+           WHEN p.first_delivery_day <= v_watermark   THEN 'promise_passed_ledger_observed'
+           WHEN p.expected_grv_date <= v_watermark   THEN 'promise_awaiting_first_delivery_day'
            ELSE 'promise_ahead_of_ledger' END AS promise_basis,
       -- rule 5a: the ESTIMATE, labelled on every row. Since ENG-188 (Pieter, 2026-09-15) an elapsed estimate
       -- also expires the line: see the last branch of exclusion_reason.
@@ -147,7 +181,7 @@ BEGIN
           THEN CASE WHEN p.age_days > p.lead_days * v_mult THEN 'stale_beyond_lead'
                     WHEN (p.order_date + p.lead_days) < v_watermark THEN 'landing_estimate_elapsed'
                     ELSE NULL END
-        WHEN p.expected_grv_date <= v_watermark THEN 'promise_passed_ledger_observed'
+        WHEN p.first_delivery_day <= v_watermark THEN 'promise_passed_ledger_observed'
         -- ENG-188 (Pieter, from the floor, 2026-09-15, relayed by PM 10:1x): an on-order line expires the
         -- moment its own expected landing date passes with nothing placed after it. It stops counting in
         -- transit and stops reducing the new order. The landing date is order_date plus the route's
@@ -155,7 +189,7 @@ BEGIN
         -- Every earlier label is unchanged: this lands only on a line that was counted before.
         WHEN (p.order_date + p.lead_days) < v_watermark THEN 'landing_estimate_elapsed'
         ELSE NULL END AS exclusion_reason
-    FROM open_pool p
+    FROM open_cal p
   ),
   lines AS (
     SELECT j.route_key, j.delivery_population, j.order_date, j.age_days, j.lead_days, j.lead_basis, j.promise_basis,
@@ -187,7 +221,7 @@ BEGIN
          MAX(age_days)      FILTER (WHERE exclusion_reason IS NOT NULL),
          ARRAY(SELECT DISTINCT unnest(array_agg(route_key)        FILTER (WHERE exclusion_reason IS NOT NULL))),
          ARRAY(SELECT DISTINCT unnest(array_agg(exclusion_reason) FILTER (WHERE exclusion_reason IS NOT NULL))),
-         'l2_on_order v17 E2.1 + ENG-188 landing estimate expires'
+         'l2_on_order v18 ENG-228 first delivery day (v17 E2.1 + ENG-188 kept)'
 ,
          ARRAY(SELECT DISTINCT unnest(array_agg(delivery_population) FILTER (WHERE exclusion_reason IS NULL)))
   FROM lines GROUP BY product_code;
@@ -205,7 +239,7 @@ BEGIN
     'on_order_qty', round(v_qty,2), 'on_order_cost', round(v_cost,2),
     'counted_rows_past_landing_estimate', v_est_past,   -- surfaced diagnostic: counted rows due on the watermark
     'excluded_order_lines', v_exc_n, 'excluded_cost_refused', round(v_exc_cost,2),
-    'engine_version', 'l2_on_order v17 E2.1 + ENG-188 landing estimate expires', 'computed_at', now());
+    'engine_version', 'l2_on_order v18 ENG-228 first delivery day (v17 E2.1 + ENG-188 kept)', 'computed_at', now());
 END;
 $function$;
 

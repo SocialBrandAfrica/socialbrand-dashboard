@@ -1,4 +1,21 @@
 -- =============================================================================
+-- RECONCILED TO LIVE 2026-10-05 by CC. THE BODY BELOW IS THE LIVE BODY, BYTE FOR BYTE.
+--     LIVE  b6bbee1e0b1c1c569d65ab34b1fd4785  / 48,560 chars
+--     ENG-229 (PM note five, 24-09): a minimum-mode line rounds UP to the whole pack that reaches its own min band
+--       (CTE packs, and its geared twin). The 35-day ceiling and the minimum-presence exemption still cap it.
+--     ENG-230 (PM note six and its second correction, 05-10, Pieter): the TEMPORARY 3-unit floor. Position after the
+--       suggestion at or under temp_floor_units (3), one pack when pack_size / rate of sale is within temp_floor_pack_days (28),
+--       otherwise keep-or-delist and never bought. HERO, CORE and SLOW. l2_bt_tail DERANGE out. forge_config rows,
+--       DEMO_CALIBRATION, effective 2026-10-05, retire when the band is ruled (R28). It only ever adds a pack.
+--     Applied by migration eng228_eng229_eng230_ordering_three_fixes (sql/2026-10-05_eng228_eng229_eng230_ordering_three_fixes.sql),
+--     md5-gated, every replacement asserted to match exactly once, tested on scratch copies first. Pre-state kept in
+--     public.cc_fn_prestate for rollback.
+--
+-- Prior stamp, retired 2026-10-05 (R28):
+--     LIVE  b9ad7495f1429a4a06325bdc8951cb83  / 45,339 chars  (ENG-214, 2026-09-23)
+-- =============================================================================
+
+-- =============================================================================
 -- RECONCILED TO LIVE 2026-09-23 10:0x SAST by CC. THE BODY BELOW IS THE LIVE BODY,
 -- BYTE FOR BYTE.
 --     LIVE  b9ad7495f1429a4a06325bdc8951cb83  / 45,339 chars
@@ -335,6 +352,8 @@ DECLARE
   v_build_start_dom int;
   v_build_end_dom int;
   v_payday_dom int;
+  v_tf_units numeric;
+  v_tf_pack_days numeric;
 BEGIN
   SET LOCAL statement_timeout = '30s';
 
@@ -349,6 +368,16 @@ BEGIN
   WHERE fc.config_key = 'relevant_min_cover_days' AND fc.store_format = '*' AND fc.retired_on IS NULL
   LIMIT 1;
   v_relevant_min_cover_days := COALESCE(v_relevant_min_cover_days, 60);
+
+  -- ENG-230 (PM note six and its second correction, 05-10-2026): Pieter's TEMPORARY floor. Both numbers are Pieter's, not derived (R28, DEMO_CALIBRATION).
+  -- Retire either forge_config row and the floor cannot fire.
+  SELECT fc.value_num INTO v_tf_units FROM forge_config fc
+  WHERE fc.config_key = 'temp_floor_units' AND fc.store_format = '*' AND fc.retired_on IS NULL LIMIT 1;
+  SELECT fc.value_num INTO v_tf_pack_days FROM forge_config fc
+  WHERE fc.config_key = 'temp_floor_pack_days' AND fc.store_format = '*' AND fc.retired_on IS NULL LIMIT 1;
+  IF v_tf_units IS NULL OR v_tf_pack_days IS NULL THEN
+    v_tf_units := -1000000000; v_tf_pack_days := 0;
+  END IF;
 
   IF p_route IS NULL THEN
     RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS, DIRECT_BEER or a RULED DIRECT_<brand> desk (canon SS14 v7 item 1 / v9 item 7)';
@@ -691,7 +720,10 @@ BEGIN
     packs AS (
       SELECT n.*,
         (CASE WHEN n.ros_final<=0 THEN 0
-              WHEN n.needu>0 THEN GREATEST(FLOOR(n.needu/n.ps),1)
+              WHEN n.needu>0 THEN GREATEST(FLOOR(n.needu/n.ps),1,
+                   -- ENG-229 (PM note five, 24-09-2026): a minimum-mode line must reach its own min band, so round UP to the whole pack that reaches it.
+                   -- The 35-day ceiling and the minimum-presence exemption still cap it downstream, in packs_ceiled.
+                   (CASE WHEN n.mode = 'minimum' AND n.proj < n.min_band_ot THEN CEIL((n.min_band_ot - n.proj) / n.ps)::int ELSE 0 END))
               ELSE 0 END)::int AS normal_packs_raw
       FROM needc n
     ),
@@ -707,12 +739,12 @@ BEGIN
         (p.ros_final > 0 AND (p.ps / p.ros_final) <= %29$s) AS pack_relevant
       FROM packs p
     ),
-    packs_ceiled AS (
+    packs_ceiled0 AS (
       SELECT m.*,
         (m.range_state IN ('HERO','CORE') AND NOT m.mp_life AND m.normal_packs_raw >= 1 AND m.ros_final > 0
           AND (GREATEST(m.soh_used,0) + m.normal_packs_raw * m.ps) / m.ros_final > %28$s) AS pack_forced_review,
-        ((m.mp_life OR (m.slow_candidate AND m.pack_relevant)) AND m.first_pack_over_ceiling) AS min_presence_forced,
-        (m.slow_candidate AND NOT m.pack_relevant) AS keep_or_delist,
+        ((m.mp_life OR (m.slow_candidate AND m.pack_relevant)) AND m.first_pack_over_ceiling) AS min_presence_forced0,
+        (m.slow_candidate AND NOT m.pack_relevant) AS keep_or_delist0,
         (CASE
            WHEN m.slow_candidate AND m.pack_relevant THEN 1
            WHEN m.slow_candidate THEN 0
@@ -721,8 +753,33 @@ BEGIN
            WHEN m.mp_life THEN LEAST(m.normal_packs_raw, GREATEST(1, m.packs_under_ceiling))
            WHEN m.ros_final > 0 AND (GREATEST(m.soh_used,0) + m.normal_packs_raw * m.ps) / m.ros_final > %28$s THEN LEAST(m.normal_packs_raw, m.packs_under_ceiling)
            ELSE m.normal_packs_raw
-         END)::int AS normal_packs_calc
+         END)::int AS normal_packs_calc0
       FROM packs_mp m
+    ),
+    packs_ceiled AS (
+      -- ENG-230: the temporary 3-unit floor. Position after the suggestion is the projected position plus the packs suggested.
+      -- A line with no pack and a position at or under the floor gets one pack when one pack sells within the pack-day limit,
+      -- otherwise it goes to keep-or-delist and is never bought. HERO, CORE and SLOW all sit inside it. DERANGE in the
+      -- Bonnie Tyler tail is out. It only ever adds a pack, it never removes one canon already gave.
+      SELECT c.*,
+        (CASE WHEN c.tf_pack_hit THEN 1 ELSE c.normal_packs_calc0 END)::int AS normal_packs_calc,
+        (c.keep_or_delist0 OR c.tf_delist) AS keep_or_delist,
+        (c.min_presence_forced0 OR (c.tf_pack_hit AND c.first_pack_over_ceiling)) AS min_presence_forced
+      FROM (
+        SELECT d.*,
+          COALESCE(d.tf_cand AND d.ps / NULLIF(d.ros_final,0) <= %31$s, false) AS tf_pack_hit,
+          COALESCE(d.tf_cand AND d.ps / NULLIF(d.ros_final,0) >  %31$s, false) AS tf_delist
+        FROM (
+          SELECT c0.*,
+            (%8$L IS NULL AND c0.ros_final > 0 AND c0.range_state IN ('HERO','CORE','SLOW')
+               AND c0.normal_packs_calc0 = 0 AND NOT c0.keep_or_delist0
+               AND c0.proj <= %30$s
+               AND NOT EXISTS (SELECT 1 FROM l2_bt_tail bt
+                                WHERE bt.store_code = %1$L AND bt.product_code = c0.product_code AND bt.action_bucket = 'DERANGE')
+            ) AS tf_cand
+          FROM packs_ceiled0 c0
+        ) d
+      ) c
     ),
     gear_source AS (
       SELECT DISTINCT ON (pk.product_code) pk.product_code, pa.start_date, pa.end_date
@@ -754,20 +811,21 @@ BEGIN
     geared AS (
       SELECT g.*,
         (CASE WHEN g.ros_final<=0 THEN 0
-              WHEN g.needu_geared>0 THEN GREATEST(FLOOR(g.needu_geared/g.ps),1)
+              WHEN g.needu_geared>0 THEN GREATEST(FLOOR(g.needu_geared/g.ps),1,
+                   (CASE WHEN g.mode = 'minimum' AND g.proj_geared < g.min_band_ot THEN CEIL((g.min_band_ot - g.proj_geared) / g.ps)::int ELSE 0 END))
               ELSE 0 END)::int AS geared_packs_raw
       FROM geared_calc g
     ),
     geared_ceiled AS (
       SELECT g.*,
-        (CASE
+        GREATEST(CASE WHEN g.tf_pack_hit THEN 1 ELSE 0 END, (CASE
            WHEN g.geared_packs_raw < 1 THEN g.geared_packs_raw
            WHEN g.mp_life THEN LEAST(g.geared_packs_raw, GREATEST(1, g.packs_under_ceiling))
            WHEN g.ros_final > 0
              AND (GREATEST(g.soh_used,0) + g.geared_packs_raw * g.ps) / g.ros_final > %28$s
            THEN LEAST(g.geared_packs_raw, g.packs_under_ceiling)
            ELSE g.geared_packs_raw
-         END)::int AS geared_packs_calc
+         END))::int AS geared_packs_calc
       FROM geared g
     ),
     resolved AS (
@@ -832,7 +890,7 @@ BEGIN
       SELECT b.*,
         (CASE
            WHEN b.is_protected THEN b.resolved_packs_calc
-           WHEN b.resolved_packs_calc >= 1 AND (b.mp_life OR (b.slow_candidate AND b.pack_relevant)) THEN 1
+           WHEN b.resolved_packs_calc >= 1 AND (b.mp_life OR (b.slow_candidate AND b.pack_relevant) OR b.tf_pack_hit) THEN 1
            ELSE 0
          END)::int AS fit_floor_packs
       FROM catchup_decided b
@@ -897,7 +955,7 @@ BEGIN
       pk.fit_applied AS budget_fit_applied, pk.fit_reason AS budget_fit_reason,
       %19$L::date AS budget_week_start, %20$L::text AS budget_week_source,
       pk.is_bt_hero AS is_bt_hero, %10$L::text AS preset_applied, false AS frozen_focus_pending,
-      format('%%s [%%s] tier KVI=%%s, archetype=%%s -> %%s, window=%%s demand=%%s, band [%%s|%%s], SOH %%s, lead %%s(%%s) -> proj %%s, need %%s = %%s packs%%s%%s%%s%%s%%s%%s',
+      format('%%s [%%s] tier KVI=%%s, archetype=%%s -> %%s, window=%%s demand=%%s, band [%%s|%%s], SOH %%s, lead %%s(%%s) -> proj %%s, need %%s = %%s packs%%s%%s%%s%%s%%s%%s%%s',
         COALESCE(pk.tier,'-'), pk.range_state, COALESCE(pk.kvi_band,'-'), COALESCE(pk.archetype,'EVERYDAY(default)'), pk.mode_reason,
         CASE WHEN %10$L = 'standard' AND pk.mode = 'minimum' THEN 'ros_56d STABLE (v16 std-min)' ELSE pk.ros_window_used END, ROUND(pk.ros_final,2),
         ROUND(pk.min_band_ot,1), ROUND(pk.max_band_ot,1), pk.soh_raw, %9$s, %17$L::text, ROUND(pk.proj,1), ROUND(pk.needu,1), pk.resolved_packs_calc,
@@ -907,7 +965,8 @@ BEGIN
         CASE WHEN pk.promo_nr IS NOT NULL AND NOT pk.promo_geared THEN format(' | promo %%s->%%s ended before this delivery and is ordered in its closing week at promo: normal quantity, no gear', pk.promo_start, pk.promo_end) WHEN pk.promo_nr IS NOT NULL THEN format(' | promo %%s->%%s gear %%s', pk.promo_start, pk.promo_end, ROUND(pk.gear,2)) ELSE '' END,
         CASE WHEN pk.fit_applied THEN format(' | budget fit: %%s (%%s -> %%s packs)', pk.fit_reason, pk.resolved_packs_calc, pk.final_packs) ELSE '' END,
         CASE WHEN pk.min_presence_forced THEN format(' | MIN_PRESENCE: %%s projected below min_band (%%s), first pack exempt from max band', pk.range_state, ROUND(pk.min_band_ot,1)) ELSE '' END,
-        CASE WHEN pk.keep_or_delist THEN format(' | KEEP_OR_DELIST: likely to derange, one pack = %%s days cover (over %%s), range decision', ROUND(pk.ps/NULLIF(pk.ros_final,0),0), %29$s) ELSE '' END) AS story
+        CASE WHEN pk.keep_or_delist THEN format(' | KEEP_OR_DELIST: likely to derange, one pack = %%s days cover (over %%s), range decision', ROUND(pk.ps/NULLIF(pk.ros_final,0),0), (CASE WHEN pk.tf_delist THEN %31$s ELSE %29$s END)) ELSE '' END,
+        CASE WHEN pk.tf_pack_hit THEN format(' | TEMP_FLOOR (Pieter, 05-10-2026): position after the suggestion %%s units, floor %%s, one pack = %%s days cover, within %%s, one pack ordered', ROUND(pk.proj,1), %30$s, ROUND(pk.ps/NULLIF(pk.ros_final,0),0), %31$s) ELSE '' END) AS story
     FROM finalp pk
     LEFT JOIN v_ean_bridge eb ON eb.store_code=%1$L AND eb.product_code=pk.product_code
   $q$, p_store_code, v_soh_dt, NULL::boolean, v_dom,
@@ -916,7 +975,7 @@ BEGIN
        v_preset_catchup, p_catchup_band_cap_multiple, v_fit_to_budget, v_weekly_budget,
        p_route, v_dept_nrs, v_lead_source, v_next_delivery, v_week_start, v_week_source,
        v_dows, v_buyin_lead_days, p_delivery_date, v_preset_essentials, v_direct_supplier_nrs, p_soh_override,
-       p_store_target_days, p_max_order_stock_days, v_relevant_min_cover_days);
+       p_store_target_days, p_max_order_stock_days, v_relevant_min_cover_days, v_tf_units, v_tf_pack_days);
 
   EXECUTE 'DROP TABLE IF EXISTS _bloom_recipe_out';
   EXECUTE format('CREATE TEMP TABLE _bloom_recipe_out AS %s', v_sql);
