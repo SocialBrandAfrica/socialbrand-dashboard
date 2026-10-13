@@ -1,8 +1,15 @@
 import './globals.css'
+import { headers } from 'next/headers'
+import { appNameForHost } from '@/lib/appNames'
 
-export const metadata = {
-  title: 'SocialBrand Pulse',
-  description: 'Cross-store retail intelligence for SocialBrand',
+// The tab reads the app's own name, taken from the host the request came in on
+// (BLOOM-035 item 8). orders.* reads Bloom, toolkit.* reads Forge, the rest Pulse.
+export async function generateMetadata() {
+  const host = headers().get('host') || ''
+  return {
+    title: appNameForHost(host),
+    description: 'Cross-store retail intelligence for SocialBrand',
+  }
 }
 
 export default function RootLayout({ children }) {
