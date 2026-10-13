@@ -24,6 +24,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '@/lib/supabase'
 import { zar, pct, num } from '@/lib/format'
 import { Button, Chip, SegmentedControl, GlassCard, KpiCard } from '@/components/ds'
+import StoredOverview from './StoredOverview'
 // dashboard.css is only bundled for the root `/` route (imported inside its
 // own page.jsx) -- Next.js app-router CSS imports are per-route-segment, not
 // automatically shared. Bloom needs its own import to get the token block.
@@ -111,63 +112,6 @@ function BudgetGauge({ total, budget }) {
       </div>
       <div style={{ height: 8, borderRadius: 'var(--radius-pill)', background: 'rgba(0,0,0,0.35)', boxShadow: 'var(--well-shadow)', overflow: 'hidden' }}>
         <span style={{ display: 'block', height: '100%', width: fillPct + '%', borderRadius: 'var(--radius-pill)', background: fill, transition: 'width 300ms ease' }} />
-      </div>
-    </div>
-  )
-}
-
-// KVI / core / tail pie -- scenario-board request (Pieter, mid-session
-// amendment): each scenario's ORDERED-LINE mix at a glance. Grouped from
-// the recipe's own kvi_band, by LINE COUNT (never rand value -- "percentage
-// of lines ordered"): KVI = KVI_CRITICAL + KVI_IMPORTANT, core = STANDARD +
-// CONSUMABLE_CARVE, tail = LONG_TAIL. Groups with zero lines are dropped
-// from both the ring and the legend ("if those are the only ones") rather
-// than drawn as an empty slice. Hand-rolled SVG, no new chart dependency.
-const PIE_GROUPS = [
-  { key: 'kvi', label: 'KVI', color: 'var(--core-yellow)', bands: ['KVI_CRITICAL', 'KVI_IMPORTANT'] },
-  { key: 'core', label: 'Core', color: 'var(--data-pos)', bands: ['STANDARD', 'CONSUMABLE_CARVE'] },
-  { key: 'tail', label: 'Tail', color: 'var(--veld-mist)', bands: ['LONG_TAIL'] },
-]
-function kviCoreTailSplit(byKviBandLines) {
-  const src = byKviBandLines ?? {}
-  return PIE_GROUPS.map(g => ({
-    ...g, count: g.bands.reduce((s, b) => s + (Number(src[b]) || 0), 0),
-  })).filter(g => g.count > 0)
-}
-function KviPie({ byKviBandLines, size = 46 }) {
-  const groups = kviCoreTailSplit(byKviBandLines)
-  const total = groups.reduce((s, g) => s + g.count, 0)
-  if (total === 0) return null
-  const r = size / 2
-  let angle = -90
-  const slices = groups.map(g => {
-    const frac = g.count / total
-    const start = angle
-    angle += frac * 360
-    const end = angle
-    const large = (end - start) > 180 ? 1 : 0
-    const toXY = a => [r + r * Math.cos(a * Math.PI / 180), r + r * Math.sin(a * Math.PI / 180)]
-    const [x1, y1] = toXY(start)
-    const [x2, y2] = toXY(end)
-    const path = groups.length === 1
-      ? null // single group = full circle, drawn separately below
-      : `M ${r},${r} L ${x1},${y1} A ${r},${r} 0 ${large} 1 ${x2},${y2} Z`
-    return { ...g, path, pct: Math.round(frac * 100) }
-  })
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0 }}>
-        {slices.length === 1
-          ? <circle cx={r} cy={r} r={r} fill={slices[0].color} />
-          : slices.map(s => <path key={s.key} d={s.path} fill={s.color} stroke="var(--backdrop)" strokeWidth={0.5} />)}
-      </svg>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        {slices.map(s => (
-          <span key={s.key} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--veld-mist)', display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 6, height: 6, borderRadius: 2, background: s.color, display: 'inline-block' }} />
-            {s.label} {s.pct}% ({s.count})
-          </span>
-        ))}
       </div>
     </div>
   )
@@ -1368,30 +1312,6 @@ const DESK_PRESET_OPTIONS = [
   { value: 'order_essentials', label: 'Order Essentials' },
   { value: 'catch_up', label: 'Catch-up' },
 ]
-const SCENARIO_LABEL = {
-  full: 'Full need', fitted: 'Fitted to budget',
-  order_essentials: 'Order Essentials', catch_up: 'Catch-up',
-}
-// Board honesty pass (canon v9 item 5, Pieter ruling 2026-07-12): each
-// card states its own objective in plain terms, so the screen never
-// implies more precision than the FORMULA FREEZE-era build actually has.
-// Canon v9 names four objective TAGS (BUDGET/MAX PROFIT/BASIC DEMANDS/
-// AVAILABILITY) but "PM owns the screen-text walk" for the exact wording
-// -- these captions describe what each scenario's CODE actually does
-// today (verifiable against rpc_bloom_order_recipe), not a guess at PM's
-// four-word taxonomy mapping. Swap for PM's exact copy when it lands.
-const SCENARIO_OBJECTIVE = {
-  full: 'Whole pool at per-line minimums -- the unconstrained need.',
-  fitted: 'Full need, trimmed to this week’s budget (KVI protected first).',
-  order_essentials: 'Selection only: KVI + BT heroes + top-tier lines -- not the whole store.',
-  catch_up: 'Priority basket lifted toward the store-wide floor, fit forced on.',
-}
-// Canon v7 item 9, v10 re-anchor (2026-07-14): the reason a card's
-// deviation is not a defect, surfaced (R29) even when there's no flag.
-const YARDSTICK_REASON_LABEL = {
-  full_is_luxury_by_definition: 'Full is the luxury order by definition -- expected to exceed the 7-day yardstick, never a defect.',
-  cash_constrained: 'This week runs cash-constrained -- deviation from the yardstick is expected, not flagged.',
-}
 
 // ⭐ ENG-054 -- HOW MUCH IS THE UPLIFT BEHIND THIS GAP WORTH? In one word.
 // The engine is the authority: rpc_bloom_promo_floor_gap.uplift_confidence
@@ -1683,12 +1603,10 @@ function OrderDesksMode() {
   // ("this pairing was never precomputed") and a failure ("the read broke") are
   // different facts and the buyer must be able to tell them apart on sight.
   const [cacheMiss, setCacheMiss] = useState(null)
-  const [overview, setOverview] = useState([])
-  const [overviewLoading, setOverviewLoading] = useState(false)
-  const [overviewError, setOverviewError] = useState(null)
-  // HELD is not FAILED. A deliberately withheld card renders amber and says why;
-  // red is reserved for something that actually broke (the ENG-097 rule).
-  const [overviewHeld, setOverviewHeld] = useState(null)
+  // SB-CC-BLOOM-035 item 9: the scenario cards, read from the stored orders.
+  const [storedOverview, setStoredOverview] = useState(null)
+  const [storedOverviewLoading, setStoredOverviewLoading] = useState(false)
+  const [storedOverviewError, setStoredOverviewError] = useState(null)
   const [stockState, setStockState] = useState([])
   const [stockStateError, setStockStateError] = useState(null)
   // SB-CC-BLOOM-026 part (b) -- THE HIDDEN SELLERS. Lines the order DROPPED
@@ -1852,114 +1770,37 @@ function OrderDesksMode() {
     return () => { cancelled = true }
   }, [storeCode, desk, deliveryDate])
 
-  // UX-003 landing board: the scenario overview + 7-day-yardstick sanity
-  // strip (canon v7 item 9) load BEFORE Generate -- one published call,
-  // R22-equal to what each scenario's own Generate press would return
-  // (rpc_bloom_scenario_overview literally runs the same recipe RPC per
-  // scenario server-side and aggregates, never a client-side estimate).
-  // ENG-070 (2026-08-05) -- ONE SCENARIO PER CALL, RENDERED AS EACH LANDS.
+  // SB-CC-BLOOM-035 item 9 (= SB-CC-BLOOM-034 Part 1 + the weekly verdict, ruled by
+  // Pieter 13-10-2026). The scenario cards are read from the orders the night job
+  // STORED, in ONE call: rpc_bloom_stored_overview sums the stored fit-off and fit-on
+  // orders (value = sum(suggested_packs * pack_cost)), carries the stored route
+  // benchmark, and judges the week's orders together against the week's demand.
   //
-  // The single call asked the database to run the FULL recipe FIVE times in one
-  // request: the four scenarios plus the ENG-018 yardstick. Measured at source:
-  //   80175  recipe 2.72s -> overview 13.6s  (5 x 2.72 = 13.6, reproduces exactly)
-  //   10116  recipe 8.11s -> overview ~40.6s -> dies on the function's own
-  //          `SET LOCAL statement_timeout = '45s'`
-  // It sat on the boundary, so it failed INTERMITTENTLY -- three panels timing out
-  // one minute and answering the next, which is why it read as flaky rather than
-  // broken. Confirmed live on 2026-08-05 at BOTH stores under real page load.
+  // What this replaces. The loop that stood here called rpc_bloom_scenario_overview
+  // once per scenario, and each call ran the recipe again: ~64s of database work at
+  // 10116 against a ~30s ceiling, so it was held on 24-08 (BUG-LOG ENG-104). Nothing
+  // here runs the recipe and no quantity moves (R21, R32 section 3: an applet reads).
   //
-  // The ceiling cannot be raised (Kong ~30s, canon standing constraint 4), so the
-  // work had to shrink PER REQUEST rather than be given more time. `p_scenarios`
-  // was added to the RPC for exactly this -- each call now runs ONE scenario plus
-  // the yardstick (~2 recipe runs), which is comfortably inside every limit at the
-  // heaviest store.
-  //
-  // Sequential, not parallel: four concurrent recipe runs on one small instance
-  // contend and would re-create the problem in a new shape. Sequential costs
-  // wall-clock but each scenario PAINTS AS IT ARRIVES, so the buyer sees Full
-  // Need almost immediately instead of a blank card for forty seconds.
-  //
-  // R22: the aggregation stays server-side and untouched. The surface requests a
-  // subset, it never re-cooks one (R21/R27). Verified before wiring -- the four
-  // subset calls return rows identical to the single call, and
-  // demonstrated_weekly_demand holds at the same value in every one.
-  const OVERVIEW_SCENARIOS = ['full', 'fitted', 'order_essentials', 'catch_up']
-
-  // 🔴 HELD 2026-08-24 (CC, PM-approved). The overview does NOT call the server.
-  //
-  // WHY IT IS OFF RATHER THAN SLOW. The loop below issues FOUR sequential calls,
-  // one per scenario, and each runs the recipe PLUS the ENG-018 yardstick. At
-  // 10116 the recipe is ~8s, so a single page load asks for ~64s of database
-  // work that can never finish inside Kong's ~30s. It did not merely fail
-  // itself -- it competed with every other card on the page. Measured through
-  // the live anon path 2026-08-24: rpc_bloom_stock_state takes 6.7s in
-  // isolation and 14.5s while this loop is running, which is how a card that
-  // works ends up breaching the 12s client deadline.
-  //
-  // WHY IT IS NOT SIMPLY REPOINTED YET. The repoint is gated on BUG-LOG ENG-104:
-  // PM's own pre-ship gate proved demonstrated_weekly_demand MOVES cached-vs-live
-  // (80175: live 477 products / R76,748.17 vs cached 428 / R70,296.48, 8.4%),
-  // and the reason it can move at all is that the metric is computed over the
-  // ORDER'S OWN returned rows rather than the route's demand -- so the yardstick
-  // contracts with the order it judges. PM's rider: if it moves, it does not
-  // ship. It has not shipped.
-  //
-  // The card now says so instead of showing "loading …" forever, which was a
-  // lie about what it was doing. HELD is not a FAILURE and must not render red
-  // (the ENG-097 miss-vs-failure rule).
-  //
-  // TO RE-ENABLE: set OVERVIEW_ENABLED true. Pass p_include_yardstick: false
-  // when doing so -- PM ruled the yardstick defaults OFF (§D6: it judges an
-  // order, it never prices one), which alone halves the recipe runs per call.
-  const OVERVIEW_ENABLED = false
-
+  // A card with nothing stored says so, in mist and not in red (the ENG-097 rule).
+  // Order Essentials and Catch-up get no card until they are stored.
   useEffect(() => {
-    if (!storeCode || !desk || !deliveryDate) { setOverview([]); return }
-
-    if (!OVERVIEW_ENABLED) {
-      setOverview([]); setOverviewLoading(false)
-      setOverviewHeld('Not available. The scenario overview is held pending BUG-LOG ENG-104 — demonstrated weekly demand is measured over the order’s own lines rather than the route’s demand, so the benchmark moves with the order it judges. Held rather than shown wrong. Nothing else on this page depends on it.')
-      return
+    if (!storeCode || !desk || !deliveryDate || !nextDeliveryDate) {
+      setStoredOverview(null); setStoredOverviewError(null); setStoredOverviewLoading(false); return
     }
-    setOverviewHeld(null)
-
     let cancelled = false
-    setOverviewLoading(true); setOverviewError(null); setOverview([])
-
-    ;(async () => {
-      const collected = []
-      const failures  = []
-
-      for (const scenario of OVERVIEW_SCENARIOS) {
-        if (cancelled) return
-        const { data, error: err } = await supabase.rpc('rpc_bloom_scenario_overview', {
-          p_store_code:    storeCode,
-          p_delivery_date: deliveryDate,
-          p_next_delivery: nextDeliveryDate || null,
-          p_route:         desk,
-          p_scenarios:     [scenario],
-        })
-        if (cancelled) return
-
-        if (err) {
-          // No silent skips: a scenario that failed is NAMED. The others still
-          // render -- one dead scenario must not blank the whole board.
-          console.error('[rpc_bloom_scenario_overview]', scenario, err.message)
-          failures.push(`${scenario}: ${err.message}`)
-        } else {
-          collected.push(...(data ?? []))
-          // Paint progressively, in the canon order the card row expects.
-          setOverview(collected
-            .slice()
-            .sort((a, b) => OVERVIEW_SCENARIOS.indexOf(a.scenario) - OVERVIEW_SCENARIOS.indexOf(b.scenario)))
-        }
-      }
-
+    setStoredOverviewLoading(true); setStoredOverviewError(null)
+    supabase.rpc('rpc_bloom_stored_overview', {
+      p_store_code: storeCode, p_route: desk,
+      p_delivery_date: deliveryDate, p_next_delivery: nextDeliveryDate,
+    }).then(({ data, error: err }) => {
       if (cancelled) return
-      setOverviewLoading(false)
-      setOverviewError(failures.length ? failures.join(' · ') : null)
-    })()
-
+      setStoredOverviewLoading(false)
+      if (err) {
+        console.error('[rpc_bloom_stored_overview]', err.message)
+        setStoredOverviewError(err.message); setStoredOverview(null); return
+      }
+      setStoredOverview(data ?? null)
+    })
     return () => { cancelled = true }
   }, [storeCode, desk, deliveryDate, nextDeliveryDate])
 
@@ -2750,123 +2591,15 @@ function OrderDesksMode() {
         )}
       </GlassCard>
 
-      {/* UX-003 landing board: scenario overview + 7-day-yardstick sanity strip,
-          visible BEFORE Generate, one server call (rpc_bloom_scenario_overview),
-          R22-equal to what pressing Generate on each scenario would return. */}
+      {/* SB-CC-BLOOM-035 item 9 (= BLOOM-034 Part 1 + the weekly verdict): the scenario
+          cards, read from the orders the night job STORED. One read,
+          rpc_bloom_stored_overview. No recipe runs from this page and nothing here
+          calls rpc_bloom_scenario_overview. */}
       <GlassCard style={{ margin: '0 32px 20px', padding: '16px 22px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-          <Label style={{ color: 'var(--veld-mist)' }}>Scenario overview {overviewLoading ? '· loading …' : ''}</Label>
+          <Label style={{ color: 'var(--veld-mist)' }}>Scenario cards {storedOverviewLoading ? '· loading …' : ''}</Label>
         </div>
-        {overviewHeld && (
-          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: '#fcd34d',
-            background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)',
-            borderRadius: 8, padding: '10px 12px', margin: 0 }}>{overviewHeld}</p>
-        )}
-        {overviewError && (
-          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#fca5a5' }}>{overviewError}</p>
-        )}
-        {!overviewError && overview.length > 0 && (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
-              {overview.map(s => (
-                <div key={s.scenario} style={{
-                  padding: '10px 12px', borderRadius: 'var(--radius-chip)',
-                  border: s.yardstick_flag === 'DEFECT_SIGNAL' ? '1px solid rgba(239,83,80,0.55)' : '1px solid var(--hairline)',
-                  background: s.yardstick_flag === 'DEFECT_SIGNAL' ? 'rgba(239,83,80,0.08)' : 'rgba(255,255,255,0.02)',
-                }}>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--veld-mist)' }}>
-                    {SCENARIO_LABEL[s.scenario] ?? s.scenario}
-                  </div>
-                  {/* PM ruling 2026-07-12: normal/geared is a VALUE PAIR on
-                      each card, never separate cards -- closes CC's own
-                      flagged "4 vs 6 scenarios" question. value_normal is the
-                      TRUE fit-applied order value (what Generate submits);
-                      value_geared is the pre-fit "fully geared" comparison
-                      (informational -- see the RPC's own header note). Both
-                      always visible, never toggled away. */}
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 15, color: 'var(--daisy-white)', marginTop: 2 }}>
-                    {zar(s.value_normal)}
-                  </div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--veld-mist)', marginTop: 1 }}>
-                    geared basis {zar(s.value_geared)}
-                  </div>
-                  {/* BLOOM-018 item 2 pt 3 (Pieter ruling 2026-07-29): the
-                      PROMOTIONAL SHARE of value, percentage beside the rand.
-                      Split on promo_active -- the same flag the CSV/TLX/promo-
-                      sheet export splits on (canon SS14 v7 item 11) -- so the
-                      figure reconciles to the files, not to a second definition
-                      of "promo". promo + normal sums back to the card total. */}
-                  {s.promo_share_pct != null && (
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, marginTop: 3,
-                      color: 'var(--data-warn)' }}
-                      title={`Promotional ${zar(s.value_promo_lines)} + normal ${zar(s.value_nonpromo_lines)} = ${zar(Number(s.value_promo_lines) + Number(s.value_nonpromo_lines))}. Split on promo_active, the same flag the export splits on.`}>
-                      {s.promo_share_pct}% promotional
-                      <span style={{ color: 'var(--veld-mist)' }}> · {zar(s.value_promo_lines)} promo / {zar(s.value_nonpromo_lines)} normal</span>
-                    </div>
-                  )}
-                  {/* Board honesty pass (canon v9 item 5): each card states its
-                      own objective in plain terms -- what the code actually
-                      does, not a guess at PM's four-word taxonomy (BUDGET/MAX
-                      PROFIT/BASIC DEMANDS/AVAILABILITY) -- PM owns that exact
-                      copy on the walk. Fitted specifically says "= full need,
-                      no trim required" when full already sits inside budget
-                      (the mechanical reason full==fitted can be legitimate). */}
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)', marginTop: 3, lineHeight: 1.4 }}>
-                    {s.scenario === 'fitted' && Number(s.value_normal) <= Number(s.budget_amount)
-                      ? '= full need, no trim required (already inside budget).'
-                      : SCENARIO_OBJECTIVE[s.scenario]}
-                  </div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)', marginTop: 4 }}>
-                    {s.lines} lines · {s.promo_lines} promo · {s.count_first_lines} count-first (ordered)
-                    {s.trimmed_lines > 0 && ` · ${s.trimmed_lines} trimmed`}
-                  </div>
-                  {/* UX-004: ordered-set count-first (above) is never the whole
-                      pool -- the pool figure rides separately, labelled, so the
-                      two are never read as the same number again. */}
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--veld-mist)', opacity: 0.7, marginTop: 1 }}>
-                    {s.count_first_pool} count-first across the WHOLE POOL (band_blocked, includes lines not ordered)
-                  </div>
-                  <div style={{ marginTop: 8 }}>
-                    <KviPie byKviBandLines={s.by_kvi_band_lines} />
-                  </div>
-                  {s.yardstick_flag === 'DEFECT_SIGNAL' && (
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--data-neg)', marginTop: 4 }}>
-                      DEFECT SIGNAL — {s.yardstick_deviation_pct}% off yardstick
-                    </div>
-                  )}
-                  {/* R29 -- the reason travels with the number, even when there's
-                      no flag (canon v7 item 9 v10 re-anchor: full's deviation is
-                      permanent and expected, never a defect). */}
-                  {s.yardstick_reason && (
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--veld-mist)', opacity: 0.75, marginTop: 3 }}>
-                      {YARDSTICK_REASON_LABEL[s.yardstick_reason] ?? s.yardstick_reason}
-                    </div>
-                  )}
-                  {/* ENG-025 step 2b -- the direct supplier minimum, a FLAG that
-                      never blocks (canon v7 item 7e). Shown only on direct desks
-                      (min_order_value is NULL on DC). Below the minimum the card
-                      says so and shows the shortfall; the buyer decides
-                      (accumulate or send). R29 -- the reason travels. */}
-                  {s.min_order_value != null && (
-                    <div style={{
-                      fontFamily: 'var(--font-mono)', fontSize: 9, marginTop: 3,
-                      color: Number(s.min_shortfall) > 0 ? 'var(--data-warn, #c9a227)' : 'var(--veld-mist)',
-                      opacity: Number(s.min_shortfall) > 0 ? 1 : 0.75,
-                    }}>
-                      {s.min_reason}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-            <p style={{ margin: '10px 0 0', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)' }}>
-              7-day yardstick (canon v7 item 9): {zar(overview[0]?.yardstick_value ?? 0)} · flag never blocks · computed {overview[0]?.computed_at ? new Date(overview[0].computed_at).toLocaleTimeString() : '—'}
-            </p>
-            <p style={{ margin: '4px 0 0', fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--veld-mist)', opacity: 0.75 }}>
-              Pie = ordered-line mix (KVI/Core/Tail by count). Also computed server-side per scenario, not yet visualized here: value by mode (minimum/build/month-end), value by tier (T100/T1000/BOR) — available on the same call (`by_mode`, `by_tier`) for a future breakdown panel.
-            </p>
-          </>
-        )}
+        <StoredOverview data={storedOverview} loading={storedOverviewLoading} error={storedOverviewError} />
       </GlassCard>
 
       {/* SB-CC-BLOOM-008 item 7 -- THE STOCK-STATE INSTRUMENT. Read-only,
