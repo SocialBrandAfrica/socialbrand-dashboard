@@ -442,7 +442,10 @@ body:has(.stk-root) {
   color: var(--charcoal-veld);
 }
 .stk-root .stk-step:not(.stk-step-on):not(.stk-step-done) .stk-stepbtn:disabled {
-  color: var(--veld-mist);
+  /* Veld Mist on Daisy White is about 2:1, too faint to read in a shop. Growth Green at 72% is about 3.2:1
+     and still reads as "not yet". The opacity is the derived part. */
+  color: var(--growth-green);
+  opacity: 0.72;
 }
 .stk-stepno {
   display: inline-flex;

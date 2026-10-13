@@ -32,7 +32,7 @@ export const POST = route(async (request) => {
   let supplier = null
   if (body.supplier !== undefined && body.supplier !== null && body.supplier !== '') {
     const text = String(body.supplier).trim()
-    if (!/^d{1,12}$/.test(text)) throw new StocktakeError('bad_request', 400, 'The supplier must be a number.')
+    if (!/^\d{1,12}$/.test(text)) throw new StocktakeError('bad_request', 400, 'The supplier must be a number.')
     supplier = Number(text)
   }
   if (listType === 'SUPPLIER' && supplier === null) {

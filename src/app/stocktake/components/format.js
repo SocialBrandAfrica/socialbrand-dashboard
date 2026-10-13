@@ -233,7 +233,7 @@ export function describeEvent(e) {
         fmtInt(d.unchanged) +
         ' unchanged, ' +
         fmtInt(d.rejected) +
-        ' skipped.'
+        ' refused.'
       )
     case 'EDIT': {
       const code = d.product_code != null ? String(d.product_code) : 'a line'

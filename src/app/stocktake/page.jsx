@@ -834,7 +834,7 @@ export default function StocktakePage() {
   return (
     <main className="stk-page">
       {body}
-      {notice ? (
+      {notice && !cancelUi.open ? (
         <div className="stk-notice-dock">
           <Notice kind={notice.kind} message={notice.message} action={noticeAction} onClose={() => setNotice(null)} />
         </div>
