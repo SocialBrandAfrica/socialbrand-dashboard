@@ -604,6 +604,7 @@ DECLARE
   v_same integer := 0;
   v_rej jsonb := '[]'::jsonb;
   v_blank integer;
+  v_max numeric;
 BEGIN
   IF auth.uid() IS NULL THEN RAISE EXCEPTION 'not authenticated' USING ERRCODE = '28000'; END IF;
   v_actor := stocktake_actor();
@@ -614,6 +615,8 @@ BEGIN
     RAISE EXCEPTION 'cycle_closed:%', c.status USING ERRCODE = 'P0001';
   END IF;
   v_tol := COALESCE(stocktake_cfg('stocktake_flag_tolerance_pct', c.store_code), 0);
+  v_max := stocktake_cfg('stocktake_count_max_qty', c.store_code);
+  IF v_max IS NULL THEN RAISE EXCEPTION 'count ceiling config missing'; END IF;
 
   FOR r IN SELECT * FROM jsonb_to_recordset(p_lines) AS x(line_id bigint, front numeric, back numeric, clear boolean) LOOP
     SELECT * INTO l FROM stocktake_cycle_line WHERE line_id = r.line_id AND cycle_id = p_cycle FOR UPDATE;
@@ -623,6 +626,10 @@ BEGIN
     END IF;
     IF COALESCE(r.front, 0) < 0 OR COALESCE(r.back, 0) < 0 THEN
       v_rej := v_rej || jsonb_build_object('line_id', r.line_id, 'reason', 'a count cannot be negative');
+      CONTINUE;
+    END IF;
+    IF COALESCE(r.front, 0) > v_max OR COALESCE(r.back, 0) > v_max THEN
+      v_rej := v_rej || jsonb_build_object('line_id', r.line_id, 'reason', 'a count above ' || trim_scale(v_max)::text || ' is not accepted, check the box and the scanner');
       CONTINUE;
     END IF;
 

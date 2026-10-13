@@ -1,0 +1,856 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,800&family=Geist+Mono:wght@400;500;600&family=Geist:wght@300;400;500;600;700&family=Inter:wght@500;600;700&family=Roboto:wght@400;500;700&display=swap');
+
+/* =============================================================================
+   Stocktake count app (SB-CC-STOCKTAKE-001). Light, tablet readable, quiet.
+   Built from the SocialBrand Brand Bible Appendix A and C (tokens are dark first,
+   this is the LIGHT mapping): page Daisy White, cards white, ink Charcoal Veld,
+   captions Growth Green, primary Core Yellow with Charcoal text, secondary Growth
+   Green with Daisy White text, selected and hover fill Veld Green at 8% alpha.
+   Every colour is declared once, here. A colour with no Appendix A token carries
+   the stk- prefix and the DERIVED comment so PM and CD can find it.
+   ============================================================================= */
+:root {
+  /* Brand tokens, Appendix A, same values as the shared block */
+  --charcoal-veld: #121612;
+  --veld-green: #1e3f20;
+  --growth-green: #4a6b53;
+  --core-yellow: #ffd100;
+  --daisy-white: #f9fbf7;
+  --veld-mist: #a8b5a8;
+
+  /* Type and shape, Appendix A */
+  --font-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-ui: 'Geist', system-ui, -apple-system, sans-serif;
+  --radius-card: 16px;
+  --radius-chip: 8px;
+  --hover-duration: 150ms;
+
+  /* Light mapping of the dark tokens */
+  --stk-card: #ffffff; /* DERIVED, not in Appendix A, flag to PM/CD */
+  --stk-line: rgba(18, 22, 18, 0.12); /* DERIVED, not in Appendix A, flag to PM/CD */
+  --stk-input-line: rgba(18, 22, 18, 0.5); /* DERIVED, not in Appendix A, flag to PM/CD */
+  --stk-select: rgba(30, 63, 32, 0.08); /* DERIVED, not in Appendix A, flag to PM/CD. Veld Green at 8% alpha, the alpha is the derived part */
+  --stk-negative: #b3261e; /* DERIVED, not in Appendix A, flag to PM/CD. Leak Red #EF5350 is too light for text on white */
+  --stk-negative-wash: rgba(179, 38, 30, 0.08); /* DERIVED, not in Appendix A, flag to PM/CD */
+  --stk-shadow: 0 8px 32px rgba(18, 22, 18, 0.14); /* DERIVED, not in Appendix A, flag to PM/CD. The light form of the glass shadow */
+}
+
+/* Paint the body behind the page so no dark edge shows on overscroll. The :has() form
+   outranks the root layout's body utility class and stays inside this app. */
+html:has(.stk-root),
+body:has(.stk-root) {
+  background-color: var(--daisy-white);
+  color: var(--charcoal-veld);
+}
+
+.stk-root {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background-color: var(--daisy-white);
+  color: var(--charcoal-veld);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  color-scheme: light;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+.stk-root *,
+.stk-root *::before,
+.stk-root *::after {
+  box-sizing: border-box;
+}
+
+.stk-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 16px 112px;
+}
+
+/* ---- type ---------------------------------------------------------------- */
+.stk-h1 {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 4px 0 2px;
+  color: var(--charcoal-veld);
+}
+.stk-h2 {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0 0 8px;
+  color: var(--charcoal-veld);
+}
+.stk-h3 {
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 600;
+  margin: 16px 0 8px;
+  color: var(--charcoal-veld);
+}
+.stk-note {
+  font-size: 14px;
+  margin: 0 0 8px;
+  color: var(--charcoal-veld);
+}
+.stk-caption {
+  font-size: 13px;
+  margin: 0 0 6px;
+  color: var(--growth-green);
+}
+.stk-code {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--growth-green);
+  font-variant-numeric: tabular-nums;
+}
+.stk-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.stk-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.stk-neg {
+  color: var(--stk-negative);
+}
+.stk-nowrap {
+  white-space: nowrap;
+}
+.stk-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- focus: 3px Core Yellow plus a 1px Charcoal outline (yellow alone is weak on white) ---- */
+.stk-root :focus-visible {
+  outline: 1px solid var(--charcoal-veld);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px var(--core-yellow);
+}
+.stk-filebtn:focus-within {
+  outline: 1px solid var(--charcoal-veld);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px var(--core-yellow);
+}
+
+/* ---- buttons and links --------------------------------------------------- */
+.stk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-chip);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  transition: box-shadow var(--hover-duration) ease-out, background-color var(--hover-duration) ease-out;
+}
+.stk-root .stk-btn-primary {
+  background-color: var(--core-yellow);
+  color: var(--charcoal-veld);
+  border-color: var(--charcoal-veld);
+}
+.stk-root .stk-btn-secondary {
+  background-color: var(--growth-green);
+  color: var(--daisy-white);
+  border-color: var(--growth-green);
+}
+.stk-root .stk-btn-danger {
+  background-color: var(--stk-card);
+  color: var(--stk-negative);
+  border-color: var(--stk-negative);
+}
+.stk-btn:hover:not(:disabled):not(.stk-disabled) {
+  box-shadow: inset 0 0 0 999px var(--stk-select);
+}
+.stk-btn:disabled,
+.stk-btn.stk-disabled {
+  background-color: var(--stk-select);
+  color: var(--growth-green);
+  border-color: var(--stk-line);
+  cursor: not-allowed;
+}
+.stk-root .stk-link {
+  display: inline;
+  padding: 12px 4px;
+  margin: -12px -4px;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: 14px;
+  color: var(--growth-green);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  text-align: left;
+}
+.stk-root .stk-link:hover {
+  color: var(--charcoal-veld);
+}
+.stk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+/* ---- fields -------------------------------------------------------------- */
+.stk-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 200px;
+}
+.stk-label {
+  font-size: 13px;
+  color: var(--growth-green);
+}
+.stk-input,
+.stk-select {
+  min-height: 44px;
+  padding: 0 12px;
+  background-color: var(--stk-card);
+  color: var(--charcoal-veld);
+  border: 1px solid var(--stk-input-line);
+  border-radius: var(--radius-chip);
+  font-family: var(--font-ui);
+  font-size: 16px;
+}
+.stk-select {
+  padding-right: 8px;
+}
+.stk-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.stk-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font-size: 16px;
+  cursor: pointer;
+}
+.stk-toggle input {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--growth-green);
+}
+.stk-filebtn {
+  position: relative;
+  overflow: hidden;
+}
+.stk-fileinput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* ---- sections, cards ------------------------------------------------------ */
+.stk-section {
+  margin-top: 24px;
+  scroll-margin-top: 120px;
+}
+.stk-homehead {
+  padding: 24px 0 8px;
+}
+.stk-storelist,
+.stk-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+}
+.stk-root .stk-storecard {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-height: 96px;
+  padding: 16px;
+  text-align: left;
+  background-color: var(--stk-card);
+  color: var(--charcoal-veld);
+  border: 1px solid var(--stk-line);
+  border-radius: var(--radius-card);
+  cursor: pointer;
+  transition: background-color var(--hover-duration) ease-out;
+}
+.stk-root .stk-storecard:hover {
+  background-color: var(--stk-select);
+}
+.stk-storename {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.stk-statusline {
+  font-size: 14px;
+  color: var(--growth-green);
+}
+.stk-card {
+  padding: 16px;
+  background-color: var(--stk-card);
+  border: 1px solid var(--stk-line);
+  border-radius: var(--radius-card);
+}
+.stk-card-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 2px;
+}
+.stk-progress-text {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.stk-genlist {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+.stk-genrow {
+  padding: 12px 16px;
+  background-color: var(--stk-card);
+  border: 1px solid var(--stk-line);
+  border-radius: var(--radius-card);
+}
+.stk-genaction {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+.stk-genrow .stk-caption {
+  margin: 8px 0 0;
+}
+
+/* ---- the store header and tabs ------------------------------------------- */
+.stk-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin: 0 -16px;
+  padding: 8px 16px 10px;
+  background-color: var(--daisy-white);
+  border-bottom: 1px solid var(--stk-line);
+}
+.stk-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 24px;
+}
+.stk-header .stk-caption {
+  margin: 0;
+}
+.stk-saved {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--growth-green);
+  white-space: nowrap;
+}
+.stk-saved:empty {
+  display: none;
+}
+.stk-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 8px 0 16px;
+  border-bottom: 1px solid var(--stk-line);
+}
+.stk-root .stk-tab {
+  min-height: 44px;
+  padding: 0 18px;
+  background: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--growth-green);
+  cursor: pointer;
+}
+.stk-root .stk-tab-on {
+  color: var(--charcoal-veld);
+  border-bottom-color: var(--charcoal-veld);
+}
+.stk-backline,
+.stk-cancel-line {
+  margin: 0 0 8px;
+}
+.stk-cancel-line {
+  margin-top: 32px;
+}
+.stk-progress {
+  margin: 8px 0 0;
+}
+.stk-bar {
+  height: 6px;
+  background-color: var(--stk-line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.stk-bar-fill {
+  height: 100%;
+  background-color: var(--growth-green);
+  transition: width var(--hover-duration) ease-out;
+}
+.stk-tablehead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 16px;
+  margin-bottom: 4px;
+}
+.stk-tablehead .stk-h2 {
+  margin: 0;
+}
+
+/* ---- the count table: quiet, department sections, no chips ---------------- */
+.stk-tablewrap {
+  margin-top: 8px;
+  background-color: var(--stk-card);
+  border: 1px solid var(--stk-line);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+.stk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.stk-table th {
+  padding: 10px 12px;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--growth-green);
+  border-bottom: 1px solid var(--stk-line);
+}
+.stk-table th.stk-num {
+  text-align: right;
+}
+.stk-table td {
+  padding: 4px 12px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--stk-line);
+}
+.stk-table tr.stk-dept th {
+  padding: 16px 12px 6px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--growth-green);
+  background-color: var(--daisy-white);
+  border-bottom: 1px solid var(--stk-line);
+}
+.stk-row {
+  height: 52px;
+  scroll-margin-top: 140px;
+  cursor: pointer;
+}
+.stk-row:hover,
+.stk-row-open {
+  background-color: var(--stk-select);
+}
+.stk-c-code {
+  width: 84px;
+  white-space: nowrap;
+}
+.stk-c-bar {
+  width: 170px;
+  word-break: break-all;
+}
+.stk-c-size {
+  width: 96px;
+}
+.stk-c-sys {
+  width: 104px;
+  text-align: right;
+}
+.stk-c-count {
+  width: 132px;
+  text-align: right;
+}
+.stk-c-desc {
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+.stk-root .stk-desc-btn {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 0;
+  background: none;
+  border: 0;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--charcoal-veld);
+  text-align: left;
+  cursor: pointer;
+}
+.stk-sub {
+  display: block;
+  margin: -4px 0 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--growth-green);
+  overflow-wrap: anywhere;
+}
+.stk-sub-line {
+  display: block;
+}
+.stk-kind {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--growth-green);
+}
+.stk-narrow-only {
+  display: none;
+}
+.stk-countwrap {
+  position: relative;
+  display: inline-block;
+  padding-right: 20px;
+}
+.stk-table .stk-input {
+  width: 96px;
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  scroll-margin-top: 140px;
+  scroll-margin-bottom: 48px;
+}
+.stk-table .stk-input[aria-invalid='true'] {
+  border-color: var(--stk-negative);
+}
+.stk-saved-mark {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  color: var(--growth-green);
+}
+.stk-readcount {
+  display: inline-block;
+  padding-right: 20px;
+}
+.stk-under {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--growth-green);
+  text-align: right;
+  padding-right: 20px;
+}
+.stk-under-error {
+  color: var(--stk-negative);
+}
+.stk-under-error .stk-link {
+  font-size: 12px;
+  color: var(--stk-negative);
+}
+.stk-story-row td {
+  padding: 8px 12px 12px;
+  background-color: var(--stk-select);
+}
+.stk-story {
+  margin: 2px 0;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--growth-green);
+}
+
+/* ---- messages ------------------------------------------------------------- */
+.stk-notice-dock {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.stk-notice {
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  width: 100%;
+  max-width: 720px;
+  padding: 12px 16px;
+  background-color: var(--stk-card);
+  color: var(--charcoal-veld);
+  border: 1px solid var(--stk-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--stk-shadow);
+}
+.stk-notice-error {
+  background-image: linear-gradient(var(--stk-negative-wash), var(--stk-negative-wash));
+  border-color: var(--stk-negative);
+}
+.stk-notice-text {
+  margin: 0;
+  font-size: 15px;
+  flex: 1 1 240px;
+}
+.stk-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.stk-block {
+  margin: 12px 0;
+  padding: 12px 16px;
+  background-color: var(--stk-card);
+  background-image: linear-gradient(var(--stk-negative-wash), var(--stk-negative-wash));
+  border: 1px solid var(--stk-negative);
+  border-radius: var(--radius-card);
+}
+.stk-block-text {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--stk-negative);
+}
+.stk-blocklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.stk-blocklist li {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  border-top: 1px solid var(--stk-line);
+}
+.stk-blocklist .stk-link {
+  display: block;
+  width: 100%;
+  padding: 12px 4px;
+  margin: 0;
+  text-decoration: none;
+  color: var(--charcoal-veld);
+  font-size: 14px;
+}
+.stk-blocklist .stk-link:hover {
+  background-color: var(--stk-select);
+}
+.stk-result {
+  margin-top: 12px;
+}
+.stk-skiplist {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 13px;
+  color: var(--growth-green);
+}
+
+/* ---- variance review ------------------------------------------------------ */
+.stk-vr {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.stk-vr-item {
+  padding: 16px;
+  background-color: var(--stk-card);
+  border: 1px solid var(--stk-line);
+  border-radius: var(--radius-card);
+  scroll-margin-top: 120px;
+}
+.stk-vr-head {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.stk-vr-head .stk-mono {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--growth-green);
+}
+.stk-figs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px 16px;
+  margin: 8px 0 4px;
+}
+.stk-fig dt {
+  font-size: 12px;
+  color: var(--growth-green);
+}
+.stk-fig dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  text-align: left;
+}
+.stk-confirmed {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin: 0;
+  font-size: 14px;
+  color: var(--growth-green);
+}
+
+/* ---- history -------------------------------------------------------------- */
+.stk-scroll {
+  overflow-x: auto;
+  background-color: var(--stk-card);
+  border: 1px solid var(--stk-line);
+  border-radius: var(--radius-card);
+}
+.stk-plain {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.stk-plain th {
+  padding: 10px 12px;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--growth-green);
+  border-bottom: 1px solid var(--stk-line);
+  white-space: nowrap;
+}
+.stk-plain th.stk-num {
+  text-align: right;
+}
+.stk-plain td {
+  padding: 8px 12px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--stk-line);
+}
+.stk-plain td.stk-mono {
+  font-size: 13px;
+}
+.stk-selected {
+  background-color: var(--stk-select);
+}
+.stk-root .stk-cyclebtn {
+  padding: 12px 0;
+  margin: -12px 0;
+  font-size: 14px;
+  color: var(--charcoal-veld);
+  font-weight: 600;
+}
+.stk-eventlog {
+  margin-top: 12px;
+}
+
+/* ---- narrow: 390px, no horizontal page scroll ----------------------------- */
+@media (max-width: 719px) {
+  .stk-c-bar,
+  .stk-c-size {
+    display: none;
+  }
+  .stk-narrow-only {
+    display: block;
+  }
+  .stk-table td,
+  .stk-table th {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .stk-c-code {
+    width: 64px;
+  }
+  .stk-c-sys {
+    width: 60px;
+  }
+  .stk-c-count {
+    width: 112px;
+  }
+  .stk-table .stk-input {
+    width: 76px;
+    padding: 0 8px;
+  }
+  .stk-actions .stk-btn {
+    flex: 1 1 100%;
+  }
+  .stk-genaction .stk-btn {
+    flex: 1 1 100%;
+  }
+  .stk-genaction .stk-field {
+    flex: 1 1 100%;
+  }
+  .stk-select {
+    width: 100%;
+  }
+  .stk-saved {
+    font-size: 12px;
+  }
+  .stk-sub {
+    font-size: 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stk-root * {
+    transition-duration: 0.01ms !important;
+  }
+}

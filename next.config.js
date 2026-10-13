@@ -1,5 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // exceljs (the stocktake count sheets and uploads, SB-CC-STOCKTAKE-001) leans on Node streams, zlib and
+  // dynamic requires. Leave it as a runtime require on the server, never bundled by webpack.
+  experimental: {
+    serverComponentsExternalPackages: ['exceljs'],
+  },
   // xlsx uses Node.js built-ins that don't exist in Edge runtime.
   // Marking it as an external for server components, and it's only
   // used in a 'use client' component so this is just for safety.

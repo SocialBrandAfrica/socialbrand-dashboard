@@ -13,6 +13,7 @@ export const APP_NAME = {
   pulse: 'SocialBrand Pulse',
   bloom: 'Bloom',
   forge: 'Forge — Operations Toolkit',
+  stocktake: 'SocialBrand Stocktake',
 }
 
 // Host prefix (the part before the first dot) to app. The prefixes are the ones
@@ -20,6 +21,7 @@ export const APP_NAME = {
 const HOST_APP = {
   orders: 'bloom',
   toolkit: 'forge',
+  stocktake: 'stocktake',
 }
 
 export function appForHost(host) {
