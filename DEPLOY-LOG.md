@@ -12,6 +12,16 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-10-13 16:3x SAST -- BLOOM-035 ITEM 9 (ENG-233): THE SCENARIO CARDS ARE BACK ON EVERY DESK, FROM THE STORED ORDERS
+
+**Clock:** written 2026-10-13 16:3x +0200. Vercel status `success` on `0b6e3da` read 16:34.
+
+**Ship.** Migration `rpc_bloom_stored_overview_bloom035_item9` (new read-only function, source `sql/create_rpc_bloom_stored_overview.sql`, GRADE: RECOMMENDED, anon and authenticated EXECUTE) and dashboard `0b6e3da`. `src/app/bloom/StoredOverview.jsx` renders what the function returns. `OVERVIEW_ENABLED`, its held message, the per-scenario loop and the old card markup are removed, so nothing calls `rpc_bloom_scenario_overview` any more. No recipe runs from the page, no order quantity moves. Rollback: `DROP FUNCTION public.rpc_bloom_stored_overview(text, text, date, date, text, numeric)` and revert `0b6e3da`.
+
+**Read back through the anon API, 16:3x, five stores, one DC desk and one brand or SAB desk each:** all 20 card values equal `sum(suggested_packs * pack_cost)` on the stored order to the cent, line counts equal, every DC benchmark and anchor equals the cache row. Weekly verdicts: 10116 WITHIN -16.8%, 21355 WITHIN +15.8%, 80579 FLAG +24.2%, 80175 and 80176 NOT JUDGED (the night job stores one drop per DC desk, so the week's second drop has no stored order). In-database cost 17 ms on a brand desk, 457 ms on 10116 DC ambient. The signed-in /bloom page text is not read: no Chrome connected to this session. BUG-LOG ENG-233.
+
+---
+
 ## 2026-10-13 16:2x SAST -- BLOOM-035 ITEM 8 (ENG-232): EACH APP'S BROWSER TAB CARRIES ITS OWN NAME
 
 **Clock:** written 2026-10-13 16:2x +0200. Vercel status `success` on `94a88bc` read 16:19.
