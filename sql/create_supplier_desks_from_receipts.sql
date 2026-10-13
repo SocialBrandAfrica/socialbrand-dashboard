@@ -25,8 +25,9 @@
 --
 -- v1.0, APPLIED 13-10-2026 (migration supplier_desks_from_receipts_bloom035_item1). Run once, at 80579, it wrote a
 -- 13-week and a 20-week cycle from two receipts each. One gap is not a cycle. Those two test desks were removed.
--- The fix, v1.1, is sql/pending_supplier_desks_min_cadence_gaps.sql, NOT APPLIED: waiting on Pieter's permission.
--- Do not run refresh_supplier_desks until v1.1 is live (BUG-LOG ENG-234).
+-- v1.1 APPLIED 14-10-2026 (migration bloom035_item1_v11_cadence_catchall, 20261013215051): the cadence fix, the catch-all exception
+-- and the stock gate. Its source of record is sql/bloom035_item1_v11_cadence_catchall.sql, which replaces this file's
+-- refresh_supplier_desks. The v1.0 function below is kept for history only (BUG-LOG ENG-234).
 --
 -- Rollback: DROP FUNCTION refresh_supplier_desks(text), refresh_l2_world_assignment(text);
 --   DROP TABLE l2_world_assignment; DELETE the desks this wrote (bloom_route_config /

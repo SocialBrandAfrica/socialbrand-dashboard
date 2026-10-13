@@ -1,20 +1,55 @@
 -- =============================================================================
--- PENDING, NOT APPLIED -- 13-10-2026 (BLOOM-035 item 1, BUG-LOG ENG-234)
--- v1.1 of refresh_supplier_desks. The auto-mode classifier denied this migration on 13-10-2026,
--- so it waits for Pieter's permission. sql/create_supplier_desks_from_receipts.sql is what is live.
+-- BLOOM-035 ITEM 1, v1.1 -- DESKS FROM THE RECEIPTS: THE CADENCE FIX, THE CATCH-ALL EXCEPTION,
+-- THE STOCK GATE (BUG-LOG ENG-234). Replaces sql/pending_supplier_desks_min_cadence_gaps.sql.
 --
--- The change: a cadence is derived only when rpc_derive_supplier_cadence holds at least
--- desk_min_cadence_gaps (3, SEED, UNDERIVED) usable gaps. Below that the desk carries the weekdays
--- the supplier delivered on, weekly, flagged VERIFY (ORDERING-CANON A5: doubt resolves weekly).
--- v1.0 wrote a 13-week and a 20-week cycle from two receipts each, which is a guess.
+-- Three changes to refresh_supplier_desks (v1.0 is sql/create_supplier_desks_from_receipts.sql):
 --
--- Apply as migration name: supplier_desks_min_cadence_gaps_bloom035_item1
+-- 1. THE CADENCE FIX (the pending file's change). A cycle is stated only when
+--    rpc_derive_supplier_cadence holds at least desk_min_cadence_gaps (3, SEED, UNDERIVED) usable
+--    gaps. Below that the desk carries the weekdays the supplier delivered on, weekly, flagged
+--    VERIFY (ORDERING-CANON A5: doubt resolves weekly). v1.0 wrote a 13-week and a 20-week cycle
+--    from two receipts each, which is a guess.
+--
+-- 2. THE CATCH-ALL EXCEPTION (PM ruling A3, 13-10-2026 21:55, inside Pieter's R7). ALGEMEEN,
+--    VARIOUS SINGLES and LOCAL GENERAL are accounts that stock is booked against, not suppliers.
+--    They get no DIRECT_S desk. Their World 1 lines belong on the store's consolidated desk
+--    (ENG-202), grouped by the receiving account. The names are the ruling, held in
+--    bloom_catchall_account (a ruled list, not code), and matched per store by name because Sigma
+--    numbers the same account differently at each store (ENG-203). A name also matches when it is the
+--    ruled name followed by a space and more words (80175 holds both LOCAL GENERAL and
+--    LOCAL GENERAL SUPPLIER).
+--
+-- 3. THE STOCK GATE (PM ruling A4, expenses on no desk). A supplier earns a desk only through a
+--    product of class NORMAL (l2_stock_position.class, the World 1 test the count pool uses,
+--    R33). A supplier whose latest-received products are all NON_STOCK is an expense account.
+--
+-- RUN ORDER: this migration, then refresh_supplier_desks for the five stores. Never the other way
+-- round (ENG-234). Apply as: bloom035_item1_v11_cadence_catchall
+-- ROLLBACK: restore refresh_supplier_desks from sql/create_supplier_desks_from_receipts.sql, DROP
+-- TABLE bloom_catchall_account, retire the config key.
 -- =============================================================================
 
 INSERT INTO public.forge_config (config_key, store_format, value_num, scope, effective_from, notes) VALUES
  ('desk_min_cadence_gaps', '*', 3, 'DEMO_CALIBRATION', DATE '2026-10-13',
-  'SEED, UNDERIVED. Usable receipt gaps rpc_derive_supplier_cadence needs before a derived cycle is written to a desk made by refresh_supplier_desks. Two receipts give one gap and a 13-week cycle, which is a guess. Created 13-10-2026 (BLOOM-035 item 1). Derivation owed.')
+  'SEED, UNDERIVED. Usable receipt gaps rpc_derive_supplier_cadence needs before a derived cycle is written to a desk made by refresh_supplier_desks. Two receipts give one gap and a 13-week cycle, which is a guess. Decides only whether a cycle is derived or the desk is flagged VERIFY, never whether a desk exists (PM ruling A2, 13-10-2026). Created 13-10-2026 (BLOOM-035 item 1). Derivation owed.')
 ON CONFLICT (config_key, store_format) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS public.bloom_catchall_account (
+  account_name text PRIMARY KEY,
+  ruled_on     date NOT NULL,
+  ruling       text NOT NULL
+);
+ALTER TABLE public.bloom_catchall_account ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.bloom_catchall_account FROM PUBLIC, anon, authenticated;
+GRANT ALL ON public.bloom_catchall_account TO service_role;
+COMMENT ON TABLE public.bloom_catchall_account IS
+'GRADE: RAW. The catch-all accounts: names Sigma books stock against that are not suppliers (PM ruling A3 of BLOOM-035, 13-10-2026, inside Pieter''s R7 of 15:05, he can veto any line). refresh_supplier_desks makes no DIRECT_S desk for them. Matched per store by upper-cased name, exact or followed by a space and more words. Their World 1 lines go on the store consolidated desk (ENG-202).';
+
+INSERT INTO public.bloom_catchall_account (account_name, ruled_on, ruling) VALUES
+ ('ALGEMEEN',        DATE '2026-10-13', 'BLOOM-035 v1.6 ruling A3, PM 21:55: a catch-all account, not a supplier. Consolidated desk, ENG-202.'),
+ ('VARIOUS SINGLES', DATE '2026-10-13', 'BLOOM-035 v1.6 ruling A3, PM 21:55: a catch-all account, not a supplier. Consolidated desk, ENG-202.'),
+ ('LOCAL GENERAL',   DATE '2026-10-13', 'BLOOM-035 v1.6 ruling A3, PM 21:55: a catch-all account, not a supplier. Consolidated desk, ENG-202.')
+ON CONFLICT (account_name) DO NOTHING;
 
 CREATE OR REPLACE FUNCTION public.refresh_supplier_desks(p_store_code text DEFAULT NULL)
 RETURNS jsonb
@@ -33,6 +68,7 @@ DECLARE
   v_created   int;
   v_derived   int;
   v_fallback  int;
+  v_catchall  int;
   v_rank      int;
   v_dows      int[];
   v_note      text;
@@ -49,7 +85,15 @@ BEGIN
   FOR v_store IN SELECT s.store_code FROM stores s WHERE s.is_active AND (p_store_code IS NULL OR s.store_code = p_store_code) ORDER BY 1 LOOP
     PERFORM public.refresh_l2_world_assignment(v_store);
     SELECT max(movement_date) INTO v_wm FROM sigma_movements WHERE store_code = v_store;
-    v_created := 0; v_derived := 0; v_fallback := 0; v_rank := 0;
+    v_created := 0; v_derived := 0; v_fallback := 0; v_catchall := 0; v_rank := 0;
+
+    -- the catch-all accounts the receipts name at this store (counted for the report, never given a desk)
+    SELECT count(DISTINCT sm.supplier_nr)::int INTO v_catchall
+      FROM sigma_supplier_master sm
+      JOIN bloom_catchall_account ca ON upper(btrim(sm.name)) = ca.account_name OR upper(btrim(sm.name)) LIKE ca.account_name || ' %'
+     WHERE sm.store_code = v_store
+       AND EXISTS (SELECT 1 FROM sigma_movements m WHERE m.store_code = v_store AND m.supplier_nr = sm.supplier_nr
+                    AND m.movement_type IN ('R','W') AND m.qty > 0 AND m.movement_date > v_wm - v_win AND m.movement_date <= v_wm);
 
     FOR r IN
       WITH rec AS (
@@ -72,10 +116,13 @@ BEGIN
         FROM latest l
         JOIN typ t  ON t.supplier_nr = l.supplier_nr
         JOIN cost c ON c.supplier_nr = l.supplier_nr
+        JOIN l2_stock_position sp ON sp.store_code = v_store AND sp.product_code = l.product_code AND sp.class = 'NORMAL'
         LEFT JOIN l2_world_assignment w ON w.store_code = v_store AND w.product_code = l.product_code AND w.world = 'WORLD_2'
        WHERE t.supplier_type IS DISTINCT FROM 'Z'
          AND w.product_code IS NULL
          AND NOT EXISTS (SELECT 1 FROM bloom_route_config rc WHERE rc.store_code = v_store AND l.supplier_nr = ANY (rc.direct_supplier_nrs))
+         AND NOT EXISTS (SELECT 1 FROM bloom_catchall_account ca
+                          WHERE upper(btrim(t.nm)) = ca.account_name OR upper(btrim(t.nm)) LIKE ca.account_name || ' %')
        GROUP BY l.supplier_nr, t.nm, t.supplier_type, c.recv_cost
        ORDER BY c.recv_cost DESC, l.supplier_nr
     LOOP
@@ -95,6 +142,7 @@ BEGIN
       v_created := v_created + 1;
 
       -- the ledger's own cadence where it holds enough drops to state one
+      v_gaps := NULL;
       SELECT d.gaps_used INTO v_gaps FROM public.rpc_derive_supplier_cadence(v_store, v_key) d LIMIT 1;
       IF COALESCE(v_gaps, 0) >= v_min_gaps THEN
         PERFORM 1 FROM refresh_supplier_calendar(v_store, v_key);
@@ -123,7 +171,7 @@ BEGIN
     END LOOP;
 
     v_out := v_out || jsonb_build_array(jsonb_build_object('store_code', v_store, 'desks_created', v_created,
-              'cadence_derived', v_derived, 'cadence_verify', v_fallback, 'watermark', v_wm));
+              'cadence_derived', v_derived, 'cadence_verify', v_fallback, 'catchall_accounts_skipped', v_catchall, 'watermark', v_wm));
     v_tot := v_tot + v_created;
   END LOOP;
 
@@ -132,3 +180,8 @@ END
 $fn$;
 REVOKE EXECUTE ON FUNCTION public.refresh_supplier_desks(text) FROM PUBLIC, anon;
 GRANT  EXECUTE ON FUNCTION public.refresh_supplier_desks(text) TO authenticated, service_role;
+
+COMMENT ON FUNCTION public.refresh_supplier_desks(text) IS
+'GRADE: RECOMMENDED. BLOOM-035 item 1 (R7), v1.1. A desk for every supplier that delivered a non-World-2 product of class NORMAL in the desk_receipt_window_days, derived from the receipt ledger, never typed: bloom_route_config DIRECT_S<supplier_nr> + supplier_calendar (cadence derived with at least desk_min_cadence_gaps usable gaps, otherwise the delivered weekdays, weekly, flagged VERIFY). Never deletes a desk. DC suppliers (type Z) already have theirs. The catch-all accounts (bloom_catchall_account) and expense accounts (no NORMAL product) get no desk. World 2 inputs (l2_world_assignment, ENG-020) go to the production desk.';
+
+SELECT pg_notify('pgrst', 'reload schema');
