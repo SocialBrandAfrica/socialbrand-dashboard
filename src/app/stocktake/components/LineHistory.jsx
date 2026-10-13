@@ -1,9 +1,10 @@
+import LoadError from './LoadError'
 import { fmtDay, fmtPct, fmtQty, fmtRand, fmtSigned, listName } from './format'
 
 // props: value (the product code box text), onValueChange(text), onLookup(), busy (string or null),
 //        result ({ app, ledger } from rpc_stocktake_line_history or null), product (the code that was looked up),
-//        message (a plain error sentence or '')
-export default function LineHistory({ value, onValueChange, onLookup, busy, result, product, message }) {
+//        message (a plain error sentence or ''), signIn (the message is a sign-in that ended), onSignIn()
+export default function LineHistory({ value, onValueChange, onLookup, busy, result, product, message, signIn, onSignIn }) {
   const app = result && Array.isArray(result.app) ? result.app : []
   const ledger = result && Array.isArray(result.ledger) ? result.ledger : []
   return (
@@ -33,7 +34,8 @@ export default function LineHistory({ value, onValueChange, onLookup, busy, resu
           {busy === 'linehistory' ? 'Working' : 'Show history'}
         </button>
       </form>
-      {message ? (
+      {message && signIn ? <LoadError message={message} signIn onSignIn={onSignIn} /> : null}
+      {message && !signIn ? (
         <p className="stk-note stk-neg" role="alert">
           {message}
         </p>

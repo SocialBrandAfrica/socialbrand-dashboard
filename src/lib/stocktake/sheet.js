@@ -17,6 +17,7 @@
 
 import ExcelJS from 'exceljs'
 import { parseLineId, parseQty } from './qty.js'
+import { duplicateLineSentence } from './reasons.js'
 
 const HEADER_FILL = 'FFE0E0E0'
 const THIN = { style: 'thin' }
@@ -282,26 +283,40 @@ function shown(v) {
   return s.length > 20 ? s.slice(0, 20) + '...' : s
 }
 
-// Reads one box. Returns { empty } | { value } | { reject: '<sentence>' }.
-function readBox(raw, label, where) {
+// Reads one box. Returns { empty } | { value } | { reject: '<bare sentence>' }.
+// A reason never carries the tab or the row. The route sends those as their own fields.
+function readBox(raw, label) {
   const plain = cellPlain(raw)
   if (plain && typeof plain === 'object') {
-    return { reject: `${where}: the ${label} box holds ${plain.unreadable}, which is not a number.` }
+    return { reject: `the ${label} box holds ${plain.unreadable}, which is not a number.` }
   }
   const q = parseQty(plain)
   if (q.empty) return { empty: true }
   if (q.bad) {
-    return { reject: `${where}: the ${label} box holds "${shown(raw)}", which ${q.bad}.` }
+    // A refusal that comes with its own whole sentence (the thousands comma) is used as it is.
+    return { reject: q.refusal || `the ${label} box holds "${shown(raw)}", which ${q.bad}.` }
   }
   return { value: q.value }
+}
+
+// What one box sends. A box that holds a number sends it. A blank box in a row that has
+// the other box filled sends 0, so the sheet replaces the stored pair (Front 3, Back 0 is
+// what the sheet shows). A box with no column on the tab sends null and leaves the stored
+// value alone, because that sheet never showed it.
+function boxToSend(box) {
+  if (box.value !== undefined) return box.value
+  return box.absent ? null : 0
 }
 
 // buffer: the uploaded .xlsx. Returns
 //   lines      [{line_id, front, back}]   what to send to rpc_stocktake_capture
 //   sources    [{tab, row}]               where each line came from (same order)
-//   rejected   [{line_id?, row, tab, reason}]
+//   rejected   [{line_id?, row, tab, reason}]   reason is a bare sentence
 //   rows_seen  rows with a numeric LineId
 //   tabs_read  tabs that carry a LineId header (0 means: not a count sheet)
+//
+// A row with a box filled sends BOTH boxes, a blank one as 0. A row with both boxes blank
+// is not sent. The later of two rows with the same LineId is rejected, never sent.
 export async function parseCountUpload(buffer) {
   const wb = new ExcelJS.Workbook()
   await wb.xlsx.load(buffer)
@@ -311,6 +326,8 @@ export async function parseCountUpload(buffer) {
   const rejected = []
   let rowsSeen = 0
   let tabsRead = 0
+  // The first row that carried each LineId, across every tab of the file.
+  const firstSeen = new Map()
 
   wb.eachSheet((ws) => {
     const header = findHeader(ws)
@@ -319,7 +336,7 @@ export async function parseCountUpload(buffer) {
     const { cols } = header
 
     if (!cols.front && !cols.back) {
-      rejected.push({ row: header.row, tab: ws.name, reason: `${ws.name}: this tab has no Front or Back column, so it was not read.` })
+      rejected.push({ row: header.row, tab: ws.name, reason: 'this tab has no Front or Back column, so it was not read.' })
       return
     }
 
@@ -328,26 +345,29 @@ export async function parseCountUpload(buffer) {
       const id = parseLineId(cellPlain(row.getCell(cols.lineId).value))
       if (id.none) return
       rowsSeen += 1
-      const where = `${ws.name} row ${r}`
       if (id.bad) {
-        rejected.push({ row: r, tab: ws.name, reason: `${where}: ${id.bad}` })
+        rejected.push({ row: r, tab: ws.name, reason: id.bad })
         return
       }
 
-      const front = cols.front ? readBox(row.getCell(cols.front).value, 'Front', where) : { empty: true }
-      const back = cols.back ? readBox(row.getCell(cols.back).value, 'Back', where) : { empty: true }
+      // One line goes in once. The later row is refused and never sent.
+      const first = firstSeen.get(id.id)
+      if (first) {
+        rejected.push({ line_id: id.id, row: r, tab: ws.name, reason: duplicateLineSentence(first.row, first.tab) })
+        return
+      }
+      firstSeen.set(id.id, { tab: ws.name, row: r })
+
+      const front = cols.front ? readBox(row.getCell(cols.front).value, 'Front') : { absent: true }
+      const back = cols.back ? readBox(row.getCell(cols.back).value, 'Back') : { absent: true }
       const problem = front.reject || back.reject
       if (problem) {
         rejected.push({ line_id: id.id, row: r, tab: ws.name, reason: problem })
         return
       }
-      // Both boxes empty changes nothing, so the row is not sent.
-      if (front.empty && back.empty) return
-      lines.push({
-        line_id: id.id,
-        front: front.empty ? null : front.value,
-        back: back.empty ? null : back.value,
-      })
+      // Both boxes blank changes nothing, so the row is not sent.
+      if (front.value === undefined && back.value === undefined) return
+      lines.push({ line_id: id.id, front: boxToSend(front), back: boxToSend(back) })
       sources.push({ tab: ws.name, row: r })
     })
   })

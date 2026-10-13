@@ -191,9 +191,11 @@ body:has(.stk-root) {
   cursor: not-allowed;
 }
 .stk-root .stk-link {
-  display: inline;
-  padding: 12px 4px;
-  margin: -12px -4px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 4px;
+  margin: 0 -4px;
   background: none;
   border: 0;
   font: inherit;
@@ -207,11 +209,20 @@ body:has(.stk-root) {
 .stk-root .stk-link:hover {
   color: var(--charcoal-veld);
 }
+.stk-root .stk-link:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  text-decoration: none;
+}
 .stk-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
   margin: 12px 0 0;
+}
+/* A note straight under a row of buttons gets room, so the sentence does not touch the button. */
+.stk-actions + .stk-note {
+  margin-top: 12px;
 }
 
 /* ---- fields -------------------------------------------------------------- */
@@ -356,7 +367,7 @@ body:has(.stk-root) {
   margin: 8px 0 0;
 }
 
-/* ---- the store header and tabs ------------------------------------------- */
+/* ---- the store header and the step bar ------------------------------------------- */
 .stk-header {
   position: sticky;
   top: 0;
@@ -387,27 +398,88 @@ body:has(.stk-root) {
 .stk-saved:empty {
   display: none;
 }
-.stk-tabs {
+.stk-steps {
+  margin: 10px 0 16px;
+}
+.stk-steps-list {
   display: flex;
   gap: 4px;
-  margin: 8px 0 16px;
-  border-bottom: 1px solid var(--stk-line);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
-.stk-root .stk-tab {
-  min-height: 44px;
-  padding: 0 18px;
+.stk-step {
+  flex: 1 1 0;
+  min-width: 0;
+  border-bottom: 3px solid var(--stk-line);
+}
+.stk-step-done {
+  border-bottom-color: var(--growth-green);
+}
+.stk-step-on {
+  border-bottom-color: var(--charcoal-veld);
+}
+.stk-root .stk-stepbtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 6px;
   background: none;
   border: 0;
-  border-bottom: 3px solid transparent;
   font-family: var(--font-ui);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--growth-green);
   cursor: pointer;
 }
-.stk-root .stk-tab-on {
+.stk-root .stk-stepbtn:disabled {
+  cursor: default;
+}
+.stk-root .stk-step-on .stk-stepbtn:disabled {
   color: var(--charcoal-veld);
-  border-bottom-color: var(--charcoal-veld);
+}
+.stk-root .stk-step:not(.stk-step-on):not(.stk-step-done) .stk-stepbtn:disabled {
+  color: var(--veld-mist);
+}
+.stk-stepno {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.stk-step-on .stk-stepno {
+  background-color: var(--charcoal-veld);
+  border-color: var(--charcoal-veld);
+  color: var(--daisy-white);
+}
+.stk-nextline {
+  margin: 24px 0 0;
+}
+.stk-headlinks {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+@media (max-width: 520px) {
+  .stk-stepbtn .stk-steplabel {
+    font-size: 13px;
+  }
+  .stk-root .stk-stepbtn {
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 2px;
+  }
 }
 .stk-backline,
 .stk-cancel-line {
@@ -546,7 +618,7 @@ body:has(.stk-root) {
 }
 .stk-kind {
   font-family: var(--font-ui);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--growth-green);
 }
 .stk-narrow-only {
@@ -684,7 +756,9 @@ body:has(.stk-root) {
   width: 100%;
   padding: 12px 4px;
   margin: 0;
-  text-decoration: none;
+  text-decoration: underline;
+  text-decoration-color: var(--growth-green);
+  text-underline-offset: 3px;
   color: var(--charcoal-veld);
   font-size: 14px;
 }
@@ -792,14 +866,50 @@ body:has(.stk-root) {
   background-color: var(--stk-select);
 }
 .stk-root .stk-cyclebtn {
-  padding: 12px 0;
-  margin: -12px 0;
+  padding: 0;
+  margin: 0;
   font-size: 14px;
   color: var(--charcoal-veld);
   font-weight: 600;
 }
 .stk-eventlog {
   margin-top: 12px;
+}
+
+/* The actions of a list sit first in its row, so Open never hides behind a sideways scroll. */
+.stk-c-actions {
+  min-width: 180px;
+}
+.stk-rowactions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+}
+.stk-rowactions .stk-btn {
+  flex: 0 0 auto;
+}
+.stk-loaderror .stk-notice {
+  margin-bottom: 4px;
+}
+
+/* ---- the quiet line while a typed count waits to send --------------------------------- */
+.stk-offline {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 8px 16px;
+  background-color: var(--stk-card);
+  border-top: 1px solid var(--stk-line);
+  font-size: 13px;
+  text-align: center;
+  color: var(--growth-green);
+}
+.stk-root:has(.stk-offline) .stk-notice-dock {
+  bottom: 56px;
 }
 
 /* ---- narrow: 390px, no horizontal page scroll ----------------------------- */
@@ -844,8 +954,126 @@ body:has(.stk-root) {
   .stk-saved {
     font-size: 12px;
   }
-  .stk-sub {
-    font-size: 11px;
+
+  /* The event log and the adherence table read as short cards, so the detail sentence is never
+     pushed behind a sideways scroll. The header row stays in the page for screen readers. */
+  .stk-stack,
+  .stk-stack tbody {
+    display: block;
+  }
+  .stk-stack thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .stk-stack tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 16px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--stk-line);
+  }
+  .stk-stack td {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+  .stk-stack td:first-child {
+    grid-column: 1 / -1;
+    font-weight: 600;
+  }
+  .stk-stack td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--growth-green);
+  }
+  .stk-stack td:first-child::before {
+    display: none;
+  }
+  .stk-events tr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 12px;
+  }
+  .stk-events td[data-label]::before {
+    display: none;
+  }
+  .stk-events td {
+    font-weight: 400;
+  }
+  .stk-events td:first-child {
+    flex: 0 0 auto;
+    font-size: 12px;
+    color: var(--growth-green);
+  }
+  .stk-events td:nth-child(2) {
+    flex: 1 1 0;
+    font-size: 12px;
+    color: var(--growth-green);
+  }
+  .stk-events td:nth-child(3) {
+    flex: 0 0 100%;
+    font-weight: 600;
+  }
+  .stk-events td:nth-child(4) {
+    flex: 0 0 100%;
+  }
+}
+
+/* ---- History, lists table: one card per list below 1100px, no sideways scroll ---------- */
+/* At a tablet's 1024px the nine columns do not fit beside a five-link action column, so the
+   net variance ran off the edge. Cards read whole at every width up to a wide desktop. */
+@media (max-width: 1099px) {
+  .stk-cycles,
+  .stk-cycles tbody {
+    display: block;
+  }
+  .stk-cycles thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .stk-cycles tr {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+    gap: 4px 16px;
+    padding: 12px;
+    border-bottom: 1px solid var(--stk-line);
+  }
+  .stk-cycles td {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+  .stk-cycles td.stk-c-actions {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+  .stk-cycles td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--growth-green);
   }
 }
 

@@ -19,6 +19,15 @@ import { NextResponse } from 'next/server'
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 export const MULTIPART_SLACK_BYTES = 64 * 1024
 
+// Request size caps. A request over a cap is refused with a 400 and a plain sentence.
+export const MAX_CAPTURE_LINES = 2000
+export const MAX_REVIEW_ACTIONS = 2000
+export const MAX_CANCEL_REASON = 300
+
+// How much history the page reads. The events function clamps its limit at 1000 itself.
+export const HISTORY_CYCLE_LIMIT = 60
+export const EVENT_LIMIT = 1000
+
 const NO_STORE = { 'Cache-Control': 'no-store' }
 const SERVER_ERROR_TEXT = 'Something went wrong on our side. Try again in a moment.'
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -35,7 +44,7 @@ export class StocktakeError extends Error {
   }
 }
 
-const LIST_WORD = { DAILY: 'daily', CONFIRM: 'confirmation', ADHOC: 'batch', PLU: 'PLU and scale' }
+const LIST_WORD = { DAILY: 'daily', CONFIRM: 'confirmation', ADHOC: 'batch', SUPPLIER: 'supplier', PLU: 'PLU and scale' }
 
 // The database raise texts the contract lists, matched by their stable front part.
 function mapRaise(text) {
@@ -56,7 +65,7 @@ function mapRaise(text) {
   m = /^cycle_closed:([A-Z_]+)/.exec(text)
   if (m) {
     const how = m[1] === 'CANCELLED' ? 'was cancelled' : 'is already finalised'
-    return new StocktakeError('cycle_closed', 409, `This list ${how}, so it can no longer change.`)
+    return new StocktakeError('cycle_closed', 409, `This list ${how}. It no longer changes.`)
   }
   if (text.startsWith('cycle_not_finalised:')) {
     return new StocktakeError('cycle_not_finalised', 409, 'Finalise this list before you export it.')
@@ -73,6 +82,12 @@ function mapRaise(text) {
   }
   if (text.startsWith('unknown or inactive store')) {
     return new StocktakeError('unknown_store', 404, 'That store was not found.')
+  }
+  if (text.startsWith('a supplier count needs a supplier')) {
+    return new StocktakeError('supplier_required', 422, 'A supplier count needs a supplier. Pick one and try again.')
+  }
+  if (text.startsWith('unknown_supplier:')) {
+    return new StocktakeError('unknown_supplier', 404, 'That supplier has no received products at this store.')
   }
   if (text.startsWith('an ad hoc batch needs a sub-department')) {
     return new StocktakeError('subdept_required', 422, 'A batch needs a sub-department. Pick one and try again.')
@@ -167,11 +182,13 @@ export function route(handler) {
   }
 }
 
-// A file response (xlsx or tlx). The body goes out untouched.
-export function fileResponse(body, contentType, filename) {
+// A file response (xlsx or tlx). The body goes out untouched. `extraHeaders` adds headers
+// beside the file ones and never replaces them.
+export function fileResponse(body, contentType, filename, extraHeaders) {
   return new NextResponse(body, {
     status: 200,
     headers: {
+      ...(extraHeaders || {}),
       'Content-Type': contentType,
       'Content-Disposition': `attachment; filename="${safeFilename(filename)}"`,
       ...NO_STORE,
@@ -206,6 +223,31 @@ export function productParam(value) {
   const code = String(value || '').trim()
   if (!/^\d{1,18}$/.test(code)) throw bad('Name a product code made of digits.')
   return code
+}
+
+// Reads a request body as a stream with a running byte count and stops at `limit`. A body
+// with no Content-Length (chunked) is held to the same limit as one that declares its size.
+// `refuse` builds the error thrown when the limit is passed. Returns a Buffer.
+export async function readBoundedBody(request, limit, refuse) {
+  if (!request.body) return Buffer.alloc(0)
+  const reader = request.body.getReader()
+  const chunks = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > limit) {
+      try {
+        await reader.cancel()
+      } catch {
+        /* the stream is already closed */
+      }
+      throw refuse()
+    }
+    chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength))
+  }
+  return Buffer.concat(chunks, total)
 }
 
 export async function readJsonObject(request) {

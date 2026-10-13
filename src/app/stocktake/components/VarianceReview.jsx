@@ -40,7 +40,7 @@ export default function VarianceReview({ lines, confirmedBy, busy, onConfirm, on
       <p className="stk-note">
         {open > 0
           ? 'Confirm each line or send it for a recount. The largest rand difference comes first.'
-          : 'Every line has a decision. You can still send a line for a recount.'}
+          : 'Every line has a decision. Send a line for a recount if the count is wrong.'}
       </p>
       <ul className="stk-vr">
         {flagged.map((l) => {

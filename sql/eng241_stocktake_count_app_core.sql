@@ -29,8 +29,10 @@ CREATE TABLE IF NOT EXISTS public.stocktake_cycle (
   cycle_id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   client_id         text NOT NULL DEFAULT 'socialbrand',
   store_code        text NOT NULL,
-  list_type         text NOT NULL CHECK (list_type IN ('DAILY','CONFIRM','ADHOC','PLU')),
+  list_type         text NOT NULL CHECK (list_type IN ('DAILY','CONFIRM','ADHOC','PLU','SUPPLIER')),
   subdept_name      text,
+  supplier_nr       bigint,
+  supplier_name     text,
   status            text NOT NULL DEFAULT 'PENDING_CAPTURE'
                     CHECK (status IN ('PENDING_CAPTURE','CAPTURING','FINALISED','CANCELLED')),
   generated_by      text NOT NULL,
@@ -50,7 +52,7 @@ CREATE TABLE IF NOT EXISTS public.stocktake_cycle (
   cancel_reason     text
 );
 CREATE UNIQUE INDEX IF NOT EXISTS stocktake_cycle_one_open
-  ON public.stocktake_cycle (store_code, list_type, COALESCE(subdept_name, ''))
+  ON public.stocktake_cycle (store_code, list_type, COALESCE(subdept_name, ''), COALESCE(supplier_nr, 0))
   WHERE status IN ('PENDING_CAPTURE','CAPTURING');
 CREATE INDEX IF NOT EXISTS stocktake_cycle_store_date ON public.stocktake_cycle (store_code, generated_at DESC);
 
@@ -363,7 +365,7 @@ COMMENT ON FUNCTION public.stocktake_count_days(text, integer) IS 'GRADE: CALCUL
 
 -- ---------------------------------------------------------------- RPCs
 -- Generate one list. One open cycle per store, list type (and sub-department).
-CREATE OR REPLACE FUNCTION public.rpc_stocktake_generate(p_store text, p_list_type text, p_subdept text DEFAULT NULL)
+CREATE OR REPLACE FUNCTION public.rpc_stocktake_generate(p_store text, p_list_type text, p_subdept text DEFAULT NULL, p_supplier bigint DEFAULT NULL)
  RETURNS jsonb
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -389,10 +391,12 @@ DECLARE
   v_man integer;
   v_excl bigint[];
   v_drawn timestamptz;
+  v_sup_name text;
+  v_sup_rows integer;
 BEGIN
   IF auth.uid() IS NULL THEN RAISE EXCEPTION 'not authenticated' USING ERRCODE = '28000'; END IF;
   v_actor := stocktake_actor();
-  IF p_list_type NOT IN ('DAILY','CONFIRM','ADHOC','PLU') THEN
+  IF p_list_type NOT IN ('DAILY','CONFIRM','ADHOC','PLU','SUPPLIER') THEN
     RAISE EXCEPTION 'unknown list type %', p_list_type;
   END IF;
   SELECT s.store_type INTO v_fmt FROM stores s WHERE s.store_code = p_store AND s.is_active;
@@ -401,6 +405,16 @@ BEGIN
     RAISE EXCEPTION 'an ad hoc batch needs a sub-department';
   END IF;
   IF p_list_type <> 'ADHOC' THEN p_subdept := NULL; END IF;
+  -- A supplier count (asked 14-10-2026): the pool's own lines, in the pool's own order, cut to the products whose
+  -- LATEST GRV supplier is this one (l2_received_placement, the one home, R33). Never a link, never a typed list.
+  IF p_list_type = 'SUPPLIER' THEN
+    IF p_supplier IS NULL THEN RAISE EXCEPTION 'a supplier count needs a supplier'; END IF;
+    SELECT MAX(rp.supplier_name), COUNT(*) INTO v_sup_name, v_sup_rows
+      FROM l2_received_placement rp WHERE rp.store_code = p_store AND rp.latest_grv_supplier_nr = p_supplier;
+    IF v_sup_rows = 0 THEN RAISE EXCEPTION 'unknown_supplier:%', p_supplier USING ERRCODE = 'P0001'; END IF;
+  ELSE
+    p_supplier := NULL;
+  END IF;
 
   PERFORM pg_advisory_xact_lock(hashtext('stocktake_gen:' || p_store));
   v_today := store_local_today(p_store);
@@ -411,6 +425,7 @@ BEGIN
   SELECT c.cycle_id INTO v_open FROM stocktake_cycle c
    WHERE c.store_code = p_store AND c.list_type = p_list_type
      AND COALESCE(c.subdept_name, '') = COALESCE(p_subdept, '')
+     AND COALESCE(c.supplier_nr, 0) = COALESCE(p_supplier, 0)
      AND c.status IN ('PENDING_CAPTURE','CAPTURING')
    LIMIT 1;
   IF v_open IS NOT NULL THEN
@@ -431,16 +446,18 @@ BEGIN
            WHEN 'DAILY'   THEN stocktake_cfg('daily_count_volume', p_store)::int
            WHEN 'CONFIRM' THEN stocktake_cfg('daily_count_volume', p_store)::int
            WHEN 'ADHOC'   THEN stocktake_cfg('stocktake_adhoc_batch_size', p_store)::int
+           WHEN 'SUPPLIER' THEN stocktake_cfg('stocktake_adhoc_batch_size', p_store)::int
            ELSE NULL END;
   v_basis := CASE p_list_type
                WHEN 'DAILY'   THEN 'RULED_2026-10-13_NEGATIVE_INACTIVE_SUSPECT_ZERO'
                WHEN 'CONFIRM' THEN 'RULED_2026-10-13_CONFIRMATION_COUNT_BY_VALUE'
                WHEN 'ADHOC'   THEN 'RULED_2026-10-13_SUBDEPARTMENT_BATCH_SAME_ORDER'
+               WHEN 'SUPPLIER' THEN 'ASKED_2026-10-14_SUPPLIER_BATCH_SAME_ORDER'
                ELSE 'PLU_LIST_BY_DEPARTMENT_THEN_VALUE' END;
 
-  INSERT INTO stocktake_cycle (store_code, list_type, subdept_name, generated_by, generated_on,
+  INSERT INTO stocktake_cycle (store_code, list_type, subdept_name, supplier_nr, supplier_name, generated_by, generated_on,
                                target_size, ordering_basis, non_count_day, non_count_reason, params)
-  VALUES (p_store, p_list_type, p_subdept, v_actor, v_today, v_n, v_basis, v_nc, v_reason,
+  VALUES (p_store, p_list_type, p_subdept, p_supplier, v_sup_name, v_actor, v_today, v_n, v_basis, v_nc, v_reason,
           jsonb_build_object('posting_wait_days', v_wait, 'draw_refreshed_at', v_drawn,
                              'inactive_days', stocktake_cfg('stocktake_inactive_days', p_store)))
   RETURNING cycle_id INTO v_cycle;
@@ -472,7 +489,9 @@ BEGIN
     SELECT COUNT(*) INTO v_pool FROM stocktake_candidates(p_store) c
      WHERE NOT (c.product_code = ANY (v_excl))
        AND CASE p_list_type WHEN 'PLU' THEN c.route = 'MANUAL' ELSE c.route = 'TLX' END
-       AND (p_list_type <> 'ADHOC' OR c.subdept_name = p_subdept);
+       AND (p_list_type <> 'ADHOC' OR c.subdept_name = p_subdept)
+       AND (p_list_type <> 'SUPPLIER' OR EXISTS (SELECT 1 FROM l2_received_placement rp
+              WHERE rp.store_code = p_store AND rp.product_code = c.product_code AND rp.latest_grv_supplier_nr = p_supplier));
     INSERT INTO stocktake_cycle_line (cycle_id, store_code, product_code, seq, group_tag, identifier, identifier_kind,
       route, route_reason, ean_status, description, size_text, dept_name, subdept_name, system_stock, unit_cost,
       system_value, last_counted_date, last_sale_date, story)
@@ -489,6 +508,8 @@ BEGIN
     WHERE NOT (c.product_code = ANY (v_excl))
       AND CASE p_list_type WHEN 'PLU' THEN c.route = 'MANUAL' ELSE c.route = 'TLX' END
       AND (p_list_type <> 'ADHOC' OR c.subdept_name = p_subdept)
+      AND (p_list_type <> 'SUPPLIER' OR EXISTS (SELECT 1 FROM l2_received_placement rp
+             WHERE rp.store_code = p_store AND rp.product_code = c.product_code AND rp.latest_grv_supplier_nr = p_supplier))
     ORDER BY CASE WHEN p_list_type = 'PLU' THEN c.dept_name END, c.rank_overall
     LIMIT v_n;
   END IF;
@@ -508,13 +529,13 @@ BEGIN
 
   INSERT INTO stocktake_event (cycle_id, store_code, event_type, actor, detail)
   VALUES (v_cycle, p_store, 'GENERATE', v_actor,
-          jsonb_build_object('list_type', p_list_type, 'subdept', p_subdept, 'lines', v_lines,
+          jsonb_build_object('list_type', p_list_type, 'subdept', p_subdept, 'supplier_nr', p_supplier, 'supplier_name', v_sup_name, 'lines', v_lines,
                              'tlx_lines', v_tlx, 'manual_lines', v_man, 'groups', v_groups,
                              'pool_available', v_pool, 'target_size', v_n, 'ordering_basis', v_basis,
                              'non_count_day', v_nc, 'non_count_reason', v_reason, 'draw_refreshed_at', v_drawn));
 
   RETURN jsonb_build_object('cycle_id', v_cycle, 'store_code', p_store, 'list_type', p_list_type,
-    'subdept_name', p_subdept, 'line_count', v_lines, 'tlx_lines', v_tlx, 'manual_lines', v_man,
+    'subdept_name', p_subdept, 'supplier_nr', p_supplier, 'supplier_name', v_sup_name, 'line_count', v_lines, 'tlx_lines', v_tlx, 'manual_lines', v_man,
     'groups', v_groups, 'pool_available', v_pool, 'target_size', v_n, 'ordering_basis', v_basis,
     'non_count_day', v_nc, 'non_count_reason', v_reason, 'draw_refreshed_at', v_drawn, 'generated_by', v_actor, 'status', 'PENDING_CAPTURE');
 END;
@@ -570,7 +591,8 @@ BEGIN
 
   RETURN jsonb_build_object(
     'cycle', jsonb_build_object('cycle_id', c.cycle_id, 'store_code', c.store_code, 'list_type', c.list_type,
-      'subdept_name', c.subdept_name, 'status', c.status, 'generated_by', c.generated_by,
+      'subdept_name', c.subdept_name, 'supplier_nr', c.supplier_nr, 'supplier_name', c.supplier_name,
+      'status', c.status, 'generated_by', c.generated_by,
       'generated_at', c.generated_at, 'generated_on', c.generated_on, 'target_size', c.target_size,
       'pool_size', c.pool_size, 'line_count', c.line_count, 'ordering_basis', c.ordering_basis,
       'non_count_day', c.non_count_day, 'non_count_reason', c.non_count_reason,
@@ -825,7 +847,8 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'unknown cycle %', p_cycle; END IF;
   IF c.status <> 'FINALISED' THEN RAISE EXCEPTION 'cycle_not_finalised:%', c.status USING ERRCODE = 'P0001'; END IF;
   v_name := c.store_code || '_stocktake_' || to_char(c.generated_on, 'YYYY-MM-DD') || '_' || c.list_type
-            || CASE WHEN c.subdept_name IS NOT NULL THEN '_' || regexp_replace(c.subdept_name, '[^A-Za-z0-9]+', '-', 'g') ELSE '' END;
+            || CASE WHEN c.subdept_name IS NOT NULL THEN '_' || regexp_replace(c.subdept_name, '[^A-Za-z0-9]+', '-', 'g') ELSE '' END
+            || CASE WHEN c.supplier_name IS NOT NULL THEN '_' || regexp_replace(c.supplier_name, '[^A-Za-z0-9]+', '-', 'g') ELSE '' END;
 
   IF p_kind = 'TLX' THEN
     SELECT COUNT(*), COUNT(*) FILTER (WHERE l.count_qty <> trunc(l.count_qty)),
@@ -929,6 +952,7 @@ BEGIN
                FROM l2_stocktake_pool_summary ps WHERE ps.store_code = s.store_code),
       'open_cycles', (SELECT COALESCE(jsonb_agg(jsonb_build_object(
                  'cycle_id', c.cycle_id, 'list_type', c.list_type, 'subdept_name', c.subdept_name,
+                 'supplier_nr', c.supplier_nr, 'supplier_name', c.supplier_name,
                  'status', c.status, 'generated_by', c.generated_by, 'generated_at', c.generated_at,
                  'line_count', c.line_count,
                  'captured', (SELECT COUNT(*) FROM stocktake_cycle_line l WHERE l.cycle_id = c.cycle_id AND l.count_qty IS NOT NULL),
@@ -992,7 +1016,15 @@ BEGIN
     'subdepts', (SELECT COALESCE(jsonb_agg(jsonb_build_object('subdept_name', q.subdept_name, 'lines', q.n) ORDER BY q.n DESC), '[]'::jsonb) FROM (
                SELECT c.subdept_name, COUNT(*) AS n FROM cand c
                 WHERE c.route = 'TLX' AND c.subdept_name IS NOT NULL
-                GROUP BY c.subdept_name) q)
+                GROUP BY c.subdept_name) q),
+    -- Count by supplier: the pool's lines grouped by the LATEST GRV supplier of each product (l2_received_placement).
+    'suppliers', (SELECT COALESCE(jsonb_agg(jsonb_build_object('supplier_nr', q.nr, 'supplier_name', q.nm, 'lines', q.n)
+                                           ORDER BY q.n DESC, q.nm), '[]'::jsonb) FROM (
+               SELECT rp.latest_grv_supplier_nr AS nr, MAX(rp.supplier_name) AS nm, COUNT(*) AS n
+                 FROM cand c JOIN l2_received_placement rp ON rp.store_code = p_store AND rp.product_code = c.product_code
+                WHERE c.route = 'TLX'
+                GROUP BY rp.latest_grv_supplier_nr
+                ORDER BY COUNT(*) DESC, MAX(rp.supplier_name) LIMIT 100) q)
   ) INTO v_out;
   RETURN v_out;
 END;
@@ -1012,7 +1044,8 @@ DECLARE
 BEGIN
   IF auth.uid() IS NULL THEN RAISE EXCEPTION 'not authenticated' USING ERRCODE = '28000'; END IF;
   SELECT COALESCE(jsonb_agg(jsonb_build_object(
-      'cycle_id', c.cycle_id, 'list_type', c.list_type, 'subdept_name', c.subdept_name, 'status', c.status,
+      'cycle_id', c.cycle_id, 'list_type', c.list_type, 'subdept_name', c.subdept_name, 'supplier_nr', c.supplier_nr, 'supplier_name', c.supplier_name,
+      'status', c.status,
       'generated_by', c.generated_by, 'generated_at', c.generated_at, 'finalised_by', c.finalised_by,
       'finalised_at', c.finalised_at, 'line_count', c.line_count,
       'captured', (SELECT COUNT(*) FROM stocktake_cycle_line l WHERE l.cycle_id = c.cycle_id AND l.count_qty IS NOT NULL),
@@ -1084,7 +1117,7 @@ $function$;
 
 -- Grants (R30 addendum extension): both the PUBLIC and the direct anon grant, then authenticated.
 REVOKE EXECUTE ON FUNCTION
-  public.rpc_stocktake_generate(text, text, text), public.rpc_stocktake_cycle_get(uuid),
+  public.rpc_stocktake_generate(text, text, text, bigint), public.rpc_stocktake_cycle_get(uuid),
   public.rpc_stocktake_capture(uuid, jsonb, text), public.rpc_stocktake_review(uuid, jsonb),
   public.rpc_stocktake_finalise(uuid), public.rpc_stocktake_export(uuid, text),
   public.rpc_stocktake_cancel(uuid, text), public.rpc_stocktake_log_event(uuid, text, jsonb),
@@ -1093,7 +1126,7 @@ REVOKE EXECUTE ON FUNCTION
   public.rpc_stocktake_line_history(text, bigint)
   FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION
-  public.rpc_stocktake_generate(text, text, text), public.rpc_stocktake_cycle_get(uuid),
+  public.rpc_stocktake_generate(text, text, text, bigint), public.rpc_stocktake_cycle_get(uuid),
   public.rpc_stocktake_capture(uuid, jsonb, text), public.rpc_stocktake_review(uuid, jsonb),
   public.rpc_stocktake_finalise(uuid), public.rpc_stocktake_export(uuid, text),
   public.rpc_stocktake_cancel(uuid, text), public.rpc_stocktake_log_event(uuid, text, jsonb),
@@ -1102,7 +1135,7 @@ GRANT EXECUTE ON FUNCTION
   public.rpc_stocktake_line_history(text, bigint)
   TO authenticated, service_role;
 
-COMMENT ON FUNCTION public.rpc_stocktake_generate(text, text, text) IS 'GRADE: RECOMMENDED. Generate one count list for a store (DAILY, CONFIRM, ADHOC, PLU) in the ruled order. One open cycle per store, list type and sub-department. SB-CC-STOCKTAKE-001, ENG-241.';
+COMMENT ON FUNCTION public.rpc_stocktake_generate(text, text, text, bigint) IS 'GRADE: RECOMMENDED. Generate one count list for a store (DAILY, CONFIRM, ADHOC, PLU, SUPPLIER) in the ruled order. One open cycle per store, list type, sub-department and supplier. A SUPPLIER list is the pool cut to the products whose latest GRV supplier is the one asked for (l2_received_placement). SB-CC-STOCKTAKE-001, ENG-241.';
 COMMENT ON FUNCTION public.rpc_stocktake_cycle_get(uuid) IS 'GRADE: RAW. One cycle and all its lines as a single jsonb document (never a SETOF, the 1,000-row cap).';
 COMMENT ON FUNCTION public.rpc_stocktake_capture(uuid, jsonb, text) IS 'GRADE: RAW. Capture counts against a cycle (typed or upload). Count = front + back, both blank = uncounted. Writes the variance and an EDIT event per changed line.';
 COMMENT ON FUNCTION public.rpc_stocktake_review(uuid, jsonb) IS 'GRADE: RAW. Confirm a counted line or send it for a recount.';

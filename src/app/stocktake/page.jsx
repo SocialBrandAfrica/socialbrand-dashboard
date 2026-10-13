@@ -6,39 +6,26 @@
 // Everything drawn on screen is a pure component under ./components (props in, callbacks out).
 // The page never computes a variance, a flag or a list size: it shows what the database returns
 // and sends what the user typed. The count boxes save through ./saveQueue.js: 600 ms after the
-// last key and on blur, one line at a time, in order, so a refresh or a dropped connection loses
-// nothing the page showed as saved.
+// last key and on blur, one line at a time, in order. Every unsaved box is also kept on the tablet
+// (./draftStore.js), so a refresh, an app switch or a dropped connection loses nothing.
 // =============================================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as api from './api'
 import { isBlankLine } from './components/CountTable'
+import LoadError from './components/LoadError'
 import Notice from './components/Notice'
 import StoreList from './components/StoreList'
 import StoreScreen from './components/StoreScreen'
-import { listName, plural } from './components/format'
+import { fractionalSentence, listNoun, plural } from './components/format'
+import { clearDrafts, draftsToReplay, readDrafts, writeDrafts } from './draftStore'
+import { errorNotice, isSignedOut, messageOf } from './errors'
+import { emptyHistoryDoc, readRoute, routeQuery, shouldRefreshOverview, stepFor } from './routeState'
 import { createSaveQueue } from './saveQueue'
 
 const REFRESH_DELAY_MS = 900
+const INFO_NOTICE_MS = 8000
 const LEAVE_MESSAGE = 'Some counts are not saved. Fix the lines marked Not saved before you leave.'
-
-function readRoute() {
-  const p = new URLSearchParams(window.location.search)
-  return {
-    store: p.get('store') || null,
-    cycle: p.get('cycle') || null,
-    tab: p.get('tab') === 'history' ? 'history' : 'count',
-  }
-}
-
-function routeQuery(r) {
-  const p = new URLSearchParams()
-  if (r.store) p.set('store', r.store)
-  if (r.cycle) p.set('cycle', r.cycle)
-  if (r.tab === 'history') p.set('tab', 'history')
-  const s = p.toString()
-  return s ? '?' + s : ''
-}
 
 function sentence(text) {
   const t = String(text || '').trim()
@@ -52,15 +39,6 @@ function scrollToId(id) {
   if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-function errorNotice(e) {
-  return {
-    kind: 'error',
-    message: e && e.message ? e.message : 'Something went wrong. Try again.',
-    signIn: Boolean(e && e.status === 401),
-    cycleId: e && e.code === 'open_cycle_exists' ? e.cycleId : null,
-  }
-}
-
 function without(map, key) {
   if (!(key in map)) return map
   const next = { ...map }
@@ -68,15 +46,20 @@ function without(map, key) {
   return next
 }
 
+function signInNow() {
+  window.location.assign('/login')
+}
+
 export default function StocktakePage() {
   const [route, setRoute] = useState(null)
-  const [overview, setOverview] = useState({ status: 'loading', stores: [], message: '' })
+  const [overview, setOverview] = useState({ status: 'loading', stores: [], message: '', signIn: false })
   const [storeState, setStoreState] = useState(null)
-  const [cycleDoc, setCycleDoc] = useState({ status: 'idle', data: null, message: '' })
-  const [historyDoc, setHistoryDoc] = useState({ status: 'idle', history: null, events: [], message: '' })
+  const [storeStateError, setStoreStateError] = useState(null)
+  const [cycleDoc, setCycleDoc] = useState({ status: 'idle', data: null, message: '', signIn: false })
+  const [historyDoc, setHistoryDoc] = useState(emptyHistoryDoc())
   const [historyCycle, setHistoryCycle] = useState(null)
   const [historyCycleEvents, setHistoryCycleEvents] = useState(null)
-  const [lookup, setLookup] = useState({ text: '', product: '', result: null, message: '' })
+  const [lookup, setLookup] = useState({ text: '', product: '', result: null, message: '', signIn: false })
   const [drafts, setDrafts] = useState({})
   const [rowStates, setRowStates] = useState({})
   const [openRows, setOpenRows] = useState([])
@@ -90,25 +73,30 @@ export default function StocktakePage() {
   const [finaliseResult, setFinaliseResult] = useState(null)
   const [confirmedBy, setConfirmedBy] = useState({})
   const [exportNote, setExportNote] = useState('')
+  const [fractionalLines, setFractionalLines] = useState(null)
   const [cancelUi, setCancelUi] = useState({ open: false, reason: '' })
   const [subdept, setSubdept] = useState('')
+  const [supplier, setSupplier] = useState('')
 
   // Refs hold what async work needs to read at the moment it runs.
   const routeRef = useRef(null)
+  const prevRouteRef = useRef(null)
   const cycleIdRef = useRef(null)
   const storeRef = useRef(null)
   const queueRef = useRef(null)
   const savesRef = useRef(0)
+  const overviewSeqRef = useRef(0)
   const refreshTimerRef = useRef(null)
 
   const storeCode = route ? route.store : null
   const cycleId = route ? route.cycle : null
   const tab = route ? route.tab : 'count'
+  const step = route ? route.step : null
 
   // ---- navigation --------------------------------------------------------------------------
 
   const go = useCallback((patch, replace) => {
-    const next = { store: null, cycle: null, tab: 'count', ...(routeRef.current || {}), ...patch }
+    const next = { store: null, cycle: null, tab: 'count', step: null, ...(routeRef.current || {}), ...patch }
     routeRef.current = next
     setRoute(next)
     const url = window.location.pathname + routeQuery(next)
@@ -119,47 +107,85 @@ export default function StocktakePage() {
   // ---- loading -----------------------------------------------------------------------------
 
   const loadOverview = useCallback(async (quiet) => {
-    if (!quiet) setOverview({ status: 'loading', stores: [], message: '' })
+    // Only the newest read counts, so a slow older answer never overwrites a newer one.
+    overviewSeqRef.current += 1
+    const seq = overviewSeqRef.current
+    if (!quiet) setOverview({ status: 'loading', stores: [], message: '', signIn: false })
     try {
       const stores = await api.getOverview()
-      setOverview({ status: 'ready', stores, message: '' })
+      if (seq !== overviewSeqRef.current) return
+      setOverview({ status: 'ready', stores, message: '', signIn: false })
     } catch (e) {
-      setOverview((o) => ({ status: 'error', stores: quiet ? o.stores : [], message: e.message }))
+      if (seq !== overviewSeqRef.current) return
+      setOverview((o) => ({ status: 'error', stores: quiet ? o.stores : [], message: messageOf(e), signIn: isSignedOut(e) }))
     }
   }, [])
 
   const loadStoreState = useCallback(async (store, quiet) => {
-    if (!quiet) setStoreState(null)
+    if (!quiet) {
+      setStoreState(null)
+      setStoreStateError(null)
+    }
     try {
       const state = await api.getStoreState(store)
-      if (storeRef.current === store) setStoreState(state)
+      if (storeRef.current === store) {
+        setStoreState(state)
+        setStoreStateError(null)
+      }
     } catch (e) {
-      if (storeRef.current === store) setNotice(errorNotice(e))
+      if (storeRef.current !== store) return
+      setStoreStateError({ message: messageOf(e), signIn: isSignedOut(e) })
+      if (quiet) setNotice(errorNotice(e))
     }
   }, [])
 
-  const loadCycle = useCallback(async (id, quiet) => {
-    if (!quiet) setCycleDoc({ status: 'loading', data: null, message: '' })
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const token = savesRef.current
-      try {
-        const data = await api.getCycle(id)
-        if (cycleIdRef.current !== id) return
-        // A save finished while this read ran, so the read may be older than that save. Read again.
-        if (quiet && token !== savesRef.current && attempt < 3) continue
-        setCycleDoc({ status: 'ready', data, message: '' })
-        return
-      } catch (e) {
-        if (cycleIdRef.current !== id) return
-        if (quiet) setNotice(errorNotice(e))
-        else setCycleDoc({ status: 'error', data: null, message: e.message })
-        return
-      }
+  // The list opens: put back what was typed here and never reached the server.
+  const replayDrafts = useCallback((id, data) => {
+    const status = data && data.cycle ? data.cycle.status : ''
+    if (status === 'FINALISED' || status === 'CANCELLED') {
+      clearDrafts(id)
+      return
     }
+    const keep = draftsToReplay(readDrafts(id), data.lines)
+    writeDrafts(id, keep)
+    if (Object.keys(keep).length > 0 && queueRef.current) queueRef.current.restore(keep)
   }, [])
+
+  const loadCycle = useCallback(
+    async (id, quiet) => {
+      if (!quiet) setCycleDoc({ status: 'loading', data: null, message: '', signIn: false })
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const token = savesRef.current
+        try {
+          const data = await api.getCycle(id)
+          if (cycleIdRef.current !== id) return
+          // A save finished while this read ran, so the read may be older than that save. Read again.
+          if (quiet && token !== savesRef.current && attempt < 3) continue
+          setCycleDoc({ status: 'ready', data, message: '', signIn: false })
+          if (!quiet) {
+            replayDrafts(id, data)
+            // The list opens where the work stands and then stays there. The step goes into the URL now, so
+            // sending a sheet or typing the last count never moves the screen to the next step on its own.
+            const here = routeRef.current
+            const status = data && data.cycle ? data.cycle.status : ''
+            if (here && here.cycle === id && !here.step && status !== 'FINALISED' && status !== 'CANCELLED') {
+              go({ step: stepFor(null, data.counts) }, true)
+            }
+          }
+          return
+        } catch (e) {
+          if (cycleIdRef.current !== id) return
+          if (quiet) setNotice(errorNotice(e))
+          else setCycleDoc({ status: 'error', data: null, message: messageOf(e), signIn: isSignedOut(e) })
+          return
+        }
+      }
+    },
+    [replayDrafts, go]
+  )
 
   const loadHistory = useCallback(async (store) => {
-    setHistoryDoc((d) => ({ ...d, status: 'loading', message: '' }))
+    setHistoryDoc((d) => ({ ...d, status: 'loading', message: '', signIn: false }))
     try {
       const body = await api.getHistory(store)
       if (storeRef.current !== store) return
@@ -167,10 +193,12 @@ export default function StocktakePage() {
         status: 'ready',
         history: body && body.history ? body.history : { cycles: [], by_day: [] },
         events: body && Array.isArray(body.events) ? body.events : [],
+        eventsLimit: body && body.events_limit ? body.events_limit : null,
         message: '',
+        signIn: false,
       })
     } catch (e) {
-      if (storeRef.current === store) setHistoryDoc((d) => ({ ...d, status: 'error', message: e.message }))
+      if (storeRef.current === store) setHistoryDoc((d) => ({ ...d, status: 'error', message: messageOf(e), signIn: isSignedOut(e) }))
     }
   }, [])
 
@@ -218,6 +246,8 @@ export default function StocktakePage() {
     () =>
       createSaveQueue({
         send: (id, lines) => api.captureLines(id, lines),
+        sendKeepalive: (id, lines) => api.captureLinesKeepalive(id, lines),
+        persist: { save: (id, map) => writeDrafts(id, map) },
         getCycleId: () => cycleIdRef.current,
         on: {
           drafts: setDrafts,
@@ -258,6 +288,7 @@ export default function StocktakePage() {
     setUploadResult(null)
     setConfirmedBy({})
     setExportNote('')
+    setFractionalLines(null)
     setCancelUi({ open: false, reason: '' })
     setSaveState('idle')
     setSavedAt(null)
@@ -284,13 +315,13 @@ export default function StocktakePage() {
 
   // Start: read the URL, load the stores, guard the browser's own back button and tab close.
   useEffect(() => {
-    const first = readRoute()
+    const first = readRoute(window.location.search)
     routeRef.current = first
     setRoute(first)
     loadOverview(false)
 
     function onPop() {
-      const target = readRoute()
+      const target = readRoute(window.location.search)
       const here = routeRef.current
       if (!here || here.cycle === target.cycle) {
         routeRef.current = target
@@ -316,25 +347,50 @@ export default function StocktakePage() {
     function onOnline() {
       saveQueue.retryErrors()
     }
+    // The tablet goes to another app, or the page closes: send what is typed with a request that
+    // outlives the page. The drafts stay on the tablet until the server confirms them.
+    function onVisibility() {
+      if (document.visibilityState === 'hidden') saveQueue.flushKeepalive()
+    }
+    function onPageHide() {
+      saveQueue.flushKeepalive()
+    }
     window.addEventListener('popstate', onPop)
     window.addEventListener('beforeunload', onBeforeUnload)
     window.addEventListener('online', onOnline)
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pagehide', onPageHide)
     return () => {
       window.removeEventListener('popstate', onPop)
       window.removeEventListener('beforeunload', onBeforeUnload)
       window.removeEventListener('online', onOnline)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pagehide', onPageHide)
     }
   }, [saveQueue, loadOverview])
 
-  // A store opens: the stock figures behind its buttons.
+  // The route lands on Home or on a store: read the overview again so the progress on the home list
+  // ("26 of 29 captured") is current. This covers every way in: a button, the back button, a closed list.
+  useEffect(() => {
+    const prev = prevRouteRef.current
+    prevRouteRef.current = route
+    if (shouldRefreshOverview(prev, route)) loadOverview(true)
+  }, [route, loadOverview])
+
+  // A store opens: the stock figures behind its buttons. Nothing of another store stays on screen.
   useEffect(() => {
     storeRef.current = storeCode
     setSubdept('')
+    setSupplier('')
+    setHistoryDoc(emptyHistoryDoc())
     setHistoryCycle(null)
     setHistoryCycleEvents(null)
-    setLookup({ text: '', product: '', result: null, message: '' })
+    setLookup({ text: '', product: '', result: null, message: '', signIn: false })
     if (storeCode) loadStoreState(storeCode, false)
-    else setStoreState(null)
+    else {
+      setStoreState(null)
+      setStoreStateError(null)
+    }
   }, [storeCode, loadStoreState])
 
   // A list opens or closes.
@@ -342,7 +398,7 @@ export default function StocktakePage() {
     cycleIdRef.current = cycleId
     resetCapture()
     if (cycleId) loadCycle(cycleId, false)
-    else setCycleDoc({ status: 'idle', data: null, message: '' })
+    else setCycleDoc({ status: 'idle', data: null, message: '', signIn: false })
   }, [cycleId, loadCycle, resetCapture])
 
   // A link with a list but no store: take the store from the list.
@@ -398,19 +454,19 @@ export default function StocktakePage() {
     el.focus({ preventScroll: Boolean(center) })
   }
 
-  async function doGenerate(listType, sub) {
+  async function doGenerate(listType, sub, sup) {
     setBusy('generate:' + listType)
     setNotice(null)
     try {
-      const res = await api.generate({ store: storeCode, listType, subdept: sub })
+      const res = await api.generate({ store: storeCode, listType, subdept: sub, supplier: sup })
       loadOverview(true)
       loadStoreState(storeCode, true)
-      go({ cycle: res.cycle_id, tab: 'count' })
+      go({ cycle: res.cycle_id, tab: 'count', step: 'print' })
       setNotice({
         kind: 'info',
         message:
           'Generated a ' +
-          listName({ list_type: res.list_type, subdept_name: res.subdept_name }).toLowerCase() +
+          listNoun({ list_type: res.list_type, subdept_name: res.subdept_name, supplier_name: res.supplier_name }) +
           ' of ' +
           res.line_count +
           ' ' +
@@ -482,8 +538,7 @@ export default function StocktakePage() {
       }
       setFinaliseResult(res)
       await loadCycle(id, true)
-      const noBlank = !res || !Array.isArray(res.blank_lines) || res.blank_lines.length === 0
-      scrollToId(noBlank ? 'stk-review' : 'stk-finalise')
+      scrollToId('stk-finalise')
     } catch (e) {
       setNotice(errorNotice(e))
     } finally {
@@ -514,13 +569,21 @@ export default function StocktakePage() {
     }
   }
 
-  async function doExport(kind) {
-    const id = cycleIdRef.current
-    setBusy('export:' + kind)
+  // A finalised list exports as often as needed. The database logs every export. The list may be
+  // the open one (its Ready panel shows the result) or any list of the History tab (a notice does).
+  async function doExport(id, kind) {
+    setBusy('export:' + kind + ':' + id)
     setNotice(null)
     try {
       const f = await api.downloadFile(api.exportUrl(id, kind), kind === 'TLX' ? 'stocktake.tlx' : 'stocktake-plu.xlsx')
-      setExportNote('Downloaded ' + f.filename + '.')
+      const fractional = kind === 'TLX' ? f.fractionalLines : null
+      if (cycleIdRef.current === id) {
+        setExportNote('Downloaded ' + f.filename + '.')
+        setFractionalLines(fractional)
+      } else {
+        const extra = fractionalSentence(fractional)
+        setNotice({ kind: 'info', sticky: Boolean(extra), message: 'Downloaded ' + f.filename + '.' + (extra ? ' ' + extra : '') })
+      }
     } catch (e) {
       setNotice(errorNotice(e))
     } finally {
@@ -535,9 +598,9 @@ export default function StocktakePage() {
     try {
       await api.cancelCycle(id, cancelUi.reason.trim())
       resetCapture()
-      loadOverview(true)
+      clearDrafts(id)
       loadStoreState(storeCode, true)
-      go({ cycle: null, tab: 'count' })
+      go({ cycle: null, tab: 'count', step: null })
       setNotice({ kind: 'info', message: 'The list was cancelled.' })
     } catch (e) {
       setNotice(errorNotice(e))
@@ -547,11 +610,22 @@ export default function StocktakePage() {
   }
 
   async function closeCycle() {
-    const left = await leave({ cycle: null, tab: 'count' })
-    if (left) {
-      loadOverview(true)
-      loadStoreState(storeCode, true)
-    }
+    const left = await leave({ cycle: null, tab: 'count', step: null })
+    if (left) loadStoreState(storeCode, true)
+  }
+
+  // A step of the open list. Unsaved counts keep saving in the background (the queue outlives the
+  // count table), so moving on never waits for the network.
+  function goStep(next) {
+    saveQueue.flushAll()
+    go({ step: next })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // A blank line named by Finish: show the Count step, then put the cursor in its box.
+  function jumpToLine(lineId) {
+    go({ step: 'count' })
+    setTimeout(() => focusLine(lineId, true), 80)
   }
 
   async function selectHistoryCycle(id) {
@@ -574,27 +648,29 @@ export default function StocktakePage() {
   async function doLookup() {
     const code = lookup.text.trim()
     if (!/^\d+$/.test(code)) {
-      setLookup((l) => ({ ...l, result: null, message: 'Enter the product code as digits only.' }))
+      setLookup((l) => ({ ...l, result: null, message: 'Enter the product code as digits only.', signIn: false }))
       return
     }
     setBusy('linehistory')
-    setLookup((l) => ({ ...l, message: '' }))
+    setLookup((l) => ({ ...l, message: '', signIn: false }))
     try {
       const result = await api.getLineHistory(storeCode, code)
-      setLookup((l) => ({ ...l, product: code, result, message: '' }))
+      setLookup((l) => ({ ...l, product: code, result, message: '', signIn: false }))
     } catch (e) {
-      setLookup((l) => ({ ...l, result: null, message: e.message }))
+      setLookup((l) => ({ ...l, result: null, message: messageOf(e), signIn: isSignedOut(e) }))
     } finally {
       setBusy(null)
     }
   }
 
   const actions = {
-    onBackToStores: () => leave({ store: null, cycle: null, tab: 'count' }),
+    onBackToStores: () => leave({ store: null, cycle: null, tab: 'count', step: null }),
     onTab: (t) => leave({ tab: t }),
-    onOpenCycle: (id) => leave({ cycle: id, tab: 'count' }),
+    onOpenCycle: (id) => leave({ cycle: id, tab: 'count', step: null }),
     onCloseCycle: closeCycle,
+    onStep: goStep,
     onSubdeptChange: setSubdept,
+    onSupplierChange: setSupplier,
     onGenerate: doGenerate,
     onDownloadSheet: doDownloadSheet,
     onUpload: doUpload,
@@ -607,13 +683,16 @@ export default function StocktakePage() {
       setKeepVisible([])
     },
     onRetry: (id) => saveQueue.retry(id),
+    onRetryStoreState: () => loadStoreState(storeCode, false),
+    onSignIn: signInNow,
     onFinalise: doFinalise,
-    onJump: (id) => focusLine(id, true),
-    onJumpReview: () => scrollToId('stk-review'),
+    onJump: jumpToLine,
+    onJumpReview: () => goStep('review'),
     onConfirm: (id) => doReview(id, 'CONFIRM'),
     onRecount: (id) => doReview(id, 'RECOUNT'),
-    onExportTlx: () => doExport('TLX'),
-    onExportPlu: () => doExport('PLU'),
+    onExport: doExport,
+    onExportTlx: () => doExport(cycleIdRef.current, 'TLX'),
+    onExportPlu: () => doExport(cycleIdRef.current, 'PLU'),
     onCancelAsk: () => setCancelUi({ open: true, reason: '' }),
     onCancelKeep: () => setCancelUi({ open: false, reason: '' }),
     onCancelReason: (reason) => setCancelUi((c) => ({ ...c, reason })),
@@ -656,12 +735,12 @@ export default function StocktakePage() {
     )
   } else if (overview.status === 'error' && overview.stores.length === 0) {
     body = (
-      <div>
-        <Notice kind="error" message={overview.message || 'The stores did not load.'} />
-        <button type="button" className="stk-btn stk-btn-primary" onClick={() => loadOverview(false)}>
-          Try again
-        </button>
-      </div>
+      <LoadError
+        message={overview.message || 'The stores did not load.'}
+        signIn={overview.signIn}
+        onSignIn={signInNow}
+        onTryAgain={() => loadOverview(false)}
+      />
     )
   } else if (!storeCode) {
     body = (
@@ -670,14 +749,14 @@ export default function StocktakePage() {
           <h1 className="stk-h1">Stocktake</h1>
           <p className="stk-caption">Choose a store to count.</p>
         </header>
-        <StoreList stores={overview.stores} onOpenStore={(code) => leave({ store: code, cycle: null, tab: 'count' })} />
+        <StoreList stores={overview.stores} onOpenStore={(code) => leave({ store: code, cycle: null, tab: 'count', step: null })} />
       </>
     )
   } else if (!store) {
     body = (
       <div>
         <p className="stk-note">That store is not on your list.</p>
-        <button type="button" className="stk-btn stk-btn-secondary" onClick={() => go({ store: null, cycle: null, tab: 'count' })}>
+        <button type="button" className="stk-btn stk-btn-secondary" onClick={() => go({ store: null, cycle: null, tab: 'count', step: null })}>
           All stores
         </button>
       </div>
@@ -687,8 +766,10 @@ export default function StocktakePage() {
       <StoreScreen
         store={store}
         storeState={storeState}
+        storeStateError={storeStateError}
         tab={tab}
         cycleId={cycleId}
+        step={step}
         cycle={{
           doc: cycleDoc,
           capture: { drafts, rowStates, openRows, showOnlyBlank, keepVisible },
@@ -696,14 +777,17 @@ export default function StocktakePage() {
           finalise: { blankLines, unconfirmedLines },
           upload: { result: uploadResult },
           exportNote,
+          fractionalLines,
           cancel: cancelUi,
         }}
-        generate={{ subdept }}
+        generate={{ subdept, supplier }}
         history={{
           loading: historyDoc.status === 'loading',
           message: historyDoc.status === 'error' ? historyDoc.message : '',
+          signIn: historyDoc.status === 'error' ? historyDoc.signIn : false,
           history: historyDoc.history,
           events: historyDoc.events,
+          eventsLimit: historyDoc.eventsLimit,
           selectedCycleId: historyCycle,
           cycleEvents: historyCycleEvents,
           lineHistory: {
@@ -714,6 +798,8 @@ export default function StocktakePage() {
             result: lookup.result,
             product: lookup.product,
             message: lookup.message,
+            signIn: lookup.signIn,
+            onSignIn: signInNow,
           },
         }}
         saveState={saveState}
@@ -724,15 +810,23 @@ export default function StocktakePage() {
     )
   }
 
+  // A plain "Generated" or "Downloaded" note fades after a few seconds, so it never sits over the rows being
+  // counted. An error, a sign-in notice and the fractional-count warning stay until closed.
+  useEffect(() => {
+    if (!notice || notice.kind !== 'info' || notice.sticky) return undefined
+    const timer = setTimeout(() => setNotice((n) => (n === notice ? null : n)), INFO_NOTICE_MS)
+    return () => clearTimeout(timer)
+  }, [notice])
+
   let noticeAction
   if (notice && notice.signIn) {
-    noticeAction = { label: 'Sign in', onClick: () => window.location.assign('/login') }
+    noticeAction = { label: 'Sign in', onClick: signInNow }
   } else if (notice && notice.cycleId) {
     noticeAction = {
       label: 'Open that list',
       onClick: () => {
         setNotice(null)
-        leave({ cycle: notice.cycleId, tab: 'count' })
+        leave({ cycle: notice.cycleId, tab: 'count', step: null })
       },
     }
   }

@@ -1,5 +1,5 @@
 // POST /api/stocktake/cycle/[id]/cancel  { reason? } -> { ok: true, status: 'CANCELLED' }
-import { cycleIdParam, json, requireUser, route, StocktakeError } from '@/lib/stocktake/server'
+import { MAX_CANCEL_REASON, cycleIdParam, json, requireUser, route, StocktakeError } from '@/lib/stocktake/server'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -21,6 +21,9 @@ export const POST = route(async (request, { params }) => {
     if (body && body.reason !== undefined && body.reason !== null) {
       if (typeof body.reason !== 'string') throw new StocktakeError('bad_request', 400, 'The reason must be text.')
       reason = body.reason.trim() || null
+      if (reason !== null && reason.length > MAX_CANCEL_REASON) {
+        throw new StocktakeError('bad_request', 400, `Keep the reason to ${MAX_CANCEL_REASON} characters or fewer.`)
+      }
     }
   }
 

@@ -130,10 +130,31 @@ export function listName(c) {
       return 'Confirmation count'
     case 'ADHOC':
       return c.subdept_name ? 'Batch (' + c.subdept_name + ')' : 'Batch'
+    case 'SUPPLIER':
+      return c.supplier_name ? 'Supplier count (' + c.supplier_name + ')' : 'Supplier count'
     case 'PLU':
       return 'PLU and scale list'
     default:
       return c && c.list_type ? String(c.list_type) : 'List'
+  }
+}
+
+// The list's name for the middle of a sentence ("Generated a daily list of 29 lines"). Only the
+// list word is lowered. A sub-department keeps its own capitals and PLU stays PLU.
+export function listNoun(c) {
+  switch (c && c.list_type) {
+    case 'DAILY':
+      return 'daily list'
+    case 'CONFIRM':
+      return 'confirmation count'
+    case 'ADHOC':
+      return c.subdept_name ? 'batch (' + c.subdept_name + ')' : 'batch'
+    case 'SUPPLIER':
+      return c.supplier_name ? 'supplier count (' + c.supplier_name + ')' : 'supplier count'
+    case 'PLU':
+      return 'PLU and scale list'
+    default:
+      return listName(c).toLowerCase()
   }
 }
 
@@ -196,8 +217,8 @@ export function describeEvent(e) {
   const d = (e && e.detail) || {}
   switch (e && e.event_type) {
     case 'GENERATE': {
-      const name = listName({ list_type: d.list_type, subdept_name: d.subdept })
-      return 'Generated a ' + name.toLowerCase() + ' of ' + nOf(d.lines, 'line', 'lines') + '.'
+      const name = listNoun({ list_type: d.list_type, subdept_name: d.subdept, supplier_name: d.supplier_name })
+      return 'Generated a ' + name + ' of ' + nOf(d.lines, 'line', 'lines') + '.'
     }
     case 'DOWNLOAD': {
       const tabs = isNum(d.tabs) ? ' on ' + nOf(d.tabs, 'tab', 'tabs') : ''
@@ -251,12 +272,81 @@ export function describeEvent(e) {
   }
 }
 
+// The sentences a count box shows when its text is refused.
+export const NOT_A_NUMBER = 'Enter a number such as 12 or 3.5.'
+export const THOUSANDS_REFUSED = 'Enter 1200 or 1.2, not 1,200.'
+
+// "1,200" and "1,000": exactly three digits after a single comma read as a thousands
+// separator in one country and as a decimal comma in another. The box refuses it.
+const THOUSANDS_FORM = /^\d+,\d{3}$/
+
+function trimmed(text) {
+  return String(text === undefined || text === null ? '' : text).trim()
+}
+
 // A count box accepts digits with one decimal point or comma. Returns the number, null for an
 // empty box, or undefined when the text is not a count.
 export function parseCountText(text) {
-  const t = String(text === undefined || text === null ? '' : text).trim()
+  const t = trimmed(text)
   if (t === '') return null
+  if (THOUSANDS_FORM.test(t)) return undefined
   const norm = /^\d+,\d+$/.test(t) ? t.replace(',', '.') : t
   if (!/^\d+(\.\d+)?$/.test(norm)) return undefined
   return Number(norm)
+}
+
+// The plain sentence for text that parseCountText refused.
+export function countTextProblem(text) {
+  return THOUSANDS_FORM.test(trimmed(text)) ? THOUSANDS_REFUSED : NOT_A_NUMBER
+}
+
+// "2." and "2," are a number still being typed, not a mistake.
+export function isUnfinishedNumber(text) {
+  return /^\d+[.,]$/.test(trimmed(text))
+}
+
+// "13 Oct"
+export function fmtShortDate(iso) {
+  const p = zoneParts(iso)
+  return p ? p.day + ' ' + MONTHS[p.month - 1] : ''
+}
+
+// The warning after a TLX export that holds counts with a fraction. Empty when there are none.
+export function fractionalSentence(n) {
+  const v = Number(n)
+  if (!Number.isFinite(v) || v <= 0) return ''
+  return (
+    fmtInt(v) +
+    ' ' +
+    plural(v, 'line has', 'lines have') +
+    ' a fractional count. Check how Sigma reads ' +
+    plural(v, 'it', 'them') +
+    ' before you import the file.'
+  )
+}
+
+// "a", "a and b", "a, b and c"
+export function joinNames(names) {
+  const list = (Array.isArray(names) ? names : []).filter(Boolean)
+  if (list.length <= 1) return list[0] || ''
+  return list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1]
+}
+
+function sentenceOf(text) {
+  const t = String(text || '').trim()
+  if (!t) return ''
+  const cap = t.charAt(0).toUpperCase() + t.slice(1)
+  return /[.!?]$/.test(cap) ? cap : cap + '.'
+}
+
+// One skipped row of an upload: "BAKERY row 3: The Front box holds "x", which is not a number."
+// The API sends the tab, the row and a bare reason. The page puts them together.
+export function skippedText(item) {
+  const i = item || {}
+  let where = ''
+  if (i.tab && i.row) where = String(i.tab) + ' row ' + i.row
+  else if (i.row) where = 'Row ' + i.row
+  else if (i.line_id) where = 'Line ' + i.line_id
+  const why = sentenceOf(i.reason) || 'The row could not be read.'
+  return where ? where + ': ' + why : why
 }

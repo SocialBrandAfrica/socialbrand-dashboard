@@ -32,7 +32,8 @@ export const GET = route(async (request, { params }) => {
   const c = doc.cycle
   const date = /^\d{4}-\d{2}-\d{2}/.test(String(c.generated_on || '')) ? String(c.generated_on).slice(0, 10) : 'undated'
   const sub = c.subdept_name ? '_' + String(c.subdept_name).replace(/[^A-Za-z0-9]+/g, '-') : ''
-  const name = `${c.store_code}_stocktake_${date}_${c.list_type}${sub}.xlsx`
+  const sup = c.supplier_name ? '_' + String(c.supplier_name).replace(/[^A-Za-z0-9]+/g, '-') : ''
+  const name = `${c.store_code}_stocktake_${date}_${c.list_type}${sub}${sup}.xlsx`
 
   return fileResponse(buffer, XLSX_TYPE, name)
 })

@@ -2,7 +2,8 @@
 //
 //   kind=TLX  the TLX file, byte for byte what the database built: text/plain, no trailing
 //             newline, no byte order mark, the filename the database chose. Sigma reads this
-//             file, so nothing here touches the content.
+//             file, so nothing here touches the content. The header X-Fractional-Lines carries
+//             how many lines hold a fractional count, so the page warns before the import.
 //   kind=PLU  the PLU and scale rows (the MANUAL lines) as an xlsx.
 //
 // The EXPORT_TLX / EXPORT_PLU event is written by the database function itself.
@@ -24,7 +25,16 @@ export const GET = route(async (request, { params }) => {
     if (!data || data.kind !== 'TLX' || typeof data.content !== 'string' || data.content === '') {
       throw new StocktakeError('tripwire', 502, 'The TLX file came back empty, so no file was made. Tell SocialBrand support.')
     }
-    return fileResponse(data.content, 'text/plain; charset=utf-8', data.filename)
+    // The database reports how many lines hold a fractional count. A file whose warning
+    // cannot be sent is not served: the person would import it without being told.
+    const fractional = data.fractional_lines
+    if (!Number.isSafeInteger(fractional) || fractional < 0) {
+      throw new StocktakeError('tripwire', 502,
+        'The TLX file did not report its fractional lines, so no file was made. Tell SocialBrand support.')
+    }
+    return fileResponse(data.content, 'text/plain; charset=utf-8', data.filename, {
+      'X-Fractional-Lines': String(fractional),
+    })
   }
 
   if (kind === 'PLU') {

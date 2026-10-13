@@ -4,16 +4,19 @@
 //   an empty box           -> { line_id, clear: true }
 //   0                      -> { line_id, front: 0, back: 0 }   (0 is a real count)
 //   12 or 12,5 or 12.5     -> { line_id, front: 12.5, back: 0 }
+//   2. or 2,               -> a number still being typed: waits for the blur, no error until then
 //   anything else          -> never sent, the row shows a plain error and keeps what was typed
 //
 // A draft leaves the screen only when the server confirmed that exact text. A newer draft typed
 // while a save runs stays and saves next. A failed save keeps its draft and its error until the
 // user tries again, the connection returns, or the text changes.
-import { parseCountText } from './components/format'
+//
+// Every draft is also written to the tablet (options.persist) so a refresh, an app switch or a
+// dropped connection loses nothing. restore() puts stored drafts back into the queue when the list
+// opens. flushKeepalive() sends every valid draft with a request that outlives the page.
+import { countTextProblem, isUnfinishedNumber, parseCountText } from './components/format'
 
 export const SAVE_DELAY_MS = 600
-
-const NOT_A_NUMBER = 'Enter a number such as 12 or 3.5.'
 
 function sentence(text) {
   const t = String(text || '').trim()
@@ -22,15 +25,23 @@ function sentence(text) {
   return /[.!?]$/.test(cap) ? cap : cap + '.'
 }
 
+function lineFor(lineId, number) {
+  return number === null ? { line_id: lineId, clear: true } : { line_id: lineId, front: number, back: 0 }
+}
+
 // options:
 //   send(cycleId, lines)  -> Promise of the capture result { set, unchanged, rejected, blank, saved_at }
 //   getCycleId()          -> the cycle the boxes belong to right now
 //   on                    -> { drafts(map), row(lineId, state|null), status('idle'|'saving'|'error'),
 //                              saved({ lineId, number, applied, savedAt }), failed(error) }
+//   persist               -> { save(cycleId, draftsMap) } called on every change of the drafts, never on reset
+//   sendKeepalive(cycleId, lines) -> fire and forget, used when the page is hidden or closing
 //   setTimer, clearTimer  -> injectable for tests
 export function createSaveQueue(options) {
   const { send, getCycleId } = options
   const on = options.on || {}
+  const persist = options.persist || null
+  const sendKeepalive = options.sendKeepalive || null
   const setTimer = options.setTimer || ((fn, ms) => setTimeout(fn, ms))
   const clearTimer = options.clearTimer || ((h) => clearTimeout(h))
   const delay = options.delay === undefined ? SAVE_DELAY_MS : options.delay
@@ -41,6 +52,8 @@ export function createSaveQueue(options) {
   let epoch = 0
   const timers = new Map()
   const errors = new Set()
+  // Boxes whose timer ran out while the text was an unfinished number. The blur sends them.
+  const held = new Set()
 
   function emitDrafts() {
     if (on.drafts) on.drafts(drafts)
@@ -55,6 +68,14 @@ export function createSaveQueue(options) {
   }
   function emitStatus() {
     if (on.status) on.status(status())
+  }
+  function keep(cycleId) {
+    if (!persist || !cycleId) return
+    try {
+      persist.save(cycleId, drafts)
+    } catch {
+      // the tablet's storage is blocked or full: the page works without it
+    }
   }
   function setDrafts(next) {
     drafts = next
@@ -74,11 +95,11 @@ export function createSaveQueue(options) {
     const number = parseCountText(text)
     if (number === undefined) {
       errors.add(lineId)
-      row(lineId, { state: 'error', message: NOT_A_NUMBER })
+      row(lineId, { state: 'error', message: countTextProblem(text) })
       emitStatus()
       return
     }
-    const line = number === null ? { line_id: lineId, clear: true } : { line_id: lineId, front: number, back: 0 }
+    const line = lineFor(lineId, number)
     const started = epoch
     inflight += 1
     row(lineId, { state: 'saving' })
@@ -95,7 +116,10 @@ export function createSaveQueue(options) {
       errors.delete(lineId)
       if (started !== epoch || getCycleId() !== cycleId) return
       const applied = drafts[lineId] === text
-      if (applied) removeDraft(lineId)
+      if (applied) {
+        removeDraft(lineId)
+        keep(cycleId)
+      }
       row(lineId, null)
       if (on.saved) on.saved({ lineId, number, applied, savedAt: res && res.saved_at ? res.saved_at : null })
     } catch (e) {
@@ -111,6 +135,7 @@ export function createSaveQueue(options) {
   }
 
   function enqueue(lineId) {
+    held.delete(lineId)
     chain = chain.then(() => save(lineId)).catch(() => {})
     return chain
   }
@@ -126,13 +151,21 @@ export function createSaveQueue(options) {
     // The box text changed.
     change(lineId, text) {
       setDrafts({ ...drafts, [lineId]: text })
+      keep(getCycleId())
       errors.delete(lineId)
+      held.delete(lineId)
       row(lineId, null)
       clearTimerFor(lineId)
       timers.set(
         lineId,
         setTimer(() => {
           timers.delete(lineId)
+          if (isUnfinishedNumber(drafts[lineId])) {
+            // Still being typed. No error, no send. The blur decides.
+            held.add(lineId)
+            emitStatus()
+            return
+          }
           enqueue(lineId)
         }, delay)
       )
@@ -140,7 +173,9 @@ export function createSaveQueue(options) {
     },
     // The box lost focus: send what is waiting now.
     blur(lineId) {
-      if (clearTimerFor(lineId)) enqueue(lineId)
+      const waiting = clearTimerFor(lineId)
+      const heldBack = held.delete(lineId)
+      if (waiting || heldBack) enqueue(lineId)
     },
     retry(lineId) {
       errors.delete(lineId)
@@ -160,18 +195,53 @@ export function createSaveQueue(options) {
       await chain
       return Object.keys(drafts).length === 0
     },
+    // Put drafts read from the tablet back into the queue and send them. A box typed since wins
+    // over a stored one. Returns how many boxes came back.
+    restore(stored) {
+      const next = { ...drafts }
+      const ids = []
+      for (const [key, text] of Object.entries(stored || {})) {
+        const id = Number(key)
+        if (next[id] !== undefined) continue
+        next[id] = text
+        ids.push(id)
+      }
+      if (ids.length === 0) return 0
+      setDrafts(next)
+      keep(getCycleId())
+      emitStatus()
+      for (const id of ids) enqueue(id)
+      return ids.length
+    },
+    // The page is hidden or closing: send every valid draft in one request that outlives the page.
+    // The drafts stay where they are. The next load compares them with the server and drops what it holds.
+    flushKeepalive() {
+      const cycleId = getCycleId()
+      if (!cycleId || !sendKeepalive) return false
+      const lines = []
+      for (const [key, text] of Object.entries(drafts)) {
+        const number = parseCountText(text)
+        if (number !== undefined) lines.push(lineFor(Number(key), number))
+      }
+      if (lines.length === 0) return false
+      sendKeepalive(cycleId, lines)
+      return true
+    },
     // Forget a box without saving it (the line was sent for a recount).
     discard(lineId) {
       clearTimerFor(lineId)
+      held.delete(lineId)
       errors.delete(lineId)
       removeDraft(lineId)
+      keep(getCycleId())
       row(lineId, null)
       emitStatus()
     },
-    // The list changed: drop every draft, timer and error.
+    // The list changed: drop every draft, timer and error from the screen. The tablet keeps its copy.
     reset() {
       epoch += 1
       for (const id of Array.from(timers.keys())) clearTimerFor(id)
+      held.clear()
       errors.clear()
       setDrafts({})
       emitStatus()

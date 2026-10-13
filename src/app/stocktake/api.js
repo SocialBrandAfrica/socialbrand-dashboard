@@ -16,6 +16,9 @@ export class ApiError extends Error {
 }
 
 const NETWORK_MESSAGE = 'The connection dropped. Check the signal and try again.'
+// The most events the history route asks the database for in one read (decision D5). The route
+// reports its own figure as events_limit. This is the figure to use when it does not.
+export const EVENTS_READ_LIMIT = 1000
 const SIGNED_OUT_MESSAGE = 'Your sign-in has ended. Sign in again to carry on.'
 // A request that hangs on a dead link must fail in the open, so the row shows Not saved with Try again.
 const REQUEST_TIMEOUT_MS = 30000
@@ -115,16 +118,20 @@ export async function getOverview() {
 
 export async function getStoreState(store) {
   const body = await send('GET', '/store' + q({ store }))
-  return body && body.state ? body.state : null
+  if (!body || !body.state) throw new ApiError('The stock figures did not load. Try again.', { code: 'no_state' })
+  return body.state
 }
 
 export function getCycle(cycleId) {
   return send('GET', cyclePath(cycleId))
 }
 
-// { history: {cycles, by_day}, events: [...] }
-export function getHistory(store) {
-  return send('GET', '/history' + q({ store }))
+// { history: {cycles, by_day}, events: [...], events_limit } where events_limit is the most events
+// one read returns. A read that returns that many has been cut short.
+export async function getHistory(store) {
+  const body = await send('GET', '/history' + q({ store }))
+  const reported = Number(body && body.events_limit)
+  return { ...body, events_limit: Number.isFinite(reported) && reported > 0 ? reported : EVENTS_READ_LIMIT }
 }
 
 export async function getCycleEvents(cycleId) {
@@ -139,15 +146,33 @@ export function getLineHistory(store, product) {
 
 // --- writes --------------------------------------------------------------------------------------
 
-export function generate({ store, listType, subdept }) {
+export function generate({ store, listType, subdept, supplier }) {
   const json = { store, list_type: listType }
   if (subdept) json.subdept = subdept
+  if (supplier) json.supplier = supplier
   return send('POST', '/generate', { json })
 }
 
 // lines: [{ line_id, front, back, clear }]. Saved as TYPED.
 export function captureLines(cycleId, lines) {
   return send('POST', cyclePath(cycleId) + '/capture', { json: { lines } })
+}
+
+// The page is hidden or closing. Send the typed counts with a request the browser finishes after the
+// page is gone. Fire and forget: the next load compares the stored drafts with the server.
+export function captureLinesKeepalive(cycleId, lines) {
+  try {
+    fetch(BASE + cyclePath(cycleId) + '/capture', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      keepalive: true,
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lines }),
+    }).catch(() => {})
+  } catch {
+    // nothing more to do: the drafts are still on the tablet
+  }
 }
 
 export function uploadSheet(cycleId, file) {
@@ -195,8 +220,15 @@ function filenameFrom(header, fallback) {
   return plain ? plain[1].trim() : fallback
 }
 
+// The TLX route reports how many of its lines hold a fraction in X-Fractional-Lines (decision D4).
+function countHeader(value) {
+  const t = String(value === null || value === undefined ? '' : value).trim()
+  return /^\d+$/.test(t) ? Number(t) : null
+}
+
 // Fetch a file and hand it to the browser as a download. A failure shows as a plain sentence on the
-// page, never as a JSON page that replaces it.
+// page, never as a JSON page that replaces it. Resolves { filename, fractionalLines } where
+// fractionalLines is null when the route sent no such header.
 export async function downloadFile(url, fallbackName) {
   let res
   try {
@@ -219,5 +251,5 @@ export async function downloadFile(url, fallbackName) {
   link.click()
   link.remove()
   setTimeout(() => URL.revokeObjectURL(href), 30000)
-  return { filename }
+  return { filename, fractionalLines: countHeader(res.headers.get('X-Fractional-Lines')) }
 }

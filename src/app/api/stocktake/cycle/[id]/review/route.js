@@ -1,5 +1,7 @@
 // POST /api/stocktake/cycle/[id]/review  { actions: [{ line_id, action: 'CONFIRM' | 'RECOUNT' }] } -> review result
-import { cycleIdParam, json, readJsonObject, requireUser, route, StocktakeError } from '@/lib/stocktake/server'
+import {
+  MAX_REVIEW_ACTIONS, cycleIdParam, json, readJsonObject, requireUser, route, StocktakeError,
+} from '@/lib/stocktake/server'
 import { parseLineId } from '@/lib/stocktake/qty'
 
 export const runtime = 'nodejs'
@@ -13,6 +15,9 @@ export const POST = route(async (request, { params }) => {
   const body = await readJsonObject(request)
   if (!Array.isArray(body.actions) || body.actions.length === 0) {
     throw new StocktakeError('bad_request', 400, 'Send at least one line to confirm or recount.')
+  }
+  if (body.actions.length > MAX_REVIEW_ACTIONS) {
+    throw new StocktakeError('bad_request', 400, `Send ${MAX_REVIEW_ACTIONS} lines or fewer in one request.`)
   }
 
   const actions = body.actions.map((item) => {

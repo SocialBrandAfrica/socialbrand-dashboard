@@ -1,37 +1,47 @@
 // POST /api/stocktake/cycle/[id]/upload  (multipart, field `file`, an .xlsx up to 5 MB)
-//   -> { set, unchanged, blank, rejected: [{ line_id?, row?, reason }], unmatched_rows, saved_at }
+//   -> { set, unchanged, blank, rejected: [{ line_id?, row, tab, reason }], unmatched_rows, saved_at }
 //
 // The filled count sheet is read here (matched on LineId, see parseCountUpload) and ALL its readable
 // rows go to rpc_stocktake_capture in ONE call with source UPLOAD. Rows that cannot be read never
-// leave this route. They come back in `rejected` with the tab and row, beside the database's own.
-import { MAX_UPLOAD_BYTES, MULTIPART_SLACK_BYTES, StocktakeError, cycleIdParam, json, requireUser, route } from '@/lib/stocktake/server'
+// leave this route. They come back in `rejected` beside the database's own.
+//
+// Every rejected item carries `reason` (a bare sentence), `row` and `tab`. The page writes
+// "BAKERY row 3: <reason>" itself, so the reason never repeats the location.
+//
+// The file is checked in this order, and each step stops the request before the next one runs:
+//   1. the declared size, then the body itself read with a running byte count (5 MB)
+//   2. the zip, counted by what it unpacks to (50 MB in all, 20 MB for one worksheet)
+//   3. the cycle's own line count, read from the database
+//   4. the sheet read by exceljs, then the number of lines it would send against that line count
+import {
+  MAX_UPLOAD_BYTES, MULTIPART_SLACK_BYTES, StocktakeError, cycleIdParam, json, readBoundedBody, requireUser, route,
+} from '@/lib/stocktake/server'
 import { parseCountUpload } from '@/lib/stocktake/sheet'
+import { NOT_ON_CYCLE, dbRefusalSentence } from '@/lib/stocktake/reasons'
+import { UploadTooLarge, assertXlsxWithinLimits } from '@/lib/stocktake/zipguard'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// What rpc_stocktake_capture says when a LineId is not on the cycle. It is the one reason
-// counted as an unmatched row.
-const NOT_ON_CYCLE = 'line is not on this cycle'
-
-const DB_REASON = {
-  [NOT_ON_CYCLE]: 'this line is not on this list',
-  'a count cannot be negative': 'a count cannot be below zero',
-}
-
 const tooLarge = () => new StocktakeError('file_too_large', 413, 'That file is too large. A count sheet is far smaller than 5 MB.')
+const unpackedTooLarge = () => new StocktakeError('file_too_large', 413,
+  'That file is far larger than a count sheet once it is opened. Download the sheet again and fill that one.')
+const sheetTooLarge = () => new StocktakeError('file_too_large', 413,
+  'A tab in that file is far larger than a count sheet. Download the sheet again and fill that one.')
 
 export const POST = route(async (request, { params }) => {
   const { rpc } = await requireUser()
   const id = cycleIdParam(params.id)
 
-  // Refuse an oversized request before reading it. The check after reading is the real one.
+  // Refuse an oversized request before reading it. The bounded read below is the real check,
+  // because a chunked request declares no size.
   const declared = Number(request.headers.get('content-length'))
   if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES + MULTIPART_SLACK_BYTES) throw tooLarge()
 
+  const raw = await readBoundedBody(request, MAX_UPLOAD_BYTES + MULTIPART_SLACK_BYTES, tooLarge)
   let form
   try {
-    form = await request.formData()
+    form = await new Response(raw, { headers: { 'content-type': request.headers.get('content-type') || '' } }).formData()
   } catch {
     throw new StocktakeError('bad_request', 400, 'Send the sheet as a file upload.')
   }
@@ -50,6 +60,22 @@ export const POST = route(async (request, { params }) => {
     'This file could not be read as an Excel sheet. Download the sheet again and fill that one.')
   if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4b) throw unreadable
 
+  // Count what the zip unpacks to before anything opens it.
+  try {
+    await assertXlsxWithinLimits(buffer)
+  } catch (err) {
+    if (err instanceof UploadTooLarge) throw err.what === 'sheet' ? sheetTooLarge() : unpackedTooLarge()
+    throw unreadable
+  }
+
+  // The cycle's own line count. A sheet never holds more lines to send than the cycle has.
+  const { data: cycleDoc } = await rpc('rpc_stocktake_cycle_get', { p_cycle: id })
+  const lineCount = cycleDoc ? cycleDoc.line_count : null
+  if (!Number.isSafeInteger(lineCount) || lineCount < 0) {
+    throw new StocktakeError('tripwire', 502,
+      'The list did not load in full, so the sheet was not used. Reload the page. If it happens again tell SocialBrand support.')
+  }
+
   let parsed
   try {
     parsed = await parseCountUpload(buffer)
@@ -60,19 +86,24 @@ export const POST = route(async (request, { params }) => {
     throw new StocktakeError('not_a_count_sheet', 422,
       'This file is not a count sheet from this page. Download the sheet again and fill that one.')
   }
+  if (parsed.lines.length > lineCount) {
+    throw new StocktakeError('too_many_lines', 422,
+      'This sheet holds more lines than the list does. Download the sheet again and fill that one.')
+  }
 
   const { data } = await rpc('rpc_stocktake_capture', { p_cycle: id, p_lines: parsed.lines, p_source: 'UPLOAD' })
 
-  // Where each sent line sat in the file, so the database's refusals can name the tab and row.
+  // Where each sent line sat in the file, so the database's refusals name the tab and row.
+  // A line goes in once (the later duplicate never reaches here), so each key is unique.
   const where = new Map()
-  parsed.lines.forEach((line, i) => {
-    const key = String(line.line_id)
-    if (!where.has(key)) where.set(key, parsed.sources[i])
-  })
+  parsed.lines.forEach((line, i) => where.set(String(line.line_id), parsed.sources[i]))
 
   const rejected = parsed.rejected.map((r) => {
-    const out = { row: r.row, reason: r.reason }
+    const out = {}
     if (r.line_id !== undefined) out.line_id = r.line_id
+    out.row = r.row
+    out.tab = r.tab
+    out.reason = r.reason
     return out
   })
 
@@ -80,10 +111,13 @@ export const POST = route(async (request, { params }) => {
   const fromDb = Array.isArray(data && data.rejected) ? data.rejected : []
   for (const r of fromDb) {
     if (r.reason === NOT_ON_CYCLE) unmatched += 1
+    const out = { line_id: r.line_id }
     const src = where.get(String(r.line_id))
-    const why = DB_REASON[r.reason] || 'the database did not accept this line'
-    const out = { line_id: r.line_id, reason: src ? `${src.tab} row ${src.row}: ${why}.` : `Line ${r.line_id}: ${why}.` }
-    if (src) out.row = src.row
+    if (src) {
+      out.row = src.row
+      out.tab = src.tab
+    }
+    out.reason = dbRefusalSentence(r.reason)
     rejected.push(out)
   }
 

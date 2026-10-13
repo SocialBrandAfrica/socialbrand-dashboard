@@ -3,8 +3,12 @@
 // Source TYPED. A null or missing front or back leaves that box alone, clear:true empties both
 // (the database defines this, see rpc_stocktake_capture). A line that cannot be read is not
 // sent. It comes back in `rejected` beside the database's own, so the page handles one shape.
-import { cycleIdParam, json, readJsonObject, requireUser, route, StocktakeError } from '@/lib/stocktake/server'
+// The request holds MAX_CAPTURE_LINES lines or fewer.
+import {
+  MAX_CAPTURE_LINES, cycleIdParam, json, readJsonObject, requireUser, route, StocktakeError,
+} from '@/lib/stocktake/server'
 import { parseLineId, parseQty } from '@/lib/stocktake/qty'
+import { dbRefusalSentence } from '@/lib/stocktake/reasons'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -15,6 +19,9 @@ export const POST = route(async (request, { params }) => {
   const body = await readJsonObject(request)
   if (!Array.isArray(body.lines)) {
     throw new StocktakeError('bad_request', 400, 'Send the counts as a list of lines.')
+  }
+  if (body.lines.length > MAX_CAPTURE_LINES) {
+    throw new StocktakeError('bad_request', 400, `Send ${MAX_CAPTURE_LINES} lines or fewer in one request.`)
   }
 
   const send = []
@@ -34,8 +41,9 @@ export const POST = route(async (request, { params }) => {
     const back = parseQty(item.back)
     if (front.bad || back.bad) {
       const which = front.bad ? 'Front' : 'Back'
-      const why = front.bad || back.bad
-      rejected.push({ line_id: lineId.id, reason: `The ${which} count ${why}.` })
+      const refused = front.bad ? front : back
+      // A refusal with its own whole sentence (the thousands comma) is used as it is.
+      rejected.push({ line_id: lineId.id, reason: refused.refusal || `The ${which} count ${refused.bad}.` })
       continue
     }
     const out = { line_id: lineId.id }
@@ -46,6 +54,8 @@ export const POST = route(async (request, { params }) => {
   }
 
   const { data } = await rpc('rpc_stocktake_capture', { p_cycle: id, p_lines: send, p_source: 'TYPED' })
-  const fromDb = Array.isArray(data && data.rejected) ? data.rejected : []
+  // The database's refusals leave as bare sentences too, never as its own text.
+  const fromDb = (Array.isArray(data && data.rejected) ? data.rejected : [])
+    .map((r) => ({ ...r, reason: dbRefusalSentence(r.reason) }))
   return json({ ...data, rejected: [...rejected, ...fromDb] })
 })
