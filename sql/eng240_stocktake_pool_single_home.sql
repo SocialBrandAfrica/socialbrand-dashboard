@@ -1,5 +1,5 @@
 -- =============================================================================
--- ENG-233 -- THE UNCOUNTED POOL HAS ONE HOME (SB-CC-STOCKTAKE-001 section 2 check)
+-- ENG-240 -- (applied as migration eng233_stocktake_pool_single_home, comments re-stamped by eng240_renumber_stocktake_pool_single_home; live pins rpc_forge_integrity 98ea2288, rpc_forge_integrity_lines b5bde735) THE UNCOUNTED POOL HAS ONE HOME (SB-CC-STOCKTAKE-001 section 2 check)
 --
 -- THE DEFECT, measured 2026-10-13 16:2x SAST at 10116 (whole pool, R22):
 --   The toolkit scoreboard (rpc_forge_integrity, count_coverage_91d) read 3,229 counted of
@@ -34,8 +34,8 @@
 -- it is revoked from PUBLIC, anon and authenticated. The two integrity functions keep their
 -- ACL (CREATE OR REPLACE keeps it): they are anon-readable read RPCs by design.
 --
--- ROLLBACK: sql/_archive/rpc_forge_integrity_5f7b3f70_pre_eng233.sql and
---           sql/_archive/rpc_forge_integrity_lines_2049519b_pre_eng233.sql, then DROP VIEW.
+-- ROLLBACK: sql/_archive/rpc_forge_integrity_5f7b3f70_pre_eng240.sql and
+--           sql/_archive/rpc_forge_integrity_lines_2049519b_pre_eng240.sql, then DROP VIEW.
 -- PRE-FLIGHT (done before writing): one overload each; no SET LOCAL; LANGUAGE sql so no
 -- RETURNS TABLE shadowing; ACL read; pre-state files hash-proven to the live md5.
 -- =============================================================================
@@ -60,7 +60,7 @@ LEFT JOIN public.l2_last_counted lc ON lc.store_code = sp.store_code AND lc.prod
 WHERE sp.class = 'NORMAL' AND sp.soh <> 0;
 
 COMMENT ON VIEW public.v_stocktake_pool IS
-'GRADE: CALCULATED. The countable pool, one row per (store, product): class NORMAL, soh <> 0, exists in sigma_articles. counted_91 is DERIVED ON READ from l2_last_counted.last_counted_date against the store-local date, never from the stored l2_last_counted.counted_91d (frozen at the nightly refresh, up to a day stale: ENG-233). The ONE home of "uncounted in 91 days" for rpc_forge_integrity, rpc_forge_integrity_lines and the stocktake count app (SB-CC-STOCKTAKE-001). Read by SECURITY DEFINER functions only.';
+'GRADE: CALCULATED. The countable pool, one row per (store, product): class NORMAL, soh <> 0, exists in sigma_articles. counted_91 is DERIVED ON READ from l2_last_counted.last_counted_date against the store-local date, never from the stored l2_last_counted.counted_91d (frozen at the nightly refresh, up to a day stale: ENG-240). The ONE home of "uncounted in 91 days" for rpc_forge_integrity, rpc_forge_integrity_lines and the stocktake count app (SB-CC-STOCKTAKE-001). Read by SECURITY DEFINER functions only.';
 
 REVOKE ALL ON public.v_stocktake_pool FROM PUBLIC;
 REVOKE ALL ON public.v_stocktake_pool FROM anon;
@@ -89,7 +89,7 @@ cap AS (
   FROM v_l2_capital_by_store v JOIN st ON st.sc = v.store_code
 ),
 pool AS (
-  -- ENG-233 (2026-10-13): the countable pool and its counted-in-91-days test now come from
+  -- ENG-240 (2026-10-13): the countable pool and its counted-in-91-days test now come from
   -- the one home, v_stocktake_pool, derived on read against the store-local date. The stored
   -- l2_last_counted.counted_91d flag this read before was frozen at the nightly refresh.
   SELECT v.store_code AS sc,
@@ -201,7 +201,7 @@ FROM l2_stock_position sp
 JOIN sigma_articles a ON a.store_code = sp.store_code AND a.product_code = sp.product_code
 WHERE p_instrument = 'negative_book' AND sp.store_code = p_store AND sp.class = 'NORMAL' AND sp.soh < 0
 UNION ALL
--- ENG-233 (2026-10-13): the uncounted list reads the same home as the scoreboard, so the list
+-- ENG-240 (2026-10-13): the uncounted list reads the same home as the scoreboard, so the list
 -- and the number can never differ. The branch used to re-test sigma_movements against
 -- CURRENT_DATE - 91 while the scoreboard read a flag frozen at the nightly refresh.
 SELECT v.product_code, v.description, v.dept_name, v.subdept_name, v.soh, v.capital_value,

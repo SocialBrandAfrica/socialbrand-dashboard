@@ -12,15 +12,27 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
-## 2026-10-13 16:3x SAST -- SB-CC-STOCKTAKE-001 STEP 1 (ENG-233): THE UNCOUNTED POOL HAS ONE HOME
+## 2026-10-13 16:3x SAST -- SB-CC-STOCKTAKE-001 STEP 1 (ENG-240): THE UNCOUNTED POOL HAS ONE HOME
 
 **Clock:** written 2026-10-13 16:3x +0200 (`date` 16:33:35, DB `now()` 14:31 UTC, agreeing).
 
-**Ship.** Migration `eng233_stocktake_pool_single_home`, source `sql/eng233_stocktake_pool_single_home.sql`. New view `v_stocktake_pool` (the countable pool with `counted_91` derived on read against the store-local date). `rpc_forge_integrity` `5f7b3f70` to `c5d139d8` and `rpc_forge_integrity_lines` `2049519b` to `e22ec4f1` read it. No signature or grant on either function changed. View revoked from PUBLIC, anon and authenticated. Rollback: `sql/_archive/rpc_forge_integrity_5f7b3f70_pre_eng233.sql` and `sql/_archive/rpc_forge_integrity_lines_2049519b_pre_eng233.sql`, both hash-proven to the live pins before the apply.
+**Ship.** Migration `eng233_stocktake_pool_single_home`, source `sql/eng240_stocktake_pool_single_home.sql`. New view `v_stocktake_pool` (the countable pool with `counted_91` derived on read against the store-local date). `rpc_forge_integrity` `5f7b3f70` to `c5d139d8` and `rpc_forge_integrity_lines` `2049519b` to `e22ec4f1` read it. No signature or grant on either function changed. View revoked from PUBLIC, anon and authenticated. Rollback: `sql/_archive/rpc_forge_integrity_5f7b3f70_pre_eng240.sql` and `sql/_archive/rpc_forge_integrity_lines_2049519b_pre_eng240.sql`, both hash-proven to the live pins before the apply.
 
-**Why.** The toolkit scoreboard read 5,304 uncounted at 10116 and its list returned 5,419. All 115 lines were last counted on 2026-07-13: the scoreboard used a flag frozen at the nightly refresh, the list re-tested live a day later. BUG-LOG ENG-233.
+**Id.** ENG-240 (CC block 240 to 249 claimed for this stocktake build in BUG-LOG, because two CC seats read the same next-free on 13-10 and ENG-233 went to BLOOM-035 item 9 on main first). The migration was APPLIED as `eng233_stocktake_pool_single_home` and its comments re-stamped by migration `eng240_renumber_stocktake_pool_single_home`. Live pins now `rpc_forge_integrity` 98ea2288 and `rpc_forge_integrity_lines` b5bde735. Migration names are history and are not renamed.
+
+**Why.** The toolkit scoreboard read 5,304 uncounted at 10116 and its list returned 5,419. All 115 lines were last counted on 2026-07-13: the scoreboard used a flag frozen at the nightly refresh, the list re-tested live a day later. BUG-LOG ENG-240.
 
 **Read back, live, anon key through PostgREST, 16:3x.** Scoreboard counted of pool: 10116 3,114/8,533 · 21355 646/812 · 80175 4,308/5,604 · 80176 686/735 · 80579 628/659. List rows equal pool less counted at every store: 5,419 · 166 · 1,296 · 49 · 31. `negative_book` unchanged (156 · 32 · 76 · 9 · 18). RLS guard gate PASS. The signed-in toolkit page is not read: it sits behind Google sign-in and no signed-in browser is connected to this session.
+
+---
+
+## 2026-10-13 16:3x SAST -- BLOOM-035 ITEM 9 (ENG-233): THE SCENARIO CARDS ARE BACK ON EVERY DESK, FROM THE STORED ORDERS
+
+**Clock:** written 2026-10-13 16:3x +0200. Vercel status `success` on `0b6e3da` read 16:34.
+
+**Ship.** Migration `rpc_bloom_stored_overview_bloom035_item9` (new read-only function, source `sql/create_rpc_bloom_stored_overview.sql`, GRADE: RECOMMENDED, anon and authenticated EXECUTE) and dashboard `0b6e3da`. `src/app/bloom/StoredOverview.jsx` renders what the function returns. `OVERVIEW_ENABLED`, its held message, the per-scenario loop and the old card markup are removed, so nothing calls `rpc_bloom_scenario_overview` any more. No recipe runs from the page, no order quantity moves. Rollback: `DROP FUNCTION public.rpc_bloom_stored_overview(text, text, date, date, text, numeric)` and revert `0b6e3da`.
+
+**Read back through the anon API, 16:3x, five stores, one DC desk and one brand or SAB desk each:** all 20 card values equal `sum(suggested_packs * pack_cost)` on the stored order to the cent, line counts equal, every DC benchmark and anchor equals the cache row. Weekly verdicts: 10116 WITHIN -16.8%, 21355 WITHIN +15.8%, 80579 FLAG +24.2%, 80175 and 80176 NOT JUDGED (the night job stores one drop per DC desk, so the week's second drop has no stored order). In-database cost 17 ms on a brand desk, 457 ms on 10116 DC ambient. The signed-in /bloom page text is not read: no Chrome connected to this session. BUG-LOG ENG-233.
 
 ---
 
