@@ -12,6 +12,18 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-10-13 16:2x SAST -- BLOOM-035 ITEM 8 (ENG-232): EACH APP'S BROWSER TAB CARRIES ITS OWN NAME
+
+**Clock:** written 2026-10-13 16:2x +0200. Vercel status `success` on `94a88bc` read 16:19.
+
+**Ship.** Dashboard `94a88bc`. `src/lib/appNames.js` (new) holds the app names and the host-prefix map. The root layout's `generateMetadata` reads the request host: orders.* reads Bloom, toolkit.* reads Forge, the rest read SocialBrand Pulse. `src/app/bloom/layout.jsx` (new) titles the Bloom route for a path visit. toolkit, bt and pmini serve their own static HTML with their own titles and are unchanged.
+
+**Blocker cleared first.** The RLS guard gate stopped the build on two scratch tables of 05-10 (`cc_eng228_caches_before`, `cc_fn_prestate`: RLS on, no policy, anon and authenticated SELECT). Pieter approved the REVOKE. Migration `cc_scratch_tables_revoke_client_select_eng228`. Rollback: `GRANT SELECT` on both to anon and authenticated.
+
+**Read back, page text, live, 16:19:** orders. `Bloom` (was `SocialBrand Pulse`) · toolkit. `Forge -- Operations Toolkit` (was `SocialBrand Pulse`) · dashboard. `SocialBrand Pulse` · dashboard./bt `Bonnie Tyler &middot; SocialBrand`. These are the login tabs. The signed-in /bloom tab is not read yet: no Chrome connected to this session. BUG-LOG ENG-232.
+
+---
+
 ## 2026-10-05 13:1x SAST -- ENG-228, ENG-229, ENG-230: THE THREE ORDERING FIXES AND PIETER'S TEMPORARY 3-UNIT FLOOR ARE LIVE
 
 **Clock:** written 2026-10-05 13:19 +0200 (`date`), the migration applied at 13:11 SAST (DB 11:11 UTC).
