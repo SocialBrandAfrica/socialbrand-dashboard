@@ -1085,8 +1085,14 @@ function useIsMobile() {
 // Persists between sessions. Key is scoped to dept+stores so different
 // filter combos don't overwrite each other.
 // ─────────────────────────────────────────────────────────────────────────────
-const SEARCH_IDX_KEY = 'sb_pulse_search_index_v2'
+// ENG-252: v3. Every v1/v2 entry written while the read ran through the PostgREST
+// 1,000-row cap holds a truncated index (22 of 58 cached scopes held exactly 1,000
+// rows), so those keys must die rather than be served for six more hours.
+const SEARCH_IDX_KEY = 'sb_pulse_search_index_v3'
 const SEARCH_IDX_TTL = 6 * 60 * 60 * 1000  // 6h — optimistic cache only, always revalidated
+// The live PostgREST row cap (API-layer setting, tested behaviourally; BUG-LOG ENG-093,
+// ENG-101). A read that returns exactly this many rows was cut, not complete.
+const PGRST_ROW_CAP = 1000
 
 function loadCachedSearchIndex(scopeKey) {
   try {
@@ -1156,6 +1162,7 @@ export default function Home() {
   const [viewsLoading,   setViewsLoading]   = useState(false)
   const [top20Loading,   setTop20Loading]   = useState(false)
   const [top20Error,     setTop20Error]     = useState(null)  // ENG-141 — a failed read is NOT an empty list
+  const [deptError,      setDeptError]      = useState(null)  // ENG-255 — the department effect's failures are stated, not rendered as "No sales data"
   const [refreshKey,     setRefreshKey]     = useState(0)
 
   function handleReload() {
@@ -1792,6 +1799,7 @@ export default function Home() {
     const dKey = [...storeCodes].sort().join(',') + '|' + [...selectedDates].sort().join(',') + '|' + (subdeptParam ?? '') + '|' + (focusEans ? focusEans.slice().sort().join(',') : '')
     const dHit = deptCache.current.get(dKey)
     if (dHit) {
+      setDeptError(null)   // ENG-255: only a clean read is cached, so a hit is never a failure
       setDeptSummary(dHit.deptSummary)
       setDeptSohCounts(dHit.deptSohCounts)
       setLyKpiDeptSummary(dHit.lyKpiDeptSummary)
@@ -1860,6 +1868,17 @@ export default function Home() {
       // wrong money number under that selection key for the whole session.
       const deptFail = deptRes.error || deptSohRes.error || lyDeptRes.error || wowDeptRes.error || lyDeptSohRes.error
       if (!deptFail) deptCache.current.set(dKey, { deptSummary: ds, deptSohCounts: dsc, lyKpiDeptSummary: lyds, wowKpiDeptSummary: wds, lyDeptSohCounts: lysc })
+      // ENG-255: the reads above only reached the console, so a failure here rendered
+      // as "No sales data" (Sales by Department) or R0 (the Sales card under a dept
+      // chip) with nothing on screen to say it was a failure. Name the reads that failed.
+      const deptFailed = [
+        deptRes.error      && 'rpc_dept_summary',
+        deptSohRes.error   && 'rpc_kpi_dept_counts',
+        lyDeptRes.error    && 'rpc_dept_summary (last year)',
+        wowDeptRes.error   && 'rpc_dept_summary (week on week)',
+        lyDeptSohRes.error && 'rpc_kpi_dept_counts (last year)',
+      ].filter(Boolean)
+      setDeptError(deptFailed.length ? `Department figures could not be read — ${deptFailed.join(', ')}.` : null)
       setDeptSummary(ds)
       setDeptSohCounts(dsc)
       setLyKpiDeptSummary(lyds)
@@ -1868,6 +1887,7 @@ export default function Home() {
     }).catch(err => {
       if (cancelled) return
       console.error('[dept effect]', err)
+      setDeptError(`Department figures could not be read — ${err?.message ?? err}.`)
       setDeptSummary([])
       setDeptSohCounts([])
       setLyKpiDeptSummary([])
@@ -1915,6 +1935,7 @@ export default function Home() {
   useEffect(() => {
     if (!storeCodes.length || !selectedDates.length) {
       setTop20Data([])
+      setTop20Error(null)   // ENG-255: no selection is not a failure
       setTop20Loading(false)
       return
     }
@@ -1934,7 +1955,10 @@ export default function Home() {
                      (focusEans ? focusEans.slice().sort().join(',') : '')
       const t20Hit = top20Cache.current.get(t20Key)
       if (t20Hit) {
-        if (!cancelled) { setTop20Data(t20Hit); setTop20Loading(false) }
+        // ENG-255: only a clean read is ever cached, so a hit is never a failure. The
+        // error of an earlier, different selection must not outlive it (the sibling
+        // viewsCache hit clears its errors the same way).
+        if (!cancelled) { setTop20Error(null); setTop20Data(t20Hit); setTop20Loading(false) }
         return
       }
 
@@ -2058,6 +2082,14 @@ export default function Home() {
       if (cancelled) return
       if (error) { console.error('[search_index]', error.message); return }
       const rows = data ?? []
+      // ENG-252: a truncated index is worse than none -- it answers a search from 1
+      // line in 30 and says nothing. At the cap: do not use it, do not cache it, and let
+      // ProductSearchBar fall through to rpc_search_products (bounded, per keystroke).
+      if (rows.length >= PGRST_ROW_CAP) {
+        console.warn(`[search_index] ${scopeKey}: ${rows.length} rows is the read cap, index not used`)
+        setSearchIndex([])
+        return
+      }
       saveCachedSearchIndex(scopeKey, rows)
       setSearchIndex(rows)
     })
@@ -2297,19 +2329,23 @@ export default function Home() {
     return result.sort((a, b) => b.daysSince - a.daysSince)
   }, [reportRows, rosMap, reportLoaded, availableDates])
 
-  // Capital Tied breakdown by dept — for drill-down modal (all SOH > 0 lines)
+  // Capital Tied breakdown by dept — for drill-down modal.
+  // ENG-254: reads the SAME engine-purified capital the tile reads.
+  // rpc_dept_summary.capital_tied is l2_classification bucket-in-4 at the latest
+  // snapshot (SB-CC-RETIRE-003), the figure v_l2_capital_by_store.capital_purified sums.
+  // This used to sum soh x unit cost over every report line with no class filter, so the
+  // non-stock departments (EXPENSES, DORMANT, FRONTEND PACK) entered, one department read
+  // 66 per cent, and the total beside the bars was not the tile's.
   const capTiedByDept = useMemo(() => {
     const m = new Map()
-    for (const r of mergedReportRows) {
-      if ((r.soh ?? 0) <= 0) continue
-      const cost = unitCost(r)
-      const tied = (r.soh ?? 0) * cost
-      if (tied <= 0) continue
-      const d = r.dept_name ?? 'Unknown'
-      m.set(d, (m.get(d) ?? 0) + tied)
+    for (const r of deptSummary) {
+      const v = Number(r.capital_tied ?? 0)
+      if (!(v > 0)) continue
+      const d = normalizeDept(r.dept_name) || 'Unknown'
+      m.set(d, (m.get(d) ?? 0) + v)
     }
-    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)
-  }, [mergedReportRows])
+    return [...m.entries()].sort((a, b) => b[1] - a[1])
+  }, [deptSummary])
 
   // daysInPeriod: calendar days from earliest to latest selected date (min 1).
   // Replaces selectedDates.length wherever a real period length is needed — a click count
@@ -2769,7 +2805,15 @@ export default function Home() {
       if (key === 'ghost_stock') {
         supabase.rpc('rpc_ghost_stock_report', { p_store_codes: storeCodes, p_date: date })
           .then(({ data, error }) => {
-            if (error) console.error('[ghost_stock_report]', error.message)
+            // ENG-250: a failed read is stated, never rendered as an empty report
+            // (the same one-row error table stock_integrity already uses below).
+            if (error) {
+              console.error('[ghost_stock_report]', error.message)
+              setGhostStockRows([{ 'Error': `RPC error: ${error.message}` }])
+              setReportLoaded(true)
+              setReportLoading(false)
+              return
+            }
             setGhostStockRows((data ?? []).map(r => ({
               'Store':       r.store_name ?? r.store_code,
               'EAN':         r.ean,
@@ -3236,7 +3280,7 @@ export default function Home() {
                  manufactured −100% beside it, which is worse than a visible failure because
                  it reads as a real catastrophic number. A number that could not be read now
                  says so, and names the cause. ───────────────────────────────────────────── */}
-          {!viewsLoading && (kpiError || kpiStockError) && (
+          {!viewsLoading && (kpiError || kpiStockError || deptError) && (
             <div style={{
               border: '1px solid var(--data-neg)', borderRadius: 'var(--radius-md)',
               padding: '10px 14px', background: 'rgba(220,60,60,0.08)',
@@ -3249,6 +3293,11 @@ export default function Home() {
                 <div style={{ marginTop: kpiError ? 6 : 0 }}>
                   <strong>Stock figures unavailable</strong> (negative SOH, slow movers, capital tied).
                   {' '}Sales above are unaffected and were read from <code>rpc_dept_summary</code>. {kpiStockError}
+                </div>
+              )}
+              {deptError && (
+                <div style={{ marginTop: (kpiError || kpiStockError) ? 6 : 0 }}>
+                  <strong>Department figures unavailable — this is not a zero.</strong> {deptError}
                 </div>
               )}
             </div>
@@ -3541,6 +3590,11 @@ export default function Home() {
                     {top20Activity === 'non_movers' && moverMode === 'value' && (
                       <span style={{ fontSize: 10, color: 'rgba(245,245,244,0.3)', fontFamily: "'Geist Mono', monospace" }}>stock value</span>
                     )}
+                    {/* ENG-140: Non-Movers is stock on hand now (rpc_top20 reads l2_stock_position and
+                        never uses p_dates), so it says so, rather than looking like a list for the dates. */}
+                    {top20Activity === 'non_movers' && (
+                      <span style={{ fontSize: 10, color: 'rgba(245,245,244,0.3)', fontFamily: "'Geist Mono', monospace" }}>current stock · date range not applied</span>
+                    )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <div style={{ display: 'flex', gap: 3, background: 'rgba(255,255,255,0.04)', padding: 3, borderRadius: 8 }}>
@@ -3589,7 +3643,7 @@ export default function Home() {
                       {top20.length === 0 && !top20Error && (
                         <p style={{ color: 'rgba(245,245,244,0.3)', fontSize: 13, padding: '20px 0', textAlign: 'center', fontStyle: 'italic' }}>
                           {top20Activity === 'non_movers'
-                            ? `No non-moving stock · ${selectedDates.length} date${selectedDates.length !== 1 ? 's' : ''} · ${deptFilter !== 'all' ? deptFilter : 'all depts'}`
+                            ? `No non-moving stock · ${deptFilter !== 'all' ? deptFilter : 'all depts'}`
                             : `No movers found · ${selectedDates.length} date${selectedDates.length !== 1 ? 's' : ''} · ${deptFilter !== 'all' ? deptFilter : 'all depts'}`
                           }
                         </p>
@@ -3957,17 +4011,26 @@ export default function Home() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <div>
                 <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 20, fontWeight: 600 }}>Capital Tied</p>
-                <p style={{ fontSize: 11, color: 'rgba(245,245,244,0.4)', fontFamily: "'Geist Mono', monospace", marginTop: 2 }}>by department · {zarShort(kpiCapTied)} total</p>
+                <p style={{ fontSize: 11, color: 'rgba(245,245,244,0.4)', fontFamily: "'Geist Mono', monospace", marginTop: 2 }}>by department · {zarShort(engineCapPairable ? enginePurifiedCap : kpiCapTied)} total</p>
               </div>
               <button onClick={() => setCapTiedModalOpen(false)} style={{ background: 'none', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, color: 'rgba(245,245,244,0.5)', cursor: 'pointer', padding: '4px 10px', fontSize: 12 }}>✕</button>
             </div>
 
             {capTiedByDept.length === 0 ? (
-              <p style={{ color: 'rgba(245,245,244,0.4)', fontSize: 12, textAlign: 'center', padding: '20px 0' }}>Load report data to see breakdown</p>
+              <p style={{ color: 'rgba(245,245,244,0.4)', fontSize: 12, textAlign: 'center', padding: '20px 0' }}>Department capital is not available for this selection</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {capTiedByDept.map(([dept, val]) => {
-                  const total = capTiedByDept.reduce((s, [, v]) => s + v, 0)
+                {(() => {
+                  // ENG-254: shares are taken against the number the tile shows, the top 15
+                  // departments are listed, and whatever the list does not carry is named
+                  // as "Other departments" so the bars always add up to the header.
+                  const headline = Number(engineCapPairable ? enginePurifiedCap : kpiCapTied) || 0
+                  const top = capTiedByDept.slice(0, 15)
+                  const listed = top.reduce((s, [, v]) => s + v, 0)
+                  const rest = headline - listed
+                  return rest > Math.max(1, headline * 0.005) ? [...top, ['Other departments', rest]] : top
+                })().map(([dept, val]) => {
+                  const total = Number(engineCapPairable ? enginePurifiedCap : kpiCapTied) || capTiedByDept.reduce((s, [, v]) => s + v, 0)
                   const share = total > 0 ? (val / total) * 100 : 0
                   return (
                     <div key={dept}>
@@ -3985,7 +4048,7 @@ export default function Home() {
             )}
 
             <p style={{ marginTop: 16, fontSize: 10, color: 'rgba(245,245,244,0.25)', fontFamily: "'Geist Mono', monospace", fontStyle: 'italic' }}>
-              SOH × unit cost · slow-mover lines · ghost stock excluded
+              Stock at cost, engine-purified: cost errors, dead and phantom lines and non-stock departments are not counted · adds up to the Capital Tied tile
               {kpiGhostStock > 0 && (
                 <span style={{ color: 'rgba(251,191,36,0.6)', marginLeft: 6 }}>
                   ({zarShort(kpiGhostStock)} production stock removed — fix at source in Sigma)
@@ -4073,9 +4136,18 @@ export default function Home() {
                   </div>
                 )
               ) : reportData.length === 0 ? (
-                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-                  <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 15, fontStyle: 'italic', color: 'rgba(245,245,244,0.3)', textAlign: 'center' }}>No rows match current filters</p>
-                </div>
+                currentReport === 'slowmovers' && engineSlowError ? (
+                  // ENG-250: a failed or short Slow Movers read is stated here, in the
+                  // empty branch a failed read actually reaches. It used to sit below the
+                  // table, which a failed read never renders, so it read as "no slow movers".
+                  <div role="alert" style={{ padding: '14px 18px', borderTop: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.10)', fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#fca5a5', flexShrink: 0 }}>
+                    Slow Movers could not be read: {engineSlowError}
+                  </div>
+                ) : (
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+                    <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 15, fontStyle: 'italic', color: 'rgba(245,245,244,0.3)', textAlign: 'center' }}>No rows match current filters</p>
+                  </div>
+                )
               ) : (
                 <>
                   <div style={{ flex: 1, overflow: 'auto' }}>
@@ -4103,14 +4175,6 @@ export default function Home() {
                     {currentReport === 'slowmovers' && engineSlowRows.filter(r => r.ean == null).length > 0 &&
                       ` · ${num(engineSlowRows.filter(r => r.ean == null).length)} lines hidden (no EAN bridge)`}
                   </div>
-                  {/* ENG-101: a failed or short read is stated, never rendered as
-                      an empty report. A blank here would read as "no slow movers",
-                      which is the exact lie the 1,000-row cap was already telling. */}
-                  {currentReport === 'slowmovers' && engineSlowError && (
-                    <div style={{ padding: '10px 18px', borderTop: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.10)', fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#fca5a5', flexShrink: 0 }}>
-                      Slow Movers could not be read: {engineSlowError}
-                    </div>
-                  )}
                 </>
               )}
             </div>
