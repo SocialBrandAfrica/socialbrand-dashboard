@@ -200,9 +200,13 @@ AS $f$
       FROM x)
   SELECT x.pcode, x.ean_c, x.descr, x.dname, x.snr, x.lstatus, x.lkind,
          -- INTERIM active range until item 4b: not a catalogue stub, and it sold in 91 days, holds stock, is a new range line or is on this order.
-         (x.pstate IS NOT NULL
+         -- Applied as bloom035_s36_desk_lines_exception_lines_in_range (21:3x): a line needing activation, and an unordered line carrying an engine reason
+         -- of its own (non-stock but it sold, stock on no desk), are in the range. They have no verdict row, so pstate IS NULL had hidden them.
+         ((x.pstate IS NOT NULL
             AND NOT (COALESCE(x.never_sold, false) AND x.first_receipt IS NULL)
-            AND (COALESCE(x.last_sale >= CURRENT_DATE - 91, false) OR COALESCE(x.soh_c, 0) > 0 OR x.pstate = 'NEW_RANGE' OR x.packs_c > 0)) AS in_range,
+            AND (COALESCE(x.last_sale >= CURRENT_DATE - 91, false) OR COALESCE(x.soh_c, 0) > 0 OR x.pstate = 'NEW_RANGE' OR x.packs_c > 0))
+            OR x.needs_act
+            OR (x.lkind = 'unordered' AND x.hreason IS NOT NULL AND x.hreason NOT LIKE 'In the desk pool, nothing to order:%' AND x.hreason NOT LIKE 'Expense, not stock%')) AS in_range,
          'INTERIM_91D'::text AS range_basis,
          (CASE
             WHEN x.lkind = 'ordered' THEN 'On this order: ' || x.packs_c || ' pack' || CASE WHEN x.packs_c = 1 THEN '' ELSE 's' END || '.'

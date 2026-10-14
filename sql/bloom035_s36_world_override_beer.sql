@@ -101,4 +101,28 @@ BEGIN
 END
 $m$;
 
+-- ALIGNED TO PM CLOSE SECTION 31 ITEM 3 (applied 14-10 21:3x as bloom035_s36_world_override_pm_seven_aligned): PM counts the beer codes labelled World 2 by the
+-- beer desk's merch groups 201-205 and 401: 21355 six (CRATE@ 141, CORONA ZERO 163, STELLA NRB 12929, REDD'S 20389, STELLA NRB_24 21879, ALL CREATES SAB 36816)
+-- and 80176 one (CASTLE MILK STOUT CASE 59713). The first seeding took seven by description and missed three of those. Added below. CC's own three that fall outside
+-- PM's count (80176 125 and 469, 80579 10011) stay, marked as a CC proposal for PM to confirm or retire. Dry run rolled back: exactly these ten rows change, 80175 control 0.
+INSERT INTO public.l2_world_override (store_code, product_code, world, ruled_by, ruled_on, confirmed_by, reason, falsifier, retired_on)
+SELECT v.store_code, v.product_code, 'WORLD_1', 'PM close section 31 item 3 (14-10-2026 16:31): the beer codes labelled World 2 at 21355 (6) and 80176 (1), counted by the beer merch groups 201-205 and 401', DATE '2026-10-14', NULL, v.reason,
+       'Retire when the family builder links this code to its selling family (the floor answers the pack-count question in the resolution queue) or when a till sale moves it to World 1 by the ENG-020 legs.', NULL
+  FROM (VALUES
+    ('21355', 141::bigint,   'CRATE@: returnable SAB crate, merch group 201, 39 receipt dates in 531 days, never sold at the till. Not a production input. World 1 lists it on the SAB desk as an unordered line with no rate.'),
+    ('21355', 20389::bigint, 'REDD''S ORIGINAL RB: SAB cider, merch group 401, 3 receipts in 212 days, SOH 1, one-member family that never sold. Beer and cider are never production.'),
+    ('21355', 36816::bigint, 'ALL CREATES SAB: returnable SAB crates on the brewery account, merch group 201, 30 receipt dates, SOH 408, never sold at the till. Not a production input.')
+  ) AS v(store_code, product_code, reason)
+ON CONFLICT (store_code, product_code) DO NOTHING;
+
+UPDATE public.l2_world_override
+   SET ruled_by = 'CC (builder) proposal 14-10-2026 21:3x, same cause as PM close section 31 item 3 but outside PM''s count of 7: PM to confirm or retire'
+ WHERE (store_code, product_code) IN (('80176', 125), ('80176', 469), ('80579', 10011));
+
+-- CONFIRMED BY PIETER (chat answer, 14-10-2026 21:3x): the three CC-proposal rows above. Applied as a plain UPDATE. The other seven keep confirmed_by NULL until PM reviews them.
+UPDATE public.l2_world_override
+   SET confirmed_by = 'Pieter (chat answer, 14-10-2026)',
+       ruled_by = 'Pieter, chat 14-10-2026: confirmed the CC proposal, same cause as PM close section 31 item 3 but outside PM''s count of 7'
+ WHERE (store_code, product_code) IN (('80176', 125), ('80176', 469), ('80579', 10011));
+
 SELECT pg_notify('pgrst', 'reload schema');
