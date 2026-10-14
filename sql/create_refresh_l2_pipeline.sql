@@ -45,6 +45,7 @@
 -- inside general canon (§0h): it is the only store with a consignment arrangement
 -- today. It belongs in config; filed, not silently generalised.
 
+-- Re-synced from the live definition 2026-10-14 (after eng236_option_h_plain_for_full_delta_matviews, ENG-236).
 CREATE OR REPLACE FUNCTION public.refresh_l2_pipeline()
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -61,10 +62,10 @@ BEGIN
   REFRESH MATERIALIZED VIEW CONCURRENTLY l2_movements_typed;
   v_result := v_result || jsonb_build_object('movements_typed_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
 
-  REFRESH MATERIALIZED VIEW CONCURRENTLY l2_rate_of_sale;
-  REFRESH MATERIALIZED VIEW CONCURRENTLY l2_item_classification;
-  REFRESH MATERIALIZED VIEW CONCURRENTLY l2_ranging_tier;
-  REFRESH MATERIALIZED VIEW CONCURRENTLY l2_stock_position;
+  REFRESH MATERIALIZED VIEW l2_rate_of_sale;
+  REFRESH MATERIALIZED VIEW l2_item_classification;
+  REFRESH MATERIALIZED VIEW l2_ranging_tier;
+  REFRESH MATERIALIZED VIEW l2_stock_position;
   REFRESH MATERIALIZED VIEW CONCURRENTLY l2_kpi_daily;
   v_result := v_result || jsonb_build_object('chain_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
 
