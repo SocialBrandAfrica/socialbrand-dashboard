@@ -1130,6 +1130,74 @@ async function readAllPages(makeQuery) {
   return { data: null, error: { message: `read exceeded ${PGRST_MAX_PAGES} pages of ${PGRST_ROW_CAP} rows` } }
 }
 
+// ENG-103 (PM ruling 14-10-2026: page the results, never refuse; derive the page size from a measurement).
+// rpc_top20 Movers filters with `sale_date = ANY(array)`, which is superlinear in the number of dates: measured
+// 14-10-2026 at five stores, 1 date 1.1 s, 13 dates 1.7 s, 31 dates 6.5 s, 62 dates 25.9 s, against the
+// authenticator's 8 s. So up to TOP20_DIRECT_DATES dates it is called as before (one call, unchanged); beyond
+// that the dates are read in pages through rpc_top20_totals (a linear, join-to-the-dates read of per-EAN totals,
+// measured 1.6 s for 25 dates at five stores and 3.2 s for 125 dates at one store: 125 store-dates a page, the
+// slowest page about 2.5 times inside the ceiling). Movers is the UNION of the top 20 by value and the top 20 by
+// quantity over the WHOLE period, which the 40 rows of a page cannot give, so the pages carry EVERY item's total
+// and this function sums them exactly, then picks the union itself; rpc_ean_labels names the picked EANs. Any
+// page's error is the read's error (the caller states it, never ranks a short read), and a page whose `served`
+// count does not equal its rows is a failure too (R22 tripwire).
+const TOP20_DIRECT_DATES = 14
+const TOP20_PAGE_STORE_DATES = 125
+const TOP20_PAGE_PARALLEL = 3
+async function readTop20Paged(supabaseClient, { storeCodes, dates, dept, subdept, eans }) {
+  const perPage = Math.max(1, Math.floor(TOP20_PAGE_STORE_DATES / Math.max(1, storeCodes.length)))
+  const pages = []
+  for (let i = 0; i < dates.length; i += perPage) pages.push(dates.slice(i, i + perPage))
+  const sums = new Map()   // ean -> [sales in 1/10,000, qty]
+  let next = 0
+  let failure = null
+  async function worker() {
+    while (!failure) {
+      const idx = next++
+      if (idx >= pages.length) return
+      const { data, error } = await supabaseClient.rpc('rpc_top20_totals', {
+        p_store_codes: storeCodes, p_dates: pages[idx], p_dept: dept, p_subdept: subdept, p_eans: eans,
+      })
+      if (failure) return
+      const rows = data?.rows
+      if (error) { failure = `page ${idx + 1} of ${pages.length}: ${error.message}`; return }
+      if (!Array.isArray(rows) || Number(data.served) !== rows.length) {
+        failure = `page ${idx + 1} of ${pages.length} came back short (served ${data?.served}, rows ${Array.isArray(rows) ? rows.length : 'none'})`
+        return
+      }
+      for (const [ean, sv, q] of rows) {
+        const cur = sums.get(ean) ?? [0, 0]
+        cur[0] += Math.round(Number(sv) * 1e4)
+        cur[1] += Number(q)
+        sums.set(ean, cur)
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(TOP20_PAGE_PARALLEL, pages.length) }, worker))
+  if (failure) return { data: null, error: { message: failure } }
+  const keyed = [...sums].map(([ean, [sv4, q]]) => ({
+    ean, total_sales: Math.round(sv4 / 100) / 100, total_qty: Math.round(q * 1e6) / 1e6,
+  }))
+  const tie = (a, b) => (a.ean < b.ean ? -1 : a.ean > b.ean ? 1 : 0)
+  const picked = new Map()
+  for (const r of [...keyed].sort((a, b) => (b.total_sales - a.total_sales) || tie(a, b)).slice(0, 20)) picked.set(r.ean, r)
+  for (const r of [...keyed].sort((a, b) => (b.total_qty - a.total_qty) || tie(a, b)).slice(0, 20)) picked.set(r.ean, r)
+  if (picked.size === 0) return { data: [], error: null }
+  const { data: labels, error: labelError } = await supabaseClient.rpc('rpc_ean_labels', {
+    p_store_codes: storeCodes, p_eans: [...picked.keys()],
+  })
+  if (labelError) return { data: null, error: { message: `labels: ${labelError.message}` } }
+  const byEan = new Map((labels ?? []).map(l => [l.ean, l]))
+  return {
+    data: [...picked.values()].map(r => {
+      const l = byEan.get(r.ean) ?? {}
+      return { ean: r.ean, description: l.description ?? null, dept_name: l.dept_name ?? null, sub_dept_name: l.sub_dept_name ?? null,
+               size: l.size ?? null, unit: l.unit ?? null, total_sales: r.total_sales, total_qty: r.total_qty }
+    }),
+    error: null,
+  }
+}
+
 function loadCachedSearchIndex(scopeKey) {
   try {
     const raw = localStorage.getItem(SEARCH_IDX_KEY + '|' + scopeKey)
@@ -2055,17 +2123,27 @@ export default function Home() {
         return
       }
 
-      const { data, error } = await supabase.rpc('rpc_top20', {
-        p_store_codes: storeCodes,
-        p_dates:       datesForTop20,
-        p_dept:        deptFilter    !== 'all' ? deptFilter    : null,
-        p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
-        p_activity:    top20Activity,
-        p_parents:     includeParents,
-        p_eans:        focusEans,
-      })
+      // ENG-103: Non-Movers ignores the dates (stock now), so only Movers over a long selection is paged.
+      const paged = top20Activity !== 'non_movers' && datesForTop20.length > TOP20_DIRECT_DATES
+      const t20Src = paged ? 'rpc_top20_totals' : 'rpc_top20'
+      const { data, error } = paged
+        ? await readTop20Paged(supabase, {
+            storeCodes, dates: datesForTop20,
+            dept:    deptFilter    !== 'all' ? deptFilter    : null,
+            subdept: subDeptFilter !== 'all' ? subDeptFilter : null,
+            eans:    focusEans,
+          })
+        : await supabase.rpc('rpc_top20', {
+            p_store_codes: storeCodes,
+            p_dates:       datesForTop20,
+            p_dept:        deptFilter    !== 'all' ? deptFilter    : null,
+            p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
+            p_activity:    top20Activity,
+            p_parents:     includeParents,
+            p_eans:        focusEans,
+          })
       if (cancelled) return
-      if (error) console.error('[rpc_top20]', error.message)
+      if (error) console.error('[' + t20Src + ']', error.message)
       const t20 = data ?? []
       // ENG-141. Only cache a clean read, and leave the key UNSET on failure so
       // the next render retries. Caching a failure replays it as though it were
@@ -2076,7 +2154,7 @@ export default function Home() {
       // rows for 80175/August as `anon`, and the panel renders on a fresh
       // session -- the fault was never in the database. Same rule the KPI cache
       // already applies at viewsCache above; this site and deptCache missed it.
-      setTop20Error(error ? `Top 20 could not be read — rpc_top20: ${error.message}` : null)
+      setTop20Error(error ? `Top 20 could not be read — ${t20Src}: ${error.message}` : null)
       if (!error) top20Cache.current.set(t20Key, t20)
       setTop20Data(t20)
       setTop20Loading(false)
