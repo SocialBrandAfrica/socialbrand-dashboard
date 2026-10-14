@@ -67,14 +67,16 @@ export function CalendarPopover({ availableDates, selectedDates, onChange, onClo
     if (allMoSel) {
       onChange(prev => {
         const next = prev.filter(d => !monthAvail.includes(d))
-        return next.length ? next : [availableDates[0]]
+        return next.length ? next : (availableDates.length ? [availableDates[0]] : prev)
       })
     } else {
       onChange(prev => [...new Set([...prev, ...monthAvail])])
     }
   }
 
-  function pickLatest() { onChange([availableDates[0]]); onClose() }
+  // 14-10-2026: with the available dates not yet loaded (the database was saturated) this passed [undefined] and every
+  // data effect threw "Invalid time value" in shiftDate: the whole page fell to "Application error".
+  function pickLatest() { if (availableDates.length) onChange([availableDates[0]]); onClose() }
 
   const btn = {
     fontFamily: 'Geist, sans-serif', fontSize: 11,

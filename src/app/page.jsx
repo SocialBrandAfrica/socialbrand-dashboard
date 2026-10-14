@@ -1275,7 +1275,15 @@ export default function Home() {
 
   // ── dates & stores ──────────────────────────────────────────────────────────
   const [availableDates, setAvailableDates] = useState([])
-  const [pickedDates,    setSelectedDates]  = useState([])   // what the calendar shows, at once (ENG-258)
+  const [pickedDates,    setPickedDates]    = useState([])   // what the calendar shows, at once (ENG-258)
+  // Every pick passes through here: only well-formed ISO dates get in (a stray undefined once took the whole page to
+  // "Application error" through shiftDate), and a pick that leaves nothing valid changes nothing.
+  const setSelectedDates = useCallback(next => setPickedDates(prev => {
+    const v = typeof next === 'function' ? next(prev) : next
+    if (!Array.isArray(v)) return prev
+    const clean = v.filter(d => typeof d === 'string' && /^d{4}-d{2}-d{2}$/.test(d))
+    return clean.length === v.length ? v : (clean.length ? clean : prev)
+  }), [])
   const selectedDates = useSettledDates(pickedDates, DATE_SETTLE_MS)   // what every data effect reads, 400 ms after the last click
   const [storeCodes,     setStoreCodes]     = useState([])   // populated after profile load
   const [userProfile,    setUserProfile]    = useState(undefined) // undefined=loading, null=pending
