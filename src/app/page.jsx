@@ -1144,7 +1144,10 @@ async function readAllPages(makeQuery) {
 const TOP20_DIRECT_DATES = 14
 const TOP20_PAGE_STORE_DATES = 125
 const TOP20_PAGE_PARALLEL = 3
-async function readTop20Paged(supabaseClient, { storeCodes, dates, dept, subdept, eans }) {
+// Review fixes 14-10-2026 (adversarial review of 77799af): `isCancelled` stops a superseded read at its next page
+// (the effect's cleanup used to leave all 25 pages running, and every selection change added another job, so
+// concurrency was 3 times the number of live jobs).
+async function readTop20Paged(supabaseClient, { storeCodes, dates, dept, subdept, eans, isCancelled = () => false }) {
   const perPage = Math.max(1, Math.floor(TOP20_PAGE_STORE_DATES / Math.max(1, storeCodes.length)))
   const pages = []
   for (let i = 0; i < dates.length; i += perPage) pages.push(dates.slice(i, i + perPage))
@@ -1152,13 +1155,13 @@ async function readTop20Paged(supabaseClient, { storeCodes, dates, dept, subdept
   let next = 0
   let failure = null
   async function worker() {
-    while (!failure) {
+    while (!failure && !isCancelled()) {
       const idx = next++
       if (idx >= pages.length) return
       const { data, error } = await supabaseClient.rpc('rpc_top20_totals', {
         p_store_codes: storeCodes, p_dates: pages[idx], p_dept: dept, p_subdept: subdept, p_eans: eans,
       })
-      if (failure) return
+      if (failure || isCancelled()) return
       const rows = data?.rows
       if (error) { failure = `page ${idx + 1} of ${pages.length}: ${error.message}`; return }
       if (!Array.isArray(rows) || Number(data.served) !== rows.length) {
@@ -1174,6 +1177,7 @@ async function readTop20Paged(supabaseClient, { storeCodes, dates, dept, subdept
     }
   }
   await Promise.all(Array.from({ length: Math.min(TOP20_PAGE_PARALLEL, pages.length) }, worker))
+  if (isCancelled()) return { data: null, error: { message: 'superseded by a newer selection' } }
   if (failure) return { data: null, error: { message: failure } }
   const keyed = [...sums].map(([ean, [sv4, q]]) => ({
     ean, total_sales: Math.round(sv4 / 100) / 100, total_qty: Math.round(q * 1e6) / 1e6,
@@ -1183,6 +1187,8 @@ async function readTop20Paged(supabaseClient, { storeCodes, dates, dept, subdept
   for (const r of [...keyed].sort((a, b) => (b.total_sales - a.total_sales) || tie(a, b)).slice(0, 20)) picked.set(r.ean, r)
   for (const r of [...keyed].sort((a, b) => (b.total_qty - a.total_qty) || tie(a, b)).slice(0, 20)) picked.set(r.ean, r)
   if (picked.size === 0) return { data: [], error: null }
+  // OWED (PM 14-10 12:58: split): the labels call should also send p_dates / p_dept / p_subdept under a filter
+  // (rpc_ean_labels already accepts them, migration eng103b); it ships once the call is timed on a quiet database.
   const { data: labels, error: labelError } = await supabaseClient.rpc('rpc_ean_labels', {
     p_store_codes: storeCodes, p_eans: [...picked.keys()],
   })
@@ -2132,6 +2138,7 @@ export default function Home() {
             dept:    deptFilter    !== 'all' ? deptFilter    : null,
             subdept: subDeptFilter !== 'all' ? subDeptFilter : null,
             eans:    focusEans,
+            isCancelled: () => cancelled,
           })
         : await supabase.rpc('rpc_top20', {
             p_store_codes: storeCodes,
