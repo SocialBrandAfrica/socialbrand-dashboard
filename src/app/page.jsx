@@ -712,7 +712,7 @@ function LayerFreshnessStrip({ rows }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // FILTER DROPDOWN — compact pill that shows current selection; opens a menu
 // ─────────────────────────────────────────────────────────────────────────────
-function FilterDropdown({ label, value, options, onChange, emptyMsg }) {
+function FilterDropdown({ label, value, options, onChange, emptyMsg, errorMsg }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   useEffect(() => {
@@ -744,6 +744,8 @@ function FilterDropdown({ label, value, options, onChange, emptyMsg }) {
           borderRadius: 10, overflow: 'hidden', minWidth: 170,
           boxShadow: '0 16px 48px rgba(0,0,0,0.65)',
         }}>
+          {/* ENG-143: a failed read of this list is stated here, so a short list is never mistaken for the whole list. */}
+          {errorMsg && <div role="alert" style={{ padding: '8px 14px', fontSize: 11, color: 'rgba(251,191,36,0.9)', borderBottom: '1px solid rgba(255,255,255,0.08)', maxWidth: 260 }}>{errorMsg}</div>}
           {options.length === 0
             ? <div style={{ padding: '10px 14px', fontSize: 11, color: 'rgba(245,245,244,0.3)', fontStyle: 'italic' }}>{emptyMsg ?? 'No options'}</div>
             : options.map(o => (
@@ -1162,6 +1164,9 @@ export default function Home() {
   const [viewsLoading,   setViewsLoading]   = useState(false)
   const [top20Loading,   setTop20Loading]   = useState(false)
   const [top20Error,     setTop20Error]     = useState(null)  // ENG-141 — a failed read is NOT an empty list
+  const [subDeptsError,  setSubDeptsError]  = useState(null)  // ENG-143 -- rpc_subdepts failure, stated in the Sub-dept dropdown
+  const [deptTrendError,   setDeptTrendError]   = useState(null)  // ENG-143 -- v_dept_by_date failure, stated in the Sales Trend panel
+  const [productTrendError, setProductTrendError] = useState(null) // ENG-143 -- rpc_focus_chart failure, stated in the Sales Trend panel
   const [deptError,      setDeptError]      = useState(null)  // ENG-255 — the department effect's failures are stated, not rendered as "No sales data"
   const [refreshKey,     setRefreshKey]     = useState(0)
 
@@ -1208,6 +1213,7 @@ export default function Home() {
   // swallowed into an empty array by `.catch(() => [])`, which renders as
   // "no slow movers" -- a blank standing in for a failure (R22 §3).
   const [engineSlowError, setEngineSlowError] = useState(null)
+  const [supplierError,   setSupplierError]   = useState(null)  // ENG-251 -- a failed supplier read is stated, not an empty Supplier column
   const [reportLoaded,  setReportLoaded]  = useState(false)
   const [reportLoading, setReportLoading] = useState(false)
   const [ghostStockRows,     setGhostStockRows]     = useState([])   // SB-AP-004 C -- ghost_stock report
@@ -1903,6 +1909,7 @@ export default function Home() {
     if (!storeCodes.length || !trendDates.length || deptFilter === 'all') {
       setDeptTrendData([])
       setLyDeptTrendData([])
+      setDeptTrendError(null)
       return
     }
     let cancelled = false
@@ -1923,8 +1930,20 @@ export default function Home() {
         : Promise.resolve({ data: [] }),
     ]).then(([cur, ly]) => {
       if (cancelled) return
+      // ENG-143: neither error was read, so a failed v_dept_by_date call drew "No sales data
+      // in this period" for a department that sold. State it instead.
+      if (cur.error) console.error('[v_dept_by_date trend]', cur.error.message)
+      if (ly.error)  console.error('[v_dept_by_date trend LY]', ly.error.message)
+      const failed = [cur.error && 'v_dept_by_date', ly.error && 'v_dept_by_date (last year)'].filter(Boolean)
+      setDeptTrendError(failed.length ? `Sales Trend could not be read — ${failed.join(', ')}.` : null)
       setDeptTrendData((cur.data ?? []).map(toTrend))
       setLyDeptTrendData((ly.data ?? []).map(toTrend))
+    }).catch(e => {
+      if (cancelled) return
+      console.error('[v_dept_by_date trend]', e)
+      setDeptTrendError(`Sales Trend could not be read — ${e?.message ?? e}.`)
+      setDeptTrendData([])
+      setLyDeptTrendData([])
     })
     return () => { cancelled = true }
   }, [storeCodes, deptFilter, deptNormMap, trendDates, lyTrendDates])
@@ -2121,18 +2140,28 @@ export default function Home() {
   useEffect(() => {
     if (deptFilter === 'all' || !storeCodes.length || !selectedDates.length) {
       setSubDepts([])
+      setSubDeptsError(null)
       return
     }
     let cancelled = false
     async function loadSubDepts() {
       // rpc_subdepts is SECURITY DEFINER — direct daily_snapshots reads are blocked by RLS.
       // Pass all raw dept name variants so HMR / H.M.R. both match.
-      const { data } = await supabase.rpc('rpc_subdepts', {
+      const { data, error } = await supabase.rpc('rpc_subdepts', {
         p_store_codes: storeCodes,
         p_dates:       selectedDates,
         p_dept_names:  [...(deptNormMap.get(deptFilter) ?? new Set([deptFilter]))],
       })
       if (cancelled) return
+      // ENG-143: the error was never read, so a failed call left the list at "All Sub-depts"
+      // with no sign that the sub-departments were missing rather than absent.
+      if (error) {
+        console.error('[rpc_subdepts]', error.message)
+        setSubDeptsError(`Sub-depts could not be read — rpc_subdepts: ${error.message}`)
+        setSubDepts([])
+        return
+      }
+      setSubDeptsError(null)
       const names = (data ?? []).map(r => r.sub_dept_name).filter(Boolean)
       setSubDepts(names)
     }
@@ -2147,14 +2176,29 @@ export default function Home() {
     if (!storeCodes.length || !selectedDates.length || reportLoading) return
     setReportLoading(true)
 
-    const [rows, catalogRes, engineSlowRes] = await Promise.all([
+    const [rows, supplierRes, engineSlowRes] = await Promise.all([
       fetchAllRows({ storeCodes, dates: selectedDates }),
       // product_catalog carries supplier_name per EAN (loaded from DIWAAIS2 / PLU reference)
       // SB-CC-SEC-001: routed through rpc_supplier_by_ean (SECURITY DEFINER).
+      //
+      // ENG-251: reads the JSONB wrapper, NOT the SETOF function. The SETOF form was
+      // served through the live 1,000-row PostgREST cap, so the Supplier column was blank
+      // for almost every line (5 of the first 200 filled at 10116, 12 at 80175, against 168
+      // at 80579 whose supplier rows fit under the cap). One jsonb row cannot be cut by a
+      // row cap, `served` vs the array length is the tripwire, and a failed or short read
+      // is stated, never an empty column.
       supabase
-        .rpc('rpc_supplier_by_ean', { p_stores: storeCodes })
-        .then(r => r.data ?? [])
-        .catch(() => []),
+        .rpc('rpc_supplier_by_ean_json', { p_stores: storeCodes })
+        .then(r => {
+          if (r.error) return { pairs: [], err: r.error.message }
+          const p = r.data
+          const pairs = Array.isArray(p?.rows) ? p.rows : []
+          if (p && typeof p.served === 'number' && p.served !== pairs.length) {
+            return { pairs: [], err: `Supplier names incomplete: served ${p.served} of ${pairs.length} rows.` }
+          }
+          return { pairs, err: null }
+        })
+        .catch(e => ({ pairs: [], err: e?.message ?? 'Supplier read failed' })),
       // Engine-backed Slow Movers (l2_stock_position.slow_mover_signal, §5 KPI4).
       // Bridged to EAN; unbridged rows return ean=null (excluded + footnoted).
       //
@@ -2191,15 +2235,17 @@ export default function Home() {
       .filter(r => r.daily_ros != null || r.days_cover != null)
       .map(r => ({ ean: r.ean, store_code: r.store_code, daily_ros: r.daily_ros, days_cover: r.days_cover }))
 
-    // Build ean → supplier_name lookup (last-write wins across stores — supplier is the same)
+    // ean → supplier_name lookup. One supplier per EAN, chosen in the database
+    // (alphabetically first where stores disagree), so there is no order to depend on here.
     const suppMap = new Map()
-    for (const row of catalogRes) {
-      if (row.supplier_name) suppMap.set(row.ean, row.supplier_name)
+    for (const pair of supplierRes.pairs) {
+      if (Array.isArray(pair) && pair[0] != null && pair[1]) suppMap.set(pair[0], pair[1])
     }
 
     setReportRows(rows)
     setStoreRosData(rosRes)
     setSupplierMap(suppMap)
+    setSupplierError(supplierRes.err)
     setEngineSlowRows(engineSlowRes.rows)
     setEngineSlowError(engineSlowRes.err)
     setReportLoaded(true)
@@ -2657,10 +2703,12 @@ export default function Home() {
   const lyKpiSlowMove = filterActive && lyDeptSohCounts.length > 0
     ? sumOrNull(lyDeptSohRows,      'slow_mover_count')
     : sumOrNull(lyLatestKpiByStore, 'slow_mover_count')
-  const lyDeptCapPresent = lyKpiDeptSummary.some(r => r.capital_tied != null)
-  const lyKpiCapTied  = (filterActive && lyDeptCapPresent)
-    ? sumOrNull(lyDeptRows,         'capital_tied')
-    : sumOrNull(lyLatestKpiByStore, 'capital_tied')
+  // SEL-P3: under a dept filter the LY capital must NOT come from rpc_dept_summary. Its capital
+  // leg is point-in-time at the latest l2 snapshot and ignores p_dates, so called with LY dates it
+  // returns TODAY's capital, which this line then labelled "LY" (a chip comparing a number with
+  // itself). No dept-level capital history exists, so under a filter there is no LY: null, shown
+  // as nothing, never a confident wrong number (ENG-100 rider; PROJECT-LEXICON KPI 6).
+  const lyKpiCapTied  = filterActive ? null : sumOrNull(lyLatestKpiByStore, 'capital_tied')
   const hasLY         = filterActive ? lyDeptRows.length > 0 : lyKpiData.length > 0
 
   const wowDeptRows = byDept(wowKpiDeptSummary)
@@ -2680,8 +2728,11 @@ export default function Home() {
   // The helper is now DEFINED WITH THE LY LEG ABOVE, because that leg needs it
   // first; one definition serves both. Moved, never duplicated.
   const deptCapPresent = deptSummary.some(r => r.capital_tied != null)
-  const kpiCapTied  = (filterActive && deptCapPresent)
-    ? sumField(byDept(deptSummary), 'capital_tied')
+  // SEL-P3: under a dept or sub-dept filter the whole-store figure is NOT the answer. If the
+  // dept capital is not present, the card shows nothing (a dash), never the whole store's stock
+  // presented as the filtered department's.
+  const kpiCapTied  = filterActive
+    ? (deptCapPresent ? sumField(byDept(deptSummary), 'capital_tied') : null)
     : sumOrNull(latestKpiByStore, 'capital_tied')
 
   // Ghost stock: rand value removed from Capital Tied (SB-AP-003). Point-in-time from latest snapshot per store.
@@ -2891,6 +2942,7 @@ export default function Home() {
     if (!activeEans.length || !storeCodes.length || !trendDates.length) {
       setProductTrendData([])
       setProductLyTrendData([])
+      setProductTrendError(null)
       return
     }
     let cancelled = false
@@ -2910,6 +2962,12 @@ export default function Home() {
         : Promise.resolve({ data: [] }),
     ]).then(([tRes, lyRes]) => {
       if (cancelled) return
+      // ENG-143: the errors were never read, so a failed rpc_focus_chart drew an empty trend for a
+      // product that sold. State it.
+      if (tRes.error)  console.error('[rpc_focus_chart]', tRes.error.message)
+      if (lyRes.error) console.error('[rpc_focus_chart LY]', lyRes.error.message)
+      const failedP = [tRes.error && 'rpc_focus_chart', lyRes.error && 'rpc_focus_chart (last year)'].filter(Boolean)
+      setProductTrendError(failedP.length ? `Sales Trend could not be read — ${failedP.join(', ')}.` : null)
       // rpc_focus_chart returns today_sales_ex_vat (post-GAP1 fix) with today_sales fallback
       const norm = rows => (rows ?? []).map(r => ({
         store_code:    r.store_code,
@@ -2918,6 +2976,12 @@ export default function Home() {
       }))
       setProductTrendData(norm(tRes.data))
       setProductLyTrendData(norm(lyRes.data ?? []))
+    }).catch(e => {
+      if (cancelled) return
+      console.error('[rpc_focus_chart]', e)
+      setProductTrendError(`Sales Trend could not be read — ${e?.message ?? e}.`)
+      setProductTrendData([])
+      setProductLyTrendData([])
     })
     return () => { cancelled = true }
   }, [activeEans, storeCodes, trendDates])
@@ -2925,6 +2989,7 @@ export default function Home() {
   // Effective trend data — priority: product selection > dept filter > whole-store
   const effectiveTrendData   = isSelectionActive ? productTrendData   : deptFilter !== 'all' ? deptTrendData   : trendData
   const effectiveLyTrendData = isSelectionActive ? productLyTrendData : deptFilter !== 'all' ? lyDeptTrendData : lyTrendData
+  const effectiveTrendError  = isSelectionActive ? productTrendError : deptFilter !== 'all' ? deptTrendError : null   // ENG-143
   const trendContextLabel    = isSelectionActive
     ? `${activeProducts.length} product${activeProducts.length === 1 ? '' : 's'} selected`
     : null
@@ -3178,6 +3243,7 @@ export default function Home() {
                 : [{ key: 'all', label: 'All Sub-depts' }, ...subDepts.map(d => ({ key: d, label: d }))]
               }
               onChange={key => clickSubDept(key)}
+              errorMsg={deptFilter !== 'all' ? subDeptsError : null}
               emptyMsg="No sub-depts available"
             />
 
@@ -3476,7 +3542,7 @@ export default function Home() {
                         : null,
                       sub:           engineCapPairable
                         ? `engine purified · cover ${engineDaysCover != null ? engineDaysCover.toFixed(0) + 'd' : '--'}`
-                        : 'SOH x unit cost (latest snapshot)',
+                        : (filterActive ? 'engine purified · dept scope · latest snapshot' : 'SOH x unit cost (latest snapshot)'),
                       warn:          true,
                       tone:          (() => {
                         if (!hasLY || !lyKpiCapTied) return 'neutral'
@@ -3566,6 +3632,7 @@ export default function Home() {
             : <SalesTrendPanel
                 trendData={effectiveTrendData}
                 lyTrendData={effectiveLyTrendData}
+                error={effectiveTrendError}
                 storeCodes={storeCodes}
                 rhythmProfiles={rhythmProfiles}
                 contextLabel={trendContextLabel}
@@ -4175,6 +4242,12 @@ export default function Home() {
                     {currentReport === 'slowmovers' && engineSlowRows.filter(r => r.ean == null).length > 0 &&
                       ` · ${num(engineSlowRows.filter(r => r.ean == null).length)} lines hidden (no EAN bridge)`}
                   </div>
+                  {/* ENG-251: a failed supplier read must not look like "no supplier on file". */}
+                  {supplierError && ['slowmovers', 'velocity', 'ledger_discrepancy', 'focus_export'].includes(currentReport) && (
+                    <div role="alert" style={{ padding: '8px 18px', borderTop: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.10)', fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#fca5a5', flexShrink: 0 }}>
+                      Supplier names could not be read, so the Supplier column is blank because of this and not because none is on file. {supplierError}
+                    </div>
+                  )}
                 </>
               )}
             </div>
