@@ -114,7 +114,7 @@ function getRhythmWindows(weeklyPoints, profiles) {
     return windows
 }
 
-export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProfiles = [], contextLabel = null, selectionEndDate = null }) {
+export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProfiles = [], contextLabel = null, selectionEndDate = null, error = null }) {
     // Use ex-VAT when available (whole-store path via mv_kpi_by_date).
     // Dept and product-selection paths supply total_sales only (PRSSALE/sigma incl-VAT);
     // the fallback keeps those paths rendering until a sigma-native dept-trend view lands.
@@ -150,6 +150,16 @@ export function SalesTrendPanel({ trendData, lyTrendData, storeCodes, rhythmProf
     const labelDate = iso => new Date(iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
 
     if (points.length < 2) {
+        // ENG-143: a failed read is stated, never drawn as "No sales data" (R22 section 3).
+        if (error) {
+            return (
+                <div className="sb-glass" role="alert" style={{ padding: '20px 22px', minWidth: 0, minHeight: 180, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <p style={{ fontSize: 13, color: 'rgba(251,191,36,0.85)', textAlign: 'center' }}>
+                        <strong>Sales Trend unavailable — this is not an empty period.</strong> {error}
+                    </p>
+                </div>
+            )
+        }
         return (
             <div className="sb-glass" style={{ padding: '20px 22px', minWidth: 0, minHeight: 180, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <p style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 14, fontStyle: 'italic', color: 'rgba(245,245,244,0.3)' }}>
