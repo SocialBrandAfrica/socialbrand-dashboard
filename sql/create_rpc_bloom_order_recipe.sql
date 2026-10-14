@@ -1,4 +1,6 @@
 -- =============================================================================
+-- 2026-10-14 21:3x (BLOOM-035 s37): ONE LINE CHANGED AFTER THE PINS BELOW were written. The fit window is LEAST(2, GREATEST(1, CEIL(gap/7))) budget weeks,
+--     never more than two (PM s37, Pieter B4). Applied as sql/bloom035_s37_budget_weeks_cap_two.sql. Live md5(pg_get_functiondef) after: 362a817ee74b13a79833999ad9fb06f2.
 -- RECONCILED TO LIVE 2026-10-05 by CC. THE BODY BELOW IS THE LIVE BODY, BYTE FOR BYTE.
 --     LIVE  b6bbee1e0b1c1c569d65ab34b1fd4785  / 48,560 chars
 --     ENG-229 (PM note five, 24-09): a minimum-mode line rounds UP to the whole pack that reaches its own min band
@@ -486,7 +488,7 @@ BEGIN
   FROM order_budget_ledger obl
   WHERE obl.store_code=p_store_code AND obl.route_key=v_ledger_route AND obl.grain='weekly'
     AND obl.year_month >= v_week_start
-    AND obl.year_month < v_week_start + 7 * GREATEST(1, CEIL((v_next_delivery - p_delivery_date) / 7.0))::int;
+    AND obl.year_month < v_week_start + 7 * LEAST(2, GREATEST(1, CEIL((v_next_delivery - p_delivery_date) / 7.0)))::int;
   v_weekly_budget := COALESCE(v_weekly_budget, 0);
 
   v_sql := format($q$
