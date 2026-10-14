@@ -12,6 +12,20 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-10-14 09:4x SAST -- DASHBOARD LANE (THIRD SEAT), FIRST TWO SHIPS: FAILURES STATED NOT BLANK, THE SUPPLIER COLUMN FILLED, THE CAPITAL TIED MODAL ADDS UP
+
+**Commits `a17e3d9` and `3efdba1` on `main`, Vercel success on both. Database: migration `eng251_rpc_supplier_by_ean_json` (new function, source `sql/eng251_rpc_supplier_by_ean_json.sql`). BUG-LOG ENG-250 to ENG-257 and the closure addenda of ENG-073, 101, 141, SEL-P3 and AUD-010.** Client only apart from the one new function. `next build` clean, rls-guard PASS, both pushes.
+
+- **ENG-250:** a failed Slow Movers read shows its red band (it sat in a branch a failed read never reached); Ghost Stock gets the one-row error table. Read live at 80175 and 10116 with the request made to fail.
+- **ENG-251:** the report Supplier column reads `rpc_supplier_by_ean_json`. Slow Movers, first 200 rows with a supplier: 10116 5 then 192, 80175 12 then 184.
+- **ENG-252:** a search index read that returns the 1,000-row cap is dropped, not cached; cache key v3.
+- **ENG-254:** the Capital Tied modal reads the purified department capital; header equals the tile at both stores (10116 R 5.97M, 80175 R 1.75M); no EXPENSES or DORMANT bar.
+- **ENG-255, ENG-143, ENG-141:** department-effect, Sales Trend and Sub-dept failures are stated; the stale Top 20 error is cleared. SEL-P3: no fabricated last-year Capital Tied under a department filter. ENG-140: Non-Movers says "current stock, date range not applied".
+
+**Read-back limits, stated.** Most failure paths were read with the request made to fail inside the page (a patched fetch), at both SPAR stores; the live BEFORE was not read for ENG-255, ENG-143, SEL-P3 and ENG-140 (code evidence named in the BUG-LOG addenda). ENG-143 site 2 (`rpc_focus_chart`) is not read yet. At 09:4x the Bloom pipeline rerun held locks and the page showed real lock-timeout failures, each stated and none shown as zero.
+
+---
+
 ## 2026-10-13 16:3x SAST -- SB-CC-STOCKTAKE-001 STEP 1 (ENG-240): THE UNCOUNTED POOL HAS ONE HOME
 
 **Clock:** written 2026-10-13 16:3x +0200 (`date` 16:33:35, DB `now()` 14:31 UTC, agreeing).
