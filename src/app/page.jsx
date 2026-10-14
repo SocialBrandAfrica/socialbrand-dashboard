@@ -706,11 +706,11 @@ function LayerFreshnessStrip({ rows }) {
   const lagging = rows.filter(r => r.feed_status === 'FAILED')
   return (
     <div className="sb-fresh-strip">
-      <span className="sb-fresh-chip" title="Oldest per-store sigma_sales trading date (L1 mirror currency, nightly extractor) — rpc_layer_freshness">
-        L1 → {l1Min}
+      <span className="sb-fresh-chip" title="The latest store sales date in the system">
+        Sales data to {l1Min}
       </span>
-      <span className="sb-fresh-chip" title="l2_kpi_daily.positioned_at — last L2 engine refresh (refresh_l2_pipeline, nightly 22:15 SAST)">
-        L2 engine → {l2Ref}
+      <span className="sb-fresh-chip" title="When the engine last rebuilt its figures (nightly, about 22:15)">
+        Engine refreshed {l2Ref}
       </span>
       {lagging.length > 0
         ? lagging.map(r => (
@@ -3290,6 +3290,9 @@ export default function Home() {
             } else {
               display = val.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
             }
+          } else if (isSoh && typeof val === 'number') {
+            // stock on hand printed its raw JS number (e.g. -24614.0238046977): whole numbers plain, fractions to 2 places
+            display = Number.isInteger(val) ? val.toLocaleString('en-ZA') : val.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
           } else {
             display = val ?? '—'
           }
@@ -3700,16 +3703,16 @@ export default function Home() {
                         return 'neg'
                       })(),
                       edge:          'blue',
-                      basisNote:     dualSalesPairable && l2Agg.gp != null ? 'engine (dEKUmsatz cost) · ex-VAT' : `${zarShort(kpiGPRand)} · ex-VAT`,
+                      basisNote:     dualSalesPairable && l2Agg.gp != null ? 'engine GP on Sigma recorded cost · ex-VAT' : `${zarShort(kpiGPRand)} · ex-VAT`,
                       dual:          dualSalesPairable && l2Agg.gp != null ? {
                         rawLabel: pct(kpiGP),
                         delta:    dualDelta(l2Agg.gp, kpiGP, 'pp'),
-                        explain:  'One Sigma ledger, two VAT treatments. Headline = engine GP on Sigma recorded cost (dEKUmsatz), ex-VAT at a flat 15%. Raw chip = the same ledger and cost with each line\'s native VAT. The delta is the VAT basis, not a data source. Pack-size cost corruption surfaces in the Cost Error worklist, not here.',
+                        explain:  'One Sigma ledger, two VAT treatments. Headline = engine GP on Sigma recorded cost, ex-VAT at a flat 15%. Raw chip = the same ledger and cost with each line\'s native VAT. The delta is the VAT basis, not a data source. Pack-size cost corruption surfaces in the Cost Error worklist, not here.',
                       } : null,
                       tooltip: {
                         heading: 'Gross Profit',
                         what:    "What's left after cost of goods, as a percentage of ex-VAT sales.",
-                        source:  "Engine uses Sigma's own recorded cost (dEKUmsatz), ex-VAT. The raw chip is the same figure on a native per-line VAT basis, shown for comparison.",
+                        source:  "Engine uses the cost Sigma recorded for each line, ex-VAT. The raw chip is the same figure on a native per-line VAT basis, shown for comparison.",
                         compare: 'Same period last year. The raw-chip delta is a VAT-basis difference, not a display bug.',
                         signal:  'Below 18% -- watch it. Pack-size cost errors that dent GP are surfaced in the Cost Error worklist, to fix at source.',
                       },
@@ -3726,7 +3729,7 @@ export default function Home() {
                       wowDelta:      null,
                       bench:         (engineStockTurn ?? kpiStockTurn) != null ? (() => { const t = engineStockTurn ?? kpiStockTurn; return `target: 12 turns · ${t < 12 ? `↓ ${(12 - t).toFixed(1)} vs target` : `↑ ${(t - 12).toFixed(1)} above target`}` })() : null,
                       sub:           engineStockTurn != null
-                        ? `engine ROS-based · purified ${zarShort(enginePurifiedCap)}`
+                        ? `engine rate of sale · after clean-up ${zarShort(enginePurifiedCap)}`
                         : (kpiCapTied > 0 ? `Capital tied ${zarShort(kpiCapTied)}` : 'Insufficient data'),
                       warn:          (engineStockTurn ?? kpiStockTurn) != null && (engineStockTurn ?? kpiStockTurn) < 12,
                       tone:          (() => {
@@ -3802,8 +3805,8 @@ export default function Home() {
                         ? `+ deposits ${zarShort(engineDeposits)} · returnable float (carved)`
                         : null,
                       sub:           engineCapPairable
-                        ? `engine purified · cover ${engineDaysCover != null ? engineDaysCover.toFixed(0) + 'd' : '--'}`
-                        : (filterActive ? 'engine purified · dept scope · latest snapshot' : 'SOH x unit cost (latest snapshot)'),
+                        ? `after clean-up · cover ${engineDaysCover != null ? engineDaysCover.toFixed(0) + 'd' : '--'}`
+                        : (filterActive ? 'after clean-up · department view · latest snapshot' : 'SOH x unit cost (latest snapshot)'),
                       warn:          true,
                       tone:          (() => {
                         if (!hasLY || !lyKpiCapTied) return 'neutral'
@@ -3817,12 +3820,12 @@ export default function Home() {
                       dual:          engineCapPairable ? {
                         rawLabel: zarShort(engineInScopeCap),
                         delta:    dualDelta(enginePurifiedCap, engineInScopeCap, 'pct'),
-                        explain:  `Headline = L2 engine purified Capital Tied (l2_classification, bucket IN HEALTHY/COUNT/AMBIGUOUS/LEAVE_COUNTED; canon §8.8, ~R10M). Raw = engine in-scope capital BEFORE purification (NORMAL + SOH, incl. COST_ERROR pack ghosts + dead/phantom; ~R21M). The gap is the exact ghost capital the engine strips (R21 -- earned exclusions, surfaced not hidden).`,
+                        explain:  `Headline = Capital Tied after the engine clean-up: only stock the engine has verified as real and sellable. Raw = all stock in scope before the clean-up, including lines with cost errors and dead or not-really-there stock. The gap is the capital the engine strips out, shown rather than hidden.`,
                       } : null,
                       tooltip: {
                         heading: 'Capital Tied',
                         what:    'The rand value of sellable, buyable stock on shelf at cost -- your real stock investment.',
-                        source:  'Engine-purified: ghost stock, production lines, deposits and cost errors stripped out. The raw chip shows the unfiltered figure before that cleanup.',
+                        source:  'After the engine clean-up: ghost stock, production lines, deposits and cost errors stripped out. The raw chip shows the unfiltered figure before that clean-up.',
                         compare: 'LY reference shown as direction only -- the LY figure is a historical snapshot on an older basis, so treat the percentage as a trend signal, not a precise comparison.',
                         signal:  'The gap between purified and raw is capital locked in lines the engine has flagged. 30 days cover or less is the target for standard lines.',
                         note:    'Deposits (quart bottles, crates, empties) are carved out separately -- returnable float, not stock investment.',
@@ -4017,14 +4020,14 @@ export default function Home() {
                                 hover rather than the number changing silently (R29). */}
                             <span
                               title={fam
-                                ? `Family-resolved cover. The scan code alone reads ${Number(fam.scan_days_cover).toFixed(1)}d, `
-                                  + `but this line is part of a pack-and-single family and its true draw gives ${Number(fam.family_days_cover).toFixed(1)}d`
+                                ? `Adjusted for the pack-and-single family. The scan code alone reads ${Number(fam.scan_days_cover).toFixed(1)}d, `
+                                  + `but this line is part of a family and its true draw gives ${Number(fam.family_days_cover).toFixed(1)}d`
                                   + (fam.story ? `. ${fam.story}` : '.')
                                 : undefined}
                               style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10, color: dcColour, whiteSpace: 'nowrap', textAlign: 'right', cursor: fam ? 'help' : undefined }}>
-                              {dc != null
+                              {dc != null && dc >= 0
                                 ? <>{dc.toFixed(1)}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(245,245,244,0.25)' }}>d</span>
-                                    {fam && <span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(74,222,128,0.55)' }}>ƒ</span>}
+                                    {fam && <span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(74,222,128,0.55)' }}>adj.</span>}
                                   </>
                                 : <span style={{ color: 'rgba(245,245,244,0.15)' }}>—</span>
                               }
@@ -4123,8 +4126,8 @@ export default function Home() {
                           Signal A · True OOS
                         </span>
                         {signalCCount > 0 && (
-                          <span title="Signal C: in-stock items where days since last sale x daily ROS >= 1 (phantom stock)" style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(251,191,36,0.7)', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: 6, padding: '2px 8px', cursor: 'help' }}>
-                            C: {signalCCount} phantom
+                          <span title="In stock, but the expected sale has not happened (days since the last sale times the daily rate is at least 1)" style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(251,191,36,0.7)', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: 6, padding: '2px 8px', cursor: 'help' }}>
+                            C: {signalCCount} in stock, not selling
                           </span>
                         )}
                       </div>
@@ -4174,7 +4177,7 @@ export default function Home() {
                                   OOS
                                 </span>
                                 <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: '#ef4444', whiteSpace: 'nowrap' }}>
-                                  {r.soh}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(239,68,68,0.5)' }}>SOH</span>
+                                  {num(r.soh, Number.isInteger(+r.soh) ? 0 : 2)}<span style={{ fontSize: 9, marginLeft: 2, color: 'rgba(239,68,68,0.5)' }}>SOH</span>
                                 </span>
                                 <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: 'rgba(245,245,244,0.4)', whiteSpace: 'nowrap' }}>
                                   {zarShort(r.sell_price)}
@@ -4202,7 +4205,7 @@ export default function Home() {
                                           return (
                                             <div
                                               key={day.snap_date}
-                                              title={`${day.snap_date}: ${day.sold_bool ? 'sold' : day.oos_bool ? 'OOS' : 'in stock · no sale'} · SOH ${day.soh}`}
+                                              title={`${day.snap_date}: ${day.sold_bool ? 'sold' : day.oos_bool ? 'OOS' : 'in stock · no sale'} · SOH ${num(day.soh, Number.isInteger(+day.soh) ? 0 : 2)}`}
                                               style={{ flexShrink: 0, width: 6, height: 20, borderRadius: 2, background: bg }}
                                             />
                                           )
@@ -4253,7 +4256,7 @@ export default function Home() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <span style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 16, fontWeight: 600 }}>Stalled Lines</span>
                         <span style={{ fontSize: 10, fontFamily: "'Geist Mono', monospace", color: 'rgba(245,245,244,0.4)', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 6, padding: '2px 8px' }}>
-                          {stalledLines.length} lines · {num(stalledLines.filter(r => (r.daysSince ?? 0) * (r.dailyRos ?? 0) >= SIGNAL_C_THRESHOLD).length)} phantom (C)
+                          {stalledLines.length} lines · {num(stalledLines.filter(r => (r.daysSince ?? 0) * (r.dailyRos ?? 0) >= SIGNAL_C_THRESHOLD).length)} in stock, not selling
                         </span>
                       </div>
                       <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 16, fontWeight: 700, color: '#f59e0b' }}>
@@ -4376,7 +4379,7 @@ export default function Home() {
             )}
 
             <p style={{ marginTop: 16, fontSize: 10, color: 'rgba(245,245,244,0.25)', fontFamily: "'Geist Mono', monospace", fontStyle: 'italic' }}>
-              Stock at cost, engine-purified: cost errors, dead and phantom lines and non-stock departments are not counted · adds up to the Capital Tied tile
+              Stock at cost, after the engine clean-up: cost errors, dead lines, stock that is not really there and non-stock departments are not counted · adds up to the Capital Tied tile
               {kpiGhostStock > 0 && (
                 <span style={{ color: 'rgba(251,191,36,0.6)', marginLeft: 6 }}>
                   ({zarShort(kpiGhostStock)} production stock removed — fix at source in Sigma)
