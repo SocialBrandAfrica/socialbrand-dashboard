@@ -1095,6 +1095,25 @@ const SEARCH_IDX_TTL = 6 * 60 * 60 * 1000  // 6h — optimistic cache only, alwa
 // The live PostgREST row cap (API-layer setting, tested behaviourally; BUG-LOG ENG-093,
 // ENG-101). A read that returns exactly this many rows was cut, not complete.
 const PGRST_ROW_CAP = 1000
+// ENG-253 (PM ruling 14-10-2026: page the results, never refuse). One request to PostgREST returns at most
+// PGRST_ROW_CAP rows; measured live 14-10-2026 by asking for rows 0-4999 of mv_kpi_by_date: the answer was
+// `206 Partial Content`, `Content-Range: 0-999/3065`. So the page size IS the cap, and a selection that can
+// hold more rows (five stores and 201 or more dates, 3,065 rows in all) is read page by page. `makeQuery`
+// must return a FRESH builder each call (a builder cannot be re-ranged) with a total order, so pages never
+// overlap or skip. Any page's error is the read's error: the caller states it, never sums a short read.
+const PGRST_MAX_PAGES = 50   // a safety valve (50,000 rows), reported as an error, never a silent cut
+async function readAllPages(makeQuery) {
+  const rows = []
+  for (let page = 0; page < PGRST_MAX_PAGES; page++) {
+    const from = page * PGRST_ROW_CAP
+    const { data, error } = await makeQuery().range(from, from + PGRST_ROW_CAP - 1)
+    if (error) return { data: null, error }
+    const got = data ?? []
+    rows.push(...got)
+    if (got.length < PGRST_ROW_CAP) return { data: rows, error: null }
+  }
+  return { data: null, error: { message: `read exceeded ${PGRST_MAX_PAGES} pages of ${PGRST_ROW_CAP} rows` } }
+}
 
 function loadCachedSearchIndex(scopeKey) {
   try {
@@ -1588,10 +1607,11 @@ export default function Home() {
         isSingleDate
           ? Promise.resolve({ data: [], error: null })
           : withDeadline(
-              supabase.from(kpiTable)
+              readAllPages(() => supabase.from(kpiTable)
                 .select('store_code,store_name,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied,ghost_stock_value')
                 .in('store_code', storeCodes)
-                .in('snapshot_date', selectedDates),
+                .in('snapshot_date', selectedDates)
+                .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true })),
               // Name the REQUEST, not the object. Every other caller here passes
               // an RPC name; this one passed a bare table name, so its failure
               // read as "mv_kpi_by_date is broken" rather than "this select never
@@ -1744,18 +1764,20 @@ export default function Home() {
       const [lyKpiRes, wowKpiRes, lyDeptRes, trendRes, lyTrendRes] = await Promise.all([
         // LY KPI — always historical, use MV
         lyDates.length > 0
-          ? supabase.from('mv_kpi_by_date')
+          ? readAllPages(() => supabase.from('mv_kpi_by_date')
               .select('store_code,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
               .in('store_code', storeCodes)
               .in('snapshot_date', lyDates)
+              .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true }))
           : Promise.resolve({ data: [], error: null }),
 
         // WoW KPI — always historical, use MV
         wowDates.length > 0
-          ? supabase.from('mv_kpi_by_date')
+          ? readAllPages(() => supabase.from('mv_kpi_by_date')
               .select('store_code,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty')
               .in('store_code', storeCodes)
               .in('snapshot_date', wowDates)
+              .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true }))
           : Promise.resolve({ data: [], error: null }),
 
         // LY dept summary
@@ -1766,19 +1788,19 @@ export default function Home() {
         // Trend data (90-day window) — use MV (pre-aggregated, 2s for 90 dates).
         // v_kpi_by_date times out at >25 dates (live 18M-row aggregation). MV is
         // refreshed at the end of every store's nightly push so it stays current.
-        supabase.from('mv_kpi_by_date')
+        readAllPages(() => supabase.from('mv_kpi_by_date')
           .select('store_code,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty')
           .in('store_code', storeCodes)
           .in('snapshot_date', trendDates)
-          .order('snapshot_date', { ascending: true }),
+          .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true })),
 
         // LY trend data — always historical, use MV
         lyTrendDates.length > 0
-          ? supabase.from('mv_kpi_by_date')
+          ? readAllPages(() => supabase.from('mv_kpi_by_date')
               .select('store_code,snapshot_date,total_sales,total_sales_ex_vat')
               .in('store_code', storeCodes)
               .in('snapshot_date', lyTrendDates)
-              .order('snapshot_date', { ascending: true })
+              .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true }))
           : Promise.resolve({ data: [], error: null }),
       ])
 
@@ -1921,17 +1943,19 @@ export default function Home() {
     const rawNames = [...(deptNormMap.get(deptFilter) ?? new Set([deptFilter]))]
     const toTrend = r => ({ store_code: r.store_code, snapshot_date: r.snapshot_date, total_sales: r.dept_sales })
     Promise.all([
-      supabase.from('v_dept_by_date')
+      readAllPages(() => supabase.from('v_dept_by_date')
         .select('store_code,snapshot_date,dept_sales')
         .in('store_code', storeCodes)
         .in('snapshot_date', trendDates)
-        .in('dept_name', rawNames),
+        .in('dept_name', rawNames)
+        .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true }).order('dept_name', { ascending: true })),
       lyTrendDates.length > 0
-        ? supabase.from('v_dept_by_date')
+        ? readAllPages(() => supabase.from('v_dept_by_date')
             .select('store_code,snapshot_date,dept_sales')
             .in('store_code', storeCodes)
             .in('snapshot_date', lyTrendDates)
             .in('dept_name', rawNames)
+            .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true }).order('dept_name', { ascending: true }))
         : Promise.resolve({ data: [] }),
     ]).then(([cur, ly]) => {
       if (cancelled) return
