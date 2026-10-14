@@ -248,6 +248,17 @@ function applyFilters(rows, { activityFilter, deptFilter, subDeptFilter, include
 // ─────────────────────────────────────────────────────────────────────────────
 // BUILD REPORT
 // ─────────────────────────────────────────────────────────────────────────────
+// ENG-086 / ENG-073: the cover a report row shows. Where the line belongs to a pack-and-single family the
+// family-resolved cover is the true one (the scan code alone said 24.9 days for SPAR milk at 80175 against a
+// true 2.2); a negative family cover means the book stock is negative, which is not a cover, so it shows a dash
+// and says why. The scan figure always stays in its own column, and the basis is named (R29: a moved number
+// is never silent).
+function coverFor(ros) {
+  const fam = ros?.family_days_cover != null ? Number(ros.family_days_cover) : null
+  if (fam != null) return { days: fam >= 0 ? fam.toFixed(1) : '—', basis: fam >= 0 ? 'Family' : 'Family (stock negative)' }
+  return { days: ros?.days_cover != null ? Number(ros.days_cover).toFixed(1) : '—', basis: 'Scan' }
+}
+
 function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), supplierMap = new Map(), nDates = 1, focusEans = null) {
   // Helper: active line check — must have sold in last ACTIVE_LINE_LOOKBACK days
   const activeLineCutoff = refDate ? shiftDate(refDate, -ACTIVE_LINE_LOOKBACK) : null
@@ -331,7 +342,9 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
             'Stock Turn':       (r.soh ?? 0) > 0
               ? ((r.period_qty ?? 0) / (r.soh ?? 0) * (365 / n)).toFixed(1)
               : '—',
-            'Days Cover':       ros.days_cover != null ? Number(ros.days_cover).toFixed(1) : '—',
+            'Days Cover':       coverFor(ros).days,
+            'Cover Basis':      coverFor(ros).basis,
+            'Scan Days Cover':  ros.days_cover != null ? Number(ros.days_cover).toFixed(1) : '—',
             'Daily ROS (13w)':  baselineRos.toFixed(3),
             'Current ROS':      currentRos.toFixed(3),
             'ROS vs Baseline':  rosVsBase != null ? rosVsBase.toFixed(2) + 'x' : '—',
@@ -532,7 +545,9 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
             'Period Cost':   Math.round((r.period_cost  ?? 0) * 100) / 100,
             'SOH':           r.soh ?? 0,
             'Daily ROS':     ros.daily_ros  != null ? Number(ros.daily_ros).toFixed(3)  : '—',
-            'Days Cover':    ros.days_cover != null ? Number(ros.days_cover).toFixed(1) : '—',
+            'Days Cover':    coverFor(ros).days,   // ENG-086: family-resolved where the line has a family
+            'Cover Basis':   coverFor(ros).basis,
+            'Scan Days Cover': ros.days_cover != null ? Number(ros.days_cover).toFixed(1) : '—',
             'Supplier':      supplierMap.get(r.ean) ?? '',
             'Internal Ref':  r.internal_ref ?? '',
             'Status':        r.status ?? '',
@@ -2290,9 +2305,13 @@ export default function Home() {
     // Replaces the unpaged mv_rate_of_sale table fetch that PostgREST silently
     // capped at 1 000 rows (~345k in the matview), which left Velocity tiers
     // and Signal C computing on <1% of the range (CC-BRIEF-DASH-FINAL-001 item 5).
+    // ENG-086 / ENG-073: rpc_report_rows now carries the FAMILY-resolved cover beside the scan-keyed one
+    // (family_days_cover, family_daily_ros, family_ratio from l2_family_ros). A pack code holds no stock, so
+    // its scan cover is null; the family figure is the one that is true for the line.
     const rosRes = rows
-      .filter(r => r.daily_ros != null || r.days_cover != null)
-      .map(r => ({ ean: r.ean, store_code: r.store_code, daily_ros: r.daily_ros, days_cover: r.days_cover }))
+      .filter(r => r.daily_ros != null || r.days_cover != null || r.family_days_cover != null)
+      .map(r => ({ ean: r.ean, store_code: r.store_code, daily_ros: r.daily_ros, days_cover: r.days_cover,
+                   family_days_cover: r.family_days_cover, family_daily_ros: r.family_daily_ros, family_ratio: r.family_ratio }))
 
     // ean → supplier_name lookup. One supplier per EAN, chosen in the database
     // (alphabetically first where stores disagree), so there is no order to depend on here.
