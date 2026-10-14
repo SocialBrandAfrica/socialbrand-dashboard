@@ -240,6 +240,7 @@ const STORES = [
   ["80175","SPAR Roosville"],["80176","TOPS Roosville"],["80579","TOPS Dice"]
 ];
 const sel = new Set(STORES.map(s=>s[0]));   // progress lands group-wide by default
+let measuresCache = null;   // declared HERE, above its first caller: loadCompliance() runs at load, before the getMeasures block, and a let read before its line is a temporal-dead-zone ReferenceError (the Progress tab showed "Could not load: Cannot access 'measuresCache' before initialization")
 const $ = id => document.getElementById(id);
 const log = m => { $("log").textContent += m + "\n"; };
 function banner(msg, cls){ const b=$("banner"); b.style.display="block"; b.className="banner"+(cls?" "+cls:""); b.textContent=msg; }
@@ -368,9 +369,15 @@ $("loadprogress").onclick = async ()=>{
       }).join("");
     const snap = rows.reduce((a,r)=> (r.now_date && r.now_date>a) ? r.now_date : a, "");
     const _t = todayStr();
+    // The snapshot job writes day D at 23:30 on D, so by day it is normal for the newest row to be last night's. Only a row
+    // older than that means a night did not write (13-10: the job was cancelled on a statement timeout).
+    const _dy = new Date(_t+"T00:00:00"); _dy.setDate(_dy.getDate()-1);
+    const _y = _dy.getFullYear()+"-"+String(_dy.getMonth()+1).padStart(2,"0")+"-"+String(_dy.getDate()).padStart(2,"0");
+    const _lag = snap ? Math.round((new Date(_t+"T00:00:00")-new Date(snap+"T00:00:00"))/86400000) : 0;
     $("progress-asof").innerHTML = !snap ? "" :
-      (snap===_t ? `Scoreboard as of ${snap} (today's snapshot).`
-        : `<span style="color:var(--warn)">Scoreboard as of ${snap}, NOT today (${_t}). Last night's snapshot has not refreshed yet, so these are ${snap}'s figures.</span>`);
+      (snap===_t ? `Scoreboard as of ${snap}: today's 23:30 snapshot.`
+        : snap===_y ? `Scoreboard as of ${snap}: last night's 23:30 snapshot. Today's is taken at 23:30 tonight. Live figures are on the Platform Integrity tab.`
+        : `<span style="color:var(--warn)">Scoreboard as of ${snap}, ${_lag} days old: the 23:30 snapshot did not write on at least ${_lag-1} night(s) since. These are ${snap}'s figures. Live figures are on the Platform Integrity tab.</span>`);
     provenance("progress",{stores:[...sel], rows:rows.length, snapshot:snap});
   }catch(e){ banner(e.message,"err"); log("ERROR "+e.message); }
   $("loadprogress").disabled=false;
@@ -471,7 +478,6 @@ $("dl-weekly").onclick    = function(){ apiDownload(this, "/api/forge/weekly-rep
 // One fetch feeds the count measures and the compliance board. The route carries the signed-in
 // session, so the stocktake functions run as 'authenticated' (R30 addendum 2) and are never
 // granted to the publishable key this page otherwise uses.
-let measuresCache = null;
 function getMeasures(from, to){
   const key = from + "|" + to;
   if(measuresCache && measuresCache.key === key) return measuresCache.p;
@@ -586,11 +592,15 @@ $("loadcost").onclick = async ()=>{
       p_store_codes:[...sel], p_days:parseInt($("cost-days").value,10)||28, p_ratio:parseFloat($("cost-ratio").value)||1.5
     });
     if(!costRows.length) banner("Checked and came back empty — no broken costs above that level in the window.", "ok");
-    const overst = costRows.reduce((t,r)=>t+(+r.cogs_overstated||0),0);
-    $("cost-summary").innerHTML = costRows.length ? `<b>${costRows.length}</b> lines to fix · fixing them recovers <b>R${R(overst)}</b> of GP in the window` : "";
+    // A row whose supplier list cost is ABOVE the cost Sigma booked recovers nothing (the function returns it negative, sorted last);
+    // a row with no known cost (list cost 0 or none) is counted at its whole cost, so the total is an upper bound and says so.
+    const overst = costRows.reduce((t,r)=>t+Math.max(0,(+r.cogs_overstated||0)),0);
+    const noSane = costRows.filter(r=>!(+r.sane_unit_cost>0)).length;
+    const lowSane = costRows.filter(r=>(+r.cogs_overstated||0)<0).length;
+    $("cost-summary").innerHTML = costRows.length ? `<b>${costRows.length}</b> lines to fix · fixing them recovers up to <b>R${R(overst)}</b> of GP in the window, largest first (scroll for all of them)` + (noSane ? ` · <b>${noSane}</b> have no known correct cost (marked none) and are counted at their whole cost, so treat the total as an upper bound` : "") + (lowSane ? ` · <b>${lowSane}</b> carry a supplier cost above the cost booked and recover nothing` : "") : "";
     const tb=$("cost-table");
     tb.innerHTML = costRows.length ? "<tr><th>store</th><th>code</th><th>description</th><th>dept</th><th class=num>units sold</th><th class=num>cost in Sigma</th><th class=num>sells for (ex VAT)</th><th class=num>how wrong</th><th class=num>sane cost</th><th class=num>GP recovered R</th></tr>" +
-      costRows.map(r=>`<tr><td>${r.store_code}</td><td>${r.product_code}</td><td>${csvEsc(r.description)}</td><td>${csvEsc(r.dept_name||"")}</td><td class=num>${r.units}</td><td class=num>${(+r.sigma_unit_cost).toFixed(2)}</td><td class=num>${(+r.ex_vat_sell_unit).toFixed(2)}</td><td class=num>${(+r.cost_to_sell_ratio).toFixed(1)}×</td><td class=num>${r.sane_unit_cost==null?"":(+r.sane_unit_cost).toFixed(2)}</td><td class=num>${R(r.cogs_overstated)}</td></tr>`).join("") : "";
+      costRows.map(r=>`<tr><td>${r.store_code}</td><td>${r.product_code}</td><td>${csvEsc(r.description)}</td><td>${csvEsc(r.dept_name||"")}</td><td class=num>${r.units}</td><td class=num>${(+r.sigma_unit_cost).toFixed(2)}</td><td class=num>${(+r.ex_vat_sell_unit).toFixed(2)}</td><td class=num>${(+r.cost_to_sell_ratio).toFixed(1)}×</td><td class=num>${+r.sane_unit_cost>0?(+r.sane_unit_cost).toFixed(2):`<span title="no receipt in 120 days and no list cost: load the cost from the supplier invoice in Sigma">none</span>`}</td><td class=num>${R(Math.max(0,+r.cogs_overstated||0))}</td></tr>`).join("") : "";
     $("dl-cost").disabled=!costRows.length;
     provenance("cost worklist",{rows:costRows.length, days:$("cost-days").value, ratio:$("cost-ratio").value});
   }catch(e){ banner(e.message,"err"); log("ERROR "+e.message); }
