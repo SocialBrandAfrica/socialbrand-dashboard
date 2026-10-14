@@ -11,6 +11,7 @@
 -- SECURITY DEFINER IS LOAD-BEARING: sigma_orders carries RLS and rpc_bloom_next_deliveries runs as its anon or
 -- authenticated caller (the ENG-068 trap). EXECUTE to anon, authenticated and service_role, PUBLIC revoked.
 
+-- Re-synced from the live definition 2026-10-14 (after bloom035_1b_dc_fresh_phase0, ENG-204).
 CREATE OR REPLACE FUNCTION public.rpc_derive_placement_day(p_store_code text, p_route_key text, p_delivery_date date)
  RETURNS TABLE(placement_date date, is_dc boolean, admitted_dows smallint[], admitted_share numeric, placements integer, verify boolean, basis text)
  LANGUAGE sql
@@ -47,6 +48,11 @@ AS $function$
        AND o.order_date >= p_delivery_date - (SELECT cfg.lb FROM cfg)
        AND o.order_date < p_delivery_date
        AND NOT EXISTS (SELECT 1 FROM bloom_route_config dr WHERE dr.store_code = o.store_code AND o.supplier_nr = ANY(dr.direct_supplier_nrs))
+       AND (p_route_key <> 'DC_FRESH'
+            OR EXISTS (SELECT 1 FROM sigma_order_lines ol
+                         JOIN sigma_articles oa ON oa.store_code = ol.store_code AND oa.product_code = ol.product_code
+                        WHERE ol.store_code = o.store_code AND ol.order_nr = o.order_nr
+                          AND oa.department_nr = ANY(public.bloom_desk_dept_nrs(o.store_code, p_route_key))))
      GROUP BY 1),
   adm AS (
     SELECT array_agg(wk.dw::smallint ORDER BY wk.dw) FILTER (WHERE wk.n >= (SELECT cfg.minr FROM cfg)) AS dows,

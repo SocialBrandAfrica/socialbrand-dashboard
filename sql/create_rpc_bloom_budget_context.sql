@@ -64,19 +64,16 @@
 --      make in the same pass; it is called out so it is not discovered later.
 -- =============================================================================
 
-CREATE OR REPLACE FUNCTION public.rpc_bloom_budget_context(
-  p_store_code    text,
-  p_desk          text,
-  p_delivery_date date DEFAULT NULL
-)
-RETURNS jsonb
-LANGUAGE sql
-STABLE SECURITY DEFINER
-SET search_path TO 'public'
+-- Re-synced from the live definition 2026-10-14 (after bloom035_1b_dc_fresh_phase0, ENG-204).
+CREATE OR REPLACE FUNCTION public.rpc_bloom_budget_context(p_store_code text, p_desk text, p_delivery_date date DEFAULT NULL::date)
+ RETURNS jsonb
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
   WITH route AS (
-    -- VERBATIM from rpc_bloom_order_recipe's v_ledger_route CASE. One home.
     SELECT CASE
+             WHEN p_desk = 'DC_FRESH' THEN 'DC_FRESH'
              WHEN p_desk = 'DIRECT_BEER'                    THEN 'DIRECT_BEER'
              WHEN p_desk LIKE 'DIRECT\_%' ESCAPE '\'        THEN 'DIRECT'
              ELSE 'DC'
@@ -126,8 +123,6 @@ AS $function$
     'desk',            p_desk,
     'delivery_date',   p_delivery_date,
     'ledger_route',    (SELECT ledger_route FROM route),
-    -- R29: the basis travels with the number, so a screen can say WHICH week it
-    -- is showing rather than presenting a fallback as an exact answer.
     'desk_row_basis',  CASE
                          WHEN NOT EXISTS (SELECT 1 FROM desk_row) THEN 'no_ledger_row'
                          WHEN p_delivery_date IS NULL             THEN 'latest_row'

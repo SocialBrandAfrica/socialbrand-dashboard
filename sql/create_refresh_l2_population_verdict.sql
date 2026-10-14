@@ -58,6 +58,7 @@
 -- sigma_supplier_link.cost_date stays TESTED AND REJECTED as the ranging signal:
 -- the DC re-prices routinely (§A5 7d).
 
+-- Re-synced from the live definition 2026-10-14 (after bloom035_1b_dc_fresh_phase0, ENG-204).
 CREATE OR REPLACE FUNCTION public.refresh_l2_population_verdict(p_store_code text)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -67,7 +68,7 @@ AS $function$
 DECLARE
   v_soh_dt date;
   v_client constant text := 'socialbrand';
-  v_engine constant text := 'BLOOM-026 population-verdict v2.2 (ENG-183 desk split, received-from, history, supplier column)';
+  v_engine constant text := 'BLOOM-026 population-verdict v2.4 (ENG-183 desk split, received-from, history, supplier column, A1 latest receipt decides, ENG-204 DC fresh desk)';
   v_desk   record;
   v_dept   smallint[];
   v_direct bigint[];
@@ -173,7 +174,7 @@ BEGIN
 
     v_dept := NULL; v_direct := NULL;
     IF v_desk.is_dc THEN
-      SELECT dc.dc_cycle_dept_nrs INTO v_dept FROM bloom_dc_config dc
+      SELECT CASE WHEN v_desk.route_key = 'DC_FRESH' THEN dc.dc_fresh_dept_nrs ELSE dc.dc_cycle_dept_nrs END INTO v_dept FROM bloom_dc_config dc
        WHERE dc.store_code = p_store_code AND dc.status = 'RULED';
       CONTINUE WHEN v_dept IS NULL;
     ELSE
@@ -263,9 +264,10 @@ BEGIN
   )
   WITH rcpt AS (
     -- ENG-183 (ORDERING-CANON SSA2, Pieter 2026-09-10). The supplier is who the line was RECEIVED from (GRV-led).
-    -- In the current regime: one receiving desk owns it, more than one goes to DC, because DC is the preferred
-    -- supplier always where there are multiple suppliers. Not received in the regime: the desk whose supplier
-    -- delivered it LAST in our history (DC on a same-day tie). Never received: Sigma's supplier column. Else DC, VERIFY.
+    -- In the current regime: one receiving desk owns it, more than one goes to the desk whose supplier delivered it
+    -- LATEST (BLOOM-035 A1, PM 13-10-2026: the latest GRV decides, DC on a same-day tie). Not received in the regime:
+    -- the desk whose supplier delivered it LAST in our history (DC on a same-day tie). Never received: Sigma's
+    -- supplier column. Else DC, VERIFY.
     SELECT q.product_code, array_agg(q.route_key ORDER BY q.route_key) FILTER (WHERE q.desk_rcpt) AS rcpt_desks,
            COALESCE(bool_or(q.desk_rcpt AND q.is_dc), false) AS dc_rcpt,
            COALESCE(bool_or(q.desk_rcpt_f), false) AS f_rcpt,
@@ -275,7 +277,7 @@ BEGIN
   ),
   ranked AS (
     SELECT p.*, rc.rcpt_desks, rc.dc_rcpt, rc.f_rcpt, rc.hist_any, rc.supp_any,
-           row_number() OVER (PARTITION BY p.product_code ORDER BY p.desk_rcpt DESC, (rc.rcpt_desks IS NOT NULL AND p.is_dc) DESC, p.desk_last DESC NULLS LAST, (rc.hist_any AND p.is_dc) DESC, p.supp_match DESC, p.is_dc DESC, p.desk_sort NULLS LAST, p.route_key) AS rk,
+           row_number() OVER (PARTITION BY p.product_code ORDER BY p.desk_rcpt DESC, p.desk_last DESC NULLS LAST, (rc.hist_any AND p.is_dc) DESC, p.supp_match DESC, p.is_dc DESC, p.desk_sort NULLS LAST, p.route_key) AS rk,
            (count(*)   OVER (PARTITION BY p.product_code) > 1)                                AS overlap
       FROM _pv_pool p
       LEFT JOIN rcpt rc ON rc.product_code = p.product_code
@@ -348,7 +350,7 @@ BEGIN
               WHEN f.rcpt_desks IS NULL THEN 'NO_RECEIPT'
               WHEN cardinality(f.rcpt_desks) = 1 THEN 'RECEIPTS'
               WHEN f.dc_rcpt AND f.f_rcpt THEN 'ANOMALY_DC_AND_DIRECT'
-              WHEN f.dc_rcpt THEN 'DC_PREFERRED'
+              WHEN f.dc_rcpt THEN 'LATEST_RECEIPT'
               ELSE 'MULTI_RECEIPT' END,
          f.rcpt_desks
     FROM f;

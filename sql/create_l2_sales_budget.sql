@@ -73,24 +73,11 @@ GRANT SELECT ON public.l2_sales_budget TO anon, authenticated;
 -- rpc_project_route_sales_budget -- the ONE formula, reusable by anchor date.
 -- Returns 26 weeks (6 months) forward from the Saturday on/after p_anchor_date.
 -- =============================================================================
-CREATE OR REPLACE FUNCTION public.rpc_project_route_sales_budget(
-  p_store_code text,
-  p_route_key text,
-  p_anchor_date date DEFAULT CURRENT_DATE,
-  p_weeks_forward int DEFAULT 26
-)
-RETURNS TABLE(
-  budget_week_start date,
-  month_start date,
-  ly_base_cost numeric,
-  trend_factor numeric,
-  rhythm_seasonality_projected_cost numeric,
-  projected_sales_cost numeric,
-  products_in_pool integer,
-  products_with_ly_history integer
-)
-LANGUAGE plpgsql
-SECURITY DEFINER
+-- Re-synced from the live definition 2026-10-14 (after bloom035_1b_dc_fresh_phase0, ENG-204).
+CREATE OR REPLACE FUNCTION public.rpc_project_route_sales_budget(p_store_code text, p_route_key text, p_anchor_date date DEFAULT CURRENT_DATE, p_weeks_forward integer DEFAULT 26)
+ RETURNS TABLE(budget_week_start date, month_start date, ly_base_cost numeric, trend_factor numeric, rhythm_seasonality_projected_cost numeric, projected_sales_cost numeric, products_in_pool integer, products_with_ly_history integer)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
 AS $function$
 DECLARE
   v_anchor_week_start date;
@@ -98,31 +85,17 @@ DECLARE
 BEGIN
   SET LOCAL statement_timeout = '60s';
 
-  -- LEG D (2026-07-21): the budget week CONTAINING the anchor -- now byte-identical to
-  -- rpc_bloom_order_recipe's own v_week_start, which this comment always claimed but the
-  -- code did not do. The retired "+7 if earlier than the anchor" advance meant the
-  -- projection could only ever hold weeks starting in the FUTURE (live proof: earliest
-  -- row 2026-07-25 while the current budget week started 2026-07-18), so the week you
-  -- are ordering in never existed and the recipe silently fell back to the nearest PAST
-  -- week -- ENG-016, and the reason every order was fitted to a 3-week-stale budget.
-  -- Retired with lineage (R28), not deleted.
+  -- LEG D (2026-07-21): the week CONTAINING the anchor, byte-identical to
+  -- rpc_bloom_order_recipe's own v_week_start.
   v_anchor_week_start := p_anchor_date - ((EXTRACT(ISODOW FROM p_anchor_date)::int + 1) % 7);
 
-  -- Route pool -- mirrors rpc_bloom_order_recipe's `lnk` CTE population
-  -- exactly (R21, one classifier reused, never reinvented).
-  -- NOT "ON COMMIT DROP" -- that only fires at actual transaction commit,
-  -- not at function return, so a caller invoking this function twice in
-  -- one statement/transaction (refresh_l2_sales_budget's own per-route
-  -- loop, or two UNION ALL'd calls) collided on the second CREATE TEMP
-  -- TABLE (caught live during this build's own R22 pass). Explicit
-  -- DROP-then-CREATE at the top and an explicit DROP at the end instead.
   DROP TABLE IF EXISTS _sb_pool;
   CREATE TEMP TABLE _sb_pool AS
   WITH dc_cfg AS (
-    SELECT dc.dc_cycle_dept_nrs
+    SELECT CASE WHEN p_route_key = 'DC_FRESH' THEN dc.dc_fresh_dept_nrs ELSE dc.dc_cycle_dept_nrs END AS dc_cycle_dept_nrs
     FROM bloom_dc_config dc
     WHERE dc.store_code = p_store_code AND dc.status = 'RULED'
-      AND p_route_key IN ('DC_AMBIENT', 'DC_TOPS')
+      AND p_route_key IN ('DC_AMBIENT', 'DC_TOPS', 'DC_FRESH')
   ),
   route_cfg AS (
     SELECT rc.merch_group_nrs, rc.excluded_supplier_types, rc.direct_supplier_nrs
@@ -137,18 +110,15 @@ BEGIN
     AND COALESCE(sl.status, '') <> 'S'
     AND (sl.valid_to IS NULL OR sl.valid_to >= p_anchor_date)
     AND (
-      (p_route_key IN ('DC_AMBIENT', 'DC_TOPS') AND sm.supplier_type = 'Z'
-        AND sp.department_nr = ANY(COALESCE((SELECT dc_cycle_dept_nrs FROM dc_cfg), ARRAY[]::smallint[])))
-      -- ENG-033 (2026-07-21): DIRECT_BEER is account-scoped like every other DIRECT_* desk
+      -- SB-CC-DCBUDGET-001: World-1 only on the DC pool, so budget and committed measure one pool.
+      (p_route_key IN ('DC_AMBIENT', 'DC_TOPS', 'DC_FRESH') AND sm.supplier_type = 'Z'
+        AND sp.department_nr = ANY(COALESCE((SELECT dc_cycle_dept_nrs FROM dc_cfg), ARRAY[]::smallint[]))
+        AND sp.class = 'NORMAL')
+      -- ENG-033: DIRECT_BEER is account-scoped like every other DIRECT_* desk
       OR (p_route_key LIKE 'DIRECT\_%' ESCAPE '\'
         AND sl.supplier_nr = ANY(COALESCE((SELECT direct_supplier_nrs FROM route_cfg), ARRAY[]::bigint[])))
     );
 
-  -- Trend factor -- ONE ratio per (store, route): trailing 8 weeks ending
-  -- the anchor's own week start, vs the LY-equivalent trailing 8 weeks,
-  -- SAME pool. Capped [0.6, 1.6] (DEMO_CALIBRATION) -- a noisy trailing
-  -- window must not extrapolate into a runaway projection. Defaults to
-  -- 1.0 (no adjustment) when LY-trailing has no history to divide by.
   SELECT LEAST(GREATEST(
     COALESCE(recent.v, 0) / NULLIF(lytrail.v, 0),
     0.6), 1.6)
@@ -185,8 +155,6 @@ BEGIN
       w.week_start,
       p.product_code,
       COALESCE(ls.ly_cost, 0) AS ly_cost,
-      -- W-bucket by day-of-month of the WEEK START, same boundaries as
-      -- refresh_l2_rhythm_profile (1-7/8-14/15-21/22+, R21 reuse).
       COALESCE(
         CASE
           WHEN EXTRACT(day FROM w.week_start)::int BETWEEN 1 AND 7 THEN rp.w1_index
@@ -194,9 +162,6 @@ BEGIN
           WHEN EXTRACT(day FROM w.week_start)::int BETWEEN 15 AND 21 THEN rp.w3_index
           ELSE rp.w4_index
         END, 1.0) AS rhythm_index,
-      -- Seasonality factor for the week START's own calendar month
-      -- (majority-day simplification, named in the header -- a week
-      -- spanning a month boundary reads the START month's factor only).
       COALESCE(sp.monthly_factor[EXTRACT(month FROM w.week_start)::int], 1.0) AS seasonality_factor
     FROM weeks w
     CROSS JOIN _sb_pool p
@@ -239,10 +204,11 @@ GRANT EXECUTE ON FUNCTION public.rpc_project_route_sales_budget(text,text,date,i
 -- bloom_route_config) and projects each one 26 weeks forward from
 -- CURRENT_DATE, DELETE + re-INSERT per store (idempotent, R21 pattern).
 -- =============================================================================
+-- Re-synced from the live definition 2026-10-14 (after bloom035_1b_dc_fresh_phase0, ENG-204).
 CREATE OR REPLACE FUNCTION public.refresh_l2_sales_budget(p_store_code text)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
 AS $function$
 DECLARE
   v_route text;
@@ -275,6 +241,7 @@ BEGIN
   FOR v_route IN
     SELECT rc.route_key FROM bloom_route_config rc
     WHERE rc.store_code = p_store_code AND rc.status = 'RULED'
+      AND rc.route_key !~ '^DIRECT_S[0-9]+$'   -- derived desks (BLOOM-035 item 1) have no ledger row of their own yet (ENG-176): kept out of the pooled DIRECT need
   LOOP
     INSERT INTO public.l2_sales_budget (
       client_id, store_code, route_key, budget_week_start, month_start,
@@ -289,6 +256,22 @@ BEGIN
     v_rows := v_rows + v_route_rows;
   END LOOP;
 
+  -- BLOOM-035 1b (ENG-204): the DC fresh desk has its own projection, hence its own ledger row (ENG-176 route grain).
+  -- Dormant until bloom_dc_config.dc_fresh_dept_nrs is populated.
+  IF EXISTS (SELECT 1 FROM bloom_dc_config dc WHERE dc.store_code = p_store_code AND dc.status = 'RULED' AND dc.dc_fresh_dept_nrs IS NOT NULL) THEN
+    INSERT INTO public.l2_sales_budget (
+      client_id, store_code, route_key, budget_week_start, month_start,
+      ly_base_cost, trend_factor, rhythm_seasonality_projected_cost, projected_sales_cost,
+      products_in_pool, products_with_ly_history, anchor_date
+    )
+    SELECT 'socialbrand', p_store_code, 'DC_FRESH', r.budget_week_start, r.month_start,
+      r.ly_base_cost, r.trend_factor, r.rhythm_seasonality_projected_cost, r.projected_sales_cost,
+      r.products_in_pool, r.products_with_ly_history, CURRENT_DATE
+    FROM rpc_project_route_sales_budget(p_store_code, 'DC_FRESH', CURRENT_DATE, 26) r;
+    GET DIAGNOSTICS v_route_rows = ROW_COUNT;
+    v_rows := v_rows + v_route_rows;
+  END IF;
+
   RETURN jsonb_build_object('store_code', p_store_code, 'rows', v_rows, 'refreshed_at', now());
 END;
 $function$;
@@ -302,22 +285,11 @@ GRANT EXECUTE ON FUNCTION public.refresh_l2_sales_budget(text) TO authenticated;
 -- compares each projected week to what ACTUALLY happened. Never persisted --
 -- a diagnostic, run on demand, published in the brief close-out.
 -- =============================================================================
-CREATE OR REPLACE FUNCTION public.rpc_backtest_l2_sales_budget(
-  p_store_code text,
-  p_route_key text,
-  p_backtest_anchor_date date,
-  p_weeks_forward int DEFAULT 26
-)
-RETURNS TABLE(
-  budget_week_start date,
-  projected_sales_cost numeric,
-  actual_sales_cost numeric,
-  error_pct numeric,
-  products_in_pool integer,
-  products_with_ly_history integer
-)
-LANGUAGE plpgsql
-SECURITY DEFINER
+-- Re-synced from the live definition 2026-10-14 (after bloom035_1b_dc_fresh_phase0, ENG-204).
+CREATE OR REPLACE FUNCTION public.rpc_backtest_l2_sales_budget(p_store_code text, p_route_key text, p_backtest_anchor_date date, p_weeks_forward integer DEFAULT 26)
+ RETURNS TABLE(budget_week_start date, projected_sales_cost numeric, actual_sales_cost numeric, error_pct numeric, products_in_pool integer, products_with_ly_history integer)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
 AS $function$
 BEGIN
   SET LOCAL statement_timeout = '60s';
@@ -327,11 +299,9 @@ BEGIN
     SELECT * FROM rpc_project_route_sales_budget(p_store_code, p_route_key, p_backtest_anchor_date, p_weeks_forward)
   ),
   pool AS (
-    -- Re-derive the SAME pool the projection used (R21) so the actuals
-    -- comparison is apples-to-apples, not a different product set.
     WITH dc_cfg AS (
-      SELECT dc.dc_cycle_dept_nrs FROM bloom_dc_config dc
-      WHERE dc.store_code = p_store_code AND dc.status = 'RULED' AND p_route_key IN ('DC_AMBIENT','DC_TOPS')
+      SELECT CASE WHEN p_route_key = 'DC_FRESH' THEN dc.dc_fresh_dept_nrs ELSE dc.dc_cycle_dept_nrs END AS dc_cycle_dept_nrs FROM bloom_dc_config dc
+      WHERE dc.store_code = p_store_code AND dc.status = 'RULED' AND p_route_key IN ('DC_AMBIENT','DC_TOPS','DC_FRESH')
     ),
     route_cfg AS (
       SELECT rc.merch_group_nrs, rc.excluded_supplier_types, rc.direct_supplier_nrs
@@ -344,9 +314,9 @@ BEGIN
     WHERE sl.store_code = p_store_code AND COALESCE(sl.status,'') <> 'S'
       AND (sl.valid_to IS NULL OR sl.valid_to >= p_backtest_anchor_date)
       AND (
-        (p_route_key IN ('DC_AMBIENT','DC_TOPS') AND sm.supplier_type = 'Z'
+        (p_route_key IN ('DC_AMBIENT','DC_TOPS','DC_FRESH') AND sm.supplier_type = 'Z'
           AND sp.department_nr = ANY(COALESCE((SELECT dc_cycle_dept_nrs FROM dc_cfg), ARRAY[]::smallint[])))
-        -- ENG-033 (2026-07-21): DIRECT_BEER is account-scoped like every other DIRECT_* desk
+        -- ENG-033: DIRECT_BEER is account-scoped like every other DIRECT_* desk
         OR (p_route_key LIKE 'DIRECT\_%' ESCAPE '\'
           AND sl.supplier_nr = ANY(COALESCE((SELECT direct_supplier_nrs FROM route_cfg), ARRAY[]::bigint[])))
       )

@@ -57,6 +57,7 @@
 -- Architecture Rules, proven by probe): the bound is armed by the caller or the
 -- role. As `anon` this function actually gets the role's 30s.
 
+-- Re-synced from the live definition 2026-10-14 (after bloom035_1b_dc_fresh_phase0, ENG-204).
 CREATE OR REPLACE FUNCTION public.rpc_bloom_scenario_overview(p_store_code text, p_delivery_date date, p_next_delivery date DEFAULT NULL::date, p_route text DEFAULT NULL::text, p_yardstick_tolerance_pct numeric DEFAULT 20, p_scenarios text[] DEFAULT NULL::text[], p_include_yardstick boolean DEFAULT true)
  RETURNS TABLE(scenario text, lines integer, promo_lines integer, count_first_lines integer, value_normal numeric, value_geared numeric, protected_lines integer, trimmed_lines integer, budget_amount numeric, budget_week_start date, yardstick_value numeric, yardstick_source text, yardstick_deviation_pct numeric, yardstick_flag text, yardstick_reason text, by_kvi_band jsonb, by_mode jsonb, by_tier jsonb, by_kvi_band_lines jsonb, demonstrated_weekly_demand numeric, count_first_pool integer, min_order_value numeric, min_shortfall numeric, min_reason text, computed_at timestamp with time zone, value_promo_lines numeric, value_nonpromo_lines numeric, promo_share_pct numeric, promo_lines_pool integer)
  LANGUAGE plpgsql
@@ -70,7 +71,7 @@ DECLARE
 BEGIN
   SET LOCAL statement_timeout = '45s';
 
-  IF p_route IS NULL OR (p_route NOT IN ('DC_AMBIENT','DC_TOPS','DIRECT_BEER') AND p_route NOT LIKE 'DIRECT\_%' ESCAPE '\') THEN
+  IF p_route IS NULL OR (p_route NOT IN ('DC_AMBIENT','DC_TOPS','DC_FRESH','DIRECT_BEER') AND p_route NOT LIKE 'DIRECT\_%' ESCAPE '\') THEN
     RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS, DIRECT_BEER or a RULED DIRECT_<brand> desk';
   END IF;
 
@@ -184,6 +185,7 @@ BEGIN
     FROM order_budget_ledger obl
     WHERE obl.store_code = p_store_code
       AND obl.route_key = (CASE
+        WHEN p_route = 'DC_FRESH' THEN 'DC_FRESH'
         WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER'
         WHEN p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN 'DIRECT'
         ELSE 'DC'

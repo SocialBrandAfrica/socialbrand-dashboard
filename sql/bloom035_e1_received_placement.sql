@@ -63,12 +63,13 @@ COMMENT ON TABLE public.l2_received_placement IS
 'GRADE: CALCULATED. BLOOM-035 E1 (R7). One row per (store, product) received in the desk_receipt_window_days: the desk it belongs on (the LATEST GRV supplier decides, never a link) and why it would not be an order row. state DESK = a desk exists for it (reason_code says why it is not ordered when it is not), PARKED = no sheet can hold it yet (a catch-all account whose consolidated desk is not built, an expense account), PRODUCTION = World 2, belongs on the production desk (item 7), NO_DESK = the latest supplier has no desk (a defect to read, expected 0). Written nightly by refresh_l2_received_placement. The one home for "where does this received product sit", read by the order cache and, by design, by the stocktake supplier lists (R33).';
 
 -- The nightly fact ------------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.refresh_l2_received_placement(p_store_code text DEFAULT NULL)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path TO 'public'
-AS $fn$
+-- Re-synced from the live definition 2026-10-14 (after bloom035_1b_dc_fresh_phase0, ENG-204).
+CREATE OR REPLACE FUNCTION public.refresh_l2_received_placement(p_store_code text DEFAULT NULL::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
 DECLARE
   v_store text;
   v_wm    date;
@@ -103,7 +104,8 @@ BEGIN
              COALESCE(NULLIF(btrim(sm.name), ''), NULLIF(btrim(sm.short_name), ''), 'Supplier ' || sm.supplier_nr) AS nm
         FROM sigma_supplier_master sm WHERE sm.store_code = v_store ORDER BY sm.supplier_nr, sm.id DESC
     ),
-    dcroute AS (SELECT DISTINCT pv.route_key FROM l2_population_verdict pv WHERE pv.store_code = v_store AND pv.is_dc LIMIT 1),
+    dcroute AS (SELECT DISTINCT pv.route_key FROM l2_population_verdict pv WHERE pv.store_code = v_store AND pv.is_dc AND pv.route_key <> 'DC_FRESH' LIMIT 1),
+    freshdept AS (SELECT unnest(dc.dc_fresh_dept_nrs)::int AS d FROM bloom_dc_config dc WHERE dc.store_code = v_store AND dc.status = 'RULED'),
     dcdept AS (SELECT unnest(dc.dc_cycle_dept_nrs)::int AS d, dc.fresh_cycle_applicable AS fresh
                  FROM bloom_dc_config dc WHERE dc.store_code = v_store AND dc.status = 'RULED'),
     sold AS (SELECT DISTINCT ss.product_code FROM sigma_sales ss
@@ -114,7 +116,7 @@ BEGIN
              (w.product_code IS NOT NULL) AS w2,
              EXISTS (SELECT 1 FROM bloom_catchall_account ca
                       WHERE upper(btrim(t.nm)) = ca.account_name OR upper(btrim(t.nm)) LIKE ca.account_name || ' %') AS catchall,
-             CASE WHEN t.supplier_type = 'Z' THEN (SELECT route_key FROM dcroute)
+             CASE WHEN t.supplier_type = 'Z' THEN (CASE WHEN sp.department_nr::int IN (SELECT d FROM freshdept) THEN 'DC_FRESH' ELSE (SELECT route_key FROM dcroute) END)
                   ELSE (SELECT rc.route_key FROM bloom_route_config rc
                          WHERE rc.store_code = v_store AND rc.status = 'RULED' AND l.supplier_nr = ANY (rc.direct_supplier_nrs)
                          ORDER BY rc.route_key LIMIT 1) END AS desk,
@@ -152,7 +154,7 @@ BEGIN
                 WHEN f.catchall THEN format('Booked against the catch-all account %s. It has no supplier desk. It waits for the store consolidated desk (ENG-202, not built).', f.nm)
                 WHEN f.desk IS NULL THEN format('The latest supplier, %s, has no desk at this store.', f.nm)
                 WHEN f.desk IN (SELECT route_key FROM dcroute) AND f.dept IS NOT NULL AND f.dept NOT IN (SELECT d FROM dcdept) THEN
-                  CASE WHEN (SELECT bool_or(fresh) FROM dcdept) THEN format('Department %s is outside the DC ambient cycle. It belongs on the DC fresh desk (ENG-204, ruled 10-09, not built).', f.dept)
+                  CASE WHEN (SELECT bool_or(fresh) FROM dcdept) THEN format('Department %s is outside the DC ambient cycle. It is in no DC desk department set (the DC fresh desk takes the departments the DC delivered, ENG-204).', f.dept)
                        ELSE format('Department %s is outside this store''s DC cycle departments.', f.dept) END
                 WHEN NOT f.has_link THEN format('No active supplier link to %s in Sigma. Repair the link to order it.', f.nm)
                 WHEN pv.route_key = f.desk THEN format('In the desk pool, nothing to order: %s%s.', pv.population_state, COALESCE(' (' || NULLIF(pv.state_reason, '') || ')', ''))
@@ -167,7 +169,7 @@ BEGIN
   END LOOP;
   RETURN jsonb_build_object('stores', v_out);
 END
-$fn$;
+$function$;
 REVOKE EXECUTE ON FUNCTION public.refresh_l2_received_placement(text) FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.refresh_l2_received_placement(text) TO service_role;
 COMMENT ON FUNCTION public.refresh_l2_received_placement(text) IS

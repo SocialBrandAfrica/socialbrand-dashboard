@@ -324,6 +324,7 @@ DROP FUNCTION IF EXISTS public.rpc_bloom_order_recipe(text,date,date,date,text,n
 DROP FUNCTION IF EXISTS public.rpc_bloom_order_recipe(text,date,date,date,text,numeric,boolean,integer,integer,integer,numeric,text,jsonb);
 DROP FUNCTION IF EXISTS public.rpc_bloom_order_recipe(text,date,date,date,text,numeric,boolean,integer,integer,integer,numeric,text);
 
+-- Re-synced from the live definition 2026-10-14 (after bloom035_1b_dc_fresh_phase0, ENG-204).
 CREATE OR REPLACE FUNCTION public.rpc_bloom_order_recipe(p_store_code text, p_delivery_date date, p_next_delivery date DEFAULT NULL::date, p_soh_date date DEFAULT NULL::date, p_preset text DEFAULT NULL::text, p_days_cover_override numeric DEFAULT NULL::numeric, p_fit_to_budget boolean DEFAULT false, p_month_end_build_start_day integer DEFAULT 15, p_month_end_build_end_day integer DEFAULT 24, p_early_month_build_start_day integer DEFAULT 25, p_catchup_band_cap_multiple numeric DEFAULT 3.0, p_route text DEFAULT NULL::text, p_soh_override jsonb DEFAULT NULL::jsonb, p_store_target_days integer DEFAULT 21, p_max_order_stock_days numeric DEFAULT 35)
  RETURNS TABLE(store_code text, product_code bigint, ean text, description text, dept_name text, route text, kvi_band text, archetype text, tier text, mode text, mode_reason text, range_state text, range_state_reason text, demand_source text, ros_window_used text, rhythm_adjusted_demand numeric, min_band numeric, max_band numeric, target_level numeric, soh numeric, lead_days_used integer, lead_days_source text, projected_soh numeric, count_first boolean, band_blocked_reason text, pack_forced_review boolean, hero_pack_over_max boolean, min_presence_forced boolean, keep_or_delist boolean, need_units numeric, pack_size smallint, pack_cost numeric, normal_packs integer, promo_active boolean, promo_nr bigint, promo_start date, promo_end date, promo_uplift numeric, promo_uplift_source text, promo_suffix text, promo_naming_gap boolean, geared_packs integer, packs_before_fit integer, suggested_packs integer, value numeric, gmroi_quartile integer, gmroi_capped boolean, gmroi_rank integer, budget_fit_applied boolean, budget_fit_reason text, budget_week_start date, budget_week_source text, is_bt_hero boolean, preset_applied text, frozen_focus_pending boolean, story text, promo_in_window boolean, promo_band_demand numeric, promo_uplift_band numeric, promo_uplift_band_source text, promo_uplift_band_basis text, promo_floor_units numeric, promo_shortfall_units numeric, promo_shortfall_packs integer, promo_shortfall_rand numeric, promo_gap_reason text, in_transit_qty numeric, in_transit_cost numeric, in_transit_landing date, in_transit_counted boolean, in_transit_routes text, in_transit_lead_basis text, in_transit_landing_state text, in_transit_stale_qty numeric, in_transit_stale_age_days integer, in_transit_reason text, pack_content text)
  LANGUAGE plpgsql
@@ -383,8 +384,8 @@ BEGIN
     RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS, DIRECT_BEER or a RULED DIRECT_<brand> desk (canon SS14 v7 item 1 / v9 item 7)';
   END IF;
 
-  IF p_route IN ('DC_AMBIENT','DC_TOPS') THEN
-    SELECT dc.dc_cycle_dept_nrs, dc.format_group INTO v_dept_nrs, v_format_group
+  IF p_route IN ('DC_AMBIENT','DC_TOPS','DC_FRESH') THEN
+    SELECT CASE WHEN p_route = 'DC_FRESH' THEN dc.dc_fresh_dept_nrs ELSE dc.dc_cycle_dept_nrs END, dc.format_group INTO v_dept_nrs, v_format_group
     FROM bloom_dc_config dc WHERE dc.store_code = p_store_code AND dc.status = 'RULED';
     IF v_dept_nrs IS NULL THEN
       RAISE EXCEPTION 'no RULED bloom_dc_config row for store %', p_store_code;
@@ -407,6 +408,7 @@ BEGIN
   END IF;
 
   v_ledger_route := CASE
+    WHEN p_route = 'DC_FRESH' THEN 'DC_FRESH'
     WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER'
     WHEN p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN 'DIRECT'
     ELSE 'DC'
@@ -493,7 +495,7 @@ BEGIN
       LEFT JOIN sigma_supplier_master sm ON sm.store_code=sl.store_code AND sm.supplier_nr=sl.supplier_nr
       WHERE sl.store_code=%1$L AND COALESCE(sl.status,'')<>'S' AND (sl.valid_to IS NULL OR sl.valid_to>=CURRENT_DATE)
         AND (
-          (%15$L::text IN ('DC_AMBIENT','DC_TOPS') AND sm.supplier_type='Z')
+          (%15$L::text IN ('DC_AMBIENT','DC_TOPS','DC_FRESH') AND sm.supplier_type='Z')
           OR (%15$L::text LIKE 'DIRECT\_%%' ESCAPE '\' AND sl.supplier_nr = ANY(%25$L::bigint[]))
         )
       ORDER BY sl.product_code, (sl.supplier_nr=1339) DESC, sl.cost_date DESC NULLS LAST
@@ -562,7 +564,7 @@ BEGIN
         -- population verdict assigned it by receipts. No verdict row, no change (R33 clause 3).
         AND NOT EXISTS (SELECT 1 FROM l2_population_verdict pv WHERE pv.store_code=%1$L AND pv.product_code=b.product_code AND pv.route_overlap AND pv.route_key IS DISTINCT FROM %15$L::text)
         AND (
-          (%15$L::text IN ('DC_AMBIENT','DC_TOPS') AND sp.department_nr = ANY(%16$L::smallint[]))
+          (%15$L::text IN ('DC_AMBIENT','DC_TOPS','DC_FRESH') AND sp.department_nr = ANY(%16$L::smallint[]))
           -- ENG-033 supersedes ENG-029's merch-group + any-direct-receipt gate for
           -- DIRECT_BEER (retired with lineage, R28). Account scope removes link-only
           -- DC-supplied beer by construction -- it is not linked to the SAB account.

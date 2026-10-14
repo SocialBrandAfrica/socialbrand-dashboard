@@ -92,37 +92,13 @@
 -- dump the whole tail at him.
 -- =====================================================================
 
-CREATE OR REPLACE FUNCTION public.rpc_bloom_hidden_demand(
-  p_store_code text,
-  p_route      text,
-  p_soh_date   date DEFAULT NULL
-)
-RETURNS TABLE (
-  product_code        bigint,
-  description         text,
-  dept_name           text,
-  tier                text,
-  kvi_band            text,
-  range_state         text,
-  soh                 numeric,
-  pack_size           smallint,
-  pack_cost           numeric,
-  window_days         smallint,
-  rate_raw            numeric,
-  rate_corrected      numeric,
-  rate_multiple       numeric,
-  guard               text,
-  days_removed        smallint,
-  observable_days     smallint,
-  observable_share    numeric,
-  cover_days_on_raw   numeric,
-  cover_days_on_corr  numeric,
-  reason              text
-)
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path TO 'public'
-AS $fn$
+-- Re-synced from the live definition 2026-10-14 (after bloom035_1b_dc_fresh_phase0, ENG-204).
+CREATE OR REPLACE FUNCTION public.rpc_bloom_hidden_demand(p_store_code text, p_route text, p_soh_date date DEFAULT NULL::date)
+ RETURNS TABLE(product_code bigint, description text, dept_name text, tier text, kvi_band text, range_state text, soh numeric, pack_size smallint, pack_cost numeric, window_days smallint, rate_raw numeric, rate_corrected numeric, rate_multiple numeric, guard text, days_removed smallint, observable_days smallint, observable_share numeric, cover_days_on_raw numeric, cover_days_on_corr numeric, reason text)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
 DECLARE
   v_dept_nrs  smallint[];
   v_direct    bigint[];
@@ -144,7 +120,7 @@ BEGIN
   END IF;
 
   IF v_is_dc THEN
-    SELECT dc.dc_cycle_dept_nrs INTO v_dept_nrs
+    SELECT CASE WHEN p_route = 'DC_FRESH' THEN dc.dc_fresh_dept_nrs ELSE dc.dc_cycle_dept_nrs END INTO v_dept_nrs
       FROM public.bloom_dc_config dc
      WHERE dc.store_code = p_store_code AND dc.status = 'RULED';
     IF v_dept_nrs IS NULL THEN
@@ -241,7 +217,7 @@ BEGIN
      AND t.w_pub IS NULL
      AND COALESCE(t.w_corr,0) > COALESCE(t.w_raw,0)
    ORDER BY t.w_corr DESC NULLS LAST, t.product_code;
-END $fn$;
+END $function$;
 
 -- A READ rpc. Grants stated explicitly -- a create_*.sql without its grants is
 -- incomplete (R30 addendum). anon-executable by design; the R30 addendum

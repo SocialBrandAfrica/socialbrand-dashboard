@@ -32,6 +32,7 @@
 -- with no anon read policy, so an invoker build hands the browser key a
 -- confident ZERO -- the ENG-068 / ENG-074 shape. Proven behaviourally.
 
+-- Re-synced from the live definition 2026-10-14 (after bloom035_1b_dc_fresh_phase0, ENG-204).
 CREATE OR REPLACE FUNCTION public.rpc_bloom_route_benchmark(p_store_code text, p_route text, p_anchor_date date DEFAULT NULL::date)
  RETURNS TABLE(store_code text, route_key text, anchor_date date, anchor_basis text, window_days integer, weekly_cost_demand numeric, window_cost_demand numeric, products_in_scope integer, dept_nrs smallint[], basis text, disclosure text)
  LANGUAGE plpgsql
@@ -44,7 +45,7 @@ DECLARE
   v_wm date;
 BEGIN
   -- The population is the store's CYCLE DEPARTMENT SET. Ruled for DC routes only.
-  SELECT c.dc_cycle_dept_nrs INTO v_depts
+  SELECT CASE WHEN p_route = 'DC_FRESH' THEN c.dc_fresh_dept_nrs ELSE c.dc_cycle_dept_nrs END INTO v_depts
   FROM bloom_dc_config c WHERE c.store_code = p_store_code;
 
   IF p_route NOT LIKE 'DC%' OR v_depts IS NULL THEN

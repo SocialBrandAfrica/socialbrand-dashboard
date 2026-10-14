@@ -58,6 +58,7 @@
 -- nothing is invented for a population canon has not ruled. That fallback is
 -- still CURRENT_DATE-anchored -- a NAMED residual, filed, not hidden.
 
+-- Re-synced from the live definition 2026-10-14 (after bloom035_1b_dc_fresh_phase0, ENG-204).
 CREATE OR REPLACE FUNCTION public.rpc_bloom_stock_state(p_store_code text, p_route text)
  RETURNS TABLE(group_name text, lines integer, selling_lines integer, stock_at_cost numeric, daily_cost_demand numeric, stock_days numeric, weekly_demand_dept numeric, weekly_demand_orderable numeric, weekly_demand_gap numeric, weekly_demand_gap_lines integer, weekly_demand_gap_label text, computed_at timestamp with time zone)
  LANGUAGE plpgsql
@@ -75,8 +76,8 @@ BEGIN
     RAISE EXCEPTION 'p_route is required: DC_AMBIENT, DC_TOPS, DIRECT_BEER or a RULED DIRECT_<brand> desk';
   END IF;
 
-  IF p_route IN ('DC_AMBIENT','DC_TOPS') THEN
-    SELECT dc.dc_cycle_dept_nrs INTO v_dept_nrs
+  IF p_route IN ('DC_AMBIENT','DC_TOPS','DC_FRESH') THEN
+    SELECT CASE WHEN p_route = 'DC_FRESH' THEN dc.dc_fresh_dept_nrs ELSE dc.dc_cycle_dept_nrs END INTO v_dept_nrs
     FROM bloom_dc_config dc WHERE dc.store_code = p_store_code AND dc.status = 'RULED';
   ELSIF p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN
     NULL;
@@ -133,7 +134,7 @@ BEGIN
     SELECT sp.product_code
     FROM l2_stock_position sp
     WHERE sp.store_code = p_store_code
-      AND ((p_route IN ('DC_AMBIENT','DC_TOPS') AND sp.department_nr = ANY(v_dept_nrs)))
+      AND ((p_route IN ('DC_AMBIENT','DC_TOPS','DC_FRESH') AND sp.department_nr = ANY(v_dept_nrs)))
     UNION
     SELECT pr.product_code FROM pool_run pr WHERE p_route LIKE 'DIRECT\_%' ESCAPE '\'
   ),

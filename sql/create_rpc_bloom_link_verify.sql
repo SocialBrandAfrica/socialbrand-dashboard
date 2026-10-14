@@ -107,7 +107,7 @@ BEGIN
   END IF;
 
   IF v_is_dc THEN
-    SELECT dc.dc_cycle_dept_nrs INTO v_dept_nrs FROM public.bloom_dc_config dc
+    SELECT CASE WHEN p_route = 'DC_FRESH' THEN dc.dc_fresh_dept_nrs ELSE dc.dc_cycle_dept_nrs END INTO v_dept_nrs FROM public.bloom_dc_config dc
      WHERE dc.store_code=p_store_code AND dc.status='RULED';
   ELSE
     SELECT rc.direct_supplier_nrs INTO v_direct FROM public.bloom_route_config rc

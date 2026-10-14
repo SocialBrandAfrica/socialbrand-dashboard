@@ -59,19 +59,26 @@ VALUES ('purchases_to_sales_ratio_cost_basis', '*', 1.00, 'DEMO_CALIBRATION', '2
         'Leg d. Multiplier from l2_sales_budget.projected_sales_cost (already at cost) to the weekly NEEDS rail. 1.00 = buy what you sell, at cost. Canon v11''s 0.82 is the RETAIL->cost conversion and must not be applied on top of a cost figure. Demonstrated per-store ratio is SURFACED in order_budget_ledger.source_note, never applied.')
 ON CONFLICT (config_key, store_format) DO NOTHING;
 
+-- Re-synced from the live definition 2026-10-14 (after bloom035_1b_dc_fresh_phase0, ENG-204).
 CREATE OR REPLACE FUNCTION public.refresh_order_budget_ledger_needs(p_store text)
-RETURNS jsonb
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
 DECLARE
   v_ratio numeric;
   v_demo numeric;
   v_ins int; v_upd int; v_held int;
+  v_cm_rows int; v_cm_total numeric; v_ld_total numeric;
+  v_unrouted_landed numeric; v_unrouted_transit numeric; v_multi_route int;
+  v_strip_dept numeric; v_strip_w1 numeric; v_strip_lines int;
+  v_floor date;
 BEGIN
   SELECT value_num INTO v_ratio FROM forge_config
    WHERE config_key='purchases_to_sales_ratio_cost_basis' AND store_format='*' AND retired_on IS NULL;
   v_ratio := COALESCE(v_ratio, 1.00);
 
-  -- demonstrated, trailing 91d, SURFACED not applied (R29 -- the reason travels)
   SELECT ROUND(
            (SELECT COALESCE(SUM(m.cost_value),0) FROM sigma_movements m
              WHERE m.store_code=p_store AND m.movement_type='R' AND m.movement_process='W'
@@ -83,7 +90,8 @@ BEGIN
 
   WITH needs AS (
     SELECT sb.store_code,
-           CASE WHEN sb.route_key LIKE 'DC\_%' ESCAPE '\' THEN 'DC'
+           CASE WHEN sb.route_key = 'DC_FRESH' THEN 'DC_FRESH'
+                WHEN sb.route_key LIKE 'DC\_%' ESCAPE '\' THEN 'DC'
                 WHEN sb.route_key = 'DIRECT_BEER'         THEN 'DIRECT_BEER'
                 ELSE 'DIRECT' END AS ledger_route,
            sb.budget_week_start AS year_month,
@@ -123,15 +131,135 @@ BEGIN
     ON sb.store_code=l.store_code AND sb.budget_week_start=l.year_month
   WHERE l.store_code=p_store AND l.grain='weekly' AND COALESCE(l.budget_manual_override,false);
 
-  -- no silent empties (canon SS8.6 guard 4): the projection exists, so the rail must move
+  -- ==================== ENG-061, THE MONEY BOOK -- SCOPED (SB-CC-DCBUDGET-001) ====================
+  -- committed_amount = what this budget week has ALREADY consumed:
+  --   (a) receipts that have LANDED inside the week   (sigma_movements R/W, cost ex-VAT)
+  -- + (b) in-transit expected to LAND inside the week (l2_on_order, line basis)
+  -- landed_amount = leg (a) alone. ONE landed computation lives here; refresh_order_budget_ledger()
+  -- keeps sales_actual only (its landed leg is retired with lineage, R28 -- see COMMENT).
+  -- THE DC ROUTE IS SCOPED TO THE SAME POOL AS ITS BUDGET: ambient departments
+  -- (bloom_dc_config.dc_cycle_dept_nrs) x World-1 (l2_item_classification NORMAL). DC fresh,
+  -- production, non-stock and unclassified receipts are EXCLUDED and SURFACED, never netted
+  -- against a buy-and-sell budget that was never sized to include them.
+  SELECT MIN(year_month) INTO v_floor FROM order_budget_ledger
+   WHERE store_code=p_store AND grain='weekly';
+
+  WITH beer AS (
+    SELECT unnest(direct_supplier_nrs) AS supplier_nr FROM bloom_route_config
+     WHERE store_code=p_store AND route_key='DIRECT_BEER'),
+  direct AS (
+    SELECT unnest(direct_supplier_nrs) AS supplier_nr FROM bloom_route_config
+     WHERE store_code=p_store AND route_key LIKE 'DIRECT\_%' ESCAPE '\' AND route_key <> 'DIRECT_BEER'),
+  -- ONE HOME (FILE-GOVERNANCE §0g write-forward): the pool definition lives in
+  -- v_bloom_dc_ambient_pool and is read, never restated. A second copy would be drift.
+  dcpool AS (
+    SELECT p.product_code FROM v_bloom_dc_ambient_pool p WHERE p.store_code = p_store),
+  fpool AS (
+    SELECT p.product_code FROM v_bloom_dc_fresh_pool p WHERE p.store_code = p_store),
+  landed AS (
+    SELECT CASE
+             WHEN m.supplier_nr IN (SELECT supplier_nr FROM beer)   THEN 'DIRECT_BEER'
+             WHEN m.supplier_nr IN (SELECT supplier_nr FROM direct) THEN 'DIRECT'
+             WHEN sm.supplier_type = 'Z'
+              AND m.product_code IN (SELECT product_code FROM dcpool) THEN 'DC'
+             WHEN sm.supplier_type = 'Z'
+              AND m.product_code IN (SELECT product_code FROM fpool) THEN 'DC_FRESH'
+           END AS ledger_route,
+           (m.movement_date - ((EXTRACT(ISODOW FROM m.movement_date)::int + 1) % 7)) AS week_start,
+           SUM(m.cost_value) AS amt
+    FROM sigma_movements m
+    LEFT JOIN sigma_supplier_master sm
+      ON sm.store_code=m.store_code AND sm.supplier_nr=m.supplier_nr
+    WHERE m.store_code=p_store AND m.movement_type IN ('R','W')
+      AND m.movement_date >= v_floor
+    GROUP BY 1,2),
+  transit AS (
+    SELECT CASE
+             WHEN o.route_keys[1] = 'DIRECT_BEER'             THEN 'DIRECT_BEER'
+             WHEN o.route_keys[1] LIKE 'DIRECT\_%' ESCAPE '\' THEN 'DIRECT'
+             WHEN o.route_keys[1] = 'DC'
+              AND o.product_code IN (SELECT product_code FROM dcpool) THEN 'DC'
+             WHEN o.route_keys[1] = 'DC'
+              AND o.product_code IN (SELECT product_code FROM fpool) THEN 'DC_FRESH'
+           END AS ledger_route,
+           (o.expected_landing_date - ((EXTRACT(ISODOW FROM o.expected_landing_date)::int + 1) % 7)) AS week_start,
+           SUM(o.on_order_cost) AS amt
+    FROM l2_on_order o
+    WHERE o.store_code=p_store AND o.on_order_qty > 0
+      AND o.expected_landing_date IS NOT NULL
+      AND array_length(o.route_keys,1) = 1
+    GROUP BY 1,2),
+  agg AS (
+    SELECT COALESCE(l.ledger_route, t.ledger_route) AS ledger_route,
+           COALESCE(l.week_start,   t.week_start)   AS week_start,
+           COALESCE(l.amt,0) AS landed_amt,
+           COALESCE(t.amt,0) AS transit_amt
+    FROM      (SELECT * FROM landed  WHERE ledger_route IS NOT NULL) l
+    FULL JOIN (SELECT * FROM transit WHERE ledger_route IS NOT NULL) t
+           ON t.ledger_route = l.ledger_route AND t.week_start = l.week_start
+  ),
+  cm AS (
+    UPDATE order_budget_ledger l
+       SET committed_amount = ROUND(a.landed_amt + a.transit_amt, 2),
+           landed_amount    = ROUND(a.landed_amt, 2),
+           updated_at = now()
+      FROM agg a
+     WHERE l.store_code=p_store AND l.grain='weekly'
+       AND l.route_key = a.ledger_route AND l.year_month = a.week_start
+    RETURNING l.committed_amount, l.landed_amount
+  )
+  SELECT count(*), COALESCE(SUM(committed_amount),0), COALESCE(SUM(landed_amount),0)
+    INTO v_cm_rows, v_cm_total, v_ld_total FROM cm;
+
+  -- THE DC STRIP, surfaced with its two reasons (R29). These are type-Z receipts that are NOT
+  -- part of the DC-ambient buy-and-sell stream and therefore never touch its budget.
+  SELECT COALESCE(SUM(m.cost_value) FILTER (WHERE sp.product_code IS NULL
+                                              OR NOT (sp.department_nr = ANY(dc.dc_cycle_dept_nrs) OR sp.department_nr = ANY(COALESCE(dc.dc_fresh_dept_nrs, ARRAY[]::smallint[])))),0),
+         COALESCE(SUM(m.cost_value) FILTER (WHERE sp.department_nr = ANY(dc.dc_cycle_dept_nrs)
+                                              AND sp.class <> 'NORMAL'),0),
+         count(*) FILTER (WHERE sp.product_code IS NULL
+                            OR NOT (sp.department_nr = ANY(dc.dc_cycle_dept_nrs) OR sp.department_nr = ANY(COALESCE(dc.dc_fresh_dept_nrs, ARRAY[]::smallint[])))
+                            OR sp.class <> 'NORMAL')
+    INTO v_strip_dept, v_strip_w1, v_strip_lines
+  FROM sigma_movements m
+  JOIN sigma_supplier_master sm ON sm.store_code=m.store_code AND sm.supplier_nr=m.supplier_nr
+  JOIN bloom_dc_config dc       ON dc.store_code=m.store_code AND dc.status='RULED'
+  LEFT JOIN l2_stock_position sp ON sp.store_code=m.store_code AND sp.product_code=m.product_code
+  WHERE m.store_code=p_store AND m.movement_type IN ('R','W') AND sm.supplier_type='Z'
+    AND m.movement_date >= v_floor;
+
+  SELECT COALESCE(SUM(m.cost_value),0) INTO v_unrouted_landed
+  FROM sigma_movements m
+  LEFT JOIN sigma_supplier_master sm ON sm.store_code=m.store_code AND sm.supplier_nr=m.supplier_nr
+  WHERE m.store_code=p_store AND m.movement_type IN ('R','W') AND m.movement_date >= v_floor
+    AND COALESCE(sm.supplier_type,'') <> 'Z'
+    AND NOT EXISTS (SELECT 1 FROM bloom_route_config rc
+                     WHERE rc.store_code=p_store AND m.supplier_nr = ANY(rc.direct_supplier_nrs));
+
+  SELECT COALESCE(SUM(o.on_order_cost),0), COUNT(*) FILTER (WHERE array_length(o.route_keys,1) > 1)
+    INTO v_unrouted_transit, v_multi_route
+  FROM l2_on_order o
+  WHERE o.store_code=p_store AND o.on_order_qty > 0
+    AND (array_length(o.route_keys,1) <> 1 OR o.route_keys[1] LIKE 'OTHER\_%' ESCAPE '\');
+
   IF v_ins + v_upd = 0 AND EXISTS (SELECT 1 FROM l2_sales_budget WHERE store_code=p_store) THEN
     RAISE EXCEPTION 'refresh_order_budget_ledger_needs(%): projection has rows but no ledger row was written or updated -- refusing a false green', p_store;
   END IF;
 
   RETURN jsonb_build_object('store_code', p_store, 'inserted', v_ins, 'updated', v_upd,
                             'held_manual', v_held, 'ratio_applied', v_ratio,
-                            'ratio_demonstrated', v_demo, 'refreshed_at', now());
-END $fn$;
+                            'ratio_demonstrated', v_demo,
+                            'committed_rows_written', v_cm_rows,
+                            'committed_total', ROUND(v_cm_total,2),
+                            'landed_total', ROUND(v_ld_total,2),
+                            'excluded_dc_non_ambient_dept_landed', ROUND(v_strip_dept,2),
+                            'excluded_dc_ambient_non_w1_landed',   ROUND(v_strip_w1,2),
+                            'excluded_dc_strip_lines',             v_strip_lines,
+                            'excluded_unrouted_landed', ROUND(v_unrouted_landed,2),
+                            'excluded_unrouted_transit', ROUND(v_unrouted_transit,2),
+                            'excluded_multi_route_products', v_multi_route,
+                            'refreshed_at', now());
+END $function$;
 
 REVOKE ALL ON FUNCTION public.refresh_order_budget_ledger_needs(text) FROM PUBLIC;
 -- anon revoked BY NAME (RULE-BOOK v2.10 SS22 R30 addendum extension, canonised 2026-07-21):
