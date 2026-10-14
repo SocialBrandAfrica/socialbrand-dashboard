@@ -32,6 +32,7 @@ Read("C:\Users\User\Desktop\Daisy\SIGMA-CLEANUP-WORKFLOW.md")
 Read("C:\Users\User\Desktop\Daisy\DB-SCHEMA.md")
 Read("C:\Users\User\Desktop\Daisy\FILE-GOVERNANCE.md")
 Read("C:\Users\User\Desktop\Daisy\HANDOVER-CURRENT.md")
+Read("C:\Users\User\Desktop\Daisy\SEATS-AND-PIPELINE.md")                  # §0f only
 Read("C:\Users\User\Desktop\Daisy\SB-VIS-001_Product_Vision_and_Philosophy.md")
 Read("C:\Users\User\Desktop\Daisy\SB-PRIORITY-FRAMEWORK-001.md")
 ```

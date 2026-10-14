@@ -1,0 +1,2 @@
+-- ENG-236 / ENG-096: pipeline-guard (cron jobid 57, every 5 minutes) carried no statement_timeout prefix, so audit_statement_timeout_ceilings() read it as FAIL NO_CEILING. Ceiling 600 s (its longest succeeded run is 1.2 s).
+SELECT cron.alter_job(57, command := $c$SET statement_timeout = '600s'; SELECT public.guard_pipeline_orphans();$c$);
