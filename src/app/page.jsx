@@ -1213,6 +1213,11 @@ export default function Home() {
   // swallowed into an empty array by `.catch(() => [])`, which renders as
   // "no slow movers" -- a blank standing in for a failure (R22 §3).
   const [engineSlowError, setEngineSlowError] = useState(null)
+  // AUD-011 B / ENG-180 A: the cost-error detector (rpc_gp_cost_quarantine) for this period and for last year's
+  // dates. {data, error}; data null while loading. A failed call is stated, never read as "no cost errors".
+  const [gpQuarTY, setGpQuarTY] = useState({ data: null, error: null })
+  const [gpQuarLY, setGpQuarLY] = useState({ data: null, error: null })
+  const gpQuarCache = useRef(new Map())
   const [supplierError,   setSupplierError]   = useState(null)  // ENG-251 -- a failed supplier read is stated, not an empty Supplier column
   const [reportLoaded,  setReportLoaded]  = useState(false)
   const [reportLoading, setReportLoading] = useState(false)
@@ -1948,6 +1953,36 @@ export default function Home() {
     return () => { cancelled = true }
   }, [storeCodes, deptFilter, deptNormMap, trendDates, lyTrendDates])
 
+  // ── Gross Profit cost-error check (AUD-011 B this period, ENG-180 A last year) ──────────────────
+  // One detector (rpc_gp_cost_quarantine): a (store, product, day) line whose cost is at least
+  // R1,000 and 10 times its ex-VAT revenue. This period it is STATED beside the headline, never
+  // smoothed out of it. For last year's dates it decides whether last year's GP is shown at all.
+  useEffect(() => {
+    if (!storeCodes.length || !selectedDates.length) {
+      setGpQuarTY({ data: null, error: null }); setGpQuarLY({ data: null, error: null }); return
+    }
+    let cancelled = false
+    const deptNames = deptFilter !== 'all' ? [...(deptNormMap.get(deptFilter) ?? new Set([deptFilter]))] : null
+    const lyDates   = selectedDates.map(d => shiftDate(d, -LY_SHIFT_DAYS))
+    const run = (dates, setter, tag) => {
+      const key = tag + '|' + [...storeCodes].sort().join(',') + '|' + [...dates].sort().join(',') + '|' + (deptNames ? deptNames.slice().sort().join(',') : '')
+      const hit = gpQuarCache.current.get(key)
+      if (hit) { setter({ data: hit, error: null }); return }
+      setter({ data: null, error: null })
+      supabase.rpc('rpc_gp_cost_quarantine', { p_store_codes: storeCodes, p_dates: dates, p_dept_names: deptNames })
+        .then(({ data, error }) => {
+          if (cancelled) return
+          if (error) { console.error('[rpc_gp_cost_quarantine ' + tag + ']', error.message); setter({ data: null, error: error.message }); return }
+          gpQuarCache.current.set(key, data)
+          setter({ data, error: null })
+        })
+        .catch(e => { if (!cancelled) setter({ data: null, error: e?.message ?? String(e) }) })
+    }
+    run(selectedDates, setGpQuarTY, 'TY')
+    run(lyDates,       setGpQuarLY, 'LY')
+    return () => { cancelled = true }
+  }, [storeCodes, selectedDates, deptFilter, deptNormMap, refreshKey])
+
   // ── fetch Top 20 via RPC — re-runs when dept or sub-dept filter changes ──────
   // rpc_top20 accepts p_dept / p_subdept and returns at most 40 pre-aggregated rows
   // (union of top-20-by-value ∪ top-20-by-qty). No client-side row-cap issues.
@@ -2675,7 +2710,25 @@ export default function Home() {
     ? sumField(lyDeptRows, 'total_sales_ex_vat')
     : lyKpiData.reduce((s, r) => s + (r.total_sales_ex_vat ?? 0), 0)
   const lyKpiGPRand = lyKpiSalesExVat - lyKpiCost
-  const lyKpiGP     = lyKpiSalesExVat > 0 ? (lyKpiGPRand / lyKpiSalesExVat) * 100 : null
+  const lyKpiGPRaw  = lyKpiSalesExVat > 0 ? (lyKpiGPRand / lyKpiSalesExVat) * 100 : null
+  // ENG-180 A: last year's GP is hidden, with a note, when removing last year's cost-error lines moves it by
+  // the configured number of points or more, and also when the check itself failed (never a confident wrong
+  // number). It is judged on the dates the card compares, so a store's poisoned window hides it only there.
+  const lyGpTot      = gpQuarLY.data?.total ?? null
+  const lyGpHidden   = !!gpQuarLY.error || lyGpTot?.poisoned === true
+  const lyKpiGP      = lyGpHidden ? null : lyKpiGPRaw
+  const lyGpNote     = gpQuarLY.error
+    ? 'LY GP hidden: last year\'s cost check could not be read'
+    : (lyGpTot?.poisoned === true
+        ? `LY GP hidden: last year's ledger carries ${num(lyGpTot.flagged_lines)} cost-error line${lyGpTot.flagged_lines === 1 ? '' : 's'} (${zarShort(lyGpTot.flagged_cost)}), GP ${pct(lyGpTot.gp_pct, 0)} with them, ${pct(lyGpTot.gp_pct_ex_flagged)} without`
+        : null)
+  // AUD-011 B: this period's cost errors, stated beside the unchanged headline.
+  const tyGpTot      = gpQuarTY.data?.total ?? null
+  const tyGpNote     = gpQuarTY.error
+    ? 'cost-error check unavailable'
+    : ((tyGpTot?.flagged_lines ?? 0) > 0
+        ? `quarantined ${zarShort(tyGpTot.flagged_cost)} of cost across ${num(tyGpTot.flagged_lines)} line${tyGpTot.flagged_lines === 1 ? '' : 's'} · GP ${pct(tyGpTot.gp_pct_ex_flagged)} without them`
+        : null)
   // Point-in-time: Neg SOH / Slow Move use lyDeptSohCounts (single latest LY date,
   // dept/subdept-scoped) when a filter is active; fall back to whole-store mv rows.
   // lyDeptSohCounts is pre-filtered by subdept at the RPC; dept filter applied here.
@@ -3425,7 +3478,7 @@ export default function Home() {
                       lyRef:         hasLY && lyKpiGP != null ? pct(lyKpiGP) : null,
                       lyDelta:       hasLY && lyKpiGP != null ? ppDeltaInfo(kpiGP, lyKpiGP) : null,
                       wowDelta:      null,
-                      bench:         null,
+                      bench:         [tyGpNote, lyGpNote].filter(Boolean).join(' · ') || null,
                       sub:           `Cost ${zarShort(kpiCost)}`,
                       warn:          (dualSalesPairable && l2Agg.gp != null ? l2Agg.gp : kpiGP) < 20,
                       danger:        (dualSalesPairable && l2Agg.gp != null ? l2Agg.gp : kpiGP) < 10,
