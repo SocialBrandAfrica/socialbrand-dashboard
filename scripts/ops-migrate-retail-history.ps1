@@ -106,6 +106,7 @@ param(
     [string]$OldDir      = 'C:\SocialBrand',
     [string]$NewDir      = 'C:\RetailHistory',
     [string]$RetainDir   = 'C:\SB-retain',
+    [string]$TaskDescription = 'Scheduled data maintenance task.',
     [switch]$Finalize,
     [switch]$DryRun
 )
@@ -148,6 +149,72 @@ foreach ($pair in @(@{P=$OldDir;L='OldDir'}, @{P=$NewDir;L='NewDir'}, @{P=$Retai
     Assert-NotCatman -Path $pair.P -Label $pair.L
 }
 Write-Host "[guard] Catman/S: boundary check passed -- this script touches only our own C:\ paths." -ForegroundColor DarkGray
+
+# =============================================================================
+# HELPERS + PREFLIGHT (ENG-023 / ENG-026, platform lane 2026-10-14)
+# ENG-023: a PowerShell parser check cannot see a wrong parameter name on a real
+#   cmdlet, and -DryRun used to return before any write step, so the first run
+#   of Set-ScheduledTask -Description happened on a live store server. The
+#   preflight binds every named parameter in THIS script against the cmdlets
+#   installed on THIS server, before anything is changed, in every mode.
+# ENG-026: a whole-file text match cannot tell code from comment. Get-CodeText
+#   removes every comment token, so the extractor-literal check and the
+#   task-name gate read code only.
+# =============================================================================
+function Get-CodeText {   # source with every comment removed via the tokenizer; all other text untouched
+    param([Parameter(Mandatory)][string]$Text)
+    $tokens = $null; $errs = $null
+    [void][System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$tokens, [ref]$errs)
+    if ($errs -and $errs.Count) { throw "Cannot parse to separate code from comments: $($errs[0].Message)" }
+    $sb = New-Object System.Text.StringBuilder $Text
+    foreach ($c in ($tokens | Where-Object { $_.Kind -eq 'Comment' } | Sort-Object { $_.Extent.StartOffset } -Descending)) {
+        [void]$sb.Remove($c.Extent.StartOffset, $c.Extent.EndOffset - $c.Extent.StartOffset)
+    }
+    $sb.ToString()
+}
+function Test-ScriptNamedParameters {   # every -Param must exist on the cmdlet it is written against, on THIS machine
+    param([Parameter(Mandatory)][string]$ScriptText)
+    # Pin a FileSystem location: provider-dynamic parameters (Get-ChildItem -File, Get-Content -Raw) only resolve there.
+    Push-Location -LiteralPath "$($env:SystemDrive)\"
+    try {
+        $tokens = $null; $errs = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($ScriptText, [ref]$tokens, [ref]$errs)
+        if ($errs.Count) { [pscustomobject]@{Kind='PARSE';Line=0;Command='';Param='';Detail=$errs[0].Message}; return }
+        $local = @($ast.FindAll({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst]}, $true) | ForEach-Object { $_.Name })
+        foreach ($c in $ast.FindAll({param($n) $n -is [System.Management.Automation.Language.CommandAst]}, $true)) {
+            $name = $c.GetCommandName(); if (-not $name -or $local -contains $name) { continue }
+            $info = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $info) { [pscustomobject]@{Kind='UNRESOLVED';Line=$c.Extent.StartLineNumber;Command=$name;Param='';Detail='command not found on this machine'}; continue }
+            if ($info.CommandType -notin 'Cmdlet','Function','Alias') { continue }   # native exe (icacls): no metadata
+            if ($info.CommandType -eq 'Alias') { $info = $info.ResolvedCommand }
+            $valid = @($info.Parameters.Values | ForEach-Object { $_.Name; $_.Aliases }) | Where-Object { $_ }
+            foreach ($el in $c.CommandElements) {
+                if ($el -isnot [System.Management.Automation.Language.CommandParameterAst]) { continue }
+                $pn = $el.ParameterName
+                $hit = @($valid | Where-Object { $_ -ieq $pn })
+                if (-not $hit) { $hit = @($valid | Where-Object { $_ -like "$pn*" }); if ($hit.Count -ne 1) { $hit = @() } }
+                if (-not $hit) { [pscustomobject]@{Kind='BAD_PARAM';Line=$el.Extent.StartLineNumber;Command=$info.Name;Param="-$pn";Detail='no such parameter on this cmdlet'} }
+            }
+        }
+    } finally { Pop-Location }
+}
+function ConvertTo-RenamedTaskXml {   # the one description rewrite, used by step 3 AND by -DryRun
+    param([Parameter(Mandatory)][string]$Xml, [Parameter(Mandatory)][string]$Description)
+    $esc  = [System.Security.SecurityElement]::Escape($Description).Replace('$', '$$')
+    $elem = "<Description>$esc</Description>"
+    if     ($Xml -match '(?s)<Description>.*?</Description>|<Description\s*/>') { $out = $Xml -replace '(?s)<Description>.*?</Description>|<Description\s*/>', $elem }
+    elseif ($Xml -match '<RegistrationInfo>')     { $out = $Xml -replace '<RegistrationInfo>', "<RegistrationInfo>$elem" }
+    elseif ($Xml -match '<RegistrationInfo\s*/>') { $out = $Xml -replace '<RegistrationInfo\s*/>', "<RegistrationInfo>$elem</RegistrationInfo>" }
+    else { Write-Warning 'No <RegistrationInfo> block: registering without a description override.'; return $Xml }
+    $n = ([xml]$out).GetElementsByTagName('Description').Count     # [xml] throws if the rewrite broke the XML
+    if ($n -ne 1) { throw "Task XML has $n <Description> elements after rewrite; expected exactly 1." }
+    $out
+}
+if ($PSCommandPath) {
+    $bad = @(Test-ScriptNamedParameters -ScriptText (Get-Content -LiteralPath $PSCommandPath -Raw))
+    if ($bad.Count) { $bad | Format-Table -AutoSize | Out-String | Write-Host; throw "PREFLIGHT FAILED: $($bad.Count) call(s) in this script do not bind on this server's cmdlets. Nothing has been changed." }
+    Write-Host "[ok] Preflight: every named parameter in this script binds on this server's cmdlets." -ForegroundColor Green
+}
 
 # =============================================================================
 # FINALIZE PATH (second run, after human verification)
@@ -306,7 +373,7 @@ $extractor = Join-Path $OldDir 'Invoke-ExtractFromSigmaSQL.ps1'
 if (-not (Test-Path -LiteralPath $extractor)) {
     throw "Extractor not found at '$extractor'. Cannot verify the self-heal name -- refusing to rename a task whose script I cannot read."
 }
-$extractorText = Get-Content -LiteralPath $extractor -Raw
+$extractorText = Get-CodeText -Text (Get-Content -LiteralPath $extractor -Raw)   # ENG-026: code only, comments removed
 if ($extractorText -notmatch [regex]::Escape("`$taskName = '$NewTaskName'")) {
     throw @"
 REFUSING TO RUN -- the deployed extractor does not carry the new task name.
@@ -342,6 +409,14 @@ Write-Host "  [ok] Live run-as account: '$principal'  (RunLevel: $runLevel)" -Fo
 Write-Host "       -- this exact account gets Modify on the final folder; nothing is assumed." -ForegroundColor DarkGray
 
 if ($DryRun) {
+    # ENG-023: rehearse the two read-only pieces of the write path on the OLD task (no writes).
+    # Covers the step 3 XML rewrite and the step 5 action object only; Register-ScheduledTask -Xml,
+    # Set-ScheduledTask and icacls are NOT rehearsed.
+    $null = ConvertTo-RenamedTaskXml -Xml ((Export-ScheduledTask -TaskName $OldTaskName) | Out-String) -Description $TaskDescription
+    Write-Host "  [dry-run ok] step 3 XML rewrite parses and carries the new description." -ForegroundColor Green
+    $a = $oldTask.Actions[0]
+    $null = New-ScheduledTaskAction -Execute ([string]$a.Execute) -Argument (([string]$a.Arguments) -replace [regex]::Escape($OldDir), $NewDir) -WorkingDirectory $NewDir
+    Write-Host "  [dry-run ok] step 5 action object builds." -ForegroundColor Green
     Write-Host ""
     Write-Host "  DRY RUN -- would now:" -ForegroundColor Yellow
     Write-Host "    2. export '$OldTaskName' XML + current ACLs -> $RetainDir" -ForegroundColor Yellow
@@ -386,16 +461,8 @@ $xmlContent = Get-Content -LiteralPath $xmlPath -Raw
 # correct place on the merits: the exported XML carries the OLD task's own
 # description, so registering the XML unaltered would have carried the old label
 # straight into the new task and defeated the rename.
-$newDescription = 'Scheduled data maintenance task.'
-if ($xmlContent -match '(?s)<Description>.*?</Description>') {
-    $xmlContent = $xmlContent -replace '(?s)<Description>.*?</Description>', "<Description>$newDescription</Description>"
-    Write-Host "  [ok] Description replaced in the XML before registration." -ForegroundColor Green
-} elseif ($xmlContent -match '<RegistrationInfo>') {
-    $xmlContent = $xmlContent -replace '<RegistrationInfo>', "<RegistrationInfo><Description>$newDescription</Description>"
-    Write-Host "  [ok] Description inserted into the XML before registration (original had none)." -ForegroundColor Green
-} else {
-    Write-Host "  [warn] No <RegistrationInfo> block found -- registering without a description override." -ForegroundColor Yellow
-}
+$xmlContent = ConvertTo-RenamedTaskXml -Xml $xmlContent -Description $TaskDescription
+Write-Host "  [ok] Description set in the XML before registration." -ForegroundColor Green
 
 Register-ScheduledTask -TaskName $NewTaskName -Xml $xmlContent -Force | Out-Null
 
@@ -429,7 +496,7 @@ Write-Host "  [ok] $copied file(s) copied. Original '$OldDir' intact as fallback
 # copy that still reads from the old folder.
 $copiedExtractor = Join-Path $NewDir 'Invoke-ExtractFromSigmaSQL.ps1'
 if (Test-Path -LiteralPath $copiedExtractor) {
-    $ct = Get-Content -LiteralPath $copiedExtractor -Raw
+    $ct = Get-CodeText -Text (Get-Content -LiteralPath $copiedExtractor -Raw)   # ENG-026: code only, comments removed
     if ($ct -match [regex]::Escape($OldDir)) {
         Write-Host "  [warn] The copied extractor still contains the literal '$OldDir'." -ForegroundColor Yellow
         Write-Host "         v1.23+ should carry none. Check it before -Finalize removes the old folder." -ForegroundColor Yellow
