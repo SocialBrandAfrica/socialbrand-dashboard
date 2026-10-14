@@ -1693,6 +1693,12 @@ function OrderDesksMode() {
   const [poolSearching, setPoolSearching] = useState(false)
   const [poolError, setPoolError] = useState(null)
   const [poolOpen, setPoolOpen] = useState(false)
+  // BLOOM-035 s36/s37 (PM 14-10-2026 20:55 and 21:15): EVERY line of the desk with its plain-word reason, read from the engine
+  // (rpc_bloom_desk_lines). The stored sheet holds the ordered lines, and a supplier desk's unordered lines are added from the population
+  // verdict, so a buyer sees the supplier's whole list. On DC ambient and TOPS DC the list is exceptions only (the pool is thousands of lines).
+  const [deskLines, setDeskLines] = useState(null)
+  const [lineFilter, setLineFilter] = useState('all')
+  const [showOutOfRange, setShowOutOfRange] = useState(false)
 
   const desks = storeDesks[storeCode] || []
 
@@ -1727,6 +1733,22 @@ function OrderDesksMode() {
     })
     return () => { cancelled = true }
   }, [generated, storeCode, desk])
+
+  // BLOOM-035 s36/s37: the desk's whole line list, once per generated sheet. A failed read says so on the card, it never blanks it.
+  useEffect(() => {
+    setDeskLines(null)
+    if (!generated || !storeCode || !desk) return
+    const dc = desk === 'DC_AMBIENT' || desk === 'DC_TOPS'
+    let cancelled = false
+    supabase.rpc('rpc_bloom_desk_lines', { p_store_code: storeCode, p_route: desk, p_fit: fitToBudget, p_exceptions_only: dc })
+      .range(0, 999)
+      .then(({ data, error: err }) => {
+        if (cancelled) return
+        if (err) { setDeskLines({ rows: [], error: err.message, capped: false }); return }
+        setDeskLines({ rows: data ?? [], error: null, capped: (data?.length ?? 0) >= 1000 })
+      })
+    return () => { cancelled = true }
+  }, [generated, storeCode, desk, fitToBudget])
 
   // Desk change -> prepopulate dates from the calendar (item 1, cutoff-
   // respecting per ENG-011), fetch this route's budget row plus the
@@ -2049,9 +2071,12 @@ function OrderDesksMode() {
     // stockout correction was withheld, so it read as covered on a suppressed
     // rate -- it carries zero quantity and its reason, and it is the first thing
     // the buyer sees rather than something he has to go and find in a second list.
+    // BLOOM-035 s36 (PM 14-10 20:55, Pieter): fastest seller first by RAND a day at cost (units a day x unit cost), hidden sellers LAST.
+    // It was hidden first, then units a day, so a cheap fast line outranked a dear one and the lines to look at sat on top of the order.
+    const randDay = r => (Number(r.rhythm_adjusted_demand) || 0) * ((Number(r.pack_cost) || 0) / (Number(r.pack_size) || 1))
     const rows = all.sort((a, b) =>
-      ((b.line_kind === 'hidden') - (a.line_kind === 'hidden'))
-      || ((b.rhythm_adjusted_demand ?? 0) - (a.rhythm_adjusted_demand ?? 0)))
+      ((a.line_kind === 'hidden') - (b.line_kind === 'hidden'))
+      || (randDay(b) - randDay(a)))
     const q = {}
     for (const r of rows) q[r.product_code] = lineQty(r, basis)
     setLines(rows); setQty(q); setEdited({}); setFilter('all'); setGenerated(true)
@@ -2254,7 +2279,7 @@ function OrderDesksMode() {
         '', l.promo_active ? 'Yes' : 'No',
       ].join(',')
     }).join('\n')
-    downloadText(`${storeCode}_${desk}_${preset}_${deliveryDate}.csv`, header + body)
+    downloadText(`${exportStem()}.csv`, header + body)
   }
 
   // Pieter ruling 2026-07-14: the three-file export contract (CSV/TLX/Promo
@@ -2262,6 +2287,22 @@ function OrderDesksMode() {
   // never get a separate promo sheet -- just TLX and CSV, so TLX on those
   // routes must carry promo lines itself (nothing else would carry them).
   const isDcRoute = desk === 'DC_AMBIENT' || desk === 'DC_TOPS'
+
+  // BLOOM-035 s36 (Pieter 14-10): the export name carries the supplier number when the desk has ONE active supplier on its order:
+  // 10116_Tau-Mills_2806_standard_<date>. A derived supplier desk carries it in its key. Any other non-DC desk reads it from the
+  // engine's own ordered lines. A desk with two suppliers, and a DC desk, keep the desk key in the name, as before.
+  const deskSupplierNr = (() => {
+    const m = /^DIRECT_S(\d+)$/.exec(desk)
+    if (m) return m[1]
+    if (isDcRoute) return null
+    const nrs = new Set((deskLines?.rows ?? []).filter(r => r.line_kind === 'ordered' && r.supplier_nr != null).map(r => String(r.supplier_nr)))
+    return nrs.size === 1 ? [...nrs][0] : null
+  })()
+  function exportStem() {
+    if (!deskSupplierNr) return `${storeCode}_${desk}_${preset}_${deliveryDate}`
+    const label = String(desks.find(d => d.value === desk)?.label ?? desk).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    return `${storeCode}_${label}_${deskSupplierNr}_${preset}_${deliveryDate}`
+  }
 
   // TLX: on DC routes, NORMAL order only -- promo lines and no-EAN lines
   // never ride it (they go out on the separate Promo Sheet). On direct
@@ -2291,18 +2332,25 @@ function OrderDesksMode() {
     // is exactly the silent-drop failure this fix exists to end.
     if (eligErr) { setTlxReport({ error: `Export blocked -- could not read export eligibility: ${eligErr.message}` }); return }
 
+    // BLOOM-035 s37 (PM 14-10 21:15): a line whose supplier link is not active in Sigma (the mirror's link status, read live) stays OUT of
+    // the TLX and goes on the activation list. Fail loudly: a TLX built without this read could sink the import, so no read, no file.
+    const act = await supabase.rpc('rpc_bloom_desk_lines', { p_store_code: storeCode, p_route: desk, p_fit: fitToBudget, p_exceptions_only: isDcRoute }).range(0, 999)
+    if (act.error) { setTlxReport({ error: `Export blocked -- could not read the supplier-link status: ${act.error.message}` }); return }
+    const inactive = new Map((act.data ?? []).filter(r => r.needs_activation).map(r => [Number(r.product_code), r]))
+    const held = []
     const elig = new Map((data ?? []).map(r => [Number(r.product_code), r]))
     const parts = []
     const excluded = []
     for (const l of wanted) {
       const q = qty[l.product_code] ?? 0
+      if (inactive.has(Number(l.product_code))) { held.push({ code: l.product_code, desc: l.description, reason: inactive.get(Number(l.product_code)).reason_plain }); continue }
       const e = elig.get(Number(l.product_code))
       if (!e) { excluded.push({ code: l.product_code, desc: l.description, reason: 'no engine identity row' }); continue }
       if (!e.export_eligible) { excluded.push({ code: l.product_code, desc: l.description, reason: e.ineligible_reason }); continue }
       parts.push(`${e.export_key}+${q}`)
     }
-    setTlxReport({ exported: parts.length, excluded })
-    downloadText(`${storeCode}_${desk}_${preset}_${deliveryDate}.tlx`, `${storeCode}++${parts.join('+')}`)
+    setTlxReport({ exported: parts.length, excluded, held })
+    downloadText(`${exportStem()}.tlx`, `${storeCode}++${parts.join('+')}`)
   }
 
   // Promo capture sheet: PROMO order only, geared quantities, the exact
@@ -2328,7 +2376,7 @@ function OrderDesksMode() {
     ws['!cols'] = [{ wch: 15 }, { wch: 45 }, { wch: 12 }, { wch: 12 }, { wch: 15 }]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Promo Order')
-    XLSX.writeFile(wb, `${storeCode}_${desk}_${preset}_${deliveryDate}_promo.xlsx`)
+    XLSX.writeFile(wb, `${exportStem()}_promo.xlsx`)
   }
 
   // Canon item 11b -- THE ROUND-TRIP RULE. Quantities only: match on Product
@@ -2715,217 +2763,6 @@ function OrderDesksMode() {
         </GlassCard>
       )}
 
-      {/* ===== SB-CC-BLOOM-026 part (b) -- THE HIDDEN SELLERS =====
-          Lines the order DROPPED with no reason shown. The stockout corrector
-          measured a real rate, the observable-day floor withheld it, the recipe
-          fell back to the stockout-SUPPRESSED raw rate, the line read as
-          covered and computed no need. Canon §B5's claim that minimum presence
-          covers this is FALSE and retired: min_band reads the same suppressed
-          rate, so both halves of that "paired" guard fail together.
-          Keyed on the withheld-correction FLAG, never band position.
-          Quantity-neutral -- this card shows, it does not order.
-
-          ENG-123 (2026-08-27): the flag is NOT the state. A line already on the
-          order can carry a withheld correction, so this panel now joins its rows
-          to the buyer's live order and splits DROPPED from ALREADY ON ORDER --
-          in the headline, in an ON ORDER column, in the row shading, and as the
-          leading column of the CSV. It never again calls a bought line dropped.
-          ===== */}
-      {(hiddenDemandError || hiddenDemand.length > 0) && (() => {
-        // ENG-123 (2026-08-27). This panel called EVERY withheld-correction line
-        // "dropped off this order", and that is not true. `withheld_correction`
-        // says WHAT IS TRUE of a line; `line_kind` says WHERE THE ROW CAME FROM;
-        // an ORDERED line can carry the flag. Measured on Pieter's own downloads:
-        // 77 of 600 at 10116 were already on the order carrying R22,950.59
-        // (80175: 21 of 389, R4,492.46). The panel has an EXPORT CSV button and
-        // reads as a worklist, so working all 600 re-ordered lines already on the
-        // sheet -- and with no quantity column, nothing on screen revealed which.
-        // Same conflation as the 2026-08-25 R22 failure that moved R18,761.51 out
-        // of the ordered bucket, one layer up in the surface built to fix it.
-        // The join is against the buyer's OWN live qty, so it tracks his edits
-        // rather than the recipe's raw suggestion.
-        const orderIndex = new Map(lines.map(l => [String(l.product_code), l]))
-        const withOrder = hiddenDemand.map(r => {
-          const l = orderIndex.get(String(r.product_code))
-          const packs = l ? Number(qty[l.product_code] ?? 0) : 0
-          return { ...r, onOrderPacks: packs, onOrderValue: packs * (Number(l?.pack_cost) || 0) }
-        })
-        const dropped = withOrder.filter(r => r.onOrderPacks <= 0)
-        const onOrder = withOrder.filter(r => r.onOrderPacks > 0)
-        const onOrderValue = onOrder.reduce((s, r) => s + r.onOrderValue, 0)
-        // Dropped first: that is the actionable work. On-order rows stay listed
-        // and flagged rather than hidden -- the buyer still needs to see that the
-        // engine read a suppressed rate on a line he is buying.
-        const rows = [...dropped, ...onOrder]
-        // The 40-row cap is on the DROPPED list only. Every already-bought row
-        // renders, always: at 10116 that is 77 rows which a combined top-40 would
-        // have pushed off screen entirely, leaving the panel still unable to show
-        // the buyer WHICH lines he has already bought -- the whole of ENG-123.
-        // The on-order population is bounded and small (77 / 21 measured).
-        const visible = [...dropped.slice(0, 40), ...onOrder]
-        // The sub-counts are arguments for ORDERING a line, so they are scoped to
-        // the lines actually still absent. Counting a line already on the order as
-        // "at 2/day or more" overstates the work in front of the buyer.
-        const strong = dropped.filter(r => Number(r.rate_corrected) >= 2)
-        const thin   = dropped.filter(r => Number(r.observable_days) <= 6)
-        const empty  = dropped.filter(r => Number(r.soh) <= 0)
-        // BLOOM-035 s34 (PM 14-10 16:55): the headline now says which of the dropped lines actually
-        // run out before the next delivery on the MEASURED rate (the true-cover column, same data).
-        const gapDays = Math.max(1, Math.round((new Date(nextDeliveryDate) - new Date(deliveryDate)) / 86400000) || 1)
-        const atRisk = dropped.filter(r => r.cover_days_on_corr != null && Number(r.cover_days_on_corr) < gapDays)
-        const win    = rows.length ? Number(rows[0].window_days) : 56
-
-        function exportHidden() {
-          // `status` leads the row so the CSV cannot be worked blind -- the first
-          // column says whether the line is already bought (ENG-123).
-          const header = ['status','on_order_packs','on_order_value',
-                          'product_code','description','dept','range_state','soh','pack_size',
-                          'window_days','rate_engine_read','rate_corrected','multiple',
-                          'days_removed','observable_days','cover_on_engine_rate',
-                          'cover_on_corrected_rate','reason'].join(',')
-          const body = rows.map(r => [
-            r.onOrderPacks > 0 ? 'ALREADY_ON_ORDER' : 'DROPPED',
-            r.onOrderPacks, r.onOrderValue.toFixed(2),
-            r.product_code, `"${String(r.description ?? '').replace(/"/g,'""')}"`,
-            `"${String(r.dept_name ?? '')}"`, r.range_state, r.soh, r.pack_size,
-            r.window_days, r.rate_raw, r.rate_corrected, r.rate_multiple ?? '',
-            r.days_removed, r.observable_days, r.cover_days_on_raw ?? '',
-            r.cover_days_on_corr ?? '', `"${String(r.reason ?? '').replace(/"/g,'""')}"`,
-          ].join(',')).join('\n')
-          downloadText(`${storeCode}_${desk}_hidden_sellers_${deliveryDate || 'nodate'}.csv`, header + '\n' + body)
-        }
-
-        return (
-          <GlassCard style={{ margin: '0 32px 20px', padding: '16px 22px' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-              <Label style={{ color: 'var(--data-neg)' }}>Hidden sellers</Label>
-              {hiddenDemandError ? (
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--data-neg)' }}>
-                  Could not read the hidden-seller net: {hiddenDemandError}. This panel is NOT empty, it FAILED —
-                  do not read a blank here as &ldquo;nothing hidden&rdquo;.
-                </span>
-              ) : (
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)' }}>
-                  {dropped.length} line{dropped.length === 1 ? '' : 's'} where the stockout correction was withheld and nothing is on the order ·
-                  {' '}<span style={{ color: atRisk.length > 0 ? 'var(--data-neg)' : undefined }}
-                    title={`The line's own measured rate would empty the shelf before the next delivery (${gapDays} day${gapDays === 1 ? '' : 's'}). These are the lines to look at first.`}>
-                    {atRisk.length} run out before the next delivery on the measured rate</span>
-                  {' '}· {strong.length} at 2/day or more · {empty.length} sitting at zero stock
-                  {onOrder.length > 0 && (
-                    <span style={{ color: 'var(--core-yellow)' }}
-                      title="These carry a suppressed rate too, but they are already bought on this order. They are listed below, flagged, and they are NOT work.">
-                      {' · '}{onOrder.length} already on this order at {zar(onOrderValue)} — not dropped
-                    </span>
-                  )}
-                </span>
-              )}
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)', opacity: 0.8 }}>
-                {storeCode} · {desk} · {win}-day window
-              </span>
-              <div style={{ flex: 1 }} />
-              {rows.length > 0 && (
-                <button onClick={exportHidden}
-                  title="Export every hidden line with its evidence, including the days the rate was measured on."
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.06em',
-                    textTransform: 'uppercase', color: 'var(--daisy-white)', cursor: 'pointer',
-                    background: 'transparent', border: '1px solid var(--glass-border)',
-                    borderRadius: 4, padding: '4px 10px' }}>
-                  Export CSV
-                </button>
-              )}
-            </div>
-
-            {rows.length > 0 && (
-              <>
-                <p style={{ margin: '8px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10.5,
-                  color: 'var(--veld-mist)', lineHeight: 1.5 }}>
-                  Each of these was out of stock for many of the last {win} days, so the rate the order used is low
-                  <em> because</em> it was empty, and the measured rate rests on too few days to order on without you. The reason is on every row (hover it).
-                  {' '}<strong style={{ color: 'var(--daisy-white)' }}>Judge the evidence, not just the number:</strong>
-                  {' '}&ldquo;days seen&rdquo; is how many days of the {win} the line was actually on the shelf to be measured.
-                  {thin.length > 0 && <> {thin.length} of these rest on six days or fewer, so treat those rates as thin.</>}
-                  {onOrder.length > 0 && (
-                    <> <strong style={{ color: 'var(--core-yellow)' }}>The last {onOrder.length} row{onOrder.length === 1 ? ' is' : 's are'} already
-                    on this order</strong> and carr{onOrder.length === 1 ? 'ies' : 'y'} the packs in the ON ORDER column. Do not re-order {onOrder.length === 1 ? 'it' : 'them'}.</>
-                  )}
-                </p>
-
-                <div style={{ marginTop: 10, maxHeight: '34vh', overflow: 'auto' }}>
-                  <div style={{ minWidth: 838 }}>
-                    <div style={{ display: 'grid',
-                      gridTemplateColumns: '72px minmax(150px,1.5fr) 96px 52px 78px 74px 74px 62px 70px',
-                      position: 'sticky', top: 0, zIndex: 2, padding: '7px 8px',
-                      background: 'rgba(14,18,14,0.96)', borderBottom: '1px solid var(--glass-border)' }}>
-                      {['Code','Description','Dept','SOH','On order','Order read','Measured','Days seen','True cover'].map((c,i) => (
-                        <span key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 500,
-                          letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--veld-mist)',
-                          textAlign: i >= 3 ? 'right' : 'left' }}>{c}</span>
-                      ))}
-                    </div>
-                    {visible.map(r => {
-                      const isThin = Number(r.observable_days) <= 6
-                      const bought = r.onOrderPacks > 0
-                      return (
-                        <div key={r.product_code} title={r.reason}
-                          style={{ display: 'grid',
-                            gridTemplateColumns: '72px minmax(150px,1.5fr) 96px 52px 78px 74px 74px 62px 70px',
-                            padding: '6px 8px', borderBottom: '1px solid var(--hairline)',
-                            // ENG-123: a line already bought reads differently from one
-                            // the order dropped, on sight, without reading the column.
-                            background: bought ? 'rgba(214,178,58,0.07)' : undefined,
-                            fontFamily: 'var(--font-mono)', fontSize: 10.5, fontVariantNumeric: 'tabular-nums' }}>
-                          <span style={{ color: 'var(--veld-mist)' }}>{String(r.product_code)}</span>
-                          <span style={{ color: 'var(--daisy-white)', whiteSpace: 'nowrap',
-                            overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.description}</span>
-                          <span style={{ color: 'var(--veld-mist)', whiteSpace: 'nowrap',
-                            overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.dept_name ?? '—'}</span>
-                          <span style={{ textAlign: 'right',
-                            color: Number(r.soh) <= 0 ? 'var(--data-neg)' : 'var(--veld-mist)' }}>
-                            {num(Number(r.soh))}
-                          </span>
-                          {/* ENG-123: the column that was missing. A dash here means
-                              the line really is off the order; a number means it is
-                              already bought and must not be worked again. */}
-                          <span style={{ textAlign: 'right',
-                            color: bought ? 'var(--core-yellow)' : 'var(--veld-mist)' }}
-                            title={bought
-                              ? `Already on this order: ${r.onOrderPacks} pack${r.onOrderPacks === 1 ? '' : 's'} · ${zar(r.onOrderValue)}. Do not re-order.`
-                              : 'Not on this order.'}>
-                            {bought ? `${num(r.onOrderPacks)} pk` : '—'}
-                          </span>
-                          <span style={{ textAlign: 'right', color: 'var(--data-neg)' }}>
-                            {Number(r.rate_raw).toFixed(2)}
-                          </span>
-                          <span style={{ textAlign: 'right', color: 'var(--growth-green)' }}>
-                            {Number(r.rate_corrected).toFixed(2)}
-                          </span>
-                          {/* R28 §5 on the surface: the evidence the rate rests on, beside the rate. */}
-                          <span style={{ textAlign: 'right',
-                            color: isThin ? 'var(--core-yellow)' : 'var(--veld-mist)' }}
-                            title={isThin ? 'Thin evidence: this rate is measured on six days or fewer.' : undefined}>
-                            {r.observable_days}/{r.window_days}
-                          </span>
-                          <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>
-                            {r.cover_days_on_corr == null ? '—' : `${Number(r.cover_days_on_corr).toFixed(1)}d`}
-                          </span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {dropped.length > 40 && (
-                  <p style={{ margin: '8px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)' }}>
-                    Showing the top 40 dropped lines of {dropped.length} by measured rate
-                    {onOrder.length > 0 && <>, plus all {onOrder.length} already on this order</>}.
-                    {' '}Export for the full list — the CSV leads with a status column.
-                  </p>
-                )}
-              </>
-            )}
-          </GlassCard>
-        )
-      })()}
 
       {/* ===== SB-CC-BLOOM-018 -- THE PROMO FLOOR GAP + THE TRUCK =====
           Item 2: every promo-in-window line finishing below its own promo-lifted
@@ -3324,6 +3161,11 @@ function OrderDesksMode() {
               {tlxReport.error ? tlxReport.error : (
                 <>
                   TLX: {tlxReport.exported} line{tlxReport.exported === 1 ? '' : 's'} written
+                  {tlxReport.held?.length > 0 && (
+                    <> · <strong style={{ color: 'var(--data-neg)' }}>{tlxReport.held.length} kept out</strong> (supplier link not active in Sigma: activate in Sigma first, then order by hand or export again)
+                      <div style={{ marginTop: 4 }}>{tlxReport.held.map(x => `${x.code} ${x.desc ?? ''}`).join(' · ')}</div>
+                    </>
+                  )}
                   {tlxReport.excluded.length > 0 && <> · <strong>{tlxReport.excluded.length} held back</strong> (Sigma cannot match the key -- order these by hand or fix the barcode at source)</>}
                   {tlxReport.excluded.length > 0 && (
                     <div style={{ marginTop: 4 }}>
@@ -3354,6 +3196,339 @@ function OrderDesksMode() {
           </div>
         </GlassCard>
       )}
+
+      {/* ===== BLOOM-035 s36/s37 -- EVERY LINE OF THE DESK, EACH WITH ITS REASON IN PLAIN WORDS =====
+          PM 14-10 20:55 and 21:15, Pieter 14-10: "I don't see all lines in a supplier's order." The sheet above is the order. This card is the
+          desk: the lines the order left out and why, fastest seller first (rand a day at cost), hidden sellers last. The reasons are the engine's
+          own (rpc_bloom_desk_lines), never written here. The range is INTERIM (the last 91 days, or stock, or a new range line) until item 4b
+          defines KVI, core, tail and long tail. On DC ambient and TOPS DC the list holds only the lines with a reason they are not on the order.
+          A line whose supplier link is not active in Sigma is listed under Needs activation, kept out of the TLX, and exported as its own list. */}
+      {generated && (() => {
+        const all = deskLines?.rows ?? []
+        const dcDesk = desk === 'DC_AMBIENT' || desk === 'DC_TOPS'
+        const inRange = r => r.in_range || r.needs_activation || r.line_kind === 'ordered'
+        const base = showOutOfRange ? all : all.filter(inRange)
+        const nOrdered = all.filter(r => r.line_kind === 'ordered').length
+        const nHidden = all.filter(r => r.line_kind === 'hidden').length
+        const nAct = all.filter(r => r.needs_activation).length
+        const nRest = base.filter(r => r.line_kind !== 'ordered' && r.line_kind !== 'hidden').length
+        const nOut = all.filter(r => !inRange(r)).length
+        const pick = lineFilter === 'ordered' ? base.filter(r => r.line_kind === 'ordered')
+          : lineFilter === 'rest' ? base.filter(r => r.line_kind !== 'ordered' && r.line_kind !== 'hidden')
+          : lineFilter === 'hidden' ? base.filter(r => r.line_kind === 'hidden')
+          : lineFilter === 'activation' ? all.filter(r => r.needs_activation)
+          : base
+        const CAP = 400
+        const shownRows = pick.slice(0, CAP)
+        const gridL = '78px minmax(170px,1.3fr) minmax(240px,2.4fr) 62px 72px 54px'
+        function exportActivation() {
+          const header = ['product_code', 'ean', 'description', 'supplier_nr', 'link_status', 'on_order_packs', 'reason'].join(',')
+          const body = all.filter(r => r.needs_activation).map(r => [
+            r.product_code, r.ean ?? '', `"${String(r.description ?? '').replace(/"/g, '""')}"`, r.supplier_nr ?? '', r.link_status ?? '',
+            r.packs ?? 0, `"${String(r.reason_plain ?? '').replace(/"/g, '""')}"`,
+          ].join(',')).join('\n')
+          downloadText(`${storeCode}_${desk}_activate_in_sigma_${deliveryDate || 'nodate'}.csv`, header + '\n' + body)
+        }
+        const cellMono = { fontFamily: 'var(--font-mono)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }
+        return (
+          <GlassCard style={{ margin: '0 32px 20px', padding: '16px 22px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+              <Label>{dcDesk ? 'Lines with a reason they are not on the order' : 'All lines on this desk'}</Label>
+              <span style={{ ...cellMono, color: 'var(--veld-mist)' }}>
+                {deskLines == null ? 'Reading the desk…'
+                  : deskLines.error ? ''
+                  : dcDesk ? `${all.length} lines · the pool is too big to list, use the search above for any other line`
+                  : `${nOrdered} on the order · ${nRest} not ordered · ${nHidden} hidden sellers · fastest seller first (rand a day at cost), hidden last`}
+              </span>
+              <span style={{ ...cellMono, fontSize: 9.5, color: 'var(--veld-mist)', opacity: 0.8 }}>{storeCode} · {desk} · range INTERIM (91 days) until item 4b</span>
+              <div style={{ flex: 1 }} />
+              {nAct > 0 && (
+                <button onClick={exportActivation}
+                  title="The lines whose supplier link is not active in Sigma. Activate them in Sigma before you import the order."
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase',
+                    color: 'var(--daisy-white)', cursor: 'pointer', background: 'transparent', border: '1px solid var(--glass-border)', borderRadius: 4, padding: '4px 10px' }}>
+                  Export activation list
+                </button>
+              )}
+            </div>
+
+            {deskLines?.error && (
+              <p style={{ ...cellMono, margin: '8px 0 0', color: 'var(--data-neg)' }}>
+                Could not read the desk's lines: {deskLines.error}. This card is NOT empty, it FAILED. The order above is unaffected.
+              </p>
+            )}
+
+            {deskLines && !deskLines.error && (
+              <>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 10 }}>
+                  <Chip active={lineFilter === 'all'} onClick={() => setLineFilter('all')}>All {base.length}</Chip>
+                  {!dcDesk && <Chip active={lineFilter === 'ordered'} onClick={() => setLineFilter('ordered')}>On the order {nOrdered}</Chip>}
+                  <Chip active={lineFilter === 'rest'} onClick={() => setLineFilter('rest')}>Not ordered {nRest}</Chip>
+                  {nHidden > 0 && <Chip active={lineFilter === 'hidden'} onClick={() => setLineFilter('hidden')}>Hidden sellers {nHidden}</Chip>}
+                  <Chip active={lineFilter === 'activation'} onClick={() => setLineFilter('activation')}>Needs activation in Sigma {nAct}</Chip>
+                  {nOut > 0 && (
+                    <label style={{ ...cellMono, color: 'var(--veld-mist)', display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8, cursor: 'pointer' }}
+                      title="Catalogue entries that never sold, and lines with no sale in 91 days that hold no stock. Hidden by default, listed here on request.">
+                      <input type="checkbox" checked={showOutOfRange} onChange={e => setShowOutOfRange(e.target.checked)} />
+                      show {nOut} out-of-range line{nOut === 1 ? '' : 's'}
+                    </label>
+                  )}
+                </div>
+
+                <div style={{ maxHeight: '44vh', overflow: 'auto', marginTop: 10, border: '1px solid var(--hairline)', borderRadius: 8 }}>
+                  <div style={{ minWidth: 720 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: gridL, gap: 10, position: 'sticky', top: 0, zIndex: 2, padding: '8px 14px',
+                      background: 'rgba(14,18,14,0.96)', borderBottom: '1px solid var(--glass-border)' }}>
+                      {['Code', 'Line', 'Why', 'SOH', 'R a day', 'Packs'].map((c, i) => (
+                        <span key={c} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase',
+                          color: 'var(--veld-mist)', textAlign: i >= 3 ? 'right' : 'left' }}>{c}</span>
+                      ))}
+                    </div>
+                    {shownRows.map(r => {
+                      const tone = r.needs_activation ? 'var(--data-neg)' : r.line_kind === 'hidden' ? 'var(--core-yellow)' : 'var(--veld-mist)'
+                      return (
+                        <div key={r.product_code} style={{ display: 'grid', gridTemplateColumns: gridL, gap: 10, padding: '7px 14px', borderBottom: '1px solid var(--hairline)', alignItems: 'baseline' }}>
+                          <span style={{ ...cellMono, color: 'var(--veld-mist)' }}>{r.product_code}</span>
+                          <span style={{ ...cellMono, color: 'var(--daisy-white)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.description}>
+                            {r.description}{r.supplier_nr != null ? <span style={{ color: 'var(--veld-mist)' }}> · {r.supplier_nr}</span> : null}
+                          </span>
+                          <span style={{ ...cellMono, color: tone, lineHeight: 1.45 }} title={r.reason_plain}>
+                            {r.needs_activation ? 'NEEDS ACTIVATION. ' : ''}{r.reason_plain}
+                          </span>
+                          <span style={{ ...cellMono, textAlign: 'right', color: 'var(--veld-mist)' }}>{r.soh ?? '—'}</span>
+                          <span style={{ ...cellMono, textAlign: 'right', color: 'var(--veld-mist)' }}>{Number(r.cost_per_day) > 0 ? zar(Number(r.cost_per_day)) : '—'}</span>
+                          <span style={{ ...cellMono, textAlign: 'right', color: r.packs > 0 ? 'var(--daisy-white)' : 'var(--veld-mist)' }}>{r.packs > 0 ? r.packs : '—'}</span>
+                        </div>
+                      )
+                    })}
+                    {shownRows.length === 0 && (
+                      <p style={{ padding: 18, textAlign: 'center', fontFamily: 'var(--font-display)', fontStyle: 'italic', color: 'var(--veld-mist)' }}>No lines in this filter.</p>
+                    )}
+                  </div>
+                </div>
+                {(pick.length > CAP || deskLines.capped) && (
+                  <p style={{ ...cellMono, margin: '8px 0 0', color: 'var(--core-yellow)' }}>
+                    {pick.length > CAP ? `Showing the first ${CAP} of ${pick.length} lines in this filter. ` : ''}
+                    {deskLines.capped ? 'The read stopped at 1,000 lines: the list is cut, not complete.' : ''}
+                  </p>
+                )}
+              </>
+            )}
+          </GlassCard>
+        )
+      })()}
+
+      {/* ===== SB-CC-BLOOM-026 part (b) -- THE HIDDEN SELLERS =====
+          Lines the order DROPPED with no reason shown. The stockout corrector
+          measured a real rate, the observable-day floor withheld it, the recipe
+          fell back to the stockout-SUPPRESSED raw rate, the line read as
+          covered and computed no need. Canon §B5's claim that minimum presence
+          covers this is FALSE and retired: min_band reads the same suppressed
+          rate, so both halves of that "paired" guard fail together.
+          Keyed on the withheld-correction FLAG, never band position.
+          Quantity-neutral -- this card shows, it does not order.
+
+          ENG-123 (2026-08-27): the flag is NOT the state. A line already on the
+          order can carry a withheld correction, so this panel now joins its rows
+          to the buyer's live order and splits DROPPED from ALREADY ON ORDER --
+          in the headline, in an ON ORDER column, in the row shading, and as the
+          leading column of the CSV. It never again calls a bought line dropped.
+          ===== */}
+      {(hiddenDemandError || hiddenDemand.length > 0) && (() => {
+        // ENG-123 (2026-08-27). This panel called EVERY withheld-correction line
+        // "dropped off this order", and that is not true. `withheld_correction`
+        // says WHAT IS TRUE of a line; `line_kind` says WHERE THE ROW CAME FROM;
+        // an ORDERED line can carry the flag. Measured on Pieter's own downloads:
+        // 77 of 600 at 10116 were already on the order carrying R22,950.59
+        // (80175: 21 of 389, R4,492.46). The panel has an EXPORT CSV button and
+        // reads as a worklist, so working all 600 re-ordered lines already on the
+        // sheet -- and with no quantity column, nothing on screen revealed which.
+        // Same conflation as the 2026-08-25 R22 failure that moved R18,761.51 out
+        // of the ordered bucket, one layer up in the surface built to fix it.
+        // The join is against the buyer's OWN live qty, so it tracks his edits
+        // rather than the recipe's raw suggestion.
+        const orderIndex = new Map(lines.map(l => [String(l.product_code), l]))
+        const withOrder = hiddenDemand.map(r => {
+          const l = orderIndex.get(String(r.product_code))
+          const packs = l ? Number(qty[l.product_code] ?? 0) : 0
+          return { ...r, onOrderPacks: packs, onOrderValue: packs * (Number(l?.pack_cost) || 0) }
+        })
+        const dropped = withOrder.filter(r => r.onOrderPacks <= 0)
+        const onOrder = withOrder.filter(r => r.onOrderPacks > 0)
+        const onOrderValue = onOrder.reduce((s, r) => s + r.onOrderValue, 0)
+        // Dropped first: that is the actionable work. On-order rows stay listed
+        // and flagged rather than hidden -- the buyer still needs to see that the
+        // engine read a suppressed rate on a line he is buying.
+        const rows = [...dropped, ...onOrder]
+        // The 40-row cap is on the DROPPED list only. Every already-bought row
+        // renders, always: at 10116 that is 77 rows which a combined top-40 would
+        // have pushed off screen entirely, leaving the panel still unable to show
+        // the buyer WHICH lines he has already bought -- the whole of ENG-123.
+        // The on-order population is bounded and small (77 / 21 measured).
+        const visible = [...dropped.slice(0, 40), ...onOrder]
+        // The sub-counts are arguments for ORDERING a line, so they are scoped to
+        // the lines actually still absent. Counting a line already on the order as
+        // "at 2/day or more" overstates the work in front of the buyer.
+        const strong = dropped.filter(r => Number(r.rate_corrected) >= 2)
+        const thin   = dropped.filter(r => Number(r.observable_days) <= 6)
+        const empty  = dropped.filter(r => Number(r.soh) <= 0)
+        // BLOOM-035 s34 (PM 14-10 16:55): the headline now says which of the dropped lines actually
+        // run out before the next delivery on the MEASURED rate (the true-cover column, same data).
+        const gapDays = Math.max(1, Math.round((new Date(nextDeliveryDate) - new Date(deliveryDate)) / 86400000) || 1)
+        const atRisk = dropped.filter(r => r.cover_days_on_corr != null && Number(r.cover_days_on_corr) < gapDays)
+        const win    = rows.length ? Number(rows[0].window_days) : 56
+
+        function exportHidden() {
+          // `status` leads the row so the CSV cannot be worked blind -- the first
+          // column says whether the line is already bought (ENG-123).
+          const header = ['status','on_order_packs','on_order_value',
+                          'product_code','description','dept','range_state','soh','pack_size',
+                          'window_days','rate_engine_read','rate_corrected','multiple',
+                          'days_removed','observable_days','cover_on_engine_rate',
+                          'cover_on_corrected_rate','reason'].join(',')
+          const body = rows.map(r => [
+            r.onOrderPacks > 0 ? 'ALREADY_ON_ORDER' : 'DROPPED',
+            r.onOrderPacks, r.onOrderValue.toFixed(2),
+            r.product_code, `"${String(r.description ?? '').replace(/"/g,'""')}"`,
+            `"${String(r.dept_name ?? '')}"`, r.range_state, r.soh, r.pack_size,
+            r.window_days, r.rate_raw, r.rate_corrected, r.rate_multiple ?? '',
+            r.days_removed, r.observable_days, r.cover_days_on_raw ?? '',
+            r.cover_days_on_corr ?? '', `"${String(r.reason ?? '').replace(/"/g,'""')}"`,
+          ].join(',')).join('\n')
+          downloadText(`${storeCode}_${desk}_hidden_sellers_${deliveryDate || 'nodate'}.csv`, header + '\n' + body)
+        }
+
+        return (
+          <GlassCard style={{ margin: '0 32px 20px', padding: '16px 22px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+              <Label style={{ color: 'var(--data-neg)' }}>Hidden sellers</Label>
+              {hiddenDemandError ? (
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--data-neg)' }}>
+                  Could not read the hidden-seller net: {hiddenDemandError}. This panel is NOT empty, it FAILED —
+                  do not read a blank here as &ldquo;nothing hidden&rdquo;.
+                </span>
+              ) : (
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)' }}>
+                  {dropped.length} line{dropped.length === 1 ? '' : 's'} where the stockout correction was withheld and nothing is on the order ·
+                  {' '}<span style={{ color: atRisk.length > 0 ? 'var(--data-neg)' : undefined }}
+                    title={`The line's own measured rate would empty the shelf before the next delivery (${gapDays} day${gapDays === 1 ? '' : 's'}). These are the lines to look at first.`}>
+                    {atRisk.length} run out before the next delivery on the measured rate</span>
+                  {' '}· {strong.length} at 2/day or more · {empty.length} sitting at zero stock
+                  {onOrder.length > 0 && (
+                    <span style={{ color: 'var(--core-yellow)' }}
+                      title="These carry a suppressed rate too, but they are already bought on this order. They are listed below, flagged, and they are NOT work.">
+                      {' · '}{onOrder.length} already on this order at {zar(onOrderValue)} — not dropped
+                    </span>
+                  )}
+                </span>
+              )}
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)', opacity: 0.8 }}>
+                {storeCode} · {desk} · {win}-day window
+              </span>
+              <div style={{ flex: 1 }} />
+              {rows.length > 0 && (
+                <button onClick={exportHidden}
+                  title="Export every hidden line with its evidence, including the days the rate was measured on."
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.06em',
+                    textTransform: 'uppercase', color: 'var(--daisy-white)', cursor: 'pointer',
+                    background: 'transparent', border: '1px solid var(--glass-border)',
+                    borderRadius: 4, padding: '4px 10px' }}>
+                  Export CSV
+                </button>
+              )}
+            </div>
+
+            {rows.length > 0 && (
+              <>
+                <p style={{ margin: '8px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10.5,
+                  color: 'var(--veld-mist)', lineHeight: 1.5 }}>
+                  Each of these was out of stock for many of the last {win} days, so the rate the order used is low
+                  <em> because</em> it was empty, and the measured rate rests on too few days to order on without you. The reason is on every row (hover it).
+                  {' '}<strong style={{ color: 'var(--daisy-white)' }}>Judge the evidence, not just the number:</strong>
+                  {' '}&ldquo;days seen&rdquo; is how many days of the {win} the line was actually on the shelf to be measured.
+                  {thin.length > 0 && <> {thin.length} of these rest on six days or fewer, so treat those rates as thin.</>}
+                  {onOrder.length > 0 && (
+                    <> <strong style={{ color: 'var(--core-yellow)' }}>The last {onOrder.length} row{onOrder.length === 1 ? ' is' : 's are'} already
+                    on this order</strong> and carr{onOrder.length === 1 ? 'ies' : 'y'} the packs in the ON ORDER column. Do not re-order {onOrder.length === 1 ? 'it' : 'them'}.</>
+                  )}
+                </p>
+
+                <div style={{ marginTop: 10, maxHeight: '34vh', overflow: 'auto' }}>
+                  <div style={{ minWidth: 838 }}>
+                    <div style={{ display: 'grid',
+                      gridTemplateColumns: '72px minmax(150px,1.5fr) 96px 52px 78px 74px 74px 62px 70px',
+                      position: 'sticky', top: 0, zIndex: 2, padding: '7px 8px',
+                      background: 'rgba(14,18,14,0.96)', borderBottom: '1px solid var(--glass-border)' }}>
+                      {['Code','Description','Dept','SOH','On order','Order read','Measured','Days seen','True cover'].map((c,i) => (
+                        <span key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 500,
+                          letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--veld-mist)',
+                          textAlign: i >= 3 ? 'right' : 'left' }}>{c}</span>
+                      ))}
+                    </div>
+                    {visible.map(r => {
+                      const isThin = Number(r.observable_days) <= 6
+                      const bought = r.onOrderPacks > 0
+                      return (
+                        <div key={r.product_code} title={r.reason}
+                          style={{ display: 'grid',
+                            gridTemplateColumns: '72px minmax(150px,1.5fr) 96px 52px 78px 74px 74px 62px 70px',
+                            padding: '6px 8px', borderBottom: '1px solid var(--hairline)',
+                            // ENG-123: a line already bought reads differently from one
+                            // the order dropped, on sight, without reading the column.
+                            background: bought ? 'rgba(214,178,58,0.07)' : undefined,
+                            fontFamily: 'var(--font-mono)', fontSize: 10.5, fontVariantNumeric: 'tabular-nums' }}>
+                          <span style={{ color: 'var(--veld-mist)' }}>{String(r.product_code)}</span>
+                          <span style={{ color: 'var(--daisy-white)', whiteSpace: 'nowrap',
+                            overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.description}</span>
+                          <span style={{ color: 'var(--veld-mist)', whiteSpace: 'nowrap',
+                            overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.dept_name ?? '—'}</span>
+                          <span style={{ textAlign: 'right',
+                            color: Number(r.soh) <= 0 ? 'var(--data-neg)' : 'var(--veld-mist)' }}>
+                            {num(Number(r.soh))}
+                          </span>
+                          {/* ENG-123: the column that was missing. A dash here means
+                              the line really is off the order; a number means it is
+                              already bought and must not be worked again. */}
+                          <span style={{ textAlign: 'right',
+                            color: bought ? 'var(--core-yellow)' : 'var(--veld-mist)' }}
+                            title={bought
+                              ? `Already on this order: ${r.onOrderPacks} pack${r.onOrderPacks === 1 ? '' : 's'} · ${zar(r.onOrderValue)}. Do not re-order.`
+                              : 'Not on this order.'}>
+                            {bought ? `${num(r.onOrderPacks)} pk` : '—'}
+                          </span>
+                          <span style={{ textAlign: 'right', color: 'var(--data-neg)' }}>
+                            {Number(r.rate_raw).toFixed(2)}
+                          </span>
+                          <span style={{ textAlign: 'right', color: 'var(--growth-green)' }}>
+                            {Number(r.rate_corrected).toFixed(2)}
+                          </span>
+                          {/* R28 §5 on the surface: the evidence the rate rests on, beside the rate. */}
+                          <span style={{ textAlign: 'right',
+                            color: isThin ? 'var(--core-yellow)' : 'var(--veld-mist)' }}
+                            title={isThin ? 'Thin evidence: this rate is measured on six days or fewer.' : undefined}>
+                            {r.observable_days}/{r.window_days}
+                          </span>
+                          <span style={{ textAlign: 'right', color: 'var(--daisy-white)' }}>
+                            {r.cover_days_on_corr == null ? '—' : `${Number(r.cover_days_on_corr).toFixed(1)}d`}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {dropped.length > 40 && (
+                  <p style={{ margin: '8px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--veld-mist)' }}>
+                    Showing the top 40 dropped lines of {dropped.length} by measured rate
+                    {onOrder.length > 0 && <>, plus all {onOrder.length} already on this order</>}.
+                    {' '}Export for the full list — the CSV leads with a status column.
+                  </p>
+                )}
+              </>
+            )}
+          </GlassCard>
+        )
+      })()}
     </div>
   )
 }
@@ -3373,7 +3548,7 @@ export default function BloomPage() {
   // UX-003 (2026-07-11): one landing, Desks only. 'dc'/'desk'/'recipe' stay
   // reachable in code (components below untouched, R28 lineage) but are no
   // longer offered in the visible nav -- see the SegmentedControl below.
-  const [appMode, setAppMode] = useState('desks')
+  const [appMode] = useState('desks')
   const [generating, setGenerating] = useState(false)
   const [lines, setLines] = useState([])
   const [qty, setQty] = useState({})
@@ -3482,11 +3657,8 @@ export default function BloomPage() {
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 32px', flexWrap: 'wrap', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <span style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 'var(--weight-semi)', color: 'var(--daisy-white)' }}>Bloom</span>
-          <SegmentedControl size="sm" value={appMode} onChange={setAppMode}
-            options={[
-              { value: 'desks', label: 'Desks' },
-              { value: 'desk', label: 'SAB Direct (beer)' },
-            ]} />
+          {/* BLOOM-035 s37 (PM 14-10 21:15): the top "SAB Direct (beer)" tab is retired. Desks, SAB Direct is the one screen.
+              DeskMode stays in this file, unreachable, as lineage (R28). */}
         </div>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em', color: 'var(--veld-mist)', textTransform: 'uppercase' }}>
           orders.socialbrand.africa
