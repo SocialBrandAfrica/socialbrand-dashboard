@@ -614,12 +614,12 @@ table.det-tbl td.id-cell{font-family:var(--font-mono),monospace;font-size:9.5px;
           Buying &amp; Tail &middot; Controlled-buying gauge
         </div>
         <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">
-          <b style="color:var(--daisy-white)">2 SPAR stores</b> &middot; purchases as % of sales &middot; target band <b style="color:var(--daisy-white)">80&ndash;86%</b> &middot; reference 85
+          <b style="color:var(--daisy-white)">2 SPAR stores</b> &middot; stock received at cost as % of sales ex-VAT, one week at a time &middot; target band <b style="color:var(--daisy-white)">80&ndash;86%</b> &middot; reference 85
         </div>
       </div>
       <div style="margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:10px">
         <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">
-          last 5 months
+          last 13 weeks (Sundays)
         </div>
         <button class="btn-daisy" id="buy-reload">Reload data</button>
       </div>
@@ -632,7 +632,7 @@ table.det-tbl td.id-cell{font-family:var(--font-mono),monospace;font-size:9.5px;
       <span class="k"><span style="border-top:2px dashed var(--text-faint);width:18px;display:inline-block"></span> 85 reference</span>
       <span class="k"><span class="ln" style="border-color:var(--series-4)"></span> Delareyville</span>
       <span class="k"><span class="ln" style="border-color:var(--series-6)"></span> Roosville</span>
-      <span class="k"><span style="width:7px;height:7px;border-radius:50%;background:var(--data-neg);box-shadow:0 0 6px rgba(239,83,80,0.7);display:inline-block"></span> alarm &gt; 95%</span>
+      <span class="k"><span style="width:7px;height:7px;border-radius:50%;background:var(--data-neg);box-shadow:0 0 6px rgba(239,83,80,0.7);display:inline-block"></span> bought ahead &gt; 95%</span>
     </div>
   </div>
 
@@ -1012,18 +1012,27 @@ function renderHeroRows(heroes) {
 
 async function loadHeroes() {
   const panel = document.getElementById('av-panel');
+  const rowsEl = document.getElementById('av-rows');
+  const cntEl = document.getElementById('av-count');
   panel.setAttribute('data-loading','true');
-  document.getElementById('av-rows').innerHTML = '';
-  const { data, error } = await db.rpc('rpc_bt_availability');
+  cntEl.textContent = 'loading…';
+  rowsEl.innerHTML = '<div class="loading-state">Reading the latest stock position for the hero lines…</div>';
+  // A read that is slow says so after 6 s and is given up, with a message, after 30 s: it used to sit on "loading" with no rows and no word.
+  const ctrl = new AbortController();
+  const slow = setTimeout(() => { rowsEl.innerHTML = '<div class="loading-state">Still reading. This is slow when the database is busy. It gives up after 30 seconds.</div>'; }, 6000);
+  const giveUp = setTimeout(() => ctrl.abort(), 30000);
+  let data = null, error = null;
+  try { ({ data, error } = await db.rpc('rpc_bt_availability').abortSignal(ctrl.signal)); }
+  catch (e) { error = { message: (e && e.message) || 'aborted' }; }
+  clearTimeout(slow); clearTimeout(giveUp);
+  panel.setAttribute('data-loading','false');
   if (error) {
-    document.getElementById('av-rows').innerHTML =
-      `<div class="err-state">RPC error: ${error.message}</div>`;
-    panel.setAttribute('data-loading','false');
+    cntEl.textContent = 'could not read';
+    rowsEl.innerHTML = `<div class="err-state">The hero lines could not be read: ${ctrl.signal.aborted ? 'it took longer than 30 seconds (the database is busy). Reload to try again.' : error.message}</div>`;
     return;
   }
   _heroData = data || [];
   renderHeroRows(_heroData);
-  panel.setAttribute('data-loading','false');
 }
 
 /* ══════════════════════════════════════════
@@ -1126,7 +1135,7 @@ const BAND_LO = 80, BAND_HI = 86, REF = 85, SCALE_LO = 65, SCALE_HI = 110;
 const Xp = v => (v - SCALE_LO) / (SCALE_HI - SCALE_LO); // 0..1
 
 function ratioTone(v) {
-  if (v > 95) return { t:'neg',     label:'ALARM' };
+  if (v > 95) return { t:'neg',     label:'BOUGHT AHEAD' };
   if (v >= BAND_LO && v <= BAND_HI) return { t:'pos', label:'IN BAND' };
   if (v > BAND_HI) return { t:'warn', label:'OVER' };
   return { t:'neutral', label:'LEAN' };
@@ -1209,9 +1218,12 @@ async function loadBuying() {
   latestSunday.setDate(thisMon.getDate() - 8);
 
   // Default window: first of the current month through latest completed Sunday.
-  const p_from = new Date(today.getFullYear(), today.getMonth(), 1)
-                   .toISOString().slice(0,10);
-  const p_to   = latestSunday.toISOString().slice(0,10);
+  // Local dates (toISOString is UTC and gave the day before in a UTC+2 browser), and the 13 weeks the table holds: the old window was the
+  // current month only, which is ONE week early in the month and EMPTY on the days when this Monday minus 8 falls before the 1st.
+  const iso = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  const fromD = new Date(latestSunday); fromD.setDate(latestSunday.getDate() - 84);
+  const p_from = iso(fromD);
+  const p_to   = iso(latestSunday);
 
   const results = await Promise.all(STORES_CFG.map(s =>
     db.rpc('rpc_bt_buying', { p_store: s.code, p_from, p_to })
@@ -1234,6 +1246,8 @@ async function loadBuying() {
              .toLocaleDateString('en-ZA', { day:'numeric', month:'short' }),
         v: +r.purchase_ratio,
         build: +r.build > 0 ? +r.build : null,
+        sales: +r.sales_ex,
+        purch: +r.purchases,
       }));
   }
 
@@ -1242,6 +1256,7 @@ async function loadBuying() {
     const weeks = weeklySeries(s.rows);
     if (!weeks.length) return `<div class="err-state">No data for ${s.name}</div>`;
     const cur = weeks[weeks.length - 1].v;
+    const last = weeks[weeks.length - 1];
     const tn = ratioTone(cur);
     const buildItems = weeks.filter(p => p.build);
     const buildHtml = buildItems.map(b =>
@@ -1256,9 +1271,10 @@ async function loadBuying() {
         <div class="ratio-now">
           <span class="ratio-num" style="color:${cur>95?'var(--data-neg)':'var(--daisy-white)'}">${cur.toFixed(1)}%</span>
           <span class="buy-chip ${tn.t}"><span class="lamp"></span>${tn.label}</span>
-          <span class="ratio-cap">latest closed week &middot; purch &divide; sales</span>
+          <span class="ratio-cap">week ending ${last.m} &middot; stock received at cost &divide; sales ex-VAT</span>
         </div>
       </div>
+      <div style="font-family:var(--font-mono);font-size:10.5px;line-height:1.5;color:var(--text-muted);margin:6px 0 10px">Week ending Sunday ${last.m}: stock received at cost ${zar(last.purch)}, sales ex-VAT ${zar(last.sales)}. Above 100% means more stock came in than went out that week, which one large delivery can cause. The 80&ndash;86% band is judged over a month, not a week.</div>
       ${buildGauge(cur, s.accent)}
       <div class="trend-hdr">
         <span class="trend-t">week ending Sunday</span>
