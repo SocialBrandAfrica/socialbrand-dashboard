@@ -241,7 +241,6 @@ BEGIN
   FOR v_route IN
     SELECT rc.route_key FROM bloom_route_config rc
     WHERE rc.store_code = p_store_code AND rc.status = 'RULED'
-      AND rc.route_key !~ '^DIRECT_S[0-9]+$'   -- derived desks (BLOOM-035 item 1) have no ledger row of their own yet (ENG-176): kept out of the pooled DIRECT need
   LOOP
     INSERT INTO public.l2_sales_budget (
       client_id, store_code, route_key, budget_week_start, month_start,

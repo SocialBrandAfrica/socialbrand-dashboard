@@ -76,7 +76,7 @@ AS $function$
              WHEN p_desk = 'DC_FRESH' THEN 'DC_FRESH'
              WHEN p_desk = 'DIRECT_CATCHALL' THEN 'DIRECT_CATCHALL'
              WHEN p_desk = 'DIRECT_BEER'                    THEN 'DIRECT_BEER'
-             WHEN p_desk LIKE 'DIRECT\_%' ESCAPE '\'        THEN 'DIRECT'
+             WHEN p_desk LIKE 'DIRECT\_%' ESCAPE '\'        THEN p_desk
              ELSE 'DC'
            END AS ledger_route
   ),

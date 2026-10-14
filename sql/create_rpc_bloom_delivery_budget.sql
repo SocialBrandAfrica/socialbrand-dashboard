@@ -27,7 +27,7 @@ BEGIN
                   WHEN p_route LIKE 'DC\_%' ESCAPE '\'  THEN 'DC'
                   WHEN p_route = 'DIRECT_CATCHALL' THEN 'DIRECT_CATCHALL'
                   WHEN p_route = 'DIRECT_BEER'          THEN 'DIRECT_BEER'
-                  ELSE 'DIRECT' END;
+                  ELSE p_route END;
 
   SELECT l.budget_amount, COALESCE(l.budget_manual_override,false), l.source_note
     INTO v_budget, v_manual, v_note
@@ -65,7 +65,8 @@ BEGIN
                  AND ( (v_route='DIRECT_BEER' AND rc.route_key='DIRECT_BEER')
                     OR (v_route='DIRECT'      AND rc.route_key LIKE 'DIRECT\_%' ESCAPE '\'
                                               AND rc.route_key NOT IN ('DIRECT_BEER', 'DIRECT_CATCHALL'))
-                    OR (v_route='DIRECT_CATCHALL' AND rc.route_key='DIRECT_CATCHALL') ) )) );
+                    OR (v_route='DIRECT_CATCHALL' AND rc.route_key='DIRECT_CATCHALL')
+                    OR (v_route LIKE 'DIRECT\_%' ESCAPE '\' AND rc.route_key = v_route) ) )) );
 
   SELECT COALESCE(SUM(o.on_order_cost),0) INTO v_transit
   FROM l2_on_order o
@@ -83,7 +84,8 @@ BEGIN
        OR (v_route='DIRECT_BEER' AND o.route_keys[1]='DIRECT_BEER')
        OR (v_route='DIRECT'      AND o.route_keys[1] LIKE 'DIRECT\_%' ESCAPE '\'
                                  AND o.route_keys[1] NOT IN ('DIRECT_BEER', 'DIRECT_CATCHALL'))
-       OR (v_route='DIRECT_CATCHALL' AND o.route_keys[1]='DIRECT_CATCHALL') );
+       OR (v_route='DIRECT_CATCHALL' AND o.route_keys[1]='DIRECT_CATCHALL')
+       OR (v_route LIKE 'DIRECT\_%' ESCAPE '\' AND o.route_keys[1] = v_route) );
 
   RETURN QUERY SELECT
     v_ws,

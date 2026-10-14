@@ -411,7 +411,7 @@ BEGIN
     WHEN p_route = 'DC_FRESH' THEN 'DC_FRESH'
     WHEN p_route = 'DIRECT_CATCHALL' THEN 'DIRECT_CATCHALL'
     WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER'
-    WHEN p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN 'DIRECT'
+    WHEN p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN p_route
     ELSE 'DC'
   END;
 
@@ -482,10 +482,11 @@ BEGIN
   v_override := p_days_cover_override;
   v_fit_to_budget := COALESCE(p_fit_to_budget, false);
 
-  SELECT COALESCE(obl.budget_amount,0) - COALESCE(obl.committed_amount,0) INTO v_weekly_budget
+  SELECT COALESCE(SUM(COALESCE(obl.budget_amount,0) - COALESCE(obl.committed_amount,0)), 0) INTO v_weekly_budget
   FROM order_budget_ledger obl
   WHERE obl.store_code=p_store_code AND obl.route_key=v_ledger_route AND obl.grain='weekly'
-    AND obl.year_month = v_week_start;
+    AND obl.year_month >= v_week_start
+    AND obl.year_month < v_week_start + 7 * GREATEST(1, CEIL((v_next_delivery - p_delivery_date) / 7.0))::int;
   v_weekly_budget := COALESCE(v_weekly_budget, 0);
 
   v_sql := format($q$

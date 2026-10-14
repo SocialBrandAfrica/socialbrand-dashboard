@@ -76,6 +76,7 @@ DROP FUNCTION IF EXISTS public.rpc_bloom_month_projection(text,text);
 -- route_budget_amount is NULL where no monthly ledger row exists.
 -- =============================================================================
 
+-- Re-synced from the live definition 2026-10-14 (after bloom035_item2_fit_own_need, BLOOM-035 item 2).
 CREATE OR REPLACE FUNCTION public.rpc_bloom_month_projection(p_store_code text, p_route text)
  RETURNS TABLE(row_kind text, drop_number integer, delivery_date date, lines integer, projected_value numeric, running_purchases numeric, month_to_date_landed numeric, month_purchases_projected_total numeric, route_budget_amount numeric, drops_capped boolean, sales_target_note text, computed_at timestamp with time zone)
  LANGUAGE plpgsql
@@ -97,7 +98,8 @@ DECLARE
 BEGIN
   v_ledger_route := CASE
     WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER'
-    WHEN p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN 'DIRECT'
+    WHEN p_route = 'DC_FRESH' THEN 'DC_FRESH'
+    WHEN p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN p_route
     ELSE 'DC'
   END;
 

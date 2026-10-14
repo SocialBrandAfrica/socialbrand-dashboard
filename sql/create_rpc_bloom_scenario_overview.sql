@@ -188,7 +188,7 @@ BEGIN
         WHEN p_route = 'DC_FRESH' THEN 'DC_FRESH'
         WHEN p_route = 'DIRECT_CATCHALL' THEN 'DIRECT_CATCHALL'
         WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER'
-        WHEN p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN 'DIRECT'
+        WHEN p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN p_route
         ELSE 'DC'
       END)
       AND obl.grain = 'weekly'

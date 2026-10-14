@@ -94,7 +94,7 @@ BEGIN
                 WHEN sb.route_key LIKE 'DC\_%' ESCAPE '\' THEN 'DC'
                 WHEN sb.route_key = 'DIRECT_CATCHALL' THEN 'DIRECT_CATCHALL'
                 WHEN sb.route_key = 'DIRECT_BEER'         THEN 'DIRECT_BEER'
-                ELSE 'DIRECT' END AS ledger_route,
+                ELSE sb.route_key END AS ledger_route,
            sb.budget_week_start AS year_month,
            ROUND(SUM(sb.projected_sales_cost) * v_ratio, 2) AS needs_amount,
            string_agg(DISTINCT sb.route_key, '+' ORDER BY sb.route_key) AS desks
@@ -154,6 +154,12 @@ BEGIN
   catchall AS (
     SELECT unnest(direct_supplier_nrs) AS supplier_nr FROM bloom_route_config
      WHERE store_code=p_store AND route_key='DIRECT_CATCHALL'),
+  direct_map AS MATERIALIZED (
+    SELECT DISTINCT ON (x.supplier_nr) x.route_key, x.supplier_nr
+      FROM (SELECT rc.route_key, unnest(rc.direct_supplier_nrs) AS supplier_nr FROM bloom_route_config rc
+             WHERE rc.store_code=p_store AND rc.route_key LIKE 'DIRECT\_%' ESCAPE '\'
+               AND rc.route_key NOT IN ('DIRECT_BEER', 'DIRECT_CATCHALL')) x
+     ORDER BY x.supplier_nr, x.route_key),
   -- ONE HOME (FILE-GOVERNANCE §0g write-forward): the pool definition lives in
   -- v_bloom_dc_ambient_pool and is read, never restated. A second copy would be drift.
   dcpool AS (
@@ -164,7 +170,8 @@ BEGIN
     SELECT CASE
              WHEN m.supplier_nr IN (SELECT supplier_nr FROM beer)   THEN 'DIRECT_BEER'
              WHEN m.supplier_nr IN (SELECT supplier_nr FROM catchall) THEN 'DIRECT_CATCHALL'
-             WHEN m.supplier_nr IN (SELECT supplier_nr FROM direct) THEN 'DIRECT'
+             WHEN m.supplier_nr IN (SELECT supplier_nr FROM direct_map)
+              THEN (SELECT dm.route_key FROM direct_map dm WHERE dm.supplier_nr = m.supplier_nr)
              WHEN sm.supplier_type = 'Z'
               AND m.product_code IN (SELECT product_code FROM dcpool) THEN 'DC'
              WHEN sm.supplier_type = 'Z'
@@ -182,7 +189,7 @@ BEGIN
     SELECT CASE
              WHEN o.route_keys[1] = 'DIRECT_BEER'             THEN 'DIRECT_BEER'
              WHEN o.route_keys[1] = 'DIRECT_CATCHALL'         THEN 'DIRECT_CATCHALL'
-             WHEN o.route_keys[1] LIKE 'DIRECT\_%' ESCAPE '\' THEN 'DIRECT'
+             WHEN o.route_keys[1] LIKE 'DIRECT\_%' ESCAPE '\' THEN o.route_keys[1]
              WHEN o.route_keys[1] = 'DC'
               AND o.product_code IN (SELECT product_code FROM dcpool) THEN 'DC'
              WHEN o.route_keys[1] = 'DC'
