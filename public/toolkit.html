@@ -187,7 +187,7 @@
   </div>
   <div id="measures-asof" class="note" style="margin-top:2px"></div>
   <div class="cards" id="count-measures"></div>
-  <div class="note"><b>The five measures, one definition each.</b> Count pool: World 1 lines that sold or were received in 91 days, plus any World 1 line with stock not equal to 0. Counted in 91 days: a Sigma count posting (DIWAINV) inside 91 store days, over that pool. Normalised share: lines whose stock the ledger has been shown to track (two counts no more than 60 days apart and the later one within the tolerance), over the lines that sold in 91 days. Measured shrinkage: the counts on normalised lines after they qualified, in units and in rand at unit cost. Count compliance: daily lists generated in the app against lists finalised on time, on the Progress tab. The pool and the counted figure are the live read of the Platform Integrity tab on every tab (Progress, Platform Integrity and Stocktake); only the normalised share and the shrinkage are stocked with the nightly draw.</div>
+  <div class="note"><b>The five measures, one definition each.</b> Count pool: World 1 lines that sold or were received in 91 days, plus any World 1 line with stock not equal to 0. Counted in 91 days: a Sigma stocktake count line inside 91 store days, over that pool. Normalised share: lines whose stock the ledger has been shown to track (two counts no more than 60 days apart and the later one within the tolerance), over the lines that sold in 91 days. Measured shrinkage: the counts on normalised lines after they qualified, in units and in rand at unit cost. Count compliance: daily lists generated in the app against lists finalised on time, on the Progress tab. The pool and the counted figure are the live read of the Platform Integrity tab on every tab (Progress, Platform Integrity and Stocktake); only the normalised share and the shrinkage are stocked with the nightly draw.</div>
 </div>
 
 <!-- 2 · FIXER -->
@@ -226,7 +226,7 @@
     <button id="dl-integrity" disabled>Download (.csv)</button>
   </div>
   <div class="cards" id="integrity-cards"></div>
-  <div class="note">Floor adoption (are the tools being used on the floor) has no data source yet. It is a named gap, not a hidden zero. These measures are provisional until the R33 ruling lands.</div>
+  <div class="note">Floor adoption (are the tools being used on the floor) has no data source yet. It is a named gap, not a hidden zero. These measures follow the agreed count rule.</div>
 </div>
 
 <div id="log"></div>
@@ -243,6 +243,10 @@ const sel = new Set(STORES.map(s=>s[0]));   // progress lands group-wide by defa
 let measuresCache = null;   // declared HERE, above its first caller: loadCompliance() runs at load, before the getMeasures block, and a let read before its line is a temporal-dead-zone ReferenceError (the Progress tab showed "Could not load: Cannot access 'measuresCache' before initialization")
 const $ = id => document.getElementById(id);
 const log = m => { $("log").textContent += m + "\n"; };
+// Buyer wording (prose read 14-10, C): engine codes are data, not labels; "1 lines" is not English.
+const plural = (n, one, many) => (+n===1 ? one : many);
+const BUCKET_LABEL = { DEAD_ZERO:"no movement in 365 days", PHANTOM_ZERO:"in stock, no sale in 365 days and no recent count", SOURCE_FIX:"made in store: fix the recipe in Sigma" };
+const bucketLabel = k => BUCKET_LABEL[k] || String(k).replace(/_/g," ").toLowerCase();
 function banner(msg, cls){ const b=$("banner"); b.style.display="block"; b.className="banner"+(cls?" "+cls:""); b.textContent=msg; }
 function clearBanner(){ $("banner").style.display="none"; }
 
@@ -538,7 +542,7 @@ async function loadCountMeasures(){
       const card = document.createElement("div"); card.className = "card";
       const line = (label, sub, val) => '<div class="inst up"><span>'+label+'<span class="instsub">'+sub+'</span></span><span style="text-align:right;white-space:nowrap"><span class="v">'+val+'</span></span></div>';
       card.innerHTML = '<h3>'+name+' ('+code+')</h3><div class="meta">'+(pool?(fromLive?"live engine read, the same call as Platform Integrity":"stocked "+String(pool.refreshed_at).slice(0,16).replace("T"," ")+" UTC (live read failed)"):"no data yet")+'</div>'
-        + (pool ? line("Count pool", "World 1 lines that sold or were received in 91 days, plus any line with stock not equal to 0", R(pool.pool)+" lines")
+        + (pool ? line("Count pool", "World 1 lines that sold or were received in 91 days, plus any line with stock not equal to 0", R(pool.pool)+" "+plural(pool.pool,"line","lines"))
                   + line("Counted in 91 days", "A Sigma count posting inside 91 store days, over the pool", R(pool.counted_91)+" / "+R(pool.pool)+(pool.pool?" = "+P1(100*pool.counted_91/pool.pool)+"%":"")) : "")
         + (n ? line("Normalised share", "Lines whose stock the ledger has been shown to track, over lines that sold in 91 days. At "+n.tolerance_pct+"%"+(cfgTol?": "+R(cfgTol.view_b)+" lines":"")+(cmpTol&&+n.compare_pct!==+n.tolerance_pct?". At "+n.compare_pct+"%: "+R(cmpTol.view_b)+" lines":"")+(cfgTol?". Strict view, both counts correct: "+R(cfgTol.view_a):""), R(n.normalised_lines)+" / "+R(n.selling_lines)+(n.share_pct!=null?" = "+n.share_pct+"%":""))
                   + line("Measured shrinkage, last 4 weeks", "Counts on normalised lines after they qualified. Rand uses unit cost, so a weighed line with a unit mismatch distorts it."+(big?" Largest correction: "+esc(big.description)+" "+esc(big.count_date)+", R "+R(big.rand_value)+".":""), R(shrUnits)+" units, R "+R(shrRand)) : "")
@@ -577,8 +581,8 @@ $("loadfixer").onclick = async ()=>{
       const card=document.createElement("div"); card.className="card";
       card.innerHTML = `<h3>${STORES.find(x=>x[0]===s.store_code)?.[1]||""} (${s.store_code})</h3>
         <div class="meta">engine snapshot ${s.snapshot_date} · ${s.pool_total.toLocaleString()} lines examined · <span title="lines with no proven barcode identity — these block the stocktake import">unresolved identity <b style="color:${s.unresolved_ean? "var(--neg)":"var(--pos)"}">${s.unresolved_ean}</b></span></div>
-        <div style="font:11.5px var(--font-mono);color:var(--mist);margin-bottom:8px">${Object.entries(b).map(([k,v])=>`${k} <b style="color:var(--txt)">${v.rows}</b> (R${R(v.capital)})`).join(" · ")}</div>
-        ${SELECTORS.map(([selr,lbl,why])=>`<button class="filebtn" data-store="${s.store_code}" data-sel="${selr}"><span>${lbl}${a[selr]?` — ${a[selr].rows} lines`:""}</span><small>${why}</small></button>`).join("")}`;
+        <div style="font:11.5px var(--font-mono);color:var(--mist);margin-bottom:8px">${Object.entries(b).map(([k,v])=>`<span title="${k}">${bucketLabel(k)}</span> <b style="color:var(--txt)">${v.rows}</b> (R${R(v.capital)})`).join(" · ")}</div>
+        ${SELECTORS.map(([selr,lbl,why])=>`<button class="filebtn" data-store="${s.store_code}" data-sel="${selr}"><span>${lbl}${a[selr]?` — ${a[selr].rows} ${plural(a[selr].rows,"line","lines")}`:""}</span><small>${why}</small></button>`).join("")}`;
       el.appendChild(card);
     });
     el.querySelectorAll("button").forEach(btn=>{
@@ -621,7 +625,7 @@ $("loadcost").onclick = async ()=>{
     const overst = costRows.reduce((t,r)=>t+Math.max(0,(+r.cogs_overstated||0)),0);
     const noSane = costRows.filter(r=>!(+r.sane_unit_cost>0)).length;
     const lowSane = costRows.filter(r=>(+r.cogs_overstated||0)<0).length;
-    $("cost-summary").innerHTML = costRows.length ? `<b>${costRows.length}</b> lines to fix · fixing them recovers up to <b>R${R(overst)}</b> of GP in the window, largest first (scroll for all of them)` + (noSane ? ` · <b>${noSane}</b> have no known correct cost (marked none) and are counted at their whole cost, so treat the total as an upper bound` : "") + (lowSane ? ` · <b>${lowSane}</b> carry a supplier cost above the cost booked and recover nothing` : "") : "";
+    $("cost-summary").innerHTML = costRows.length ? `<b>${costRows.length}</b> ${plural(costRows.length,"line","lines")} to fix · fixing them recovers up to <b>R${R(overst)}</b> of GP in the window, largest first (scroll for all of them)` + (noSane ? ` · <b>${noSane}</b> have no known correct cost (marked none) and are counted at their whole cost, so treat the total as an upper bound` : "") + (lowSane ? ` · <b>${lowSane}</b> carry a supplier cost above the cost booked and recover nothing` : "") : "";
     const tb=$("cost-table");
     tb.innerHTML = costRows.length ? "<tr><th>store</th><th>code</th><th>description</th><th>dept</th><th class=num>units sold</th><th class=num>cost in Sigma</th><th class=num>sells for (ex VAT)</th><th class=num>how wrong</th><th class=num>sane cost</th><th class=num>GP recovered R</th></tr>" +
       costRows.map(r=>`<tr><td>${r.store_code}</td><td>${r.product_code}</td><td>${csvEsc(r.description)}</td><td>${csvEsc(r.dept_name||"")}</td><td class=num>${r.units}</td><td class=num>${(+r.sigma_unit_cost).toFixed(2)}</td><td class=num>${(+r.ex_vat_sell_unit).toFixed(2)}</td><td class=num>${(+r.cost_to_sell_ratio).toFixed(1)}×</td><td class=num>${+r.sane_unit_cost>0?(+r.sane_unit_cost).toFixed(2):`<span title="no receipt in 120 days and no list cost: load the cost from the supplier invoice in Sigma">none</span>`}</td><td class=num>${R(Math.max(0,+r.cogs_overstated||0))}</td></tr>`).join("") : "";
