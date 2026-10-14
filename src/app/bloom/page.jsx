@@ -1585,7 +1585,8 @@ function OrderDesksMode() {
   const [budgetRow, setBudgetRow] = useState(null)
   const [allBudgetRow, setAllBudgetRow] = useState(null)
   const [basis, setBasis] = useState('normal')
-  const [fitToBudget, setFitToBudget] = useState(false)
+  // BLOOM-035 item 2 (R1, Pieter 13-10-2026): every desk opens on its FITTED order. The nightly build stores both versions; the switch still turns it off.
+  const [fitToBudget, setFitToBudget] = useState(true)
   const [preset, setPreset] = useState('standard')
   const [generating, setGenerating] = useState(false)
   const [lines, setLines] = useState([])
