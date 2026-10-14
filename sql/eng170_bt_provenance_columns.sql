@@ -1,7 +1,7 @@
 -- =============================================================================
 -- eng170_bt_provenance_columns.sql   (migrations eng170_bt_provenance_columns, then
 --                                     eng170_bt_provenance_columns_l2_bt_tail)
--- ENG-170 (dashboard lane, PM ruling 14-10-2026 09:0x): the four Bonnie Tyler precompute tables carry no provenance.
+-- ENG-170: the four Bonnie Tyler precompute tables carry no provenance.
 -- refresh_bt_precompute() is the 12th leg of refresh_l2_pipeline (pg_cron job 15, 20:15 UTC) and swallows each leg's
 -- error as a warning, and the whole chain is one transaction, so a failed night leaves the page a day old with nothing
 -- on the rows to say so. computed_at and engine_version let any reader (and the page, later) say when a row was written.

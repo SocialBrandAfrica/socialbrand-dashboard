@@ -1,9 +1,9 @@
 -- =============================================================================
 -- eng257_rpc_bt_availability_family.sql   (migration eng257_rpc_bt_availability_family)
--- ENG-257 (dashboard lane, PM ruling 14-10-2026 12:58): the Bonnie Tyler hero availability read is scan-keyed. Its stock is the
+-- ENG-257: the Bonnie Tyler hero availability read is scan-keyed. Its stock is the
 -- latest l2_soh_daily row of the HERO'S OWN product code and its rate is the hero's scan rate (l2_bt_heroes), so a hero that is a
 -- pack code (stock sits on the single) would read OUT while its family holds stock, as milk did on the report leg (ENG-086).
--- PM: "a rule applies the same way in every file" -- the report rows already use the family rule (l2_family_ros), so this does too.
+-- The report rows already use the family rule (l2_family_ros, ENG-086); the same rule applies here.
 --
 -- THE RULE (the report rows' own, ENG-086): where the hero has a row in l2_family_ros, days_cover is the family's days cover
 -- (family stock in singles over the family's daily rate in singles) and OUT / SHORT are judged on family stock and family cover;

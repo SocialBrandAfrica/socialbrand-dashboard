@@ -1,6 +1,6 @@
 -- =============================================================================
 -- bt012_rpc_bt_availability_latest_snap_probe.sql   (migration bt012_rpc_bt_availability_latest_snap_probe)
--- /bt "Heroes loading…" (dashboard lane, PM 20:55 section 36, C; investigation 14-10-2026): rpc_bt_availability did not finish in 25 s.
+-- /bt "Heroes loading…": rpc_bt_availability did not finish in 25 s.
 -- Cause, measured: its latest_snap CTE was `SELECT store_code, MAX(snapshot_date) FROM l2_soh_daily GROUP BY store_code`, which plans as a
 -- Parallel Seq Scan over l2_soh_daily (47 million rows, a 3.8 GB heap; plan cost 906,169) to find ONE date per store, because Postgres has no
 -- loose index scan for GROUP BY MAX. The index (store_code, snapshot_date DESC) exists. FIX: probe it once per hero store
