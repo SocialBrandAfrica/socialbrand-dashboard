@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <!--
   FORGE TOOLKIT — toolkit.socialbrand.africa · v2.0 (2026-07-10, PM-built)
+  v2.1 (2026-10-13, SB-CC-STOCKTAKE-001): the Stocktake Composer is retired. Count lists are generated, printed,
+  captured and exported in the stocktake app (stocktake.socialbrand.africa). This page keeps the OVERVIEW:
+  the count measures per store (one definition each, read from the app's stocked facts through /api/stocktake/measures)
+  and the count compliance board, which now reads the app's own cycles.
   v2.0 (Pieter ruling, same day): PROGRESS landing view — week on week, where we were vs where we are,
   read from forge_integrity_history (daily snapshot 21:30 UTC via pg_cron 'forge-integrity-snapshot',
   backfilled from retained l2_classification snapshots to 2026-07-01). Full brand pass per
@@ -123,6 +127,9 @@
   .ccell.win{color:var(--mist);border-color:rgba(158,158,158,0.45);background:rgba(158,158,158,0.10)}
   .ccell.nolist{color:var(--mist);border-style:dashed;background:transparent}
   .ccell.rest{color:var(--mist);border-style:dotted;background:rgba(158,158,158,0.06)}
+  a.btnlink{display:inline-block;text-decoration:none;background:var(--charcoal);border:1px solid var(--border);color:var(--txt);padding:7px 14px;border-radius:8px;transition:transform 150ms,border-color 150ms}
+  a.btnlink.primary{background:var(--yellow);border-color:var(--yellow);color:var(--charcoal);font-weight:600}
+  a.btnlink:hover{border-color:var(--border-hover);transform:translateY(-1px)}
   @media print{
     body{background:#F4F6F2;color:#121612;padding:0} .tabs,.bar,button,#log,.banner,.sub,.explain,.note,.hero-grid{display:none!important}
     table{font-size:11px} th{color:#1E3F20;background:#F4F6F2;position:static} td,th{border-color:#999}
@@ -138,7 +145,7 @@
 
 <div class="tabs">
   <span class="tab on" data-pane="progress">Progress</span>
-  <span class="tab" data-pane="composer">Stocktake Composer</span>
+  <span class="tab" data-pane="composer">Stocktake</span>
   <span class="tab" data-pane="fixer">Fixer files &amp; imports</span>
   <span class="tab" data-pane="cost">Cost-Error Worklist</span>
   <span class="tab" data-pane="integrity">Platform Integrity</span>
@@ -158,7 +165,6 @@
   </div>
   <div class="bar">
     <button class="primary" id="loadprogress">Load progress</button>
-    <button id="dl-allstores" title="One workbook, a tab per store, product_code in column A for the StockFlow upload. Today's lists.">Today's count lists — all stores (xlsx)</button>
     <button id="dl-weekly" title="The weekly Chairman / VP report, built from the same platform facts as this page.">Weekly report (xlsx)</button>
   </div>
   <div id="progress-asof" class="note" style="margin-top:2px"></div>
@@ -170,59 +176,18 @@
   <div class="note">Trusted capital moves with cleanup AND with trading, so read it with its pool. Counts, negatives and debts are the work measures — those are ours to move.</div>
 </div>
 
-<!-- 1 · COMPOSER -->
+<!-- 1 · STOCKTAKE. The count app lives at dashboard.socialbrand.africa/stocktake today. When the stocktake.socialbrand.africa domain is added in Vercel, point the link below at it. -->
 <div class="pane" id="pane-composer">
   <div class="explain">
-    <b>What this does:</b> builds today's count list. The Engine picks which lines need counting and every line shows the reason it was picked, in plain words.
-    <div class="steps">
-      <b>Daily count list</b> is the standard morning list, issued by the system every trading day. It ranks by ordering impact: the lines whose wrong number would buy wrong stock or miss a sale this week come first, always. A fixed volume, 200 lines at a SPAR and 70 at a TOPS. Nobody in the store picks the lines.<br>
-      <b>Random spot check</b> pulls a surprise sample per department. Good for honesty checks.<br>
-      <b>Whole department</b> lists an entire department wall to wall.<br>
-      Then: <b>StockFlow file</b> to upload as an ad-hoc stocktake, or <b>Print count sheet</b> for the floor.
-    </div>
+    <b>Counting has one home.</b> Lists are generated, printed, captured and exported in the stocktake app, where a store keeps its count and every step is logged with the user and the time. This page keeps the overview: how each store is counting and how much of its range the ledger has been shown to track.
   </div>
   <div class="bar">
-    <div>
-      <span class="lbl">What kind of list</span>
-      <select id="mode">
-        <option value="daily">Daily count list (the standard)</option>
-        <option value="random">Random spot check</option>
-        <option value="targeted">Whole department</option>
-      </select>
-    </div>
-    <div id="nper-wrap" style="display:none">
-      <!-- SB-CC-BLOOM-029 item 4 clause (b). This was "lines per department" and
-           it MULTIPLIED by the department count: the untouched default of 50
-           issued 690 lines at 80175 and 441 at 80176, against store budgets of
-           200 and 70. It is now a STORE TOTAL, and blank means the store's own
-           daily budget (forge_config.daily_count_volume, SPAR 200 / TOPS 70). -->
-      <span class="lbl">Lines for this store (blank = daily budget)</span>
-      <input id="nper" type="number" placeholder="store budget" style="width:150px">
-    </div>
-    <div>
-      <span class="lbl">&nbsp;</span>
-      <button class="primary" id="compose">Build the list</button>
-    </div>
-    <div>
-      <span class="lbl">&nbsp;</span>
-      <button id="dl-stockflow" disabled title="One product code per line. Upload straight into StockFlow as an ad-hoc stocktake.">StockFlow file</button>
-      <button id="dl-sheet" disabled title="Printable sheet with a blank COUNT column, grouped for walking.">Print count sheet</button>
-      <button id="dl-full" disabled title="Everything on one spreadsheet, reasons included.">Full list (.csv)</button>
-    </div>
+    <a class="primary btnlink" href="https://dashboard.socialbrand.africa/stocktake" target="_blank" rel="noopener" id="open-stocktake">Open the stocktake app</a>
+    <button id="reload-measures">Reload the count measures</button>
   </div>
-  <div class="bar">
-    <div style="width:100%">
-      <span class="lbl">Departments — leave all off to count across the whole store. Click store(s) first, then pick.</span>
-      <span id="depts"></span>
-    </div>
-  </div>
-  <details class="adv"><summary>Advanced</summary>
-    Sample seed <input id="seed" type="number" step="0.01" value="0.42" style="width:90px">
-    — the same seed always rebuilds the exact same list, so a count can be audited later. Change it to draw a fresh random sample.
-  </details>
-  <div class="summary" id="compose-summary"></div>
-  <div class="wellbox" style="max-height:56vh;overflow:auto"><table id="compose-table"></table></div>
-  <div class="note">Why lines are picked, by ordering impact (the badges): <b style="color:var(--neg)">Ordering influencer</b> = a wrong number here buys wrong stock or misses a sale this week (on order, key line, actively ranged, or the Engine suspects the shelf). Always first. <b style="color:var(--mist)">Buy-and-sell</b> = a real seller on routine rotation. <b style="color:#A78BFA">Cosmetic ledger</b> = below zero or dead, a procedural error to clean up, fills the tail and never pushes an ordering line off the list. <b style="color:var(--pos)">Zero-SOH audit ⚑</b> = ledger says none, a spot check catches stock the system does not know it has. Deposits, production and non-stock lines never appear here, they have their own lists on the Fixer tab.</div>
+  <div id="measures-asof" class="note" style="margin-top:2px"></div>
+  <div class="cards" id="count-measures"></div>
+  <div class="note"><b>The five measures, one definition each.</b> Count pool: World 1 lines that sold or were received in 91 days, plus any World 1 line with stock not equal to 0. Counted in 91 days: a Sigma count posting (DIWAINV) inside 91 store days, over that pool. Normalised share: lines whose stock the ledger has been shown to track (two counts no more than 60 days apart and the later one within the tolerance), over the lines that sold in 91 days. Measured shrinkage: the counts on normalised lines after they qualified, in units and in rand at unit cost. Count compliance: daily lists generated in the app against lists finalised on time, on the Progress tab. The pool and the counted figure are stocked each night with the draw, so they can differ by a few lines from the live scoreboard on the Platform Integrity tab, which reads the same view.</div>
 </div>
 
 <!-- 2 · FIXER -->
@@ -275,7 +240,6 @@ const STORES = [
   ["80175","SPAR Roosville"],["80176","TOPS Roosville"],["80579","TOPS Dice"]
 ];
 const sel = new Set(STORES.map(s=>s[0]));   // progress lands group-wide by default
-const deptSel = new Set();
 const $ = id => document.getElementById(id);
 const log = m => { $("log").textContent += m + "\n"; };
 function banner(msg, cls){ const b=$("banner"); b.style.display="block"; b.className="banner"+(cls?" "+cls:""); b.textContent=msg; }
@@ -283,7 +247,7 @@ function clearBanner(){ $("banner").style.display="none"; }
 
 STORES.forEach(([code,name])=>{
   const c=document.createElement("span"); c.className="chip"+(sel.has(code)?" on":""); c.textContent=`${name} (${code})`;
-  c.onclick=()=>{ sel.has(code)?sel.delete(code):sel.add(code); c.classList.toggle("on"); loadDepts(); };
+  c.onclick=()=>{ sel.has(code)?sel.delete(code):sel.add(code); c.classList.toggle("on"); };
   $("stores").appendChild(c);
 });
 document.querySelectorAll(".tab").forEach(t=>{
@@ -293,7 +257,6 @@ document.querySelectorAll(".tab").forEach(t=>{
     t.classList.add("on"); $("pane-"+t.dataset.pane).classList.add("on");
   };
 });
-$("mode").onchange=()=>{ $("nper-wrap").style.display = $("mode").value==="random" ? "" : "none"; };
 
 async function rpc(fn, args){
   const r = await fetch(`${SB_URL}/rest/v1/rpc/${fn}`, {
@@ -325,6 +288,7 @@ async function apiDownload(btn, path){
 const csvEsc = v => { v = v==null ? "" : String(v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
 const toCSV = (rows, cols) => cols.join(",")+"\n"+rows.map(r=>cols.map(c=>csvEsc(r[c])).join(",")).join("\n")+"\n";
 const R = n => n==null ? "" : Math.round(n).toLocaleString("en-ZA");
+const esc = v => String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 function provenance(name, meta){ log(`${name} <- ${JSON.stringify(meta)} @ ${new Date().toISOString()}`); }
 const dstr = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 function todayStr(){ return dstr(new Date()); }
@@ -425,10 +389,13 @@ async function loadCompliance(){
     // way on a surface Pieter opens. The RPC is the published interface (R30 section 1),
     // filters runs FIRST, and reads only the 7 days this pane renders. p_stores is
     // omitted, meaning every store, so this read no longer leans on hardcoded STORES.
-    const [rows, sched] = await Promise.all([
-      rpc("rpc_forge_compliance_summary", { p_from: days[0], p_to: today }),
+    // SB-CC-STOCKTAKE-001 section 7 item 5: the Composer is retired, so the board reads the
+    // stocktake app's own cycles (rpc_stocktake_compliance, through /api/stocktake/measures).
+    const [mm, sched] = await Promise.all([
+      getMeasures(days[0], today),
       rpc("rpc_forge_count_schedule", {})
     ]);
+    const rows = mm.compliance || [];
     const dcByStore={}; (sched||[]).forEach(s=>{ dcByStore[s.store_code]=s.dc_dows||[]; });
     // A count is never FORCED on Sat, Sun, or a store's DC ambient delivery day.
     const dayStatus=(dstr,dc)=>{ const jd=new Date(dstr+"T00:00:00").getDay(), iso=jd===0?7:jd;
@@ -459,24 +426,24 @@ async function loadCompliance(){
       const byDate=idx[code]||{}, dc=dcByStore[code]||[];
       const seen=Object.keys(byDate).sort(), latest=seen[seen.length-1];
       let latestHtml;
-      if(!latest){ latestHtml=`<span style="color:var(--mist)">No count list issued yet</span>`; }
+      if(!latest){ latestHtml=`<span style="color:var(--mist)">No list generated in the app yet</span>`; }
       else { const c=byDate[latest], pct=c.issued?Math.round(100*c.posted/c.issued):0;
-        latestHtml=`Latest <b>${pct}% counted</b> · ${c.posted}/${c.issued} counts owed · issued ${latest}`
+        latestHtml=`Latest <b>${pct}% counted</b> · ${c.posted}/${c.issued} lines counted · generated ${latest}`
           +(c.inwin?` <span style="color:var(--mist)">(still inside the count window)</span>`:"")
           +(c.runs>1?` <span style="color:var(--warn)">(${c.runs} lists same day — duplicate)</span>`:""); }
       const ts=dayStatus(today,dc), t=byDate[today];
       let todayHtml;
       if(!ts.count) todayHtml=`<span style="color:var(--mist)">no count today (${ts.why})</span>`;
-      else todayHtml = t ? `<span style="color:var(--pos)">list issued today</span>`
-                         : `<span style="color:var(--warn)">no list issued today</span>`;
+      else todayHtml = t ? `<span style="color:var(--pos)">list generated today</span>`
+                         : `<span style="color:var(--warn)">no list generated today</span>`;
       const strip=days.map(d=>{
         const c=byDate[d], ds=dayStatus(d,dc);
         if(c){ const pct=c.issued?Math.round(100*c.posted/c.issued):0;
           const cls=pct>=80?"good":pct>=40?"mid":(c.inwin?"win":"bad");
           const why=c.inwin?" — still inside the count window, not a miss":"";
-          return `<span class="ccell ${cls}" title="${d}: ${c.posted} of ${c.issued} counts owed were counted in time${why}${c.runs>1?` (${c.runs} lists)`:""}">${d.slice(5)}<br>${pct}%</span>`; }
+          return `<span class="ccell ${cls}" title="${d}: ${c.posted} of ${c.issued} lines were counted${why}${c.runs>1?` (${c.runs} lists)`:""}">${d.slice(5)}<br>${pct}%</span>`; }
         if(!ds.count) return `<span class="ccell rest" title="${d}: ${ds.why}, no count forced">${d.slice(5)}<br>${ds.tag}</span>`;
-        return `<span class="ccell nolist" title="${d}: no count list was issued">${d.slice(5)}<br>—</span>`;
+        return `<span class="ccell nolist" title="${d}: no count list was generated">${d.slice(5)}<br>—</span>`;
       }).join("");
       return `<div class="ccard"><div class="cname">${name} <span class="cmuted">${code}</span></div>
         <div class="clatest">${latestHtml}</div>
@@ -485,129 +452,77 @@ async function loadCompliance(){
     }).join("");
     const headOk = issuedToday>=dueToday;
     wrap.innerHTML =
-      `<div class="ctitle">Count compliance — issued vs counted</div>`
+      `<div class="ctitle">Count compliance — generated vs finalised</div>`
       +`<div class="chead">As of ${today} · `
-      +`<span style="color:${dueToday===0?"var(--mist)":(headOk?"var(--txt)":"var(--neg)")}">${issuedToday} of ${dueToday} stores due a count today issued one</span>`
+      +`<span style="color:${dueToday===0?"var(--mist)":(headOk?"var(--txt)":"var(--neg)")}">${issuedToday} of ${dueToday} stores due a count today generated one</span>`
       +(offToday?` · <span style="color:var(--mist)">${offToday} on a DC / rest day</span>`:"")
       +` · last 7 days, newest on the right</div>`
       +`<div class="ccards">${cards}</div>`
-      +`<div class="note">The unit is the <b>obligation</b>, not the printed line: a product re-issued while it is still owed stays one obligation carrying its age, so one posting can never be credited against several lists. Counted = a Sigma count posting stands against it (matched or variance), from the store's own ledger — a manual confirmation is not evidence. A list still inside the 2-day count window reads IN WINDOW, not a miss. No count is forced on a Saturday, Sunday or a store's DC ambient delivery day (shown DC / rest). On a counting day, a missing list is a gap, not a zero.</div>`;
+      +`<div class="note">Read from the stocktake app's own log. The unit is the line on a generated daily list. Counted = a count captured against the line in the app (the Sigma posting follows when the TLX is imported). A list is on time when it is finalised inside the count window, and a list still inside that window reads IN WINDOW, not a miss. No count is forced on a Saturday, Sunday or a store's DC ambient delivery day (shown DC / rest). On a counting day, a missing list is a gap, not a zero.</div>`;
     provenance("compliance",{rows:rows.length, dueToday, issuedToday, offToday, today});
   }catch(e){
     wrap.innerHTML = `<div class="ctitle">Count compliance</div><div class="banner err" style="display:block;margin:0">Could not load: ${e.message}</div>`;
   }
 }
 loadCompliance();
-$("dl-allstores").onclick = function(){ apiDownload(this, "/api/forge/export-stocktake"); };
 $("dl-weekly").onclick    = function(){ apiDownload(this, "/api/forge/weekly-report"); };
 
-// ---------- department picker ----------
-let deptLoadToken=0;
-async function loadDepts(){
-  const el=$("depts"); const token=++deptLoadToken;
-  deptSel.clear();
-  if(!sel.size){ el.innerHTML='<span class="note">pick a store first</span>'; return; }
-  el.innerHTML='<span class="note">loading departments…</span>';
-  try{
-    const rows = await rpc("rpc_forge_departments",{p_stores:[...sel]});
-    if(token!==deptLoadToken) return;
-    el.innerHTML="";
-    rows.forEach(r=>{
-      const c=document.createElement("span"); c.className="chip small";
-      c.textContent=`${r.dept_name} (${Number(r.lines).toLocaleString()})`;
-      c.onclick=()=>{ deptSel.has(r.dept_name)?deptSel.delete(r.dept_name):deptSel.add(r.dept_name); c.classList.toggle("on"); };
-      el.appendChild(c);
-    });
-    if(!rows.length) el.innerHTML='<span class="note">no departments found for this selection</span>';
-  }catch(e){ if(token===deptLoadToken){ el.innerHTML=""; banner(e.message,"err"); } }
-}
-loadDepts();
-
-// ---------- 1 · COMPOSER ----------
-let composeRows = [];
-$("compose").onclick = async ()=>{
-  clearBanner();
-  if(!sel.size) return banner("Pick at least one store first.", "err");
-  const mode=$("mode").value;
-  const depts = deptSel.size ? [...deptSel] : null;
-  if(mode==="targeted" && !depts) return banner("Whole-department mode needs at least one department picked below.", "err");
-  const seed=parseFloat($("seed").value)||0.42;
-  $("compose").disabled=true;
-  try{
-    const t0=performance.now();
-    composeRows = await rpc("rpc_forge_count_list", {
-      p_stores:[...sel], p_mode:mode, p_dept_names:depts,
-      p_n: mode==="random" ? (parseInt($("nper").value,10)||null) : null, p_seed:seed
-    });
-    const ms=Math.round(performance.now()-t0);
-    if(!composeRows.length){ banner("Checked and came back empty — nothing in this selection needs counting. That is an answer, not an error.", "ok"); }
-    const byStore={};
-    composeRows.forEach(r=>{ (byStore[r.store_code]=byStore[r.store_code]||{n:0,strata:{}}); byStore[r.store_code].n++;
-      byStore[r.store_code].strata[r.stratum_label]=(byStore[r.store_code].strata[r.stratum_label]||0)+1; });
-    $("compose-summary").innerHTML = Object.entries(byStore).map(([s,v])=>
-      `<b>${s}</b>: ${v.n} lines to count (${Object.entries(v.strata).map(([k,n])=>`${k} ${n}`).join(" · ")})`).join(" &nbsp;|&nbsp; ")
-      + (composeRows.length?` &nbsp;·&nbsp; ${ms}ms`:"");
-    const tb=$("compose-table");
-    tb.innerHTML = "<tr><th>store</th><th>code</th><th>description</th><th>sub-dept</th><th class=num>SOH</th><th class=num>capital R</th><th>why it is on the list</th><th>the story</th><th class=countcol>COUNT</th></tr>" +
-      composeRows.map(r=>`<tr><td>${r.store_code}</td><td>${r.product_code}</td><td>${csvEsc(r.description)}</td><td>${csvEsc(r.subdept_name||"")}</td><td class=num>${r.soh}</td><td class=num>${R(r.capital_value)}</td><td><span class="stratum s${r.stratum}">${r.stratum_label}${r.forced_zero_soh?" ⚑":""}</span></td><td class=story>${csvEsc(r.story)}</td><td class=countcol></td></tr>`).join("");
-    ["dl-stockflow","dl-sheet","dl-full"].forEach(id=>$(id).disabled=!composeRows.length);
-    provenance("count list", {lines:composeRows.length, mode, seed, stores:[...sel], depts});
-  }catch(e){ banner(e.message,"err"); log("ERROR "+e.message); }
-  $("compose").disabled=false;
-};
-// THE COMPLIANCE LOOP OPENS HERE (canon 15). Downloading the StockFlow count
-// request is the moment a list is ISSUED -- composing one on screen is not.
-// Every issued list becomes a run (who, when, selection, seed) so the engine
-// can diff it against booked I-movements tomorrow and a list nobody executed
-// stays loud (R22).
-//
-// Posted to /api/forge/run, NOT straight to PostgREST: this page talks to the
-// API with the publishable key and so runs as `anon`, while the write function
-// is granted to `authenticated` only and explicitly revoked from `anon`
-// (R30 addendum 2 + the addendum extension). The route carries the signed-in
-// user's session, so the grant stays correct instead of being widened to reach.
-async function logRun(store, rows){
-  const r = await fetch("/api/forge/run", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({
-      store_code: store,
-      mode: $("mode").value,
-      source: "forge",
-      seed: String(parseFloat($("seed").value)||0.42),
-      params: { depts: deptSel.size ? [...deptSel] : null,
-                n_requested: $("mode").value==="random" ? (parseInt($("nper").value,10)||null) : null },
-      lines: rows.map(r=>({ product_code:r.product_code, stratum:r.stratum_label,
-                            description:r.description, soh:r.soh, capital_value:r.capital_value }))
-    })
+// ---------- 1 · STOCKTAKE OVERVIEW (SB-CC-STOCKTAKE-001 section 7) ----------
+// One fetch feeds the count measures and the compliance board. The route carries the signed-in
+// session, so the stocktake functions run as 'authenticated' (R30 addendum 2) and are never
+// granted to the publishable key this page otherwise uses.
+let measuresCache = null;
+function getMeasures(from, to){
+  const key = from + "|" + to;
+  if(measuresCache && measuresCache.key === key) return measuresCache.p;
+  const p = fetch("/api/stocktake/measures?from="+from+"&to="+to).then(async r=>{
+    if(!r.ok){ throw new Error("count measures "+r.status+": "+(await r.text()).slice(0,200)); }
+    return r.json();
   });
-  if(!r.ok){ throw new Error(`run-log ${r.status}: ${(await r.text()).slice(0,200)}`); }
-  return r.json();
+  measuresCache = { key, p };
+  p.catch(()=>{ if(measuresCache && measuresCache.p===p) measuresCache=null; });
+  return p;
 }
-
-$("dl-stockflow").onclick = async ()=>{
-  for(const s of [...sel]){
-    const rows=composeRows.filter(r=>r.store_code===s && r.ean_status==="REAL");
-    if(!rows.length){ log(`${s}: no StockFlow-countable lines (StockFlow needs a real barcode).`); continue; }
-    download(`${s}_stockflow.csv`, "product_code\n"+rows.map(r=>r.product_code).join("\n")+"\n","text/csv");
-    provenance(`${s}_stockflow.csv`,{rows:rows.length, seed:parseFloat($("seed").value)||0.42});
-    // The file is already on the buyer's machine, so a failed log is reported
-    // LOUDLY and never swallowed -- but it does not pretend the download failed.
-    try{
-      const res = await logRun(s, rows);
-      log(`${s}: run logged ${res.run_id} (${res.lines_logged} lines) -- compliance is now tracked for this list.`);
-    }catch(e){
-      banner(`${s}: the count file downloaded but the run did NOT log -- ${e.message}. This list is untracked; re-issue it once the log is back.`, "err");
-      log(`ERROR run-log ${s}: ${e.message}`);
-    }
+const P1 = n => n==null ? "" : (+n).toFixed(1);
+async function loadCountMeasures(){
+  const el = $("count-measures");
+  try{
+    const days = lastNDates(28);
+    const m = await getMeasures(days[0], days[days.length-1]);
+    const ovBy = {}; (m.overview||[]).forEach(o=>{ ovBy[o.store_code]=o; });
+    const nBy = {}; (m.normalised||[]).forEach(n=>{ nBy[n.store_code]=n; });
+    const cmpBy = {}; (m.compliance||[]).forEach(r=>{ (cmpBy[r.store_code]=cmpBy[r.store_code]||[]).push(r); });
+    el.innerHTML = "";
+    let stocked = "";
+    STORES.forEach(([code,name])=>{
+      const o = ovBy[code], n = nBy[code];
+      const pool = o && o.pool, rows = cmpBy[code]||[];
+      if(pool && pool.refreshed_at && pool.refreshed_at>stocked) stocked = pool.refreshed_at;
+      const atTol = n ? (n.at_tolerance||[]) : [];
+      const cfgTol = n && atTol.find(t=>+t.tolerance_pct===+n.tolerance_pct), cmpTol = n && atTol.find(t=>+t.tolerance_pct===+n.compare_pct);
+      const shr = n ? (n.shrinkage_weekly||[]).slice(-4) : [];
+      const shrUnits = shr.reduce((a,w)=>a+(+w.net_units||0),0), shrRand = shr.reduce((a,w)=>a+(+w.net_rand||0),0);
+      const big = n && n.largest_corrections && n.largest_corrections[0];
+      const listed = rows.reduce((a,r)=>a+(+r.runs||0),0), onTime = rows.reduce((a,r)=>a+(+r.finalised_on_time||0),0);
+      const lateOrOpen = rows.reduce((a,r)=>a+(+r.closed_late||0)+(+r.still_open||0),0);
+      const card = document.createElement("div"); card.className = "card";
+      const line = (label, sub, val) => '<div class="inst up"><span>'+label+'<span class="instsub">'+sub+'</span></span><span style="text-align:right;white-space:nowrap"><span class="v">'+val+'</span></span></div>';
+      card.innerHTML = '<h3>'+name+' ('+code+')</h3><div class="meta">'+(pool?"stocked "+String(pool.refreshed_at).slice(0,16).replace("T"," ")+" UTC":"no stocked draw yet")+'</div>'
+        + (pool ? line("Count pool", "World 1 lines that sold or were received in 91 days, plus any line with stock not equal to 0", R(pool.pool)+" lines")
+                  + line("Counted in 91 days", "A Sigma count posting inside 91 store days, over the pool", R(pool.counted_91)+" / "+R(pool.pool)+(pool.pool?" = "+P1(100*pool.counted_91/pool.pool)+"%":"")) : "")
+        + (n ? line("Normalised share", "Lines whose stock the ledger has been shown to track, over lines that sold in 91 days. At "+n.tolerance_pct+"%"+(cfgTol?": "+R(cfgTol.view_b)+" lines":"")+(cmpTol&&+n.compare_pct!==+n.tolerance_pct?". At "+n.compare_pct+"%: "+R(cmpTol.view_b)+" lines":"")+(cfgTol?". Strict view, both counts correct: "+R(cfgTol.view_a):""), R(n.normalised_lines)+" / "+R(n.selling_lines)+(n.share_pct!=null?" = "+n.share_pct+"%":""))
+                  + line("Measured shrinkage, last 4 weeks", "Counts on normalised lines after they qualified. Rand uses unit cost, so a weighed line with a unit mismatch distorts it."+(big?" Largest correction: "+esc(big.description)+" "+esc(big.count_date)+", R "+R(big.rand_value)+".":""), R(shrUnits)+" units, R "+R(shrRand)) : "")
+        + line("Count compliance, last 28 days", "Daily lists generated in the app against lists finalised inside the count window", rows.length ? (R(onTime)+" / "+R(listed)+" on time"+(lateOrOpen?", "+R(lateOrOpen)+" late or open":"")) : "no list generated");
+      el.appendChild(card);
+    });
+    $("measures-asof").textContent = stocked ? "Pool and counted figures stocked "+String(stocked).slice(0,16).replace("T"," ")+" UTC. The normalised state and shrinkage are stocked with them." : "";
+    provenance("count measures", {stores:(m.normalised||[]).length});
+  }catch(e){
+    el.innerHTML = '<div class="banner err" style="display:block;margin:0">Could not load the count measures: '+esc(e.message)+'</div>';
   }
-};
-$("dl-full").onclick = ()=>{
-  const cols=["store_code","product_code","description","dept_name","subdept_name","soh","capital_value","ean_key","ean_status","tier","last_counted","last_sale","stratum_label","forced_zero_soh","story"];
-  download("forge_count_list.csv", toCSV(composeRows, cols), "text/csv");
-  provenance("forge_count_list.csv",{rows:composeRows.length});
-};
-$("dl-sheet").onclick = ()=> window.print();
+}
+$("reload-measures").onclick = ()=>{ measuresCache=null; loadCountMeasures(); };
+loadCountMeasures();
 
 // ---------- 2 · FIXER ----------
 const SELECTORS=[
