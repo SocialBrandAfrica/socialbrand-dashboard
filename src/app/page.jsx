@@ -1130,6 +1130,42 @@ async function readAllPages(makeQuery) {
   return { data: null, error: { message: `read exceeded ${PGRST_MAX_PAGES} pages of ${PGRST_ROW_CAP} rows` } }
 }
 
+// ENG-258 (PM ruling 14-10-2026 12:58: option 1 plus a debounce). Selecting every date (619) made the page fire about
+// 20 heavy requests at once; its own KPI read queued behind them and was abandoned at the 12 s deadline ("Sales figure
+// unavailable"), although the same read answers in 0.6 to 1.0 s a page when it has the database to itself (measured
+// 14-10-2026 with the heavy requests held back). rpc_dept_summary alone, five stores and 619 dates, is 7.9 s on a quiet
+// database. Date clicks apply at once, so clicking 604 dates one at a time fired 272 heavy requests, none aborted.
+// Two changes, and neither refuses anything:
+//  1. useSettledDates: a run of date clicks fires the data effects ONCE, DATE_SETTLE_MS after the last click. The
+//     calendar keeps showing every click at once (it reads the raw picks); the first population and a clear are immediate.
+//  2. makeKpiGate: beyond WIDE_SELECTION_DATES the cards-critical KPI read goes first and every heavy panel starts when
+//     it has answered (or after KPI_GATE_MAX_WAIT_MS, so a hung read never holds the panels back). WIDE_SELECTION_DATES is
+//     the page's own trend window (90 dates), below which the page has always run as it did; it is a SEED, not a proof.
+const DATE_SETTLE_MS = 400
+const WIDE_SELECTION_DATES = 90
+const KPI_GATE_MAX_WAIT_MS = 20000
+const sameDates = (a, b) => a.length === b.length && a.every(d => b.includes(d))
+function useSettledDates(picked, ms) {
+  const [settled, setSettled] = useState(picked)
+  useEffect(() => {
+    if (picked === settled || sameDates(picked, settled)) return   // review: a pick of the same dates re-fires nothing
+    if (settled.length === 0 || picked.length === 0) { setSettled(picked); return }
+    const t = setTimeout(() => setSettled(picked), ms)
+    return () => clearTimeout(t)
+  }, [picked, settled, ms])
+  return settled
+}
+function makeKpiGate(wide) {
+  if (!wide) return null
+  let resolveGate
+  const promise = new Promise(resolve => { resolveGate = resolve })
+  let timer = null
+  return {
+    wait() { if (!timer) timer = setTimeout(resolveGate, KPI_GATE_MAX_WAIT_MS); return promise },
+    release() { if (timer) clearTimeout(timer); resolveGate() },
+  }
+}
+
 // ENG-103 (PM ruling 14-10-2026: page the results, never refuse; derive the page size from a measurement).
 // rpc_top20 Movers filters with `sale_date = ANY(array)`, which is superlinear in the number of dates: measured
 // 14-10-2026 at five stores, 1 date 1.1 s, 13 dates 1.7 s, 31 dates 6.5 s, 62 dates 25.9 s, against the
@@ -1235,7 +1271,8 @@ export default function Home() {
 
   // ── dates & stores ──────────────────────────────────────────────────────────
   const [availableDates, setAvailableDates] = useState([])
-  const [selectedDates,  setSelectedDates]  = useState([])
+  const [pickedDates,    setSelectedDates]  = useState([])   // what the calendar shows, at once (ENG-258)
+  const selectedDates = useSettledDates(pickedDates, DATE_SETTLE_MS)   // what every data effect reads, 400 ms after the last click
   const [storeCodes,     setStoreCodes]     = useState([])   // populated after profile load
   const [userProfile,    setUserProfile]    = useState(undefined) // undefined=loading, null=pending
   const [authUser,       setAuthUser]       = useState(null)
@@ -1277,6 +1314,8 @@ export default function Home() {
   const [productTrendError, setProductTrendError] = useState(null) // ENG-143 -- rpc_focus_chart failure, stated in the Sales Trend panel
   const [deptError,      setDeptError]      = useState(null)  // ENG-255 — the department effect's failures are stated, not rendered as "No sales data"
   const [refreshKey,     setRefreshKey]     = useState(0)
+  // ENG-258: one gate per (stores, dates, refresh), null unless the selection is wide. loadViews releases it when the KPI read has answered.
+  const kpiGate = useMemo(() => makeKpiGate(selectedDates.length > WIDE_SELECTION_DATES), [storeCodes, selectedDates, refreshKey])
 
   function handleReload() {
     viewsCache.current.clear()
@@ -1447,13 +1486,14 @@ export default function Home() {
     setFocusBasket([])   // clear immediately so old data never lingers
     setFocusDefaultLoading(true)
 
-    supabase.rpc('rpc_focus_top5', {
+    // ENG-258: a wide selection starts this heavy read after the KPI read has answered.
+    ;(kpiGate ? kpiGate.wait() : Promise.resolve()).then(() => (cancelled ? { data: null, error: null, skipped: true } : supabase.rpc('rpc_focus_top5', {
       p_store_codes: storeCodes,
       p_dates:       selectedDates,
       p_dept:        deptFilter    !== 'all' ? deptFilter    : null,
       p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
-    }).then(({ data, error }) => {
-      if (cancelled) return
+    }))).then(({ data, error, skipped }) => {
+      if (cancelled || skipped) return
       if (error) { console.error('rpc_focus_top5 error', error.message); setFocusDefaultLoading(false); return }
       const top5 = (data ?? []).slice(0, 5).map(r => ({
         ean:           String(r.ean),
@@ -1581,6 +1621,7 @@ export default function Home() {
         setKpiData(hit.kpiData)
         setAllSubDepts(hit.allSubDepts)
         setViewsLoading(false)
+        kpiGate?.release()
         return
       }
 
@@ -1707,14 +1748,17 @@ export default function Home() {
               // came back".
               `select ${kpiTable}`),
 
-        // Sub-dept names for the current store+date
-        withDeadline(
-          supabase.rpc('rpc_subdepts', {
-            p_store_codes: storeCodes,
-            p_dates:       selectedDates,
-            p_dept_names:  null,
-          }),
-          'rpc_subdepts'),
+        // Sub-dept names for the current store+date. ENG-258: on a wide selection this heavy read moves to wave 2,
+        // so wave 1 is the KPI read alone and the Sales card is not held for it.
+        kpiGate
+          ? Promise.resolve({ data: [], error: null })
+          : withDeadline(
+              supabase.rpc('rpc_subdepts', {
+                p_store_codes: storeCodes,
+                p_dates:       selectedDates,
+                p_dept_names:  null,
+              }),
+              'rpc_subdepts'),
 
         // ENG-069: the authoritative same-day sales source. Called per store because
         // rpc_dept_summary returns no store_code — a multi-store call would collapse
@@ -1841,10 +1885,26 @@ export default function Home() {
       setKpiStockError(stockFail)
       // Only cache a clean read — caching a failed one would replay the failure as
       // though it were data, which is the silent-empty defect wearing a cache.
-      if (!salesFail && !stockFail) viewsCache.current.set(vKey, { kpiData, allSubDepts })
+      // ENG-258: on a wide selection the sub-dept names arrive in wave 2, and the cache entry is written then.
+      if (!salesFail && !stockFail && !kpiGate) viewsCache.current.set(vKey, { kpiData, allSubDepts })
       setKpiData(kpiData)
       setAllSubDepts(allSubDepts)
       setViewsLoading(false)
+      kpiGate?.release()   // ENG-258: the cards have what they need; the heavy panels may start
+      if (kpiGate) {
+        // ENG-258: the sub-dept names of a wide selection, deferred out of wave 1 and read on their own under the 12 s
+        // deadline (review: not a member of the wave-2 Promise.all, whose other reads have no deadline). The cache entry
+        // is written as soon as both the KPI read and these names are clean.
+        withDeadline(
+          supabase.rpc('rpc_subdepts', { p_store_codes: storeCodes, p_dates: selectedDates, p_dept_names: null }),
+          'rpc_subdepts').then(wideRes => {
+          if (cancelled) return
+          if (wideRes.error) console.error('[rpc_subdepts]', wideRes.error.message)
+          const wideSubDepts = [...new Set((wideRes.data ?? []).map(r => r.sub_dept_name))].filter(Boolean).sort()
+          setAllSubDepts(wideSubDepts)
+          if (!salesFail && !stockFail && !wideRes.error) viewsCache.current.set(vKey, { kpiData, allSubDepts: wideSubDepts })
+        })
+      }
 
       // Wave 2 — comparison + trend data, fired after the cards already have what
       // they need. Each promise resolves with { data, error } (supabase-js never
@@ -1907,7 +1967,7 @@ export default function Home() {
     }
 
     loadViews()
-    return () => { cancelled = true }
+    return () => { cancelled = true; kpiGate?.release() }
   }, [storeCodes, selectedDates, refreshKey])
 
   // ── re-fetch KPI aggregates when sub-dept filter changes (Bug 4) ──────────────
@@ -1935,7 +1995,8 @@ export default function Home() {
     const lyDeptDates  = selectedDates.map(d => shiftDate(d, -LY_SHIFT_DAYS))
     const wowDeptDates = selectedDates.map(d => shiftDate(d, -7))
 
-    Promise.all([
+    // ENG-258: a wide selection starts these five heavy reads after the KPI read has answered.
+    ;(kpiGate ? kpiGate.wait() : Promise.resolve()).then(() => (cancelled ? null : Promise.all([
       supabase.rpc('rpc_dept_summary', {
         p_store_codes: storeCodes,
         p_dates:       selectedDates,
@@ -1969,8 +2030,9 @@ export default function Home() {
         p_subdept:     subdeptParam,
         p_eans:        focusEans,
       }),
-    ]).then(([deptRes, deptSohRes, lyDeptRes, wowDeptRes, lyDeptSohRes]) => {
-      if (cancelled) return
+    ]))).then(res => {
+      if (cancelled || !res) return
+      const [deptRes, deptSohRes, lyDeptRes, wowDeptRes, lyDeptSohRes] = res
       if (deptRes.error)      console.error('[rpc_dept_summary]',    deptRes.error.message)
       if (deptSohRes.error)   console.error('[rpc_kpi_dept_counts]', deptSohRes.error.message)
       // ENG-141, second instance. These two errors were not logged at all, so an
@@ -2082,9 +2144,11 @@ export default function Home() {
       const hit = gpQuarCache.current.get(key)
       if (hit) { setter({ data: hit, error: null }); return }
       setter({ data: null, error: null })
-      supabase.rpc('rpc_gp_cost_quarantine', { p_store_codes: storeCodes, p_dates: dates, p_dept_names: deptNames })
-        .then(({ data, error }) => {
-          if (cancelled) return
+      // ENG-258: on a wide selection this starts after the KPI read has answered.
+      ;(kpiGate ? kpiGate.wait() : Promise.resolve())
+        .then(() => (cancelled ? { data: null, error: null, skipped: true } : supabase.rpc('rpc_gp_cost_quarantine', { p_store_codes: storeCodes, p_dates: dates, p_dept_names: deptNames })))
+        .then(({ data, error, skipped }) => {
+          if (cancelled || skipped) return
           if (error) { console.error('[rpc_gp_cost_quarantine ' + tag + ']', error.message); setter({ data: null, error: error.message }); return }
           gpQuarCache.current.set(key, data)
           setter({ data, error: null })
@@ -2129,6 +2193,8 @@ export default function Home() {
         return
       }
 
+      // ENG-258: a wide selection reads the Top 20 after the KPI read has answered.
+      if (kpiGate) { await kpiGate.wait(); if (cancelled) return }
       // ENG-103: Non-Movers ignores the dates (stock now), so only Movers over a long selection is paged.
       const paged = top20Activity !== 'non_movers' && datesForTop20.length > TOP20_DIRECT_DATES
       const t20Src = paged ? 'rpc_top20_totals' : 'rpc_top20'
@@ -2306,6 +2372,7 @@ export default function Home() {
     async function loadSubDepts() {
       // rpc_subdepts is SECURITY DEFINER — direct daily_snapshots reads are blocked by RLS.
       // Pass all raw dept name variants so HMR / H.M.R. both match.
+      if (kpiGate) { await kpiGate.wait(); if (cancelled) return }   // ENG-258
       const { data, error } = await supabase.rpc('rpc_subdepts', {
         p_store_codes: storeCodes,
         p_dates:       selectedDates,
@@ -2336,7 +2403,8 @@ export default function Home() {
     setReportLoading(true)
 
     const [rows, supplierRes, engineSlowRes] = await Promise.all([
-      fetchAllRows({ storeCodes, dates: selectedDates }),
+      // ENG-258 (review): the heaviest date-bound read of all (rpc_report_rows) also waits for the KPI read on a wide selection.
+      (kpiGate ? kpiGate.wait() : Promise.resolve()).then(() => fetchAllRows({ storeCodes, dates: selectedDates })),
       // product_catalog carries supplier_name per EAN (loaded from DIWAAIS2 / PLU reference)
       // SB-CC-SEC-001: routed through rpc_supplier_by_ean (SECURITY DEFINER).
       //
@@ -2413,7 +2481,7 @@ export default function Home() {
     setEngineSlowError(engineSlowRes.err)
     setReportLoaded(true)
     setReportLoading(false)
-  }, [storeCodes, selectedDates])
+  }, [storeCodes, selectedDates, kpiGate])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // PRODUCT DETAIL — sync; data fetch moved into ProductDetailPanelConnected
@@ -3314,7 +3382,7 @@ export default function Home() {
                   {calOpen && (
                     <CalendarPopover
                       availableDates={availableDates}
-                      selectedDates={selectedDates}
+                      selectedDates={pickedDates}
                       onChange={setSelectedDates}
                       onClose={() => setCalOpen(false)}
                       anchorRef={calAnchorRef}
@@ -3367,7 +3435,7 @@ export default function Home() {
                 {calOpen && (
                   <CalendarPopover
                     availableDates={availableDates}
-                    selectedDates={selectedDates}
+                    selectedDates={pickedDates}
                     onChange={setSelectedDates}
                     onClose={() => setCalOpen(false)}
                     anchorRef={calAnchorRef}
