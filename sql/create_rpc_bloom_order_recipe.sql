@@ -622,9 +622,9 @@ BEGIN
     demand_resolved AS (
       SELECT g.*,
         (CASE WHEN g.draw_eligible THEN g.draw_corrected ELSE NULL END) AS draw_used,
-        CASE WHEN %10$L = 'standard' AND NOT (
+        CASE WHEN %10$L = 'standard' AND (%15$L = 'DC_FRESH' OR NOT (
                (g.archetype = 'MONTH_END' AND %4$s BETWEEN %5$s AND %6$s)
-            OR (g.archetype = 'EARLY_MONTH' AND %4$s >= %7$s))
+            OR (g.archetype = 'EARLY_MONTH' AND %4$s >= %7$s)))
              THEN GREATEST(
                     COALESCE(g.ros_56d_published, g.q56/56.0),
                     COALESCE((CASE WHEN g.draw_eligible THEN COALESCE(g.ros_draw_56d_published, g.draw_raw_56d) ELSE NULL END),0))
@@ -636,17 +636,18 @@ BEGIN
     moded AS (
       SELECT d.*,
         CASE
+          WHEN %15$L = 'DC_FRESH' THEN 'minimum'
           WHEN d.archetype = 'MONTH_END' AND %4$s BETWEEN %5$s AND %6$s THEN 'build'
           WHEN d.archetype = 'EARLY_MONTH' AND %4$s >= %7$s THEN 'build'
           ELSE 'minimum'
         END AS mode,
-        CASE d.kvi_band WHEN 'KVI_CRITICAL' THEN 4 WHEN 'KVI_IMPORTANT' THEN 2 ELSE 0 END AS safety_days
+        (CASE WHEN %15$L = 'DC_FRESH' THEN 0 ELSE (CASE d.kvi_band WHEN 'KVI_CRITICAL' THEN 4 WHEN 'KVI_IMPORTANT' THEN 2 ELSE 0 END) END) AS safety_days
       FROM demand_resolved d
     ),
     banded AS (
       SELECT m.*,
         (m.ros_final * %9$s) + (m.safety_days * m.ros_final) AS min_band_ot,
-        (CASE WHEN m.gmroi_capped THEN %9$s * 0.5 ELSE %9$s END) AS review_days_ot
+        (CASE WHEN %15$L = 'DC_FRESH' THEN 0 WHEN m.gmroi_capped THEN %9$s * 0.5 ELSE %9$s END) AS review_days_ot
       FROM moded m
     ),
     banded2 AS (
@@ -724,6 +725,7 @@ BEGIN
     packs AS (
       SELECT n.*,
         (CASE WHEN n.ros_final<=0 THEN 0
+              WHEN n.needu>0 AND %15$L = 'DC_FRESH' THEN FLOOR(n.needu/n.ps)
               WHEN n.needu>0 THEN GREATEST(FLOOR(n.needu/n.ps),1,
                    -- ENG-229 (PM note five, 24-09-2026): a minimum-mode line must reach its own min band, so round UP to the whole pack that reaches it.
                    -- The 35-day ceiling and the minimum-presence exemption still cap it downstream, in packs_ceiled.
@@ -815,6 +817,7 @@ BEGIN
     geared AS (
       SELECT g.*,
         (CASE WHEN g.ros_final<=0 THEN 0
+              WHEN g.needu_geared>0 AND %15$L = 'DC_FRESH' THEN FLOOR(g.needu_geared/g.ps)
               WHEN g.needu_geared>0 THEN GREATEST(FLOOR(g.needu_geared/g.ps),1,
                    (CASE WHEN g.mode = 'minimum' AND g.proj_geared < g.min_band_ot THEN CEIL((g.min_band_ot - g.proj_geared) / g.ps)::int ELSE 0 END))
               ELSE 0 END)::int AS geared_packs_raw

@@ -119,6 +119,17 @@ BEGIN
         AND sl.supplier_nr = ANY(COALESCE((SELECT direct_supplier_nrs FROM route_cfg), ARRAY[]::bigint[])))
     );
 
+  -- BLOOM-035 (PM 14-10-2026 16:29): the beer budget reads the FAMILY, not the order code. The other members of every family that holds a pool code join the pool.
+  IF p_route_key = 'DIRECT_BEER' THEN
+    INSERT INTO _sb_pool (product_code)
+    SELECT DISTINCT fr.product_code
+      FROM l2_family_ros fr
+     WHERE fr.store_code = p_store_code
+       AND fr.family_key IN (SELECT fr2.family_key FROM l2_family_ros fr2
+                              WHERE fr2.store_code = p_store_code AND fr2.product_code IN (SELECT product_code FROM _sb_pool))
+       AND fr.product_code NOT IN (SELECT product_code FROM _sb_pool);
+  END IF;
+
   SELECT LEAST(GREATEST(
     COALESCE(recent.v, 0) / NULLIF(lytrail.v, 0),
     0.6), 1.6)
