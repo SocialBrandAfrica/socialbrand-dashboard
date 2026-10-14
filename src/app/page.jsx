@@ -51,7 +51,7 @@ const REPORTS = [
   { key: 'diwaais',         title: 'DIWAAIS',           desc: 'Sigma-style ordering report' },
   { key: 'period_sales',    title: 'Period Sales',       desc: 'Items sold in selected period — GP% and ROS included' },
   { key: 'velocity',        title: 'Velocity Report',    desc: 'ROS vs 13-week baseline — accelerators and decelerators' },
-  { key: 'lostsales',       title: 'Lost Sales',         desc: 'True OOS — SOH <= 0, no period sales, active line' },
+  { key: 'lostsales',       title: 'Lost Sales',         desc: 'Signal A: negative stock, no sales this period, active line · Signal C: stock on hand but not sold for longer than its rate allows (stock that may not be on the shelf)' },
   { key: 'ledger_discrepancy', title: 'Stock Ledger Discrepancy', desc: 'Selling despite SOH <= 0 — receiving errors or unrecorded waste' },
   { key: 'deptsummary',     title: 'Dept Summary',       desc: 'Sales, cost and GP% per department' },
   { key: 'dept_margin',     title: 'Dept Margin Trend',  desc: 'GP% by dept vs same period LY' },
