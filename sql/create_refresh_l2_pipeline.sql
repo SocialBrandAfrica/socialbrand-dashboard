@@ -56,14 +56,16 @@ DECLARE
   v_store         text;
   v_active_stores text[] := ARRAY(SELECT store_code FROM stores WHERE is_active ORDER BY store_code);
 BEGIN
-  REFRESH MATERIALIZED VIEW l2_movements_typed;
+  -- ENG-236 (14-10-2026): CONCURRENTLY, so no reader of a chain matview is ever blocked or deadlocked by this one
+  -- long transaction (13-10-2026: two deadlocks and a 90-minute block). Each of these has a unique index.
+  REFRESH MATERIALIZED VIEW CONCURRENTLY l2_movements_typed;
   v_result := v_result || jsonb_build_object('movements_typed_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
 
-  REFRESH MATERIALIZED VIEW l2_rate_of_sale;
-  REFRESH MATERIALIZED VIEW l2_item_classification;
-  REFRESH MATERIALIZED VIEW l2_ranging_tier;
-  REFRESH MATERIALIZED VIEW l2_stock_position;
-  REFRESH MATERIALIZED VIEW l2_kpi_daily;
+  REFRESH MATERIALIZED VIEW CONCURRENTLY l2_rate_of_sale;
+  REFRESH MATERIALIZED VIEW CONCURRENTLY l2_item_classification;
+  REFRESH MATERIALIZED VIEW CONCURRENTLY l2_ranging_tier;
+  REFRESH MATERIALIZED VIEW CONCURRENTLY l2_stock_position;
+  REFRESH MATERIALIZED VIEW CONCURRENTLY l2_kpi_daily;
   v_result := v_result || jsonb_build_object('chain_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
 
   -- ============ IDENTITY PHASE 2 (CANON SS17): resolved identity FIRST ============
@@ -335,13 +337,13 @@ BEGIN
   v_result := v_result || jsonb_build_object('population_verdict_done_s', ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_t0)::numeric, 1));
 
   BEGIN
-    REFRESH MATERIALIZED VIEW mv_kpi_by_date;
+    REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kpi_by_date;
   EXCEPTION WHEN OTHERS THEN
     v_result := v_result || jsonb_build_object('mv_kpi_error', SQLERRM);
   END;
 
   BEGIN
-    REFRESH MATERIALIZED VIEW mv_rate_of_sale;
+    REFRESH MATERIALIZED VIEW CONCURRENTLY mv_rate_of_sale;
   EXCEPTION WHEN OTHERS THEN
     v_result := v_result || jsonb_build_object('mv_rate_of_sale_error', SQLERRM);
   END;
