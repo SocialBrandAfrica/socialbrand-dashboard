@@ -756,6 +756,7 @@ if (R) {
     let b = await jbody(r)
     eq('upload: the cycle line count is read first, then ONE capture call', calls.map((c) => c.name), ['rpc_stocktake_cycle_get', 'rpc_stocktake_capture'])
     eq('upload: the capture is source UPLOAD', calls[1].args.p_source, 'UPLOAD')
+    eq('upload: the rows the route could not read are counted into the capture (p_unread)', calls[1].args.p_unread, 3)
     eq('upload (D1): both boxes of every sent line are numbers', calls[1].args.p_lines, [
       { line_id: idOf('FOURTEEN DIGIT EAN'), front: 3, back: 2 },
       { line_id: idOf('S/B B/ROLLS GARLIC'), front: 2.5, back: 0 },
@@ -783,6 +784,7 @@ if (R) {
     r = await post(await handSheet([{ name: 'BAKERY', rows: [[idOf('GROC ONE'), 3, 1], [idOf('GROC ONE'), 8, 8]] }]))
     b = await jbody(r)
     eq('dup route: only the first row is sent', calls[1].args.p_lines, [{ line_id: idOf('GROC ONE'), front: 3, back: 1 }])
+    eq('dup route: the refused duplicate is counted as unread', calls[1].args.p_unread, 1)
     eq('dup route: the later row comes back refused', b.rejected, [{ line_id: idOf('GROC ONE'), row: 3, tab: 'BAKERY', reason: 'this line is already on row 2 of tab BAKERY.' }])
 
     // more lines to send than the cycle holds

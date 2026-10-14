@@ -91,7 +91,11 @@ export const POST = route(async (request, { params }) => {
       'This sheet holds more lines than the list does. Download the sheet again and fill that one.')
   }
 
-  const { data } = await rpc('rpc_stocktake_capture', { p_cycle: id, p_lines: parsed.lines, p_source: 'UPLOAD' })
+  // p_unread: the rows this route could not read and never sends. The database writes the count into the
+  // UPLOAD event beside its own refusals, so the event matches what the person was told (ENG-241, PM 14-10).
+  const { data } = await rpc('rpc_stocktake_capture', {
+    p_cycle: id, p_lines: parsed.lines, p_source: 'UPLOAD', p_unread: parsed.rejected.length,
+  })
 
   // Where each sent line sat in the file, so the database's refusals name the tab and row.
   // A line goes in once (the later duplicate never reaches here), so each key is unique.

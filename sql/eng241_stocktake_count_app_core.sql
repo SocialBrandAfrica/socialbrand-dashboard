@@ -604,7 +604,7 @@ $function$;
 
 -- Capture counts. Each element {line_id, front, back, clear}. A null front or back leaves that
 -- box alone, clear:true empties both. Count = front + back, both blank = uncounted.
-CREATE OR REPLACE FUNCTION public.rpc_stocktake_capture(p_cycle uuid, p_lines jsonb, p_source text DEFAULT 'TYPED')
+CREATE OR REPLACE FUNCTION public.rpc_stocktake_capture(p_cycle uuid, p_lines jsonb, p_source text DEFAULT 'TYPED', p_unread integer DEFAULT 0)
  RETURNS jsonb
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -631,6 +631,7 @@ BEGIN
   IF auth.uid() IS NULL THEN RAISE EXCEPTION 'not authenticated' USING ERRCODE = '28000'; END IF;
   v_actor := stocktake_actor();
   IF p_source NOT IN ('TYPED','UPLOAD') THEN RAISE EXCEPTION 'unknown source %', p_source; END IF;
+  IF p_unread IS NULL OR p_unread < 0 THEN RAISE EXCEPTION 'unread must be zero or more'; END IF;
   SELECT * INTO c FROM stocktake_cycle WHERE cycle_id = p_cycle FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'unknown cycle %', p_cycle; END IF;
   IF c.status IN ('FINALISED','CANCELLED') THEN
@@ -699,7 +700,8 @@ BEGIN
   IF p_source = 'UPLOAD' THEN
     INSERT INTO stocktake_event (cycle_id, store_code, event_type, actor, detail)
     VALUES (p_cycle, c.store_code, 'UPLOAD', v_actor,
-            jsonb_build_object('lines_set', v_set, 'unchanged', v_same, 'rejected', jsonb_array_length(v_rej)));
+            jsonb_build_object('lines_set', v_set, 'unchanged', v_same, 'rejected', jsonb_array_length(v_rej),
+                            'unread', p_unread, 'sent', jsonb_array_length(p_lines)));
   END IF;
 
   IF c.status = 'PENDING_CAPTURE' AND EXISTS (SELECT 1 FROM stocktake_cycle_line WHERE cycle_id = p_cycle AND count_qty IS NOT NULL) THEN
@@ -1118,7 +1120,7 @@ $function$;
 -- Grants (R30 addendum extension): both the PUBLIC and the direct anon grant, then authenticated.
 REVOKE EXECUTE ON FUNCTION
   public.rpc_stocktake_generate(text, text, text, bigint), public.rpc_stocktake_cycle_get(uuid),
-  public.rpc_stocktake_capture(uuid, jsonb, text), public.rpc_stocktake_review(uuid, jsonb),
+  public.rpc_stocktake_capture(uuid, jsonb, text, integer), public.rpc_stocktake_review(uuid, jsonb),
   public.rpc_stocktake_finalise(uuid), public.rpc_stocktake_export(uuid, text),
   public.rpc_stocktake_cancel(uuid, text), public.rpc_stocktake_log_event(uuid, text, jsonb),
   public.rpc_stocktake_overview(), public.rpc_stocktake_store_state(text),
@@ -1127,7 +1129,7 @@ REVOKE EXECUTE ON FUNCTION
   FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION
   public.rpc_stocktake_generate(text, text, text, bigint), public.rpc_stocktake_cycle_get(uuid),
-  public.rpc_stocktake_capture(uuid, jsonb, text), public.rpc_stocktake_review(uuid, jsonb),
+  public.rpc_stocktake_capture(uuid, jsonb, text, integer), public.rpc_stocktake_review(uuid, jsonb),
   public.rpc_stocktake_finalise(uuid), public.rpc_stocktake_export(uuid, text),
   public.rpc_stocktake_cancel(uuid, text), public.rpc_stocktake_log_event(uuid, text, jsonb),
   public.rpc_stocktake_overview(), public.rpc_stocktake_store_state(text),
@@ -1137,7 +1139,7 @@ GRANT EXECUTE ON FUNCTION
 
 COMMENT ON FUNCTION public.rpc_stocktake_generate(text, text, text, bigint) IS 'GRADE: RECOMMENDED. Generate one count list for a store (DAILY, CONFIRM, ADHOC, PLU, SUPPLIER) in the ruled order. One open cycle per store, list type, sub-department and supplier. A SUPPLIER list is the pool cut to the products whose latest GRV supplier is the one asked for (l2_received_placement). SB-CC-STOCKTAKE-001, ENG-241.';
 COMMENT ON FUNCTION public.rpc_stocktake_cycle_get(uuid) IS 'GRADE: RAW. One cycle and all its lines as a single jsonb document (never a SETOF, the 1,000-row cap).';
-COMMENT ON FUNCTION public.rpc_stocktake_capture(uuid, jsonb, text) IS 'GRADE: RAW. Capture counts against a cycle (typed or upload). Count = front + back, both blank = uncounted. Writes the variance and an EDIT event per changed line.';
+COMMENT ON FUNCTION public.rpc_stocktake_capture(uuid, jsonb, text, integer) IS 'GRADE: RAW. Capture counts against a cycle (typed or upload). Count = front + back, both blank = uncounted. Writes the variance and an EDIT event per changed line. An UPLOAD event records lines_set, unchanged, rejected (the database''s refusals), unread (rows the route could not read and never sent, p_unread) and sent.';
 COMMENT ON FUNCTION public.rpc_stocktake_review(uuid, jsonb) IS 'GRADE: RAW. Confirm a counted line or send it for a recount.';
 COMMENT ON FUNCTION public.rpc_stocktake_finalise(uuid) IS 'GRADE: RAW. Finalise a cycle. Refuses while any line is blank or any flagged line is unconfirmed and names them.';
 COMMENT ON FUNCTION public.rpc_stocktake_export(uuid, text) IS 'GRADE: RAW. The TLX (real EANs only, every counted line) or the manual PLU / scale rows of a finalised cycle. The TLX line count is checked against the cycle.';
