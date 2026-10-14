@@ -479,7 +479,9 @@ function deriveDeskMap(rows) {
   }
   for (const code of Object.keys(storeDesks)) {
     storeDesks[code].sort((a, b) => (a.sort - b.sort) || a.value.localeCompare(b.value))
-    storeDesks[code] = storeDesks[code].map(d => ({ value: d.value, label: d.label }))
+    // `primary`: the DC desks and the named supplier desks (desk_sort < 1000). The derived supplier desks (sort 1001 up) and the
+    // catch-all are the long tail: 10116 has about 70 desks and a single row of buttons ran off the side of the page.
+    storeDesks[code] = storeDesks[code].map(d => ({ value: d.value, label: d.label, primary: d.sort < 1000 }))
   }
   const codes = Object.keys(storeDesks).sort((a, b) => {
     const ra = dcRouteByStore[a] ?? '', rb = dcRouteByStore[b] ?? ''
@@ -1581,6 +1583,35 @@ function DeskOrderRow({ line, qty, isEdited, onQty, preorder, watermark }) {
   )
 }
 
+// Desk picker (Pieter, 14-10: "the order desks bleed off the side of the page ... the weekly orders and the DC orders as buttons,
+// the rest as dropdown options so I can walk the desk"). The main desks are buttons that WRAP; the long tail is one dropdown,
+// which shows the active desk when it is one of them.
+function DeskPicker({ desks, value, onChange }) {
+  const main = desks.filter(d => d.primary)
+  const rest = desks.filter(d => !d.primary)
+  const restActive = rest.some(d => d.value === value)
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', maxWidth: '100%' }}>
+      {main.map(d => (
+        <Chip key={d.value} active={value === d.value} onClick={() => onChange(d.value)}>{d.label}</Chip>
+      ))}
+      {rest.length > 0 && (
+        <select value={restActive ? value : ''} onChange={e => { if (e.target.value) onChange(e.target.value) }}
+          aria-label="More desks"
+          style={{
+            fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--daisy-white)', maxWidth: 280,
+            background: restActive ? 'rgba(74,222,128,0.14)' : 'rgba(0,0,0,0.28)',
+            border: restActive ? '1px solid rgba(74,222,128,0.5)' : '1px solid var(--glass-border)',
+            borderRadius: 'var(--radius-chip)', padding: '8px 10px', outline: 'none',
+          }}>
+          <option value="">{`More desks (${rest.length}) …`}</option>
+          {rest.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+        </select>
+      )}
+    </div>
+  )
+}
+
 function OrderDesksMode() {
   const { storeDesks, deskStores, desksLoading, desksError } = useBloomDesks()
   const [storeCode, setStoreCode] = useState('')
@@ -2432,9 +2463,9 @@ function OrderDesksMode() {
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end' }}>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '100%' }}>
               <Label>Desk</Label>
-              <SegmentedControl value={desk} onChange={setDesk} options={desks} />
+              <DeskPicker desks={desks} value={desk} onChange={setDesk} />
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <Label>Delivery date (cutoff-respecting)</Label>
