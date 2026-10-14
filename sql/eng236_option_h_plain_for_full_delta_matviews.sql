@@ -1,5 +1,7 @@
 -- =============================================================================
--- ENG-236 OPTION H -- READY, NOT APPLIED. Apply only on PM's ruling (BUG-LOG ENG-236 addendum 3).
+-- ENG-236 OPTION H -- APPLIED 14-10-2026 15:26 SAST (13:26 UTC) on PM's ruling of 15:23 (CONCURRENTLY withdrawn). Read back on the live body:
+--   md5(prosrc) 8ad6e03a949a7b139680d1427d78fd45, 13,447 chars (13,499 less 4 x 13 for the four removed CONCURRENTLY), four plain and four CONCURRENTLY
+--   statements, SECURITY DEFINER and the execute grants unchanged, cron job 15 unchanged. (BUG-LOG ENG-236 addendum 3 and 4.)
 --
 --   Four of the six chain matviews change every row on every refresh (l2_stock_position.positioned_at, l2_item_classification.classified_at and
 --   l2_ranging_tier.tiered_at are CURRENT_TIMESTAMP, l2_rate_of_sale.computed_date is CURRENT_DATE), so REFRESH ... CONCURRENTLY deletes and
