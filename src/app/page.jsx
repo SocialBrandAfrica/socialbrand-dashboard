@@ -1281,7 +1281,7 @@ export default function Home() {
   const setSelectedDates = useCallback(next => setPickedDates(prev => {
     const v = typeof next === 'function' ? next(prev) : next
     if (!Array.isArray(v)) return prev
-    const clean = v.filter(d => typeof d === 'string' && /^d{4}-d{2}-d{2}$/.test(d))
+    const clean = v.filter(d => typeof d === 'string' && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d))
     return clean.length === v.length ? v : (clean.length ? clean : prev)
   }), [])
   const selectedDates = useSettledDates(pickedDates, DATE_SETTLE_MS)   // what every data effect reads, 400 ms after the last click
