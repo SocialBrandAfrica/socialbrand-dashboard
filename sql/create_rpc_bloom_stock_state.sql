@@ -175,6 +175,39 @@ BEGIN
     FROM sales28 s
     LEFT JOIN dept_scope ds ON ds.product_code = s.product_code
     LEFT JOIN pool_run   pr ON pr.product_code = s.product_code
+  ),
+  -- BLOOM-035 s34: WHERE the demand outside this desk's pool is ordered (the gap is not "no DC link").
+  gapmix AS (
+    SELECT COALESCE(string_agg(b.bucket || ' R' || to_char(round(b.wk), 'FM999G999G999') || ' (' || b.n || ' lines)', ', ' ORDER BY b.ord), 'none') AS label
+      FROM (
+        SELECT x.bucket, x.ord, SUM(x.wk) AS wk, count(*) AS n
+          FROM (
+            SELECT s2.cost28 / 4.0 AS wk,
+                   (CASE WHEN v.route_key = 'DC_FRESH' THEN 'on the DC fresh desk'
+                         WHEN v.route_key = 'DIRECT_CATCHALL' THEN 'on the catch-all desk'
+                         WHEN v.route_key = 'DIRECT_BEER' THEN 'on the beer desk'
+                         WHEN v.route_key ~ '^DIRECT_S[0-9]+$' THEN 'on a supplier desk'
+                         WHEN v.route_key LIKE 'DIRECT\_%' ESCAPE '\' THEN 'on a brand desk'
+                         WHEN v.route_key IS NOT NULL THEN 'on another desk'
+                         WHEN spx.class = 'NON_STOCK' THEN 'non-stock lines, never ordered'
+                         ELSE 'stock lines on no desk' END) AS bucket,
+                   (CASE WHEN v.route_key = 'DC_FRESH' THEN 1
+                         WHEN v.route_key LIKE 'DIRECT\_%' ESCAPE '\' AND v.route_key !~ '^DIRECT_S[0-9]+$' AND v.route_key NOT IN ('DIRECT_CATCHALL', 'DIRECT_BEER') THEN 2
+                         WHEN v.route_key ~ '^DIRECT_S[0-9]+$' THEN 3
+                         WHEN v.route_key = 'DIRECT_CATCHALL' THEN 4
+                         WHEN v.route_key = 'DIRECT_BEER' THEN 5
+                         WHEN v.route_key IS NOT NULL THEN 6
+                         WHEN spx.class = 'NON_STOCK' THEN 7
+                         ELSE 8 END) AS ord
+              FROM sales28 s2
+              JOIN dept_scope ds2 ON ds2.product_code = s2.product_code
+              LEFT JOIN pool_run pr2 ON pr2.product_code = s2.product_code
+              LEFT JOIN l2_population_verdict v ON v.store_code = p_store_code AND v.product_code = s2.product_code
+              LEFT JOIN l2_stock_position spx ON spx.store_code = p_store_code AND spx.product_code = s2.product_code
+             WHERE pr2.product_code IS NULL AND s2.cost28 > 0
+          ) x
+         GROUP BY x.bucket, x.ord
+      ) b
   )
   SELECT g.grp, g.lines::int, g.selling_lines::int,
     ROUND(g.stock_at_cost, 2), ROUND(g.daily_cost_demand, 2),
@@ -185,7 +218,7 @@ BEGIN
   SELECT 'TOTAL', NULL, NULL, NULL, NULL, NULL,
     ROUND((SELECT dept_v FROM totals), 2), ROUND((SELECT pool_v FROM totals), 2),
     ROUND((SELECT dept_v - pool_v FROM totals), 2),
-    (SELECT gap_n FROM totals)::int, 'no_active_dc_route', v_now
+    (SELECT gap_n FROM totals)::int, (SELECT gm.label FROM gapmix gm), v_now
   ORDER BY 1;
 END;
 $function$;

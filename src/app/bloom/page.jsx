@@ -564,17 +564,23 @@ function DeskFlags({ flags }) {
     <GlassCard style={{ margin: '0 32px 20px', padding: '16px 22px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
         <span style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 'var(--weight-semi)', color: 'var(--core-yellow)' }}>
-          Data quality — {flags.length} door{flags.length > 1 ? 's' : ''} the engine cannot order (fix at source, R21)
+          {flags.length} case or multi-pack code{flags.length > 1 ? 's' : ''} sell here but hold no stock of their own
         </span>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)' }}>{num(totalUnits)} units sold last 12 months, no order proposed</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)' }}>{num(totalUnits)} units sold last 12 months</span>
       </div>
+      {/* BLOOM-035 s34 (PM 14-10 16:55): these are not errors to fix. Sigma keeps the stock of a case or six-pack on the single bottle, so
+          this screen cannot order them; Desks, SAB Direct orders the family through the single's line. */}
+      <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--veld-mist)', lineHeight: 1.5 }}>
+        Sigma keeps their stock on the single bottle, so this screen cannot order them and shows no pack for them. Their demand sits on the single&rsquo;s line.
+        Desks &rarr; SAB Direct orders the whole family through that line.
+      </p>
       <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflow: 'auto' }}>
         {flags.map(f => (
           <div key={f.product_code} style={{ display: 'flex', justifyContent: 'space-between', gap: 12,
             fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>
             <span style={{ color: 'var(--daisy-white)' }}>{f.description}</span>
             <span style={{ color: 'var(--veld-mist)', textAlign: 'right', flex: '0 0 auto' }}>
-              {num(f.q364)} units/12m · {f.reason}
+              {num(f.q364)} units/12m · {String(f.reason ?? '').includes('Record Stock Qty OFF') ? 'no stock record of its own, stock sits on the single' : f.reason}
             </span>
           </div>
         ))}
@@ -2639,7 +2645,7 @@ function OrderDesksMode() {
           <p style={{ margin: '10px 0 0', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--veld-mist)' }}>
             {(() => {
               const t = stockState.find(s => s.group_name === 'TOTAL')
-              return `Dept demand ${zar(t.weekly_demand_dept)}/wk = orderable ${zar(t.weekly_demand_orderable)} + ${zar(t.weekly_demand_gap)} (${t.weekly_demand_gap_lines} lines, ${t.weekly_demand_gap_label} -- no active DC supplier link, ENG-008)`
+              return `Department demand ${zar(t.weekly_demand_dept)} a week = ${zar(t.weekly_demand_orderable)} on this desk + ${zar(t.weekly_demand_gap)} on other desks or not ordered (${t.weekly_demand_gap_lines} lines). Where that ${zar(t.weekly_demand_gap)} sits: ${t.weekly_demand_gap_label}.`
             })()}
           </p>
         )}
@@ -2732,6 +2738,10 @@ function OrderDesksMode() {
         const strong = dropped.filter(r => Number(r.rate_corrected) >= 2)
         const thin   = dropped.filter(r => Number(r.observable_days) <= 6)
         const empty  = dropped.filter(r => Number(r.soh) <= 0)
+        // BLOOM-035 s34 (PM 14-10 16:55): the headline now says which of the dropped lines actually
+        // run out before the next delivery on the MEASURED rate (the true-cover column, same data).
+        const gapDays = Math.max(1, Math.round((new Date(nextDeliveryDate) - new Date(deliveryDate)) / 86400000) || 1)
+        const atRisk = dropped.filter(r => r.cover_days_on_corr != null && Number(r.cover_days_on_corr) < gapDays)
         const win    = rows.length ? Number(rows[0].window_days) : 56
 
         function exportHidden() {
@@ -2765,8 +2775,11 @@ function OrderDesksMode() {
                 </span>
               ) : (
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--veld-mist)' }}>
-                  {dropped.length} line{dropped.length === 1 ? '' : 's'} the order dropped with no reason shown ·
-                  {' '}{strong.length} at 2/day or more · {empty.length} sitting at zero stock
+                  {dropped.length} line{dropped.length === 1 ? '' : 's'} where the stockout correction was withheld and nothing is on the order ·
+                  {' '}<span style={{ color: atRisk.length > 0 ? 'var(--data-neg)' : undefined }}
+                    title={`The line's own measured rate would empty the shelf before the next delivery (${gapDays} day${gapDays === 1 ? '' : 's'}). These are the lines to look at first.`}>
+                    {atRisk.length} run out before the next delivery on the measured rate</span>
+                  {' '}· {strong.length} at 2/day or more · {empty.length} sitting at zero stock
                   {onOrder.length > 0 && (
                     <span style={{ color: 'var(--core-yellow)' }}
                       title="These carry a suppressed rate too, but they are already bought on this order. They are listed below, flagged, and they are NOT work.">
@@ -2795,8 +2808,9 @@ function OrderDesksMode() {
               <>
                 <p style={{ margin: '8px 0 0', fontFamily: 'var(--font-mono)', fontSize: 10.5,
                   color: 'var(--veld-mist)', lineHeight: 1.5 }}>
-                  Each of these was out of stock for most of the last {win} days, so the rate the order used is low
-                  <em> because</em> it was empty. <strong style={{ color: 'var(--daisy-white)' }}>Judge the evidence, not just the number:</strong>
+                  Each of these was out of stock for many of the last {win} days, so the rate the order used is low
+                  <em> because</em> it was empty, and the measured rate rests on too few days to order on without you. The reason is on every row (hover it).
+                  {' '}<strong style={{ color: 'var(--daisy-white)' }}>Judge the evidence, not just the number:</strong>
                   {' '}&ldquo;days seen&rdquo; is how many days of the {win} the line was actually on the shelf to be measured.
                   {thin.length > 0 && <> {thin.length} of these rest on six days or fewer, so treat those rates as thin.</>}
                   {onOrder.length > 0 && (
