@@ -2601,9 +2601,9 @@ function OrderDesksMode() {
           <span>Basis this week: <strong style={{ color: budgetManualOverride ? 'var(--daisy-white)' : cashConstrained ? 'var(--core-yellow)' : 'var(--data-pos)' }}>
             {budgetManualOverride ? 'MANUAL' : budgetIsNeeds ? 'NEEDS (projection)' : cashConstrained ? '80% CASH-CONSTRAINED (10d essentials)' : '82% FORECAST (21d essentials)'}
           </strong></span>
-          <span>Route budget{budgetManualOverride || budgetIsNeeds ? '' : ' (82%)'}: {zar(budgetTotal)}</span>
+          <span>{budgetIsNeeds && !budgetManualOverride ? 'Needs budget' : 'Route budget'}{budgetManualOverride || budgetIsNeeds ? '' : ' (82%)'}: {zar(budgetTotal)}</span>
           {budgetIsNeeds && railLyPct != null && (
-            <span style={{ color: 'var(--core-yellow)' }}>rail provisional · LY {railLyPct}% of pool</span>
+            <span style={{ color: 'var(--core-yellow)' }}>needs budget provisional · LY {railLyPct}% of pool</span>
           )}
           {!budgetManualOverride && cash80Group > 0 && <span>Group 80%-cash reference: {zar(cash80Group)}</span>}
           {generated && fitToBudget && (
@@ -2615,10 +2615,14 @@ function OrderDesksMode() {
         {generated && overRail > 0 && (
           <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--core-yellow)',
             background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.35)', borderRadius: 8, padding: '8px 12px' }}>
-            Over the week’s rail by {zar(overRail)} — HERO/KVI floors and the minimum-presence packs are protected and never trimmed.
-            Nothing has been shaved into an empty shelf; this is a buying decision, not a fault.
+            {/* BLOOM-035 s44 (PM close section 44, lexicon E5): the order is compared with the NEEDS BUDGET, never with "need" or "the rail", and the basis is named. */}
+            Over the needs budget by {zar(overRail)}.
+            {' '}Basis: {budgetManualOverride ? 'a figure typed in by hand' : budgetIsNeeds ? 'the engine’s sales projection at cost for this delivery week (last year’s week, the trend and the rhythm), ' + zar(budgetTotal) : '82% of the forecast, ' + zar(budgetTotal)}
+            {committed > 0 ? `, with ${zar(committed)} already committed to it` : ''}.
+            {' '}The protected lines (HERO/KVI floors and the minimum-presence packs) are part of the order and are never trimmed,
+            so nothing has been shaved into an empty shelf. This is a buying decision, not a fault.
             {budgetIsNeeds && railLyPct != null && (
-              <> The rail itself is <strong>provisional</strong> — it is projected off last year and only {railLyPct}% of this pool has last-year history, so treat the over-rail figure as indicative, not a cash verdict.</>
+              <> The needs budget itself is <strong>provisional</strong>: it is projected off last year and only {railLyPct}% of this pool has last-year history, so treat the over figure as indicative, not a cash verdict.</>
             )}
           </div>
         )}
