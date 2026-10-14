@@ -31,7 +31,7 @@
 --           DROP FUNCTION public.rpc_ean_labels(text[], text[]);
 -- =============================================================================
 SET LOCAL lock_timeout = '5s';
-DO $
+DO $$
 BEGIN
   IF to_regprocedure('public.rpc_top20_totals(text[],text[],text,text,text[])') IS NOT NULL
      OR to_regprocedure('public.rpc_ean_labels(text[],text[])') IS NOT NULL THEN
