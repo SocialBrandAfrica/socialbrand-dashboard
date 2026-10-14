@@ -248,6 +248,17 @@ function applyFilters(rows, { activityFilter, deptFilter, subDeptFilter, include
 // ─────────────────────────────────────────────────────────────────────────────
 // BUILD REPORT
 // ─────────────────────────────────────────────────────────────────────────────
+// ENG-086 / ENG-073: the cover a report row shows. Where the line belongs to a pack-and-single family the
+// family-resolved cover is the true one (the scan code alone said 24.9 days for SPAR milk at 80175 against a
+// true 2.2); a negative family cover means the book stock is negative, which is not a cover, so it shows a dash
+// and says why. The scan figure always stays in its own column, and the basis is named (R29: a moved number
+// is never silent).
+function coverFor(ros) {
+  const fam = ros?.family_days_cover != null ? Number(ros.family_days_cover) : null
+  if (fam != null) return { days: fam >= 0 ? fam.toFixed(1) : '—', basis: fam >= 0 ? 'Family' : 'Family (stock negative)' }
+  return { days: ros?.days_cover != null ? Number(ros.days_cover).toFixed(1) : '—', basis: 'Scan' }
+}
+
 function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), supplierMap = new Map(), nDates = 1, focusEans = null) {
   // Helper: active line check — must have sold in last ACTIVE_LINE_LOOKBACK days
   const activeLineCutoff = refDate ? shiftDate(refDate, -ACTIVE_LINE_LOOKBACK) : null
@@ -331,7 +342,9 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
             'Stock Turn':       (r.soh ?? 0) > 0
               ? ((r.period_qty ?? 0) / (r.soh ?? 0) * (365 / n)).toFixed(1)
               : '—',
-            'Days Cover':       ros.days_cover != null ? Number(ros.days_cover).toFixed(1) : '—',
+            'Days Cover':       coverFor(ros).days,
+            'Cover Basis':      coverFor(ros).basis,
+            'Scan Days Cover':  ros.days_cover != null ? Number(ros.days_cover).toFixed(1) : '—',
             'Daily ROS (13w)':  baselineRos.toFixed(3),
             'Current ROS':      currentRos.toFixed(3),
             'ROS vs Baseline':  rosVsBase != null ? rosVsBase.toFixed(2) + 'x' : '—',
@@ -532,7 +545,9 @@ function buildReport(report, rows, moverMode, refDate, rosMap = new Map(), suppl
             'Period Cost':   Math.round((r.period_cost  ?? 0) * 100) / 100,
             'SOH':           r.soh ?? 0,
             'Daily ROS':     ros.daily_ros  != null ? Number(ros.daily_ros).toFixed(3)  : '—',
-            'Days Cover':    ros.days_cover != null ? Number(ros.days_cover).toFixed(1) : '—',
+            'Days Cover':    coverFor(ros).days,   // ENG-086: family-resolved where the line has a family
+            'Cover Basis':   coverFor(ros).basis,
+            'Scan Days Cover': ros.days_cover != null ? Number(ros.days_cover).toFixed(1) : '—',
             'Supplier':      supplierMap.get(r.ean) ?? '',
             'Internal Ref':  r.internal_ref ?? '',
             'Status':        r.status ?? '',
@@ -1095,6 +1110,93 @@ const SEARCH_IDX_TTL = 6 * 60 * 60 * 1000  // 6h — optimistic cache only, alwa
 // The live PostgREST row cap (API-layer setting, tested behaviourally; BUG-LOG ENG-093,
 // ENG-101). A read that returns exactly this many rows was cut, not complete.
 const PGRST_ROW_CAP = 1000
+// ENG-253 (PM ruling 14-10-2026: page the results, never refuse). One request to PostgREST returns at most
+// PGRST_ROW_CAP rows; measured live 14-10-2026 by asking for rows 0-4999 of mv_kpi_by_date: the answer was
+// `206 Partial Content`, `Content-Range: 0-999/3065`. So the page size IS the cap, and a selection that can
+// hold more rows (five stores and 201 or more dates, 3,065 rows in all) is read page by page. `makeQuery`
+// must return a FRESH builder each call (a builder cannot be re-ranged) with a total order, so pages never
+// overlap or skip. Any page's error is the read's error: the caller states it, never sums a short read.
+const PGRST_MAX_PAGES = 50   // a safety valve (50,000 rows), reported as an error, never a silent cut
+async function readAllPages(makeQuery) {
+  const rows = []
+  for (let page = 0; page < PGRST_MAX_PAGES; page++) {
+    const from = page * PGRST_ROW_CAP
+    const { data, error } = await makeQuery().range(from, from + PGRST_ROW_CAP - 1)
+    if (error) return { data: null, error }
+    const got = data ?? []
+    rows.push(...got)
+    if (got.length < PGRST_ROW_CAP) return { data: rows, error: null }
+  }
+  return { data: null, error: { message: `read exceeded ${PGRST_MAX_PAGES} pages of ${PGRST_ROW_CAP} rows` } }
+}
+
+// ENG-103 (PM ruling 14-10-2026: page the results, never refuse; derive the page size from a measurement).
+// rpc_top20 Movers filters with `sale_date = ANY(array)`, which is superlinear in the number of dates: measured
+// 14-10-2026 at five stores, 1 date 1.1 s, 13 dates 1.7 s, 31 dates 6.5 s, 62 dates 25.9 s, against the
+// authenticator's 8 s. So up to TOP20_DIRECT_DATES dates it is called as before (one call, unchanged); beyond
+// that the dates are read in pages through rpc_top20_totals (a linear, join-to-the-dates read of per-EAN totals,
+// measured 1.6 s for 25 dates at five stores and 3.2 s for 125 dates at one store: 125 store-dates a page, the
+// slowest page about 2.5 times inside the ceiling). Movers is the UNION of the top 20 by value and the top 20 by
+// quantity over the WHOLE period, which the 40 rows of a page cannot give, so the pages carry EVERY item's total
+// and this function sums them exactly, then picks the union itself; rpc_ean_labels names the picked EANs. Any
+// page's error is the read's error (the caller states it, never ranks a short read), and a page whose `served`
+// count does not equal its rows is a failure too (R22 tripwire).
+const TOP20_DIRECT_DATES = 14
+const TOP20_PAGE_STORE_DATES = 125
+const TOP20_PAGE_PARALLEL = 3
+async function readTop20Paged(supabaseClient, { storeCodes, dates, dept, subdept, eans }) {
+  const perPage = Math.max(1, Math.floor(TOP20_PAGE_STORE_DATES / Math.max(1, storeCodes.length)))
+  const pages = []
+  for (let i = 0; i < dates.length; i += perPage) pages.push(dates.slice(i, i + perPage))
+  const sums = new Map()   // ean -> [sales in 1/10,000, qty]
+  let next = 0
+  let failure = null
+  async function worker() {
+    while (!failure) {
+      const idx = next++
+      if (idx >= pages.length) return
+      const { data, error } = await supabaseClient.rpc('rpc_top20_totals', {
+        p_store_codes: storeCodes, p_dates: pages[idx], p_dept: dept, p_subdept: subdept, p_eans: eans,
+      })
+      if (failure) return
+      const rows = data?.rows
+      if (error) { failure = `page ${idx + 1} of ${pages.length}: ${error.message}`; return }
+      if (!Array.isArray(rows) || Number(data.served) !== rows.length) {
+        failure = `page ${idx + 1} of ${pages.length} came back short (served ${data?.served}, rows ${Array.isArray(rows) ? rows.length : 'none'})`
+        return
+      }
+      for (const [ean, sv, q] of rows) {
+        const cur = sums.get(ean) ?? [0, 0]
+        cur[0] += Math.round(Number(sv) * 1e4)
+        cur[1] += Number(q)
+        sums.set(ean, cur)
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(TOP20_PAGE_PARALLEL, pages.length) }, worker))
+  if (failure) return { data: null, error: { message: failure } }
+  const keyed = [...sums].map(([ean, [sv4, q]]) => ({
+    ean, total_sales: Math.round(sv4 / 100) / 100, total_qty: Math.round(q * 1e6) / 1e6,
+  }))
+  const tie = (a, b) => (a.ean < b.ean ? -1 : a.ean > b.ean ? 1 : 0)
+  const picked = new Map()
+  for (const r of [...keyed].sort((a, b) => (b.total_sales - a.total_sales) || tie(a, b)).slice(0, 20)) picked.set(r.ean, r)
+  for (const r of [...keyed].sort((a, b) => (b.total_qty - a.total_qty) || tie(a, b)).slice(0, 20)) picked.set(r.ean, r)
+  if (picked.size === 0) return { data: [], error: null }
+  const { data: labels, error: labelError } = await supabaseClient.rpc('rpc_ean_labels', {
+    p_store_codes: storeCodes, p_eans: [...picked.keys()],
+  })
+  if (labelError) return { data: null, error: { message: `labels: ${labelError.message}` } }
+  const byEan = new Map((labels ?? []).map(l => [l.ean, l]))
+  return {
+    data: [...picked.values()].map(r => {
+      const l = byEan.get(r.ean) ?? {}
+      return { ean: r.ean, description: l.description ?? null, dept_name: l.dept_name ?? null, sub_dept_name: l.sub_dept_name ?? null,
+               size: l.size ?? null, unit: l.unit ?? null, total_sales: r.total_sales, total_qty: r.total_qty }
+    }),
+    error: null,
+  }
+}
 
 function loadCachedSearchIndex(scopeKey) {
   try {
@@ -1213,6 +1315,11 @@ export default function Home() {
   // swallowed into an empty array by `.catch(() => [])`, which renders as
   // "no slow movers" -- a blank standing in for a failure (R22 §3).
   const [engineSlowError, setEngineSlowError] = useState(null)
+  // AUD-011 B / ENG-180 A: the cost-error detector (rpc_gp_cost_quarantine) for this period and for last year's
+  // dates. {data, error}; data null while loading. A failed call is stated, never read as "no cost errors".
+  const [gpQuarTY, setGpQuarTY] = useState({ data: null, error: null })
+  const [gpQuarLY, setGpQuarLY] = useState({ data: null, error: null })
+  const gpQuarCache = useRef(new Map())
   const [supplierError,   setSupplierError]   = useState(null)  // ENG-251 -- a failed supplier read is stated, not an empty Supplier column
   const [reportLoaded,  setReportLoaded]  = useState(false)
   const [reportLoading, setReportLoading] = useState(false)
@@ -1583,10 +1690,11 @@ export default function Home() {
         isSingleDate
           ? Promise.resolve({ data: [], error: null })
           : withDeadline(
-              supabase.from(kpiTable)
+              readAllPages(() => supabase.from(kpiTable)
                 .select('store_code,store_name,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied,ghost_stock_value')
                 .in('store_code', storeCodes)
-                .in('snapshot_date', selectedDates),
+                .in('snapshot_date', selectedDates)
+                .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true })),
               // Name the REQUEST, not the object. Every other caller here passes
               // an RPC name; this one passed a bare table name, so its failure
               // read as "mv_kpi_by_date is broken" rather than "this select never
@@ -1739,18 +1847,20 @@ export default function Home() {
       const [lyKpiRes, wowKpiRes, lyDeptRes, trendRes, lyTrendRes] = await Promise.all([
         // LY KPI — always historical, use MV
         lyDates.length > 0
-          ? supabase.from('mv_kpi_by_date')
+          ? readAllPages(() => supabase.from('mv_kpi_by_date')
               .select('store_code,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty,neg_soh_count,slow_mover_count,capital_tied')
               .in('store_code', storeCodes)
               .in('snapshot_date', lyDates)
+              .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true }))
           : Promise.resolve({ data: [], error: null }),
 
         // WoW KPI — always historical, use MV
         wowDates.length > 0
-          ? supabase.from('mv_kpi_by_date')
+          ? readAllPages(() => supabase.from('mv_kpi_by_date')
               .select('store_code,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty')
               .in('store_code', storeCodes)
               .in('snapshot_date', wowDates)
+              .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true }))
           : Promise.resolve({ data: [], error: null }),
 
         // LY dept summary
@@ -1761,19 +1871,19 @@ export default function Home() {
         // Trend data (90-day window) — use MV (pre-aggregated, 2s for 90 dates).
         // v_kpi_by_date times out at >25 dates (live 18M-row aggregation). MV is
         // refreshed at the end of every store's nightly push so it stays current.
-        supabase.from('mv_kpi_by_date')
+        readAllPages(() => supabase.from('mv_kpi_by_date')
           .select('store_code,snapshot_date,total_sales,total_sales_ex_vat,total_cost,total_qty')
           .in('store_code', storeCodes)
           .in('snapshot_date', trendDates)
-          .order('snapshot_date', { ascending: true }),
+          .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true })),
 
         // LY trend data — always historical, use MV
         lyTrendDates.length > 0
-          ? supabase.from('mv_kpi_by_date')
+          ? readAllPages(() => supabase.from('mv_kpi_by_date')
               .select('store_code,snapshot_date,total_sales,total_sales_ex_vat')
               .in('store_code', storeCodes)
               .in('snapshot_date', lyTrendDates)
-              .order('snapshot_date', { ascending: true })
+              .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true }))
           : Promise.resolve({ data: [], error: null }),
       ])
 
@@ -1916,17 +2026,19 @@ export default function Home() {
     const rawNames = [...(deptNormMap.get(deptFilter) ?? new Set([deptFilter]))]
     const toTrend = r => ({ store_code: r.store_code, snapshot_date: r.snapshot_date, total_sales: r.dept_sales })
     Promise.all([
-      supabase.from('v_dept_by_date')
+      readAllPages(() => supabase.from('v_dept_by_date')
         .select('store_code,snapshot_date,dept_sales')
         .in('store_code', storeCodes)
         .in('snapshot_date', trendDates)
-        .in('dept_name', rawNames),
+        .in('dept_name', rawNames)
+        .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true }).order('dept_name', { ascending: true })),
       lyTrendDates.length > 0
-        ? supabase.from('v_dept_by_date')
+        ? readAllPages(() => supabase.from('v_dept_by_date')
             .select('store_code,snapshot_date,dept_sales')
             .in('store_code', storeCodes)
             .in('snapshot_date', lyTrendDates)
             .in('dept_name', rawNames)
+            .order('snapshot_date', { ascending: true }).order('store_code', { ascending: true }).order('dept_name', { ascending: true }))
         : Promise.resolve({ data: [] }),
     ]).then(([cur, ly]) => {
       if (cancelled) return
@@ -1947,6 +2059,36 @@ export default function Home() {
     })
     return () => { cancelled = true }
   }, [storeCodes, deptFilter, deptNormMap, trendDates, lyTrendDates])
+
+  // ── Gross Profit cost-error check (AUD-011 B this period, ENG-180 A last year) ──────────────────
+  // One detector (rpc_gp_cost_quarantine): a (store, product, day) line whose cost is at least
+  // R1,000 and 10 times its ex-VAT revenue. This period it is STATED beside the headline, never
+  // smoothed out of it. For last year's dates it decides whether last year's GP is shown at all.
+  useEffect(() => {
+    if (!storeCodes.length || !selectedDates.length) {
+      setGpQuarTY({ data: null, error: null }); setGpQuarLY({ data: null, error: null }); return
+    }
+    let cancelled = false
+    const deptNames = deptFilter !== 'all' ? [...(deptNormMap.get(deptFilter) ?? new Set([deptFilter]))] : null
+    const lyDates   = selectedDates.map(d => shiftDate(d, -LY_SHIFT_DAYS))
+    const run = (dates, setter, tag) => {
+      const key = tag + '|' + [...storeCodes].sort().join(',') + '|' + [...dates].sort().join(',') + '|' + (deptNames ? deptNames.slice().sort().join(',') : '')
+      const hit = gpQuarCache.current.get(key)
+      if (hit) { setter({ data: hit, error: null }); return }
+      setter({ data: null, error: null })
+      supabase.rpc('rpc_gp_cost_quarantine', { p_store_codes: storeCodes, p_dates: dates, p_dept_names: deptNames })
+        .then(({ data, error }) => {
+          if (cancelled) return
+          if (error) { console.error('[rpc_gp_cost_quarantine ' + tag + ']', error.message); setter({ data: null, error: error.message }); return }
+          gpQuarCache.current.set(key, data)
+          setter({ data, error: null })
+        })
+        .catch(e => { if (!cancelled) setter({ data: null, error: e?.message ?? String(e) }) })
+    }
+    run(selectedDates, setGpQuarTY, 'TY')
+    run(lyDates,       setGpQuarLY, 'LY')
+    return () => { cancelled = true }
+  }, [storeCodes, selectedDates, deptFilter, deptNormMap, refreshKey])
 
   // ── fetch Top 20 via RPC — re-runs when dept or sub-dept filter changes ──────
   // rpc_top20 accepts p_dept / p_subdept and returns at most 40 pre-aggregated rows
@@ -1981,17 +2123,27 @@ export default function Home() {
         return
       }
 
-      const { data, error } = await supabase.rpc('rpc_top20', {
-        p_store_codes: storeCodes,
-        p_dates:       datesForTop20,
-        p_dept:        deptFilter    !== 'all' ? deptFilter    : null,
-        p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
-        p_activity:    top20Activity,
-        p_parents:     includeParents,
-        p_eans:        focusEans,
-      })
+      // ENG-103: Non-Movers ignores the dates (stock now), so only Movers over a long selection is paged.
+      const paged = top20Activity !== 'non_movers' && datesForTop20.length > TOP20_DIRECT_DATES
+      const t20Src = paged ? 'rpc_top20_totals' : 'rpc_top20'
+      const { data, error } = paged
+        ? await readTop20Paged(supabase, {
+            storeCodes, dates: datesForTop20,
+            dept:    deptFilter    !== 'all' ? deptFilter    : null,
+            subdept: subDeptFilter !== 'all' ? subDeptFilter : null,
+            eans:    focusEans,
+          })
+        : await supabase.rpc('rpc_top20', {
+            p_store_codes: storeCodes,
+            p_dates:       datesForTop20,
+            p_dept:        deptFilter    !== 'all' ? deptFilter    : null,
+            p_subdept:     subDeptFilter !== 'all' ? subDeptFilter : null,
+            p_activity:    top20Activity,
+            p_parents:     includeParents,
+            p_eans:        focusEans,
+          })
       if (cancelled) return
-      if (error) console.error('[rpc_top20]', error.message)
+      if (error) console.error('[' + t20Src + ']', error.message)
       const t20 = data ?? []
       // ENG-141. Only cache a clean read, and leave the key UNSET on failure so
       // the next render retries. Caching a failure replays it as though it were
@@ -2002,7 +2154,7 @@ export default function Home() {
       // rows for 80175/August as `anon`, and the panel renders on a fresh
       // session -- the fault was never in the database. Same rule the KPI cache
       // already applies at viewsCache above; this site and deptCache missed it.
-      setTop20Error(error ? `Top 20 could not be read — rpc_top20: ${error.message}` : null)
+      setTop20Error(error ? `Top 20 could not be read — ${t20Src}: ${error.message}` : null)
       if (!error) top20Cache.current.set(t20Key, t20)
       setTop20Data(t20)
       setTop20Loading(false)
@@ -2231,9 +2383,13 @@ export default function Home() {
     // Replaces the unpaged mv_rate_of_sale table fetch that PostgREST silently
     // capped at 1 000 rows (~345k in the matview), which left Velocity tiers
     // and Signal C computing on <1% of the range (CC-BRIEF-DASH-FINAL-001 item 5).
+    // ENG-086 / ENG-073: rpc_report_rows now carries the FAMILY-resolved cover beside the scan-keyed one
+    // (family_days_cover, family_daily_ros, family_ratio from l2_family_ros). A pack code holds no stock, so
+    // its scan cover is null; the family figure is the one that is true for the line.
     const rosRes = rows
-      .filter(r => r.daily_ros != null || r.days_cover != null)
-      .map(r => ({ ean: r.ean, store_code: r.store_code, daily_ros: r.daily_ros, days_cover: r.days_cover }))
+      .filter(r => r.daily_ros != null || r.days_cover != null || r.family_days_cover != null)
+      .map(r => ({ ean: r.ean, store_code: r.store_code, daily_ros: r.daily_ros, days_cover: r.days_cover,
+                   family_days_cover: r.family_days_cover, family_daily_ros: r.family_daily_ros, family_ratio: r.family_ratio }))
 
     // ean → supplier_name lookup. One supplier per EAN, chosen in the database
     // (alphabetically first where stores disagree), so there is no order to depend on here.
@@ -2675,7 +2831,25 @@ export default function Home() {
     ? sumField(lyDeptRows, 'total_sales_ex_vat')
     : lyKpiData.reduce((s, r) => s + (r.total_sales_ex_vat ?? 0), 0)
   const lyKpiGPRand = lyKpiSalesExVat - lyKpiCost
-  const lyKpiGP     = lyKpiSalesExVat > 0 ? (lyKpiGPRand / lyKpiSalesExVat) * 100 : null
+  const lyKpiGPRaw  = lyKpiSalesExVat > 0 ? (lyKpiGPRand / lyKpiSalesExVat) * 100 : null
+  // ENG-180 A: last year's GP is hidden, with a note, when removing last year's cost-error lines moves it by
+  // the configured number of points or more, and also when the check itself failed (never a confident wrong
+  // number). It is judged on the dates the card compares, so a store's poisoned window hides it only there.
+  const lyGpTot      = gpQuarLY.data?.total ?? null
+  const lyGpHidden   = !!gpQuarLY.error || lyGpTot?.poisoned === true
+  const lyKpiGP      = lyGpHidden ? null : lyKpiGPRaw
+  const lyGpNote     = gpQuarLY.error
+    ? 'LY GP hidden: last year\'s cost check could not be read'
+    : (lyGpTot?.poisoned === true
+        ? `LY GP hidden: last year's ledger carries ${num(lyGpTot.flagged_lines)} cost-error line${lyGpTot.flagged_lines === 1 ? '' : 's'} (${zarShort(lyGpTot.flagged_cost)}), GP ${pct(lyGpTot.gp_pct, 0)} with them, ${pct(lyGpTot.gp_pct_ex_flagged)} without`
+        : null)
+  // AUD-011 B: this period's cost errors, stated beside the unchanged headline.
+  const tyGpTot      = gpQuarTY.data?.total ?? null
+  const tyGpNote     = gpQuarTY.error
+    ? 'cost-error check unavailable'
+    : ((tyGpTot?.flagged_lines ?? 0) > 0
+        ? `quarantined ${zarShort(tyGpTot.flagged_cost)} of cost across ${num(tyGpTot.flagged_lines)} line${tyGpTot.flagged_lines === 1 ? '' : 's'} · GP ${pct(tyGpTot.gp_pct_ex_flagged)} without them`
+        : null)
   // Point-in-time: Neg SOH / Slow Move use lyDeptSohCounts (single latest LY date,
   // dept/subdept-scoped) when a filter is active; fall back to whole-store mv rows.
   // lyDeptSohCounts is pre-filtered by subdept at the RPC; dept filter applied here.
@@ -3425,7 +3599,7 @@ export default function Home() {
                       lyRef:         hasLY && lyKpiGP != null ? pct(lyKpiGP) : null,
                       lyDelta:       hasLY && lyKpiGP != null ? ppDeltaInfo(kpiGP, lyKpiGP) : null,
                       wowDelta:      null,
-                      bench:         null,
+                      bench:         [tyGpNote, lyGpNote].filter(Boolean).join(' · ') || null,
                       sub:           `Cost ${zarShort(kpiCost)}`,
                       warn:          (dualSalesPairable && l2Agg.gp != null ? l2Agg.gp : kpiGP) < 20,
                       danger:        (dualSalesPairable && l2Agg.gp != null ? l2Agg.gp : kpiGP) < 10,
