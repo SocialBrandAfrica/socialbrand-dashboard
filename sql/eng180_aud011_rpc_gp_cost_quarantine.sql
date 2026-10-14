@@ -1,6 +1,6 @@
 -- =============================================================================
 -- eng180_aud011_rpc_gp_cost_quarantine.sql   (migration eng180_aud011_rpc_gp_cost_quarantine)
--- AUD-011 option B and ENG-180 option A (PM rulings 14-10-2026 09:0x), dashboard lane.
+-- AUD-011 option B and ENG-180 option A.
 --
 -- ONE detector, two uses, derived from the ledger and never typed per store:
 --   a (store, product, day) line is a COST ERROR when its cost is at least gp_quarantine_min_cost
@@ -18,8 +18,8 @@
 --   At cost >= R100 and 3 times revenue the detector also flags genuine thin-margin lines
 --   (80175: 33 lines), so the R1,000 and 10 times floor is what keeps it quiet.
 --
--- The three thresholds are SEED, UNDERIVED, held in forge_config (R21, R28); the PM rules them
--- provisional (14-10-2026). Read-only SECURITY DEFINER, reads sigma_sales only, bounded to the
+-- The three thresholds are SEED, UNDERIVED, held in forge_config (R21, R28), provisional until
+-- derived. Read-only SECURITY DEFINER, reads sigma_sales only, bounded to the
 -- requested dates. ACL as the other dashboard RPCs: anon, authenticated, service_role.
 -- Rollback: DROP FUNCTION public.rpc_gp_cost_quarantine(text[], text[], text[]);
 --           UPDATE forge_config SET retired_on = CURRENT_DATE WHERE config_key IN (the three keys).

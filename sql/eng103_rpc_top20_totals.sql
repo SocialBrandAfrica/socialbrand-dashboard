@@ -1,7 +1,7 @@
 -- =============================================================================
 -- eng103_rpc_top20_totals.sql   (migration eng103_rpc_top20_totals)
--- ENG-103 (dashboard lane, PM ruling 14-10-2026 09:0x and 10:04): the Top 20 date cap. Page the results, never refuse;
--- measure first; over 8 s, build the per-item totals reader.
+-- ENG-103: the Top 20 date cap. The results are paged, never refused; the page size is derived from a measurement;
+-- where a call exceeds 8 s a per-item totals reader is used.
 --
 -- MEASURED 14-10-2026 10:2x, five stores, rpc_top20 Movers, the database busy with the Bloom cache job:
 --   1 date 1.1 s; 13 dates 1.7 s; 31 dates 6.5 s; 62 dates 25.9 s. Superlinear: the live body filters with
