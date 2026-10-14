@@ -187,7 +187,7 @@
   </div>
   <div id="measures-asof" class="note" style="margin-top:2px"></div>
   <div class="cards" id="count-measures"></div>
-  <div class="note"><b>The five measures, one definition each.</b> Count pool: World 1 lines that sold or were received in 91 days, plus any World 1 line with stock not equal to 0. Counted in 91 days: a Sigma count posting (DIWAINV) inside 91 store days, over that pool. Normalised share: lines whose stock the ledger has been shown to track (two counts no more than 60 days apart and the later one within the tolerance), over the lines that sold in 91 days. Measured shrinkage: the counts on normalised lines after they qualified, in units and in rand at unit cost. Count compliance: daily lists generated in the app against lists finalised on time, on the Progress tab. The pool and the counted figure are stocked each night with the draw, so they can differ by a few lines from the live scoreboard on the Platform Integrity tab, which reads the same view.</div>
+  <div class="note"><b>The five measures, one definition each.</b> Count pool: World 1 lines that sold or were received in 91 days, plus any World 1 line with stock not equal to 0. Counted in 91 days: a Sigma count posting (DIWAINV) inside 91 store days, over that pool. Normalised share: lines whose stock the ledger has been shown to track (two counts no more than 60 days apart and the later one within the tolerance), over the lines that sold in 91 days. Measured shrinkage: the counts on normalised lines after they qualified, in units and in rand at unit cost. Count compliance: daily lists generated in the app against lists finalised on time, on the Progress tab. The pool and the counted figure are the live read of the Platform Integrity tab on every tab (Progress, Platform Integrity and Stocktake); only the normalised share and the shrinkage are stocked with the nightly draw.</div>
 </div>
 
 <!-- 2 · FIXER -->
@@ -317,7 +317,24 @@ const HERO_ORDER=["purified_capital_share","negative_book","count_coverage_91d",
 $("loadprogress").onclick = async ()=>{
   clearBanner(); $("loadprogress").disabled=true;
   try{
-    const rows = await rpc("rpc_forge_integrity_trend",{p_stores:[...sel]});
+    // PM 14-10 section 34/36, B: one engine source per measure, and the basis is named. "Now" is the live engine call the Platform
+    // Integrity tab makes (rpc_forge_integrity); forge_integrity_history is only the week-ago column. Before, "now" was the newest nightly
+    // snapshot, so the same measure read differently on the two tabs (10116 counted in 91 days: 3,229 here against 3,862 there).
+    const [rows, live] = await Promise.all([
+      rpc("rpc_forge_integrity_trend",{p_stores:[...sel]}),
+      rpc("rpc_forge_integrity",{p_stores:[...sel]}).catch(e=>{ log("live read failed: "+e.message); return null; })
+    ]);
+    if(live){
+      const liveBy={}; live.forEach(l=>{ liveBy[l.store_code+"|"+l.instrument]=l; });
+      rows.forEach(r=>{
+        const l=liveBy[r.store_code+"|"+r.instrument];
+        if(l && l.value_num!=null){
+          r.now_value=l.value_num; r.now_pool=l.pool_num; r.now_date=todayStr();
+          // the pool was redefined on 13-10 (ENG-240/241): a snapshot before 14-10 is a different pool, so no week delta against it
+          if(r.instrument==="count_coverage_91d" && r.week_date && r.week_date<"2026-10-14"){ r.week_value=null; r.week_pool=null; }
+        }
+      });
+    }
     // group aggregate per instrument (sum across stores; only where both now+week exist for the delta)
     const g={};
     rows.forEach(r=>{
@@ -331,7 +348,7 @@ $("loadprogress").onclick = async ()=>{
       const isRand=m[3];
       const nowStr = isRand ? "R "+R(o.nv) : R(o.nv);
       const ratio = o.np>0 ? (100*o.nv/o.np) : null;
-      let deltaHtml="", wasStr="tracking starts today";
+      let deltaHtml="", wasStr=(inst==="count_coverage_91d" && live) ? "pool redefined 13-10, comparison resumes 21-10" : "tracking starts today";
       if(o.haveWeek){
         const d=o.nv-o.wv;
         const goodDir = m[2]==="UP" ? d>0 : d<0;
@@ -363,7 +380,7 @@ $("loadprogress").onclick = async ()=>{
             const goodDir = INST_META[i][2]==="UP" ? diff>0 : diff<0;
             const col = diff===0?"var(--neutral)":(goodDir?"var(--pos)":"var(--neg)");
             d=` <span style="color:${col}">${diff===0?"–":(diff>0?"▲":"▼")}${R(Math.abs(diff))}</span>`;
-          } else { d=' <span style="color:var(--mist)" title="history starts today">new</span>'; }
+          } else { d=' <span style="color:var(--mist)" title="'+(i==="count_coverage_91d"?"the pool was redefined on 13-10; comparison with last week resumes on 21-10":"history starts today")+'">new</span>'; }
           return `<td class=num>${isRand?"R "+R(r.now_value):R(r.now_value)}${d}</td>`;
         }).join("")+"</tr>";
       }).join("");
@@ -374,10 +391,12 @@ $("loadprogress").onclick = async ()=>{
     const _dy = new Date(_t+"T00:00:00"); _dy.setDate(_dy.getDate()-1);
     const _y = _dy.getFullYear()+"-"+String(_dy.getMonth()+1).padStart(2,"0")+"-"+String(_dy.getDate()).padStart(2,"0");
     const _lag = snap ? Math.round((new Date(_t+"T00:00:00")-new Date(snap+"T00:00:00"))/86400000) : 0;
-    $("progress-asof").innerHTML = !snap ? "" :
+    const _weekSnap = rows.reduce((a,r)=> (r.week_date && r.week_date>a) ? r.week_date : a, "");
+    $("progress-asof").innerHTML = live ? `Now: live engine read ${_t}, the same call as Platform Integrity.${_weekSnap?` Week-ago: nightly snapshot of ${_weekSnap}.`:""}` : !snap ? "" :
       (snap===_t ? `Scoreboard as of ${snap}: today's 23:30 snapshot.`
         : snap===_y ? `Scoreboard as of ${snap}: last night's 23:30 snapshot. Today's is taken at 23:30 tonight. Live figures are on the Platform Integrity tab.`
         : `<span style="color:var(--warn)">Scoreboard as of ${snap}, ${_lag} days old: the 23:30 snapshot did not write on at least ${_lag-1} night(s) since. These are ${snap}'s figures. Live figures are on the Platform Integrity tab.</span>`);
+    if(!live && snap) $("progress-asof").innerHTML = `<span style="color:var(--warn)">Live read failed. Showing the nightly snapshot of ${snap} (not today's figures).</span> ` + $("progress-asof").innerHTML;
     provenance("progress",{stores:[...sel], rows:rows.length, snapshot:snap});
   }catch(e){ banner(e.message,"err"); log("ERROR "+e.message); }
   $("loadprogress").disabled=false;
@@ -495,6 +514,10 @@ async function loadCountMeasures(){
   try{
     const days = lastNDates(28);
     const m = await getMeasures(days[0], days[days.length-1]);
+    // The pool and counted-in-91-days figures come from the same live call as Platform Integrity (rpc_forge_integrity, count_coverage_91d);
+    // the stocked table is the fallback only. Before, the stocked draw (03:30) differed from the live read by 292 lines at 10116 (3,570 against 3,862).
+    const liveCc = await rpc("rpc_forge_integrity",{p_stores:null}).catch(e=>{ log("live count read failed: "+e.message); return null; });
+    const ccBy = {}; (liveCc||[]).filter(l=>l.instrument==="count_coverage_91d").forEach(l=>{ ccBy[l.store_code]=l; });
     const ovBy = {}; (m.overview||[]).forEach(o=>{ ovBy[o.store_code]=o; });
     const nBy = {}; (m.normalised||[]).forEach(n=>{ nBy[n.store_code]=n; });
     const cmpBy = {}; (m.compliance||[]).forEach(r=>{ (cmpBy[r.store_code]=cmpBy[r.store_code]||[]).push(r); });
@@ -502,7 +525,8 @@ async function loadCountMeasures(){
     let stocked = "";
     STORES.forEach(([code,name])=>{
       const o = ovBy[code], n = nBy[code];
-      const pool = o && o.pool, rows = cmpBy[code]||[];
+      const c91 = ccBy[code], fromLive = !!(c91 && c91.pool_num!=null);
+      const pool = fromLive ? {pool:+c91.pool_num, counted_91:+c91.value_num} : (o && o.pool), rows = cmpBy[code]||[];
       if(pool && pool.refreshed_at && pool.refreshed_at>stocked) stocked = pool.refreshed_at;
       const atTol = n ? (n.at_tolerance||[]) : [];
       const cfgTol = n && atTol.find(t=>+t.tolerance_pct===+n.tolerance_pct), cmpTol = n && atTol.find(t=>+t.tolerance_pct===+n.compare_pct);
@@ -513,7 +537,7 @@ async function loadCountMeasures(){
       const lateOrOpen = rows.reduce((a,r)=>a+(+r.closed_late||0)+(+r.still_open||0),0);
       const card = document.createElement("div"); card.className = "card";
       const line = (label, sub, val) => '<div class="inst up"><span>'+label+'<span class="instsub">'+sub+'</span></span><span style="text-align:right;white-space:nowrap"><span class="v">'+val+'</span></span></div>';
-      card.innerHTML = '<h3>'+name+' ('+code+')</h3><div class="meta">'+(pool?"stocked "+String(pool.refreshed_at).slice(0,16).replace("T"," ")+" UTC":"no stocked draw yet")+'</div>'
+      card.innerHTML = '<h3>'+name+' ('+code+')</h3><div class="meta">'+(pool?(fromLive?"live engine read, the same call as Platform Integrity":"stocked "+String(pool.refreshed_at).slice(0,16).replace("T"," ")+" UTC (live read failed)"):"no data yet")+'</div>'
         + (pool ? line("Count pool", "World 1 lines that sold or were received in 91 days, plus any line with stock not equal to 0", R(pool.pool)+" lines")
                   + line("Counted in 91 days", "A Sigma count posting inside 91 store days, over the pool", R(pool.counted_91)+" / "+R(pool.pool)+(pool.pool?" = "+P1(100*pool.counted_91/pool.pool)+"%":"")) : "")
         + (n ? line("Normalised share", "Lines whose stock the ledger has been shown to track, over lines that sold in 91 days. At "+n.tolerance_pct+"%"+(cfgTol?": "+R(cfgTol.view_b)+" lines":"")+(cmpTol&&+n.compare_pct!==+n.tolerance_pct?". At "+n.compare_pct+"%: "+R(cmpTol.view_b)+" lines":"")+(cfgTol?". Strict view, both counts correct: "+R(cfgTol.view_a):""), R(n.normalised_lines)+" / "+R(n.selling_lines)+(n.share_pct!=null?" = "+n.share_pct+"%":""))
@@ -521,7 +545,7 @@ async function loadCountMeasures(){
         + line("Count compliance, last 28 days", "Daily lists generated in the app against lists finalised inside the count window", rows.length ? (R(onTime)+" / "+R(listed)+" on time"+(lateOrOpen?", "+R(lateOrOpen)+" late or open":"")) : "no list generated");
       el.appendChild(card);
     });
-    $("measures-asof").textContent = stocked ? "Pool and counted figures stocked "+String(stocked).slice(0,16).replace("T"," ")+" UTC. The normalised state and shrinkage are stocked with them." : "";
+    $("measures-asof").textContent = liveCc ? "Pool and counted figures: live engine read, the same call as Platform Integrity. The normalised state and shrinkage are stocked with the nightly draw." : (stocked ? "Live read failed. Pool and counted figures stocked "+String(stocked).slice(0,16).replace("T"," ")+" UTC with the normalised state and shrinkage." : "");
     provenance("count measures", {stores:(m.normalised||[]).length});
   }catch(e){
     el.innerHTML = '<div class="banner err" style="display:block;margin:0">Could not load the count measures: '+esc(e.message)+'</div>';
