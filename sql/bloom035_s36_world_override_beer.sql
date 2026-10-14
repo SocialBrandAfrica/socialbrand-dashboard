@@ -119,4 +119,10 @@ UPDATE public.l2_world_override
    SET ruled_by = 'CC (builder) proposal 14-10-2026 21:3x, same cause as PM close section 31 item 3 but outside PM''s count of 7: PM to confirm or retire'
  WHERE (store_code, product_code) IN (('80176', 125), ('80176', 469), ('80579', 10011));
 
+-- CONFIRMED BY PIETER (chat answer, 14-10-2026 21:3x): the three CC-proposal rows above. Applied as a plain UPDATE. The other seven keep confirmed_by NULL until PM reviews them.
+UPDATE public.l2_world_override
+   SET confirmed_by = 'Pieter (chat answer, 14-10-2026)',
+       ruled_by = 'Pieter, chat 14-10-2026: confirmed the CC proposal, same cause as PM close section 31 item 3 but outside PM''s count of 7'
+ WHERE (store_code, product_code) IN (('80176', 125), ('80176', 469), ('80579', 10011));
+
 SELECT pg_notify('pgrst', 'reload schema');
