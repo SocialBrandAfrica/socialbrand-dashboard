@@ -12,6 +12,21 @@ Reverse-chronological. Each entry = one production deploy.
 
 ---
 
+## 2026-10-14 11:4x SAST -- DASHBOARD LANE (THIRD SEAT), LATER SHIPS: THE GP COST QUARANTINE, PAGED READS, FAMILY COVER, PAGED TOP 20
+
+**Commits `b00349d`, `9c4415e`, `715cad8`, `1e08b9a`, `048a995`, `77799af` on `main` (after `976603b`). Database, in order: migrations `eng180_aud011_rpc_gp_cost_quarantine`, `eng167_v_dept_by_date_left_join_coverage`, `eng086_rpc_report_rows_family_cover`, `eng103_rpc_top20_totals`, `eng170_bt_provenance_columns` (three tables) and `eng170_bt_provenance_columns_l2_bt_tail`; sources `sql/eng180_aud011_rpc_gp_cost_quarantine.sql`, `sql/create_v_dept_by_date.sql`, `sql/eng086_rpc_report_rows_family_cover.sql` (rollback `sql/_archive/rpc_report_rows_72d93b96_pre_eng086.sql`), `sql/eng103_rpc_top20_totals.sql`, `sql/eng170_bt_provenance_columns.sql`, `sql/create_rpc_top20.sql` (the live body, md5 `ced3dfe2`).** `next build` clean and rls-guard PASS before each push. The live bundle at 11:2x carries `rpc_top20_totals` and `rpc_gp_cost_quarantine` (read from the served page chunk).
+
+- **AUD-011 B, ENG-180 A (`b00349d`):** `rpc_gp_cost_quarantine` flags (store, product, day) lines with cost at least R1,000 and above 10 times ex-VAT revenue; the Gross Profit card states the quarantined rand beside the headline and hides last year's GP where its ledger is poisoned, with a note. Thresholds are SEED in `forge_config`.
+- **ENG-167, ENG-140 sources (`9c4415e`):** `v_dept_by_date` keeps the LEFT JOINs and names orphan lines UNMAPPED, so the view equals the till to the cent; the repository source of `rpc_top20` is regenerated from the live body.
+- **ENG-253 (`715cad8`):** the multi-date `mv_kpi_by_date` and `v_dept_by_date` reads are paged at the measured cap of 1,000 rows (`readAllPages`); a page error is the read's error.
+- **ENG-086, ENG-073 report leg (`048a995`):** `rpc_report_rows` carries three additive keys (family cover from `l2_family_ros`); the Velocity Report and Focus Export show the family cover with `Cover Basis` and `Scan Days Cover` beside it.
+- **ENG-103 (`77799af`):** Top 20 Movers beyond 14 dates is read in pages of 125 store-dates through `rpc_top20_totals` and `rpc_ean_labels` and merged exactly in the page; up to 14 dates and for Non-Movers it is the old call. R22 in the database: equal to `rpc_top20`, 33 rows, 0 differences.
+- **ENG-170:** `computed_at` and `engine_version` on the four BT precompute tables, nullable then default, so old rows read NULL; tonight's 22:15 SAST run stamps the rows (the refresh functions insert with explicit column lists).
+
+**Read-back limits, stated.** Claude in Chrome was found disconnected at about 11:3x, so these live readings are OWED: ENG-086 at two stores (Velocity Report and Focus Export), ENG-103 at two single stores and the By Value view, ENG-074 single-date stock tiles at two stores, ENG-253 with every date selected. ENG-253's all-dates card is not readable today: the page fires about 20 heavy requests at once at 619 dates and its KPI read starves (new BUG-LOG row ENG-258, stated by the page, never shown as zero). ENG-170 is read tomorrow morning. ENG-256 waits on the till landing.
+
+---
+
 ## 2026-10-14 09:4x SAST -- DASHBOARD LANE (THIRD SEAT), FIRST TWO SHIPS: FAILURES STATED NOT BLANK, THE SUPPLIER COLUMN FILLED, THE CAPITAL TIED MODAL ADDS UP
 
 **Commits `a17e3d9` and `3efdba1` on `main`, Vercel success on both. Database: migration `eng251_rpc_supplier_by_ean_json` (new function, source `sql/eng251_rpc_supplier_by_ean_json.sql`). BUG-LOG ENG-250 to ENG-257 and the closure addenda of ENG-073, 101, 141, SEL-P3 and AUD-010.** Client only apart from the one new function. `next build` clean, rls-guard PASS, both pushes.
