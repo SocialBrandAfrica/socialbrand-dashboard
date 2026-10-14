@@ -135,12 +135,12 @@ BEGIN
     SELECT v_store, f.product_code, f.supplier_nr, f.nm, f.supplier_type, f.last_d, f.desk, f.pclass, f.dept, f.w2, f.has_link, f.sold91,
            CASE WHEN f.w2 THEN 'PRODUCTION'
                 WHEN f.pclass IS DISTINCT FROM 'NORMAL' AND f.desk IS NULL THEN 'PARKED'
-                WHEN f.catchall THEN 'PARKED'
+                WHEN f.catchall AND f.desk IS NULL THEN 'PARKED'
                 WHEN f.desk IS NULL THEN 'NO_DESK'
                 ELSE 'DESK' END,
            CASE WHEN f.w2 THEN 'WORLD_2'
                 WHEN f.pclass IS DISTINCT FROM 'NORMAL' THEN CASE WHEN f.pclass = 'NON_STOCK' AND f.sold91 THEN 'NON_STOCK_SOLD' ELSE 'EXPENSE_NOT_STOCK' END
-                WHEN f.catchall THEN 'CATCH_ALL_ACCOUNT'
+                WHEN f.catchall AND f.desk IS NULL THEN 'CATCH_ALL_ACCOUNT'
                 WHEN f.desk IS NULL THEN 'NO_DESK'
                 WHEN f.desk IN (SELECT route_key FROM dcroute) AND f.dept IS NOT NULL AND f.dept NOT IN (SELECT d FROM dcdept) THEN 'DEPARTMENT_OUTSIDE_CYCLE'
                 WHEN NOT f.has_link THEN 'NO_ACTIVE_LINK'
@@ -151,7 +151,7 @@ BEGIN
                 WHEN f.pclass IS DISTINCT FROM 'NORMAL' THEN
                   CASE WHEN f.pclass = 'NON_STOCK' AND f.sold91 THEN 'Non-stock in Sigma but it sold in the last 91 days. If it is a buy-and-sell line, set Record Stock Qty to Yes in Sigma. Not ordered.'
                        ELSE 'Expense, not stock. Not ordered, kept out of purchases and budgets.' END
-                WHEN f.catchall THEN format('Booked against the catch-all account %s. It has no supplier desk. It waits for the store consolidated desk (ENG-202, not built).', f.nm)
+                WHEN f.catchall AND f.desk IS NULL THEN format('Booked against the catch-all account %s. It has no supplier desk and the store has no catch-all desk (no receipt against the catch-all accounts in the window).', f.nm)
                 WHEN f.desk IS NULL THEN format('The latest supplier, %s, has no desk at this store.', f.nm)
                 WHEN f.desk IN (SELECT route_key FROM dcroute) AND f.dept IS NOT NULL AND f.dept NOT IN (SELECT d FROM dcdept) THEN
                   CASE WHEN (SELECT bool_or(fresh) FROM dcdept) THEN format('Department %s is outside the DC ambient cycle. It is in no DC desk department set (the DC fresh desk takes the departments the DC delivered, ENG-204).', f.dept)

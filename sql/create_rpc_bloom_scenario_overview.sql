@@ -186,6 +186,7 @@ BEGIN
     WHERE obl.store_code = p_store_code
       AND obl.route_key = (CASE
         WHEN p_route = 'DC_FRESH' THEN 'DC_FRESH'
+        WHEN p_route = 'DIRECT_CATCHALL' THEN 'DIRECT_CATCHALL'
         WHEN p_route = 'DIRECT_BEER' THEN 'DIRECT_BEER'
         WHEN p_route LIKE 'DIRECT\_%' ESCAPE '\' THEN 'DIRECT'
         ELSE 'DC'

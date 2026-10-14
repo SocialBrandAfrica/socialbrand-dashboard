@@ -25,6 +25,7 @@ BEGIN
 
   v_route := CASE WHEN p_route = 'DC_FRESH' THEN 'DC_FRESH'
                   WHEN p_route LIKE 'DC\_%' ESCAPE '\'  THEN 'DC'
+                  WHEN p_route = 'DIRECT_CATCHALL' THEN 'DIRECT_CATCHALL'
                   WHEN p_route = 'DIRECT_BEER'          THEN 'DIRECT_BEER'
                   ELSE 'DIRECT' END;
 
@@ -63,7 +64,8 @@ BEGIN
                WHERE rc.store_code=p_store_code
                  AND ( (v_route='DIRECT_BEER' AND rc.route_key='DIRECT_BEER')
                     OR (v_route='DIRECT'      AND rc.route_key LIKE 'DIRECT\_%' ESCAPE '\'
-                                              AND rc.route_key <> 'DIRECT_BEER') ) )) );
+                                              AND rc.route_key NOT IN ('DIRECT_BEER', 'DIRECT_CATCHALL'))
+                    OR (v_route='DIRECT_CATCHALL' AND rc.route_key='DIRECT_CATCHALL') ) )) );
 
   SELECT COALESCE(SUM(o.on_order_cost),0) INTO v_transit
   FROM l2_on_order o
@@ -80,7 +82,8 @@ BEGIN
                           WHERE p.store_code=o.store_code AND p.product_code=o.product_code))
        OR (v_route='DIRECT_BEER' AND o.route_keys[1]='DIRECT_BEER')
        OR (v_route='DIRECT'      AND o.route_keys[1] LIKE 'DIRECT\_%' ESCAPE '\'
-                                 AND o.route_keys[1] <> 'DIRECT_BEER') );
+                                 AND o.route_keys[1] NOT IN ('DIRECT_BEER', 'DIRECT_CATCHALL'))
+       OR (v_route='DIRECT_CATCHALL' AND o.route_keys[1]='DIRECT_CATCHALL') );
 
   RETURN QUERY SELECT
     v_ws,

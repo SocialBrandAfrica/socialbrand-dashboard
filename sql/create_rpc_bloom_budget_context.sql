@@ -74,6 +74,7 @@ AS $function$
   WITH route AS (
     SELECT CASE
              WHEN p_desk = 'DC_FRESH' THEN 'DC_FRESH'
+             WHEN p_desk = 'DIRECT_CATCHALL' THEN 'DIRECT_CATCHALL'
              WHEN p_desk = 'DIRECT_BEER'                    THEN 'DIRECT_BEER'
              WHEN p_desk LIKE 'DIRECT\_%' ESCAPE '\'        THEN 'DIRECT'
              ELSE 'DC'

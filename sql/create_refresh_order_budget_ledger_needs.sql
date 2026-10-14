@@ -92,6 +92,7 @@ BEGIN
     SELECT sb.store_code,
            CASE WHEN sb.route_key = 'DC_FRESH' THEN 'DC_FRESH'
                 WHEN sb.route_key LIKE 'DC\_%' ESCAPE '\' THEN 'DC'
+                WHEN sb.route_key = 'DIRECT_CATCHALL' THEN 'DIRECT_CATCHALL'
                 WHEN sb.route_key = 'DIRECT_BEER'         THEN 'DIRECT_BEER'
                 ELSE 'DIRECT' END AS ledger_route,
            sb.budget_week_start AS year_month,
@@ -149,7 +150,10 @@ BEGIN
      WHERE store_code=p_store AND route_key='DIRECT_BEER'),
   direct AS (
     SELECT unnest(direct_supplier_nrs) AS supplier_nr FROM bloom_route_config
-     WHERE store_code=p_store AND route_key LIKE 'DIRECT\_%' ESCAPE '\' AND route_key <> 'DIRECT_BEER'),
+     WHERE store_code=p_store AND route_key LIKE 'DIRECT\_%' ESCAPE '\' AND route_key NOT IN ('DIRECT_BEER', 'DIRECT_CATCHALL')),
+  catchall AS (
+    SELECT unnest(direct_supplier_nrs) AS supplier_nr FROM bloom_route_config
+     WHERE store_code=p_store AND route_key='DIRECT_CATCHALL'),
   -- ONE HOME (FILE-GOVERNANCE §0g write-forward): the pool definition lives in
   -- v_bloom_dc_ambient_pool and is read, never restated. A second copy would be drift.
   dcpool AS (
@@ -159,6 +163,7 @@ BEGIN
   landed AS (
     SELECT CASE
              WHEN m.supplier_nr IN (SELECT supplier_nr FROM beer)   THEN 'DIRECT_BEER'
+             WHEN m.supplier_nr IN (SELECT supplier_nr FROM catchall) THEN 'DIRECT_CATCHALL'
              WHEN m.supplier_nr IN (SELECT supplier_nr FROM direct) THEN 'DIRECT'
              WHEN sm.supplier_type = 'Z'
               AND m.product_code IN (SELECT product_code FROM dcpool) THEN 'DC'
@@ -176,6 +181,7 @@ BEGIN
   transit AS (
     SELECT CASE
              WHEN o.route_keys[1] = 'DIRECT_BEER'             THEN 'DIRECT_BEER'
+             WHEN o.route_keys[1] = 'DIRECT_CATCHALL'         THEN 'DIRECT_CATCHALL'
              WHEN o.route_keys[1] LIKE 'DIRECT\_%' ESCAPE '\' THEN 'DIRECT'
              WHEN o.route_keys[1] = 'DC'
               AND o.product_code IN (SELECT product_code FROM dcpool) THEN 'DC'
