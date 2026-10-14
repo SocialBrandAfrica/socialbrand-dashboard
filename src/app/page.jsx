@@ -1223,10 +1223,14 @@ async function readTop20Paged(supabaseClient, { storeCodes, dates, dept, subdept
   for (const r of [...keyed].sort((a, b) => (b.total_sales - a.total_sales) || tie(a, b)).slice(0, 20)) picked.set(r.ean, r)
   for (const r of [...keyed].sort((a, b) => (b.total_qty - a.total_qty) || tie(a, b)).slice(0, 20)) picked.set(r.ean, r)
   if (picked.size === 0) return { data: [], error: null }
-  // OWED (PM 14-10 12:58: split): the labels call should also send p_dates / p_dept / p_subdept under a filter
-  // (rpc_ean_labels already accepts them, migration eng103b); it ships once the call is timed on a quiet database.
+  // Under a department, sub-department or focus filter the labels come from the lines that sold in these dates and passed
+  // the filter, exactly as the direct rpc_top20 filtered branch takes them (review of 77799af: a BAKERY filter showed
+  // DORMANT PRODUCTS under 14 of 24 rows). Timed 14-10-2026 (PM ruling 12:58: under 8 s, ship): 40 EANs, five stores,
+  // all 619 dates, BAKERY: 2.2 s. Unfiltered, the dates are not sent and it is the unfiltered deco leg.
+  const filtered = dept != null || subdept != null || eans != null
   const { data: labels, error: labelError } = await supabaseClient.rpc('rpc_ean_labels', {
     p_store_codes: storeCodes, p_eans: [...picked.keys()],
+    p_dates: filtered ? dates : null, p_dept: dept, p_subdept: subdept,
   })
   if (labelError) return { data: null, error: { message: `labels: ${labelError.message}` } }
   const byEan = new Map((labels ?? []).map(l => [l.ean, l]))
